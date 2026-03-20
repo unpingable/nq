@@ -1,0 +1,12 @@
+{
+  "bind_addr": "127.0.0.1:9847",
+  "sqlite_paths": [
+    "/var/lib/myapp/data.sqlite",
+    "/var/lib/myapp/work.sqlite"
+  ],
+  "service_health_urls": [
+    { "name": "myapp", "check_type": "systemd" },
+    { "name": "worker", "check_type": "systemd" },
+    { "name": "nginx", "check_type": "docker" }
+  ]
+}

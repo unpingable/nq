@@ -1,0 +1,15 @@
+[package]
+name = "nq-db"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+nq-core = { path = "../nq-core" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+rusqlite = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

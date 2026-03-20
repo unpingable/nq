@@ -1,0 +1,24 @@
+[package]
+name = "nq"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+nq-core = { path = "../nq-core" }
+nq-db = { path = "../nq-db" }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+clap = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+hostname = "0.4"
+libc = "0.2"
+rusqlite = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

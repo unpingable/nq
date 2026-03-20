@@ -1,0 +1,12 @@
+/target
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# Claude Code local settings
+.claude/
+
+# Deploy configs (contain host-specific paths)
+# See deploy/examples/ for templates
+deploy/*.json

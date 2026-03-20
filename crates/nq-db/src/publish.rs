@@ -1,0 +1,490 @@
+//! The publish transaction: one batch, one generation, one commit.
+//!
+//! No DB writes during collection. The entire batch is assembled in memory,
+//! then published in a single IMMEDIATE transaction. A generation becomes
+//! visible only at commit.
+//!
+//! Set-valued collectors (services, sqlite_health) use delete+replace:
+//! if a publisher responds successfully and omits a previously-known entity,
+//! it is gone. Failed collectors leave prior rows untouched.
+
+use crate::WriteDb;
+use nq_core::Batch;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
+
+#[derive(Debug, Clone)]
+pub struct PublishResult {
+    pub generation_id: i64,
+    pub sources_ok: usize,
+    pub sources_failed: usize,
+}
+
+pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishResult> {
+    let tx = db.conn.transaction()?;
+
+    let status = batch.generation_status();
+    let sources_ok = batch.sources_ok();
+    let sources_failed = batch.sources_failed();
+
+    // 1. Insert generation
+    tx.execute(
+        "INSERT INTO generations (started_at, completed_at, status, sources_expected, sources_ok, sources_failed, duration_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![
+            fmt_ts(&batch.cycle_started_at),
+            fmt_ts(&batch.cycle_completed_at),
+            status.as_str(),
+            batch.sources_expected as i64,
+            sources_ok as i64,
+            sources_failed as i64,
+            batch.duration_ms(),
+        ],
+    )?;
+    let generation_id = tx.last_insert_rowid();
+
+    // 2. Insert source_runs
+    {
+        let mut stmt = tx.prepare_cached(
+            "INSERT INTO source_runs (generation_id, source, status, received_at, collected_at, duration_ms, error_message)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+        for sr in &batch.source_runs {
+            stmt.execute(rusqlite::params![
+                generation_id,
+                &sr.source,
+                sr.status.as_str(),
+                fmt_ts(&sr.received_at),
+                sr.collected_at.as_ref().map(fmt_ts),
+                sr.duration_ms.map(|v| v as i64),
+                &sr.error_message,
+            ])?;
+        }
+    }
+
+    // 3. Insert collector_runs
+    {
+        let mut stmt = tx.prepare_cached(
+            "INSERT INTO collector_runs (generation_id, source, collector, status, collected_at, entity_count, error_message)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+        for cr in &batch.collector_runs {
+            stmt.execute(rusqlite::params![
+                generation_id,
+                &cr.source,
+                cr.collector.as_str(),
+                cr.status.as_str(),
+                cr.collected_at.as_ref().map(fmt_ts),
+                cr.entity_count.map(|v| v as i64),
+                &cr.error_message,
+            ])?;
+        }
+    }
+
+    // 4. Upsert hosts_current for successful host collectors
+    {
+        let mut stmt = tx.prepare_cached(
+            "INSERT INTO hosts_current (host, cpu_load_1m, cpu_load_5m, mem_total_mb, mem_available_mb, mem_pressure_pct, disk_total_mb, disk_avail_mb, disk_used_pct, uptime_seconds, kernel_version, boot_id, as_of_generation, collected_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             ON CONFLICT(host) DO UPDATE SET
+                cpu_load_1m=excluded.cpu_load_1m, cpu_load_5m=excluded.cpu_load_5m,
+                mem_total_mb=excluded.mem_total_mb, mem_available_mb=excluded.mem_available_mb,
+                mem_pressure_pct=excluded.mem_pressure_pct,
+                disk_total_mb=excluded.disk_total_mb, disk_avail_mb=excluded.disk_avail_mb,
+                disk_used_pct=excluded.disk_used_pct,
+                uptime_seconds=excluded.uptime_seconds, kernel_version=excluded.kernel_version,
+                boot_id=excluded.boot_id,
+                as_of_generation=excluded.as_of_generation, collected_at=excluded.collected_at",
+        )?;
+        for hr in &batch.host_rows {
+            stmt.execute(rusqlite::params![
+                &hr.host,
+                hr.cpu_load_1m,
+                hr.cpu_load_5m,
+                hr.mem_total_mb.map(|v| v as i64),
+                hr.mem_available_mb.map(|v| v as i64),
+                hr.mem_pressure_pct,
+                hr.disk_total_mb.map(|v| v as i64),
+                hr.disk_avail_mb.map(|v| v as i64),
+                hr.disk_used_pct,
+                hr.uptime_seconds.map(|v| v as i64),
+                &hr.kernel_version,
+                &hr.boot_id,
+                generation_id,
+                fmt_ts(&hr.collected_at),
+            ])?;
+        }
+    }
+
+    // 5. Delete+replace services_current for successful services collectors
+    {
+        let mut del = tx.prepare_cached("DELETE FROM services_current WHERE host = ?1")?;
+        let mut ins = tx.prepare_cached(
+            "INSERT INTO services_current (host, service, status, health_detail_json, pid, uptime_seconds, last_restart, eps, queue_depth, consumer_lag, drop_count, as_of_generation, collected_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        )?;
+        for ss in &batch.service_sets {
+            del.execute(rusqlite::params![&ss.host])?;
+            for row in &ss.rows {
+                ins.execute(rusqlite::params![
+                    &ss.host,
+                    &row.service,
+                    row.status.as_str(),
+                    &row.health_detail_json,
+                    row.pid.map(|v| v as i64),
+                    row.uptime_seconds.map(|v| v as i64),
+                    row.last_restart.as_ref().map(fmt_ts),
+                    row.eps,
+                    row.queue_depth,
+                    row.consumer_lag,
+                    row.drop_count,
+                    generation_id,
+                    fmt_ts(&ss.collected_at),
+                ])?;
+            }
+        }
+    }
+
+    // 6. Delete+replace monitored_dbs_current for successful sqlite_health collectors
+    {
+        let mut del = tx.prepare_cached("DELETE FROM monitored_dbs_current WHERE host = ?1")?;
+        let mut ins = tx.prepare_cached(
+            "INSERT INTO monitored_dbs_current (host, db_path, db_size_mb, wal_size_mb, page_size, page_count, freelist_count, journal_mode, auto_vacuum, last_checkpoint, checkpoint_lag_s, last_quick_check, last_integrity_check, last_integrity_at, as_of_generation, collected_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        )?;
+        for ds in &batch.sqlite_db_sets {
+            del.execute(rusqlite::params![&ds.host])?;
+            for row in &ds.rows {
+                ins.execute(rusqlite::params![
+                    &ds.host,
+                    &row.db_path,
+                    row.db_size_mb,
+                    row.wal_size_mb,
+                    row.page_size.map(|v| v as i64),
+                    row.page_count.map(|v| v as i64),
+                    row.freelist_count.map(|v| v as i64),
+                    &row.journal_mode,
+                    &row.auto_vacuum,
+                    row.last_checkpoint.as_ref().map(fmt_ts),
+                    row.checkpoint_lag_s.map(|v| v as i64),
+                    &row.last_quick_check,
+                    &row.last_integrity_check,
+                    row.last_integrity_at.as_ref().map(fmt_ts),
+                    generation_id,
+                    fmt_ts(&ds.collected_at),
+                ])?;
+            }
+        }
+    }
+
+    tx.commit()?;
+
+    Ok(PublishResult {
+        generation_id,
+        sources_ok,
+        sources_failed,
+    })
+}
+
+fn fmt_ts(ts: &OffsetDateTime) -> String {
+    ts.format(&Rfc3339).expect("timestamp format")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{migrate, open_rw};
+    use nq_core::batch::*;
+    use nq_core::status::*;
+
+    fn test_db() -> WriteDb {
+        let mut db = open_rw(std::path::Path::new(":memory:")).unwrap();
+        migrate(&mut db).unwrap();
+        db
+    }
+
+    fn now() -> OffsetDateTime {
+        OffsetDateTime::now_utc()
+    }
+
+    #[test]
+    fn publish_empty_batch() {
+        let mut db = test_db();
+        let t = now();
+        let batch = Batch {
+            cycle_started_at: t,
+            cycle_completed_at: t,
+            sources_expected: 0,
+            source_runs: vec![],
+            collector_runs: vec![],
+            host_rows: vec![],
+            service_sets: vec![],
+            sqlite_db_sets: vec![],
+        };
+        let result = publish_batch(&mut db, &batch).unwrap();
+        assert_eq!(result.sources_ok, 0);
+        assert_eq!(result.sources_failed, 0);
+    }
+
+    #[test]
+    fn publish_one_host() {
+        let mut db = test_db();
+        let t = now();
+        let batch = Batch {
+            cycle_started_at: t,
+            cycle_completed_at: t,
+            sources_expected: 1,
+            source_runs: vec![SourceRun {
+                source: "box-1".into(),
+                status: SourceStatus::Ok,
+                received_at: t,
+                collected_at: Some(t),
+                duration_ms: Some(42),
+                error_message: None,
+            }],
+            collector_runs: vec![CollectorRun {
+                source: "box-1".into(),
+                collector: CollectorKind::Host,
+                status: CollectorStatus::Ok,
+                collected_at: Some(t),
+                entity_count: Some(1),
+                error_message: None,
+            }],
+            host_rows: vec![HostRow {
+                host: "box-1".into(),
+                cpu_load_1m: Some(0.5),
+                cpu_load_5m: Some(0.3),
+                mem_total_mb: Some(16384),
+                mem_available_mb: Some(8192),
+                mem_pressure_pct: Some(50.0),
+                disk_total_mb: Some(500000),
+                disk_avail_mb: Some(200000),
+                disk_used_pct: Some(60.0),
+                uptime_seconds: Some(86400),
+                kernel_version: Some("6.8.0".into()),
+                boot_id: Some("abc123".into()),
+                collected_at: t,
+            }],
+            service_sets: vec![],
+            sqlite_db_sets: vec![],
+        };
+        let result = publish_batch(&mut db, &batch).unwrap();
+        assert_eq!(result.sources_ok, 1);
+        assert_eq!(result.generation_id, 1);
+
+        // Verify current-state row exists
+        let cpu: f64 = db
+            .conn
+            .query_row(
+                "SELECT cpu_load_1m FROM hosts_current WHERE host = 'box-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!((cpu - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn service_set_replacement() {
+        let mut db = test_db();
+        let t = now();
+
+        // First generation: two services
+        let batch1 = Batch {
+            cycle_started_at: t,
+            cycle_completed_at: t,
+            sources_expected: 1,
+            source_runs: vec![SourceRun {
+                source: "box-1".into(),
+                status: SourceStatus::Ok,
+                received_at: t,
+                collected_at: Some(t),
+                duration_ms: Some(10),
+                error_message: None,
+            }],
+            collector_runs: vec![CollectorRun {
+                source: "box-1".into(),
+                collector: CollectorKind::Services,
+                status: CollectorStatus::Ok,
+                collected_at: Some(t),
+                entity_count: Some(2),
+                error_message: None,
+            }],
+            host_rows: vec![],
+            service_sets: vec![ServiceSet {
+                host: "box-1".into(),
+                collected_at: t,
+                rows: vec![
+                    ServiceRow {
+                        service: "svc-a".into(),
+                        status: ServiceStatus::Up,
+                        health_detail_json: None,
+                        pid: Some(100),
+                        uptime_seconds: None,
+                        last_restart: None,
+                        eps: None,
+                        queue_depth: None,
+                        consumer_lag: None,
+                        drop_count: None,
+                    },
+                    ServiceRow {
+                        service: "svc-b".into(),
+                        status: ServiceStatus::Up,
+                        health_detail_json: None,
+                        pid: Some(200),
+                        uptime_seconds: None,
+                        last_restart: None,
+                        eps: None,
+                        queue_depth: None,
+                        consumer_lag: None,
+                        drop_count: None,
+                    },
+                ],
+            }],
+            sqlite_db_sets: vec![],
+        };
+        publish_batch(&mut db, &batch1).unwrap();
+
+        let count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM services_current WHERE host = 'box-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+
+        // Second generation: svc-b disappeared
+        let batch2 = Batch {
+            cycle_started_at: t,
+            cycle_completed_at: t,
+            sources_expected: 1,
+            source_runs: vec![SourceRun {
+                source: "box-1".into(),
+                status: SourceStatus::Ok,
+                received_at: t,
+                collected_at: Some(t),
+                duration_ms: Some(10),
+                error_message: None,
+            }],
+            collector_runs: vec![CollectorRun {
+                source: "box-1".into(),
+                collector: CollectorKind::Services,
+                status: CollectorStatus::Ok,
+                collected_at: Some(t),
+                entity_count: Some(1),
+                error_message: None,
+            }],
+            host_rows: vec![],
+            service_sets: vec![ServiceSet {
+                host: "box-1".into(),
+                collected_at: t,
+                rows: vec![ServiceRow {
+                    service: "svc-a".into(),
+                    status: ServiceStatus::Up,
+                    health_detail_json: None,
+                    pid: Some(100),
+                    uptime_seconds: None,
+                    last_restart: None,
+                    eps: None,
+                    queue_depth: None,
+                    consumer_lag: None,
+                    drop_count: None,
+                }],
+            }],
+            sqlite_db_sets: vec![],
+        };
+        publish_batch(&mut db, &batch2).unwrap();
+
+        // svc-b should be gone
+        let count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM services_current WHERE host = 'box-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn failed_source_preserves_stale_rows() {
+        let mut db = test_db();
+        let t = now();
+
+        // First: successful collection
+        let batch1 = Batch {
+            cycle_started_at: t,
+            cycle_completed_at: t,
+            sources_expected: 1,
+            source_runs: vec![SourceRun {
+                source: "box-1".into(),
+                status: SourceStatus::Ok,
+                received_at: t,
+                collected_at: Some(t),
+                duration_ms: Some(10),
+                error_message: None,
+            }],
+            collector_runs: vec![CollectorRun {
+                source: "box-1".into(),
+                collector: CollectorKind::Host,
+                status: CollectorStatus::Ok,
+                collected_at: Some(t),
+                entity_count: Some(1),
+                error_message: None,
+            }],
+            host_rows: vec![HostRow {
+                host: "box-1".into(),
+                cpu_load_1m: Some(1.0),
+                cpu_load_5m: None,
+                mem_total_mb: None,
+                mem_available_mb: None,
+                mem_pressure_pct: None,
+                disk_total_mb: None,
+                disk_avail_mb: None,
+                disk_used_pct: None,
+                uptime_seconds: None,
+                kernel_version: None,
+                boot_id: None,
+                collected_at: t,
+            }],
+            service_sets: vec![],
+            sqlite_db_sets: vec![],
+        };
+        let r1 = publish_batch(&mut db, &batch1).unwrap();
+
+        // Second: source failed — no host_rows, no collector_runs for host
+        let batch2 = Batch {
+            cycle_started_at: t,
+            cycle_completed_at: t,
+            sources_expected: 1,
+            source_runs: vec![SourceRun {
+                source: "box-1".into(),
+                status: SourceStatus::Timeout,
+                received_at: t,
+                collected_at: None,
+                duration_ms: Some(10000),
+                error_message: Some("timeout".into()),
+            }],
+            collector_runs: vec![],
+            host_rows: vec![],
+            service_sets: vec![],
+            sqlite_db_sets: vec![],
+        };
+        let r2 = publish_batch(&mut db, &batch2).unwrap();
+        assert!(r2.generation_id > r1.generation_id);
+
+        // Stale row should still be there with old generation
+        let gen: i64 = db
+            .conn
+            .query_row(
+                "SELECT as_of_generation FROM hosts_current WHERE host = 'box-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(gen, r1.generation_id);
+    }
+}

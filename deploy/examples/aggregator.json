@@ -1,0 +1,19 @@
+{
+  "interval_s": 60,
+  "db_path": "/opt/notquery/nq.db",
+  "sources": [
+    {
+      "name": "my-host",
+      "base_url": "http://127.0.0.1:9847",
+      "timeout_ms": 10000
+    }
+  ],
+  "retention": {
+    "max_generations": 2880,
+    "prune_every_n_cycles": 60
+  },
+  "disk_budget": {
+    "db_max_size_mb": 100,
+    "warn_at_pct": 80
+  }
+}
