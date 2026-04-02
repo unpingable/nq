@@ -1,0 +1,15 @@
+[Unit]
+Description=nq aggregator + web UI
+After=network.target nq-publish.service
+Wants=nq-publish.service
+
+[Service]
+Type=simple
+ExecStart=/opt/nq/nq serve -c /opt/nq/aggregator.json
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

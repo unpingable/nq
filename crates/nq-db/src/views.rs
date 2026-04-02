@@ -12,6 +12,7 @@ pub struct OverviewVm {
     pub services: Vec<ServiceSummaryVm>,
     pub sqlite_dbs: Vec<SqliteDbSummaryVm>,
     pub warnings: Vec<WarningVm>,
+    pub history_generations: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -51,10 +52,15 @@ pub struct SqliteDbSummaryVm {
 
 #[derive(Debug, Clone)]
 pub struct WarningVm {
+    pub severity: String,
     pub category: String,
     pub host: String,
     pub subject: Option<String>,
     pub message: String,
+    pub domain: Option<String>,
+    pub first_seen_at: Option<String>,
+    pub consecutive_gens: Option<i64>,
+    pub acknowledged: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -163,21 +169,38 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
         })?
         .collect::<Result<_, _>>()?;
 
-    // Warnings: stale hosts
-    let mut warnings = Vec::new();
-    for h in &hosts {
-        if h.stale {
-            warnings.push(WarningVm {
-                category: "stale_source".into(),
-                host: h.host.clone(),
-                subject: None,
-                message: format!(
-                    "last seen generation {}, current {}",
-                    h.as_of_generation, current_gen
-                ),
-            });
-        }
-    }
+    // Warnings from v_warnings view
+    let warnings: Vec<WarningVm> = if gen_id.is_some() {
+        let mut warn_stmt = db.conn.prepare(
+            "SELECT severity, kind, host, subject, message, domain, first_seen_at, consecutive_gens, acknowledged
+             FROM v_warnings ORDER BY severity DESC, kind, host",
+        )?;
+        let rows = warn_stmt
+            .query_map([], |row| {
+                Ok(WarningVm {
+                    severity: row.get(0)?,
+                    category: row.get(1)?,
+                    host: row.get(2)?,
+                    subject: row.get(3)?,
+                    message: row.get(4)?,
+                    domain: row.get(5)?,
+                    first_seen_at: row.get(6)?,
+                    consecutive_gens: row.get(7)?,
+                    acknowledged: row.get::<_, i64>(8).unwrap_or(0) != 0,
+                })
+            })?
+            .collect::<Result<_, _>>()?;
+        rows
+    } else {
+        vec![]
+    };
+
+    // Count history generations for warmup indicator
+    let history_generations: i64 = db.conn.query_row(
+        "SELECT COUNT(DISTINCT generation_id) FROM hosts_history",
+        [],
+        |row| row.get(0),
+    ).unwrap_or(0);
 
     Ok(OverviewVm {
         generation_id: gen_id,
@@ -188,6 +211,7 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
         services,
         sqlite_dbs,
         warnings,
+        history_generations,
     })
 }
 

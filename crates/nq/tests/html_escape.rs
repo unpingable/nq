@@ -51,11 +51,17 @@ fn hostile_strings_are_escaped_in_overview_html() {
             stale: false,
         }],
         warnings: vec![WarningVm {
+            severity: "warning".into(),
             category: "test".into(),
             host: hostile_host.into(),
             subject: None,
             message: hostile_warning_msg.into(),
+            domain: Some("Δg".into()),
+            first_seen_at: None,
+            consecutive_gens: None,
+            acknowledged: false,
         }],
+        history_generations: 10,
     };
 
     let html = render_overview(&vm);

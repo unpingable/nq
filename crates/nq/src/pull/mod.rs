@@ -22,6 +22,8 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
     let mut host_rows = Vec::new();
     let mut service_sets = Vec::new();
     let mut sqlite_db_sets = Vec::new();
+    let mut metric_sets = Vec::new();
+    let mut log_sets = Vec::new();
 
     for handle in handles {
         let result = handle.await?;
@@ -32,6 +34,8 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
                 host_row,
                 service_set,
                 sqlite_db_set,
+                metric_set,
+                log_set,
             } => {
                 source_runs.push(source_run);
                 collector_runs.extend(coll_runs);
@@ -43,6 +47,12 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
                 }
                 if let Some(ds) = sqlite_db_set {
                     sqlite_db_sets.push(ds);
+                }
+                if let Some(ms) = metric_set {
+                    metric_sets.push(ms);
+                }
+                if let Some(ls) = log_set {
+                    log_sets.push(ls);
                 }
             }
             PullResult::Failed(source_run) => {
@@ -62,6 +72,8 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
         host_rows,
         service_sets,
         sqlite_db_sets,
+        metric_sets,
+        log_sets,
     })
 }
 
@@ -72,6 +84,8 @@ enum PullResult {
         host_row: Option<HostRow>,
         service_set: Option<ServiceSet>,
         sqlite_db_set: Option<SqliteDbSet>,
+        metric_set: Option<MetricSet>,
+        log_set: Option<LogObsSet>,
     },
     Failed(SourceRun),
 }
@@ -148,6 +162,8 @@ async fn pull_one(source: SourceConfig) -> PullResult {
     let mut host_row = None;
     let mut service_set = None;
     let mut sqlite_db_set = None;
+    let mut metric_set = None;
+    let mut log_set = None;
 
     // Host collector
     if let Some(ref payload) = state.collectors.host {
@@ -257,11 +273,89 @@ async fn pull_one(source: SourceConfig) -> PullResult {
         }
     }
 
+    // Prometheus metrics collector
+    if let Some(ref payload) = state.collectors.prometheus {
+        let entity_count = payload.data.as_ref().map(|d| d.len() as u32);
+        coll_runs.push(CollectorRun {
+            source: canonical_host.clone(),
+            collector: CollectorKind::Prometheus,
+            status: payload.status,
+            collected_at: payload.collected_at,
+            entity_count,
+            error_message: payload.error_message.clone(),
+        });
+        if payload.status == CollectorStatus::Ok {
+            if let Some(ref data) = payload.data {
+                let collected_at = payload.collected_at.unwrap_or(state.collected_at);
+                metric_set = Some(MetricSet {
+                    host: canonical_host.clone(),
+                    collected_at,
+                    rows: data
+                        .iter()
+                        .map(|m| MetricRow {
+                            metric_name: m.name.clone(),
+                            labels_json: serde_json::to_string(&m.labels)
+                                .unwrap_or_else(|_| "{}".to_string()),
+                            value: m.value,
+                            metric_type: m.metric_type.clone(),
+                        })
+                        .collect(),
+                });
+            }
+        }
+    }
+
+    // Log observations collector
+    if let Some(ref payload) = state.collectors.logs {
+        let entity_count = payload.data.as_ref().map(|d| d.len() as u32);
+        coll_runs.push(CollectorRun {
+            source: canonical_host.clone(),
+            collector: CollectorKind::Logs,
+            status: payload.status,
+            collected_at: payload.collected_at,
+            entity_count,
+            error_message: payload.error_message.clone(),
+        });
+        if payload.status == CollectorStatus::Ok {
+            if let Some(ref data) = payload.data {
+                let collected_at = payload.collected_at.unwrap_or(state.collected_at);
+                log_set = Some(LogObsSet {
+                    host: canonical_host.clone(),
+                    collected_at,
+                    rows: data
+                        .iter()
+                        .map(|obs| LogObsRow {
+                            source_id: obs.source_id.clone(),
+                            window_start: obs.window_start
+                                .format(&time::format_description::well_known::Rfc3339)
+                                .unwrap_or_default(),
+                            window_end: obs.window_end
+                                .format(&time::format_description::well_known::Rfc3339)
+                                .unwrap_or_default(),
+                            fetch_status: obs.fetch_status.clone(),
+                            lines_total: obs.lines_total as i64,
+                            lines_error: obs.lines_error as i64,
+                            lines_warn: obs.lines_warn as i64,
+                            last_log_ts: obs.last_log_ts.map(|ts|
+                                ts.format(&time::format_description::well_known::Rfc3339)
+                                    .unwrap_or_default()),
+                            transport_lag_ms: obs.transport_lag_ms,
+                            examples_json: serde_json::to_string(&obs.examples)
+                                .unwrap_or_else(|_| "[]".to_string()),
+                        })
+                        .collect(),
+                });
+            }
+        }
+    }
+
     PullResult::Ok {
         source_run,
         coll_runs,
         host_row,
         service_set,
         sqlite_db_set,
+        metric_set,
+        log_set,
     }
 }

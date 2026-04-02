@@ -1,5 +1,8 @@
 pub mod connect;
+pub mod detect;
+pub mod digest;
 pub mod migrate;
+pub mod notify;
 pub mod publish;
 pub mod query;
 pub mod retention;
@@ -7,8 +10,9 @@ pub mod snapshot;
 pub mod views;
 
 pub use connect::{open_ro, open_rw, ReadDb, WriteDb};
+pub use detect::{DetectorConfig, Finding};
 pub use migrate::migrate;
-pub use publish::{publish_batch, PublishResult};
+pub use publish::{publish_batch, update_warning_state, EscalationConfig, PublishResult};
 pub use query::{query_read_only, QueryLimits, QueryResult};
 pub use retention::{prune, PruneStats};
 pub use snapshot::create_snapshot;

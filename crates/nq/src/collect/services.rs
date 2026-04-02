@@ -93,29 +93,39 @@ fn check_systemd(unit: &str) -> (ServiceStatus, Option<u32>) {
 }
 
 fn check_docker(container: &str) -> (ServiceStatus, Option<u32>) {
+    // First get state + pid (always works)
     let output = Command::new("docker")
-        .args(["inspect", "--format", "{{.State.Status}} {{.State.Health.Status}} {{.State.Pid}}", container])
+        .args(["inspect", "--format", "{{.State.Status}} {{.State.Pid}}", container])
         .output();
 
-    match output {
+    let (state, pid) = match &output {
         Ok(out) if out.status.success() => {
             let text = String::from_utf8_lossy(&out.stdout);
             let parts: Vec<&str> = text.trim().split_whitespace().collect();
-            let state = parts.first().copied().unwrap_or("");
-            let health = parts.get(1).copied().unwrap_or("");
-            let pid = parts.get(2).and_then(|s| s.parse::<u32>().ok()).filter(|p| *p > 0);
-
-            let status = match (state, health) {
-                ("running", "healthy") => ServiceStatus::Up,
-                ("running", "unhealthy") => ServiceStatus::Degraded,
-                ("running", _) => ServiceStatus::Up,
-                _ => ServiceStatus::Down,
-            };
-
-            (status, pid)
+            let state = parts.first().copied().unwrap_or("").to_string();
+            let pid = parts.get(1).and_then(|s| s.parse::<u32>().ok()).filter(|p| *p > 0);
+            (state, pid)
         }
-        _ => (ServiceStatus::Unknown, None),
-    }
+        _ => return (ServiceStatus::Unknown, None),
+    };
+
+    // Then try to get health status (only exists if container has HEALTHCHECK)
+    let health = Command::new("docker")
+        .args(["inspect", "--format", "{{.State.Health.Status}}", container])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+
+    let status = match (state.as_str(), health.as_str()) {
+        ("running", "healthy") => ServiceStatus::Up,
+        ("running", "unhealthy") => ServiceStatus::Degraded,
+        ("running", _) => ServiceStatus::Up,
+        _ => ServiceStatus::Down,
+    };
+
+    (status, pid)
 }
 
 fn check_pid_file(path: Option<&str>) -> (ServiceStatus, Option<u32>) {

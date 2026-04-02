@@ -23,6 +23,10 @@ pub struct Collectors {
     pub services: Option<CollectorPayload<Vec<ServiceData>>>,
     #[serde(default)]
     pub sqlite_health: Option<CollectorPayload<Vec<SqliteDbData>>>,
+    #[serde(default)]
+    pub prometheus: Option<CollectorPayload<Vec<MetricSample>>>,
+    #[serde(default)]
+    pub logs: Option<CollectorPayload<Vec<LogObservation>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,4 +85,43 @@ pub struct SqliteDbData {
     pub last_integrity_check: Option<String>,
     #[serde(default, with = "time::serde::rfc3339::option")]
     pub last_integrity_at: Option<OffsetDateTime>,
+}
+
+/// Reduced log observation for a bounded window. Not raw logs —
+/// classified counts + exemplar receipts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogObservation {
+    pub source_id: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub window_start: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub window_end: OffsetDateTime,
+    pub fetch_status: String,
+    pub lines_total: u64,
+    pub lines_error: u64,
+    pub lines_warn: u64,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub last_log_ts: Option<OffsetDateTime>,
+    pub transport_lag_ms: Option<i64>,
+    #[serde(default)]
+    pub examples: Vec<LogExample>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogExample {
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub ts: Option<OffsetDateTime>,
+    pub severity: String,
+    pub message: String,
+}
+
+/// A single metric sample scraped from a Prometheus exporter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricSample {
+    pub name: String,
+    pub labels: std::collections::BTreeMap<String, String>,
+    pub value: f64,
+    /// gauge, counter, histogram, summary, untyped
+    #[serde(default)]
+    pub metric_type: Option<String>,
 }

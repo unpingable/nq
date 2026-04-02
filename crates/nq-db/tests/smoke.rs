@@ -191,6 +191,8 @@ fn partial_batch_then_recovery() {
             collected_at: t,
             rows: vec![sqlite_db_row("/var/lib/app/main.db")],
         }],
+        metric_sets: vec![],
+            log_sets: vec![],
     };
 
     let r1 = publish_batch(&mut wdb, &batch1).unwrap();
@@ -319,6 +321,8 @@ fn partial_batch_then_recovery() {
                 rows: vec![sqlite_db_row("/var/lib/app/replica.db")],
             },
         ],
+        metric_sets: vec![],
+            log_sets: vec![],
     };
 
     let r2 = publish_batch(&mut wdb, &batch2).unwrap();
@@ -390,6 +394,8 @@ fn service_lifecycle_three_generations() {
                 ],
             }],
             sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
         };
         publish_batch(&mut wdb, &batch).unwrap();
     }
@@ -431,6 +437,8 @@ fn service_lifecycle_three_generations() {
                 ],
             }],
             sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
         };
         publish_batch(&mut wdb, &batch).unwrap();
     }
@@ -473,6 +481,8 @@ fn service_lifecycle_three_generations() {
             // No service_sets — the collector failed, so no ServiceSet is built
             service_sets: vec![],
             sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
         };
         let r3 = publish_batch(&mut wdb, &batch).unwrap();
 

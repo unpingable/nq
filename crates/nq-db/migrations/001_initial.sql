@@ -1,4 +1,4 @@
--- notquery v0 schema
+-- nq v0 schema
 -- One publish transaction per generation. No in-progress rows.
 -- Current-state tables hold latest-known-good. Set collectors use delete+replace.
 

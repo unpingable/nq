@@ -1,3 +1,4 @@
+pub mod check;
 pub mod collect;
 pub mod publish;
 pub mod query;
@@ -11,5 +12,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Serve(cmd) => serve::run(cmd).await,
         Command::Query(cmd) => query::run(cmd),
         Command::Collect(cmd) => collect::run(cmd),
+        Command::Check(cmd) => check::run(cmd),
     }
 }

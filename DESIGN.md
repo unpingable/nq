@@ -1,4 +1,4 @@
-# notquery: Architecture Spike
+# nq: Architecture Spike
 
 **Status:** Design spike — decision document, not a spec.
 **Date:** 2026-03-20
@@ -7,7 +7,7 @@
 
 ## 0. Core Mental Model
 
-notquery is an operational workbench, not an observability platform.
+nq is an operational workbench, not an observability platform.
 
 The central abstraction is: **a coherent, generationed snapshot of fleet/service state, stored as normalized SQLite tables, queryable with plain SQL.**
 
@@ -566,7 +566,7 @@ Total moving parts: 1 aggregator process + N publisher processes. No message que
 ```bash
 # The DB is small. Back it up with VACUUM INTO.
 # Run this from a cron job, not a long-lived reader.
-sqlite3 /var/lib/notquery/nq.db "VACUUM INTO '/var/lib/notquery/backup/nq-$(date +%Y%m%d).db'"
+sqlite3 /var/lib/nq/nq.db "VACUUM INTO '/var/lib/nq/backup/nq-$(date +%Y%m%d).db'"
 ```
 
 Keep 7 daily backups. That's it. The DB is < 100 MB. If you lose it, you lose history, not operational capability — the next generation will repopulate current state within 30 seconds.
@@ -580,7 +580,7 @@ Schema migrations are the biggest hidden complexity risk in this system. Recomme
 3. **Never rename columns in current-state tables.** Add new ones, deprecate old ones, drop them in a later migration. This avoids breaking queries you've saved.
 4. **Publisher and aggregator version coupling:** The publisher response format must be backward-compatible. Add fields freely. Removing fields requires a coordinated upgrade. For a one-person fleet, this is "update all publishers before updating the aggregator schema."
 
-**Hidden complexity warning:** If you're also monitoring the DBs that your other tools (driftwatch, labelwatch) use, and those tools have their own schema migration issues, you now have two layers of schema management. Keep them completely separate. notquery's schema is notquery's problem. The SQLite health collector reads PRAGMA values, not application schemas.
+**Hidden complexity warning:** If you're also monitoring the DBs that your other tools (driftwatch, labelwatch) use, and those tools have their own schema migration issues, you now have two layers of schema management. Keep them completely separate. nq's schema is nq's problem. The SQLite health collector reads PRAGMA values, not application schemas.
 
 ### Disk Budget Strategy
 
@@ -639,7 +639,7 @@ Rationale: This is a private tool for one person. Server-rendered HTML is trivia
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  notquery                          Gen #4821 · 12s ago · ● OK  │
+│  nq                          Gen #4821 · 12s ago · ● OK  │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  FLEET STATUS                                                   │
@@ -804,7 +804,7 @@ That's the MVP. You can answer "what's going on" and "are any DBs bloated" from 
 
 ## 9. Explicit Non-Goals
 
-1. **General-purpose time-series database.** If you want to graph 50 metrics at 1s resolution for 1 year, use Prometheus. notquery is for current-state + bounded trends.
+1. **General-purpose time-series database.** If you want to graph 50 metrics at 1s resolution for 1 year, use Prometheus. nq is for current-state + bounded trends.
 
 2. **Alerting platform.** No escalation policies, no on-call schedules, no runbooks, no incident management. The system shows you what's wrong. You decide what to do.
 
@@ -818,7 +818,7 @@ That's the MVP. You can answer "what's going on" and "are any DBs bloated" from 
 
 7. **Dashboards as code / dashboard versioning.** There are no dashboards. There are tables and a SQL box. The "dashboard" is the overview page and it's in the source code.
 
-8. **Compatibility with Prometheus, OpenTelemetry, StatsD, etc.** This is not a metrics sink. It does not speak those protocols. If a service already exports Prometheus metrics, the publisher can scrape specific values from the /metrics endpoint and include them as fields — but notquery does not store or process Prometheus-format data.
+8. **Compatibility with Prometheus, OpenTelemetry, StatsD, etc.** This is not a metrics sink. It does not speak those protocols. If a service already exports Prometheus metrics, the publisher can scrape specific values from the /metrics endpoint and include them as fields — but nq does not store or process Prometheus-format data.
 
 ---
 
@@ -836,7 +836,7 @@ That's the MVP. You can answer "what's going on" and "are any DBs bloated" from 
 
 5. **"Just one more table."** The temptation to add monitoring for everything is strong. Every table is a schema commitment, a collector to maintain, UI real estate to manage, and retention to configure. Resist. The right number of tables for MVP is 5-7.
 
-6. **WAL management on the notquery DB itself.** Yes, the system you're building to monitor WAL bloat can itself suffer from WAL bloat. Explicit checkpointing after each generation write cycle. Short read transactions. No long-lived readers. Period.
+6. **WAL management on the nq DB itself.** Yes, the system you're building to monitor WAL bloat can itself suffer from WAL bloat. Explicit checkpointing after each generation write cycle. Short read transactions. No long-lived readers. Period.
 
 7. **Time zones and clock skew.** Store everything as UTC ISO8601. Display in local time in the UI. Use the aggregator's clock for all time-based decisions (retention, staleness). Publisher timestamps are informational.
 

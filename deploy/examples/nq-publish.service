@@ -1,0 +1,14 @@
+[Unit]
+Description=nq publisher (serves GET /state)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/nq/nq publish -c /opt/nq/publisher.json
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

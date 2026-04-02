@@ -57,6 +57,8 @@ fn batch_with_services(host: &str, services: &[&str]) -> Batch {
                 .collect(),
         }],
         sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
     }
 }
 
@@ -100,6 +102,8 @@ fn batch_with_host(host: &str, cpu_load: f64) -> Batch {
         }],
         service_sets: vec![],
         sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
     }
 }
 

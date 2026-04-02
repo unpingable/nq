@@ -1,6 +1,6 @@
 {
   "interval_s": 60,
-  "db_path": "/opt/notquery/nq.db",
+  "db_path": "/opt/nq/nq.db",
   "sources": [
     {
       "name": "my-host",

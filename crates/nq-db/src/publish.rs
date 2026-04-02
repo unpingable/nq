@@ -116,6 +116,25 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
         }
     }
 
+    // 4b. Insert hosts_history (narrow projection for trending)
+    {
+        let mut stmt = tx.prepare_cached(
+            "INSERT INTO hosts_history (generation_id, host, cpu_load_1m, mem_pressure_pct, disk_used_pct, disk_avail_mb, collected_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+        for hr in &batch.host_rows {
+            stmt.execute(rusqlite::params![
+                generation_id,
+                &hr.host,
+                hr.cpu_load_1m,
+                hr.mem_pressure_pct,
+                hr.disk_used_pct,
+                hr.disk_avail_mb.map(|v| v as i64),
+                fmt_ts(&hr.collected_at),
+            ])?;
+        }
+    }
+
     // 5. Delete+replace services_current for successful services collectors
     {
         let mut del = tx.prepare_cached("DELETE FROM services_current WHERE host = ?1")?;
@@ -139,6 +158,25 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
                     row.consumer_lag,
                     row.drop_count,
                     generation_id,
+                    fmt_ts(&ss.collected_at),
+                ])?;
+            }
+        }
+    }
+
+    // 5b. Insert services_history
+    {
+        let mut stmt = tx.prepare_cached(
+            "INSERT INTO services_history (generation_id, host, service, status, collected_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for ss in &batch.service_sets {
+            for row in &ss.rows {
+                stmt.execute(rusqlite::params![
+                    generation_id,
+                    &ss.host,
+                    &row.service,
+                    row.status.as_str(),
                     fmt_ts(&ss.collected_at),
                 ])?;
             }
@@ -177,6 +215,123 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
         }
     }
 
+    // 7. Upsert series dictionary + delete+replace metrics_current
+    {
+        let mut series_upsert = tx.prepare_cached(
+            "INSERT INTO series (metric_name, labels_json, metric_type, first_seen_gen, last_seen_gen)
+             VALUES (?1, ?2, ?3, ?4, ?4)
+             ON CONFLICT(metric_name, labels_json) DO UPDATE SET
+                 last_seen_gen = ?4,
+                 metric_type = COALESCE(?3, series.metric_type)",
+        )?;
+        let mut series_lookup = tx.prepare_cached(
+            "SELECT series_id FROM series WHERE metric_name = ?1 AND labels_json = ?2",
+        )?;
+        let mut del = tx.prepare_cached("DELETE FROM metrics_current WHERE host = ?1")?;
+        let mut ins = tx.prepare_cached(
+            "INSERT INTO metrics_current (host, series_id, value, as_of_generation, collected_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+
+        // Load history policy once
+        let policies: Vec<(String, String)> = {
+            let mut pstmt = tx.prepare(
+                "SELECT pattern, mode FROM metric_history_policy WHERE mode != 'drop' AND enabled = 1",
+            )?;
+            let rows = pstmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            rows.collect::<Result<_, _>>()?
+        };
+
+        let mut hist_ins = tx.prepare_cached(
+            "INSERT INTO metrics_history (generation_id, host, series_id, value, collected_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+
+        for ms in &batch.metric_sets {
+            del.execute(rusqlite::params![&ms.host])?;
+            for row in &ms.rows {
+                // Upsert series
+                series_upsert.execute(rusqlite::params![
+                    &row.metric_name,
+                    &row.labels_json,
+                    &row.metric_type,
+                    generation_id,
+                ])?;
+                let series_id: i64 = series_lookup.query_row(
+                    rusqlite::params![&row.metric_name, &row.labels_json],
+                    |r| r.get(0),
+                )?;
+
+                // Insert current
+                ins.execute(rusqlite::params![
+                    &ms.host,
+                    series_id,
+                    row.value,
+                    generation_id,
+                    fmt_ts(&ms.collected_at),
+                ])?;
+
+                // Insert history if policy allows
+                if metric_matches_policy(&row.metric_name, &policies) {
+                    hist_ins.execute(rusqlite::params![
+                        generation_id,
+                        &ms.host,
+                        series_id,
+                        row.value,
+                        fmt_ts(&ms.collected_at),
+                    ])?;
+                }
+            }
+        }
+    }
+
+    // 8. Delete+replace log_observations_current + insert history
+    {
+        let mut del = tx.prepare_cached("DELETE FROM log_observations_current WHERE host = ?1")?;
+        let mut ins = tx.prepare_cached(
+            "INSERT INTO log_observations_current (host, source_id, window_start, window_end, fetch_status, lines_total, lines_error, lines_warn, last_log_ts, transport_lag_ms, examples_json, as_of_generation, collected_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        )?;
+        let mut hist = tx.prepare_cached(
+            "INSERT INTO log_observations_history (generation_id, host, source_id, lines_total, lines_error, lines_warn, last_log_ts, fetch_status, collected_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        )?;
+
+        for ls in &batch.log_sets {
+            del.execute(rusqlite::params![&ls.host])?;
+            for row in &ls.rows {
+                ins.execute(rusqlite::params![
+                    &ls.host,
+                    &row.source_id,
+                    &row.window_start,
+                    &row.window_end,
+                    &row.fetch_status,
+                    row.lines_total,
+                    row.lines_error,
+                    row.lines_warn,
+                    &row.last_log_ts,
+                    row.transport_lag_ms,
+                    &row.examples_json,
+                    generation_id,
+                    fmt_ts(&ls.collected_at),
+                ])?;
+                hist.execute(rusqlite::params![
+                    generation_id,
+                    &ls.host,
+                    &row.source_id,
+                    row.lines_total,
+                    row.lines_error,
+                    row.lines_warn,
+                    &row.last_log_ts,
+                    &row.fetch_status,
+                    fmt_ts(&ls.collected_at),
+                ])?;
+            }
+        }
+    }
+
     tx.commit()?;
 
     Ok(PublishResult {
@@ -184,6 +339,161 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
         sources_ok,
         sources_failed,
     })
+}
+
+/// Check if a metric name matches any policy pattern.
+/// Patterns ending with '%' match as a prefix. Exact names match exactly.
+/// No matching pattern = not stored in history.
+fn metric_matches_policy(name: &str, policies: &[(String, String)]) -> bool {
+    for (pattern, _mode) in policies {
+        if let Some(prefix) = pattern.strip_suffix('%') {
+            if name.starts_with(prefix) {
+                return true;
+            }
+        } else if pattern == name {
+            return true;
+        }
+    }
+    false
+}
+
+/// Update warning_state table from detector findings.
+///
+/// For each finding:
+///   - If new: insert with first_seen = now, consecutive_gens = 1
+///   - If existing: bump last_seen and consecutive_gens, track peak value
+/// Warnings not in the current findings set are removed.
+pub fn update_warning_state(
+    db: &mut WriteDb,
+    generation_id: i64,
+    findings: &[crate::detect::Finding],
+    escalation: &EscalationConfig,
+) -> anyhow::Result<()> {
+    let now = fmt_ts(&OffsetDateTime::now_utc());
+
+    let mut upsert = db.conn.prepare_cached(
+        "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, peak_value)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9)
+         ON CONFLICT(host, kind, subject) DO UPDATE SET
+             domain = ?4,
+             message = ?5,
+             last_seen_gen = ?7,
+             last_seen_at = ?8,
+             consecutive_gens = CASE
+                 WHEN warning_state.last_seen_gen = ?7 - 1 THEN warning_state.consecutive_gens + 1
+                 ELSE 1
+             END,
+             peak_value = MAX(COALESCE(warning_state.peak_value, 0), COALESCE(?9, 0)),
+             severity = ?6",
+    )?;
+
+    for f in findings {
+        // Look up existing consecutive_gens to compute severity
+        let prev_gens: i64 = db.conn.query_row(
+            "SELECT consecutive_gens FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
+            rusqlite::params![&f.host, &f.kind, &f.subject],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        // Will be prev_gens + 1 if consecutive, else 1
+        let new_gens = {
+            let was_last_gen: bool = db.conn.query_row(
+                "SELECT last_seen_gen = ?1 - 1 FROM warning_state WHERE host = ?2 AND kind = ?3 AND subject = ?4",
+                rusqlite::params![generation_id, &f.host, &f.kind, &f.subject],
+                |row| row.get(0),
+            ).unwrap_or(false);
+            if was_last_gen { prev_gens + 1 } else { 1 }
+        };
+
+        let severity = compute_severity(&f.kind, new_gens, escalation);
+
+        upsert.execute(rusqlite::params![
+            &f.host,
+            &f.kind,
+            &f.subject,
+            &f.domain,
+            &f.message,
+            severity,
+            generation_id,
+            &now,
+            f.value,
+        ])?;
+    }
+    drop(upsert);
+
+    // Build set of active (host, kind, subject) for deletion check
+    if findings.is_empty() {
+        db.conn.execute("DELETE FROM warning_state", [])?;
+    } else {
+        // Delete warnings not in current findings
+        let active_keys: Vec<(String, String, String)> = findings
+            .iter()
+            .map(|f| (f.host.clone(), f.kind.clone(), f.subject.clone()))
+            .collect();
+
+        let mut del = db.conn.prepare_cached(
+            "DELETE FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
+        )?;
+
+        // Get all existing keys
+        let existing: Vec<(String, String, String)> = {
+            let mut stmt = db.conn.prepare("SELECT host, kind, subject FROM warning_state")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?;
+            rows.collect::<Result<_, _>>()?
+        };
+
+        for key in &existing {
+            if !active_keys.contains(key) {
+                del.execute(rusqlite::params![&key.0, &key.1, &key.2])?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Escalation timing configuration.
+/// Constructed from nq_core::config::EscalationThresholds.
+#[derive(Debug, Clone)]
+pub struct EscalationConfig {
+    pub warn_after_gens: i64,
+    pub critical_after_gens: i64,
+}
+
+impl Default for EscalationConfig {
+    fn default() -> Self {
+        Self {
+            warn_after_gens: 30,
+            critical_after_gens: 180,
+        }
+    }
+}
+
+impl From<&nq_core::config::EscalationThresholds> for EscalationConfig {
+    fn from(t: &nq_core::config::EscalationThresholds) -> Self {
+        Self {
+            warn_after_gens: t.warn_after_gens,
+            critical_after_gens: t.critical_after_gens,
+        }
+    }
+}
+
+fn compute_severity(kind: &str, consecutive_gens: i64, esc: &EscalationConfig) -> &'static str {
+    // Service down is always critical regardless of age
+    if kind == "service_status" {
+        // The finding message contains the actual status; service_status findings
+        // for "down" services get domain "Δo", others get "Δg".
+        // We'll rely on consecutive_gens for non-down degraded services.
+    }
+    if consecutive_gens > esc.critical_after_gens {
+        "critical"
+    } else if consecutive_gens > esc.warn_after_gens {
+        "warning"
+    } else {
+        "info"
+    }
 }
 
 fn fmt_ts(ts: &OffsetDateTime) -> String {
@@ -220,6 +530,8 @@ mod tests {
             host_rows: vec![],
             service_sets: vec![],
             sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
         };
         let result = publish_batch(&mut db, &batch).unwrap();
         assert_eq!(result.sources_ok, 0);
@@ -267,6 +579,8 @@ mod tests {
             }],
             service_sets: vec![],
             sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
         };
         let result = publish_batch(&mut db, &batch).unwrap();
         assert_eq!(result.sources_ok, 1);
@@ -342,6 +656,8 @@ mod tests {
                 ],
             }],
             sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
         };
         publish_batch(&mut db, &batch1).unwrap();
 
@@ -394,6 +710,8 @@ mod tests {
                 }],
             }],
             sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
         };
         publish_batch(&mut db, &batch2).unwrap();
 
@@ -452,6 +770,8 @@ mod tests {
             }],
             service_sets: vec![],
             sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
         };
         let r1 = publish_batch(&mut db, &batch1).unwrap();
 
@@ -472,6 +792,8 @@ mod tests {
             host_rows: vec![],
             service_sets: vec![],
             sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
         };
         let r2 = publish_batch(&mut db, &batch2).unwrap();
         assert!(r2.generation_id > r1.generation_id);

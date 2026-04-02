@@ -1,11 +1,12 @@
 use crate::cli::ServeCmd;
 use crate::http;
 use crate::pull;
+use nq_core::config::NotificationChannel;
 use nq_core::Config;
-use nq_db::{migrate, open_ro, open_rw, publish_batch};
+use nq_db::{migrate, open_ro, open_rw, publish_batch, update_warning_state};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
     let config_text = std::fs::read_to_string(&cmd.config)?;
@@ -18,7 +19,16 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
     migrate(&mut write_db)?;
 
     let write_db = Arc::new(Mutex::new(write_db));
+    let detector_config = nq_db::DetectorConfig::from(&config.detectors);
+    let escalation_config = nq_db::EscalationConfig::from(&config.escalation);
+    let bind_addr = config.bind_addr.clone();
     let config = Arc::new(config);
+
+    // Build notification HTTP client once
+    let notify_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("notification http client");
 
     // Start pull loop
     let pull_db = write_db.clone();
@@ -33,12 +43,54 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                     let mut db = pull_db.lock().await;
                     match publish_batch(&mut db, &batch) {
                         Ok(result) => {
-                            info!(
-                                generation = result.generation_id,
-                                ok = result.sources_ok,
-                                failed = result.sources_failed,
-                                "published generation"
-                            );
+                            // Run detectors against current state, then update lifecycle
+                            match nq_db::detect::run_all(db.conn(), &detector_config) {
+                                Ok(findings) => {
+                                    if let Err(e) = update_warning_state(
+                                        &mut db,
+                                        result.generation_id,
+                                        &findings,
+                                        &escalation_config,
+                                    ) {
+                                        error!(err = %e, "warning state update failed");
+                                    }
+                                }
+                                Err(e) => {
+                                    error!(err = %e, "detector run failed");
+                                }
+                            }
+
+                            // Send notifications for escalated findings
+                            if !pull_config.notifications.channels.is_empty() {
+                                send_notifications(
+                                    &mut db,
+                                    result.generation_id,
+                                    &pull_config.notifications,
+                                    &notify_client,
+                                ).await;
+                            }
+
+                            // Seal generation with content-addressed digest
+                            match nq_db::digest::seal_generation(&mut db, result.generation_id) {
+                                Ok(hash) => {
+                                    info!(
+                                        generation = result.generation_id,
+                                        ok = result.sources_ok,
+                                        failed = result.sources_failed,
+                                        hash = %hash,
+                                        "published generation"
+                                    );
+                                }
+                                Err(e) => {
+                                    error!(err = %e, "generation seal failed");
+                                    info!(
+                                        generation = result.generation_id,
+                                        ok = result.sources_ok,
+                                        failed = result.sources_failed,
+                                        "published generation (unsealed)"
+                                    );
+                                }
+                            }
                         }
                         Err(e) => {
                             error!(err = %e, "publish failed");
@@ -66,10 +118,84 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
         }
     });
 
-    // Start HTTP server
+    // Start HTTP server (with write access for saved queries)
     let read_db = open_ro(&db_path)?;
-    let bind = "127.0.0.1:9848";
-    info!(bind, "web UI starting");
-    http::serve(read_db, bind).await?;
+    info!(bind = %bind_addr, "web UI starting");
+    http::serve_with_write(read_db, write_db, &bind_addr).await?;
     Ok(())
+}
+
+async fn send_notifications(
+    db: &mut nq_db::WriteDb,
+    generation_id: i64,
+    config: &nq_core::config::NotificationConfig,
+    client: &reqwest::Client,
+) {
+    let pending = match nq_db::notify::find_pending(db, &config.min_severity) {
+        Ok(p) => p,
+        Err(e) => {
+            error!(err = %e, "failed to find pending notifications");
+            return;
+        }
+    };
+
+    if pending.is_empty() {
+        return;
+    }
+
+    info!(count = pending.len(), "sending notifications");
+
+    for n in &pending {
+        let base_url = config.external_url.as_deref().unwrap_or("http://localhost:9848");
+        for channel in &config.channels {
+            let result = match channel {
+                NotificationChannel::Webhook { url, headers } => {
+                    let payload = nq_db::notify::build_webhook_payload(n, generation_id, base_url);
+                    let mut req = client.post(url).json(&payload);
+                    for (k, v) in headers {
+                        req = req.header(k, v);
+                    }
+                    req.send().await
+                }
+                NotificationChannel::Slack { webhook_url } => {
+                    let payload = nq_db::notify::build_slack_payload(n, generation_id, base_url);
+                    client.post(webhook_url).json(&payload).send().await
+                }
+                NotificationChannel::Discord { webhook_url } => {
+                    let payload = nq_db::notify::build_discord_payload(n, generation_id, base_url);
+                    client.post(webhook_url).json(&payload).send().await
+                }
+            };
+
+            match result {
+                Ok(resp) if resp.status().is_success() => {
+                    info!(
+                        kind = %n.kind,
+                        host = %n.host,
+                        severity = %n.severity,
+                        "notification sent"
+                    );
+                }
+                Ok(resp) => {
+                    warn!(
+                        kind = %n.kind,
+                        status = %resp.status(),
+                        "notification failed"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        kind = %n.kind,
+                        err = %e,
+                        "notification send error"
+                    );
+                }
+            }
+        }
+
+        // Mark as notified regardless of send success (avoid spam on transient failures)
+        if let Err(e) = nq_db::notify::mark_notified(db, &n.host, &n.kind, &n.subject, &n.severity) {
+            error!(err = %e, "failed to mark notification sent");
+        }
+    }
 }

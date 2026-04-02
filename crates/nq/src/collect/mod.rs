@@ -1,4 +1,6 @@
 pub mod host;
+pub mod logs;
+pub mod prometheus;
 pub mod services;
 pub mod sqlite_health;
 
@@ -18,6 +20,8 @@ pub fn collect_state(config: &PublisherConfig) -> PublisherState {
             host: Some(host::collect()),
             services: Some(services::collect(config)),
             sqlite_health: Some(sqlite_health::collect(config)),
+            prometheus: Some(prometheus::collect(config)),
+            logs: Some(logs::collect(config)),
         },
     }
 }

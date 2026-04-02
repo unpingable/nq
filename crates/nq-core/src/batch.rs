@@ -14,6 +14,8 @@ pub struct Batch {
     pub host_rows: Vec<HostRow>,
     pub service_sets: Vec<ServiceSet>,
     pub sqlite_db_sets: Vec<SqliteDbSet>,
+    pub metric_sets: Vec<MetricSet>,
+    pub log_sets: Vec<LogObsSet>,
 }
 
 impl Batch {
@@ -130,4 +132,42 @@ pub struct SqliteDbRow {
     pub last_quick_check: Option<String>,
     pub last_integrity_check: Option<String>,
     pub last_integrity_at: Option<OffsetDateTime>,
+}
+
+/// Log observations for one host from one generation window.
+#[derive(Debug, Clone)]
+pub struct LogObsSet {
+    pub host: String,
+    pub collected_at: OffsetDateTime,
+    pub rows: Vec<LogObsRow>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LogObsRow {
+    pub source_id: String,
+    pub window_start: String,
+    pub window_end: String,
+    pub fetch_status: String,
+    pub lines_total: i64,
+    pub lines_error: i64,
+    pub lines_warn: i64,
+    pub last_log_ts: Option<String>,
+    pub transport_lag_ms: Option<i64>,
+    pub examples_json: String,
+}
+
+/// Full replacement set: all Prometheus metrics for one host from one scrape.
+#[derive(Debug, Clone)]
+pub struct MetricSet {
+    pub host: String,
+    pub collected_at: OffsetDateTime,
+    pub rows: Vec<MetricRow>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MetricRow {
+    pub metric_name: String,
+    pub labels_json: String,
+    pub value: f64,
+    pub metric_type: Option<String>,
 }

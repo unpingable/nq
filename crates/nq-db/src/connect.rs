@@ -5,8 +5,21 @@ pub struct WriteDb {
     pub(crate) conn: Connection,
 }
 
+impl WriteDb {
+    /// Borrow the underlying connection for read-only operations (e.g. detectors).
+    pub fn conn(&self) -> &Connection {
+        &self.conn
+    }
+}
+
 pub struct ReadDb {
     pub(crate) conn: Connection,
+}
+
+impl ReadDb {
+    pub fn conn(&self) -> &Connection {
+        &self.conn
+    }
 }
 
 pub fn open_rw(path: &Path) -> anyhow::Result<WriteDb> {

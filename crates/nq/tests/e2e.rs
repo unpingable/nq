@@ -242,6 +242,8 @@ fn state_to_batch(state: &PublisherState, canonical_host: &str) -> Batch {
         host_rows,
         service_sets,
         sqlite_db_sets,
+        metric_sets: vec![],
+            log_sets: vec![],
     }
 }
 
@@ -312,6 +314,7 @@ async fn happy_path_full_loop() {
                 services: vec![],
                 sqlite_dbs: vec![],
                 warnings: vec![],
+                history_generations: 0,
             });
             // Minimal rendering: just include the host name so we can assert on it
             let host_lines: String = vm
@@ -320,7 +323,7 @@ async fn happy_path_full_loop() {
                 .map(|h| format!("<tr><td>{}</td></tr>", h.host))
                 .collect();
             Html(format!(
-                "<html><body><h1>notquery</h1>{host_lines}</body></html>"
+                "<html><body><h1>nq</h1>{host_lines}</body></html>"
             ))
         }
 
@@ -397,7 +400,7 @@ async fn happy_path_full_loop() {
         html.contains(host_name),
         "HTML should contain host name '{host_name}'"
     );
-    assert!(html.contains("notquery"), "HTML should contain page title");
+    assert!(html.contains("nq"), "HTML should contain page title");
 
     // GET /api/overview should return structured JSON
     let api: serde_json::Value = client

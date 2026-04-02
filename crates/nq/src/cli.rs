@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(name = "nq", about = "notquery: operational workbench")]
+#[command(name = "nq", about = "nq: local-first diagnostic monitor")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -18,6 +18,8 @@ pub enum Command {
     Query(QueryCmd),
     /// Run collectors once and print the JSON payload to stdout
     Collect(CollectCmd),
+    /// Run all saved checks against the DB and report results
+    Check(CheckCmd),
 }
 
 #[derive(Debug, Args)]
@@ -36,11 +38,11 @@ pub struct ServeCmd {
 
 #[derive(Debug, Args)]
 pub struct QueryCmd {
-    /// Path to the notquery database (local mode)
+    /// Path to the nq database (local mode)
     #[arg(long, group = "target")]
     pub db: Option<PathBuf>,
 
-    /// Remote notquery server URL (e.g., http://host:9848)
+    /// Remote nq server URL (e.g., http://host:9848)
     #[arg(long, group = "target")]
     pub remote: Option<String>,
 
@@ -61,4 +63,11 @@ pub struct CollectCmd {
     /// Path to publisher config file
     #[arg(long, short)]
     pub config: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct CheckCmd {
+    /// Path to the nq database
+    #[arg(long)]
+    pub db: PathBuf,
 }

@@ -6,6 +6,21 @@ use tracing::info;
 const MIGRATIONS: &[(u32, &str)] = &[
     (1, include_str!("../migrations/001_initial.sql")),
     (2, include_str!("../migrations/002_stable_views.sql")),
+    (3, include_str!("../migrations/003_warning_lifecycle.sql")),
+    (4, include_str!("../migrations/004_detector_refactor.sql")),
+    (5, include_str!("../migrations/005_generation_digest.sql")),
+    (6, include_str!("../migrations/006_metrics.sql")),
+    (7, include_str!("../migrations/007_collector_constraint.sql")),
+    (8, include_str!("../migrations/008_metrics_history.sql")),
+    (9, include_str!("../migrations/009_history_policy.sql")),
+    (10, include_str!("../migrations/010_series_dictionary.sql")),
+    (11, include_str!("../migrations/011_notification_state.sql")),
+    (12, include_str!("../migrations/012_saved_queries.sql")),
+    (13, include_str!("../migrations/013_stock_checks.sql")),
+    (14, include_str!("../migrations/014_more_stock_checks.sql")),
+    (15, include_str!("../migrations/015_finding_lifecycle.sql")),
+    (16, include_str!("../migrations/016_warnings_view_lifecycle.sql")),
+    (17, include_str!("../migrations/017_log_observations.sql")),
 ];
 
 pub fn migrate(db: &mut WriteDb) -> anyhow::Result<()> {
@@ -54,7 +69,7 @@ mod tests {
             .conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 17);
 
         // Verify tables exist
         let count: i64 = db

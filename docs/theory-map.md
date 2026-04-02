@@ -1,9 +1,9 @@
-# Theory Map: Δt Framework ↔ notquery
+# Theory Map: Δt Framework ↔ NQ
 
 Status: soft guideposts, not hard tracks.
 
 The Δt framework papers describe the failure ontology that can grow above
-notquery's state substrate. The bridge is a future checks/assertions layer,
+NQ's state substrate. The bridge is a future checks/assertions layer,
 not collectors.
 
 Use this as selection pressure for phase 2, not decorative overfit.
@@ -14,7 +14,7 @@ Use this as selection pressure for phase 2, not decorative overfit.
 
 These are things the tool already does, whether or not it names them that way.
 
-| Concept | Paper | How it shows up in notquery |
+| Concept | Paper | How it shows up in NQ |
 |---|---|---|
 | Measurement age is first-class | 22 (No Universal Plant Clock) | `as_of_generation`, `age_s`, `is_stale` on every current-state row and view |
 | Temporal closure via atomic commit | 06 (Temporal Closure) | One publish transaction per generation. No in-progress rows. State visible only at commit. |
