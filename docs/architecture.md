@@ -122,10 +122,15 @@ generations. Used for aging, ack, suppression, recurrence detection.
 Internal domain codes (Δo, Δs, Δg, Δh) map to operator labels
 (missing, skewed, unstable, degrading) in the UI and notifications.
 
-**Severity escalation** (Δh — hysteresis-aware):
+**Severity escalation** (orthogonal to domain classification):
 - info: new finding (< 30 consecutive generations)
 - warning: persistent (30+ gens, ~30 min at 60s interval)
 - critical: entrenched (180+ gens, ~3 hours)
+
+Domain and severity are independent axes. Domain says what kind of
+failure (static, per-generation). Severity says how persistent
+(temporal, across generations). Escalation does not imply a taxonomy
+transition — a Δs finding at critical is still Δs, not Δh.
 
 ## Failure domain tags
 

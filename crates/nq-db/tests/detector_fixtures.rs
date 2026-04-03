@@ -368,6 +368,86 @@ fn severity_escalates_with_persistence() {
 }
 
 // ================================================================
+// Domain/severity orthogonality
+// ================================================================
+
+#[test]
+fn domain_does_not_change_with_escalation() {
+    // A finding's domain stays constant regardless of how many generations
+    // it persists. Escalation changes severity, not classification.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+    let esc = EscalationConfig {
+        warn_after_gens: 3,
+        critical_after_gens: 6,
+    };
+
+    // Publish 8 gens with high disk (Δg finding)
+    for _ in 0..8 {
+        let b = host_batch(t, 0.5, 50.0, 95.0);
+        let r = publish_batch(&mut db, &b).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        update_warning_state(&mut db, r.generation_id, &findings, &esc).unwrap();
+    }
+
+    // Domain should still be Δg even though severity escalated to critical
+    let (domain, severity): (String, String) = db.conn().query_row(
+        "SELECT domain, severity FROM warning_state WHERE kind = 'disk_pressure'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).unwrap();
+
+    assert_eq!(domain, "Δg", "domain must not change with escalation");
+    assert_eq!(severity, "critical", "severity should have escalated");
+}
+
+#[test]
+fn flapping_resets_escalation() {
+    // A finding that clears and reappears should reset its consecutive
+    // generation count, not accumulate toward escalation.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+    let esc = EscalationConfig {
+        warn_after_gens: 3,
+        critical_after_gens: 6,
+    };
+
+    // 2 gens with high disk
+    for _ in 0..2 {
+        let b = host_batch(t, 0.5, 50.0, 95.0);
+        let r = publish_batch(&mut db, &b).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        update_warning_state(&mut db, r.generation_id, &findings, &esc).unwrap();
+    }
+
+    // 1 gen with normal disk (finding clears)
+    let b = host_batch(t, 0.5, 50.0, 70.0);
+    let r = publish_batch(&mut db, &b).unwrap();
+    let findings = run_all(db.conn(), &config).unwrap();
+    update_warning_state(&mut db, r.generation_id, &findings, &esc).unwrap();
+
+    // 2 more gens with high disk (finding reappears)
+    for _ in 0..2 {
+        let b = host_batch(t, 0.5, 50.0, 95.0);
+        let r = publish_batch(&mut db, &b).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        update_warning_state(&mut db, r.generation_id, &findings, &esc).unwrap();
+    }
+
+    // Should NOT have escalated to warning (total gens with finding = 4,
+    // but consecutive after reset = 2)
+    let sev: String = db.conn().query_row(
+        "SELECT severity FROM warning_state WHERE kind = 'disk_pressure'",
+        [],
+        |row| row.get(0),
+    ).unwrap_or_default();
+
+    assert_eq!(sev, "info", "flapping finding should not accumulate escalation across gaps");
+}
+
+// ================================================================
 // Check system
 // ================================================================
 

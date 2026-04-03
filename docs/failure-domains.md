@@ -95,6 +95,22 @@ Slow leak (memory, disk, connections)? Configuration drift?
 
 ## Severity escalation
 
+Domain and severity are orthogonal axes, not a single ladder.
+
+**Domain** answers: what kind of failure is this? (static, per-generation)
+**Severity** answers: how persistent is this? (temporal, across generations)
+
+A finding can be Δs/skewed at `info` (just appeared) or Δs/skewed at
+`critical` (persisted for hours). The domain didn't change — the
+operator's urgency did.
+
+This distinction matters because the static failure taxonomy does not
+include a path from every domain to every other domain. A skewed signal
+(Δs) does not *become* hysteresis (Δh) through the taxonomy graph. But a
+skewed signal that persists for 3 hours *does* demand escalated attention
+through the temporal persistence machinery. These are different claims
+carried by different systems.
+
 All findings start at `info` and escalate based on persistence:
 
 | Severity | Meaning | Default timing |
@@ -116,6 +132,10 @@ Escalation timings are configurable in the aggregator config:
 
 A finding that clears and reappears resets its consecutive generation count.
 This prevents flapping findings from escalating.
+
+Escalation does not imply a taxonomy transition. A finding stays in its
+original domain regardless of how long it persists. The domain tells you
+*what to investigate*. The severity tells you *how urgently*.
 
 ---
 
