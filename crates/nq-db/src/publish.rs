@@ -472,6 +472,35 @@ pub fn update_warning_state(
         }
     }
 
+    // Entity GC: if a finding's host no longer appears in any current-state
+    // table, increment entity_gone_gens. Delete after 10 gens of the entity
+    // being gone. This handles host renames, retired services, deleted DBs.
+    let entity_gc_threshold: i64 = 10;
+    db.conn.execute(
+        "UPDATE warning_state SET entity_gone_gens = entity_gone_gens + 1
+         WHERE host != '' AND host NOT IN (
+             SELECT host FROM hosts_current
+             UNION SELECT host FROM services_current
+             UNION SELECT host FROM metrics_current
+             UNION SELECT host FROM log_observations_current
+         )",
+        [],
+    )?;
+    // Reset entity_gone_gens for hosts that are still present
+    db.conn.execute(
+        "UPDATE warning_state SET entity_gone_gens = 0
+         WHERE host != '' AND host IN (
+             SELECT host FROM hosts_current
+             UNION SELECT host FROM services_current
+         )",
+        [],
+    )?;
+    // Delete findings for entities gone too long
+    db.conn.execute(
+        "DELETE FROM warning_state WHERE entity_gone_gens > ?1",
+        [entity_gc_threshold],
+    )?;
+
     Ok(())
 }
 

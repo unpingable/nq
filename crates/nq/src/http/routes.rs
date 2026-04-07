@@ -1119,6 +1119,8 @@ struct FindingTransition {
     owner: Option<String>,
     #[serde(default)]
     external_ref: Option<String>,
+    #[serde(default)]
+    suppressed_by: Option<String>,
 }
 
 async fn api_finding_transition(
@@ -1169,10 +1171,11 @@ async fn api_finding_transition(
 
     // Build the update — simpler approach with direct params
     let result = db.conn().execute(
-        "UPDATE warning_state SET work_state = ?1, work_state_at = ?2, owner = COALESCE(?3, owner), note = COALESCE(?4, note), external_ref = COALESCE(?5, external_ref) WHERE host = ?6 AND kind = ?7 AND subject = ?8",
+        "UPDATE warning_state SET work_state = ?1, work_state_at = ?2, owner = COALESCE(?3, owner), note = COALESCE(?4, note), external_ref = COALESCE(?5, external_ref), suppressed_by = ?6 WHERE host = ?7 AND kind = ?8 AND subject = ?9",
         rusqlite::params![
             &body.to_state, &now,
             &body.owner, &body.note, &body.external_ref,
+            &body.suppressed_by,
             &body.host, &body.kind, &body.subject,
         ],
     );
