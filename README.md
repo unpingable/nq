@@ -8,16 +8,16 @@ Most monitoring systems tell you something is red. NQ tells you what kind of fai
 
 **Failure domain classification.** Every finding is tagged with one of four domains:
 
-| Domain | Label | Meaning |
+| Label | Meaning | You investigate... |
 |---|---|---|
-| Δo | missing | Signal stopped arriving |
-| Δs | skewed | Signal present but untrustworthy |
-| Δg | unstable | Substrate under pressure |
-| Δh | degrading | Worsening over time |
+| **missing** | Signal stopped arriving | Connectivity, deployment, collection gaps |
+| **skewed** | Signal present but untrustworthy | Data integrity, exporter health |
+| **unstable** | Substrate under pressure | Resources, maintenance, capacity |
+| **degrading** | Worsening over time | What changed, drift, trends |
 
-A missing signal sends you toward connectivity and deployment. A skewed signal sends you toward data integrity. An unstable substrate sends you toward resources and maintenance. A degrading trend sends you toward change detection. Four different investigations that traditional monitoring flattens into one red box.
+Four different investigations that traditional monitoring flattens into one red box.
 
-**Generation model.** NQ collects state in atomic snapshots called generations. Every signal type — host metrics, services, databases, Prometheus metrics — lands in the same generation. Cross-signal queries are just SQL joins through `generation_id`.
+**Generation model.** NQ collects state in atomic snapshots called generations. Every signal type — host metrics, services, databases, Prometheus metrics, logs — lands in the same generation. You can ask "what was happening across the whole system when this detector fired" and get a coherent answer. Cross-signal queries are just SQL joins through `generation_id`.
 
 **SQL is the interface.** No custom query language. Every table and view is queryable with standard SQL. The web UI includes a console. The CLI has `nq query`. Saved queries become recurring checks.
 
@@ -152,6 +152,10 @@ Schema version 16. 78 tests. ~8,500 lines of Rust.
 Grafana shows telemetry. NQ commits to diagnosis.
 
 Prometheus is excellent at collecting and storing metrics. Grafana is excellent at visualizing them. Neither tells you what kind of failure you're looking at. NQ sits alongside them (it scrapes the same exporters) and adds the layer they're missing: classification by failure type, persistence-based escalation, and SQL-native investigation.
+
+## Live demo
+
+[nq.neutral.zone](https://nq.neutral.zone) — a live NQ instance monitoring a production host.
 
 ## License
 
