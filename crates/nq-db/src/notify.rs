@@ -77,16 +77,18 @@ pub fn find_pending(db: &WriteDb, min_severity: &str) -> anyhow::Result<Vec<Pend
     Ok(pending)
 }
 
-/// Mark a finding as notified at its current severity.
+/// Mark a finding as notified at its current severity with a dedup key.
 pub fn mark_notified(db: &mut WriteDb, host: &str, kind: &str, subject: &str, severity: &str) -> anyhow::Result<()> {
     let now = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .expect("timestamp format");
 
+    let dedup_key = format!("{}:{}:{}:{}", host, kind, subject, severity);
+
     db.conn.execute(
-        "UPDATE warning_state SET notified_severity = ?1, notified_at = ?2
-         WHERE host = ?3 AND kind = ?4 AND subject = ?5",
-        rusqlite::params![severity, &now, host, kind, subject],
+        "UPDATE warning_state SET notified_severity = ?1, notified_at = ?2, last_notification_dedup_key = ?3
+         WHERE host = ?4 AND kind = ?5 AND subject = ?6",
+        rusqlite::params![severity, &now, &dedup_key, host, kind, subject],
     )?;
 
     Ok(())

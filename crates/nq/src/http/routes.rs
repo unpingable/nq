@@ -1121,6 +1121,9 @@ struct FindingTransition {
     external_ref: Option<String>,
     #[serde(default)]
     suppressed_by: Option<String>,
+    /// TTL in hours for ack/quiesce/suppress. After expiry, reverts to 'new'.
+    #[serde(default)]
+    expires_in_hours: Option<i64>,
 }
 
 async fn api_finding_transition(
@@ -1170,12 +1173,18 @@ async fn api_finding_transition(
     }
 
     // Build the update — simpler approach with direct params
+    // Compute expiry for ack/quiesce/suppress
+    let expires_at: Option<String> = body.expires_in_hours.map(|h| {
+        let expiry = time::OffsetDateTime::now_utc() + time::Duration::hours(h);
+        expiry.format(&time::format_description::well_known::Rfc3339).expect("timestamp")
+    });
+
     let result = db.conn().execute(
-        "UPDATE warning_state SET work_state = ?1, work_state_at = ?2, owner = COALESCE(?3, owner), note = COALESCE(?4, note), external_ref = COALESCE(?5, external_ref), suppressed_by = ?6 WHERE host = ?7 AND kind = ?8 AND subject = ?9",
+        "UPDATE warning_state SET work_state = ?1, work_state_at = ?2, owner = COALESCE(?3, owner), note = COALESCE(?4, note), external_ref = COALESCE(?5, external_ref), suppressed_by = ?6, ack_expires_at = ?7 WHERE host = ?8 AND kind = ?9 AND subject = ?10",
         rusqlite::params![
             &body.to_state, &now,
             &body.owner, &body.note, &body.external_ref,
-            &body.suppressed_by,
+            &body.suppressed_by, &expires_at,
             &body.host, &body.kind, &body.subject,
         ],
     );

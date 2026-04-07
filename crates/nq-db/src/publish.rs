@@ -472,6 +472,15 @@ pub fn update_warning_state(
         }
     }
 
+    // Ack TTL expiry: revert expired acks/quiesces/suppressions to 'new'
+    db.conn.execute(
+        "UPDATE warning_state SET work_state = 'new', ack_expires_at = NULL
+         WHERE ack_expires_at IS NOT NULL
+           AND ack_expires_at < ?1
+           AND work_state IN ('acknowledged', 'quiesced', 'suppressed')",
+        rusqlite::params![&now],
+    )?;
+
     // Entity GC: if a finding's host no longer appears in any current-state
     // table, increment entity_gone_gens. Delete after 10 gens of the entity
     // being gone. This handles host renames, retired services, deleted DBs.
