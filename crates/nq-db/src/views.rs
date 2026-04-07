@@ -61,6 +61,7 @@ pub struct WarningVm {
     pub first_seen_at: Option<String>,
     pub consecutive_gens: Option<i64>,
     pub acknowledged: bool,
+    pub finding_class: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -172,7 +173,7 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
     // Warnings from v_warnings view
     let warnings: Vec<WarningVm> = if gen_id.is_some() {
         let mut warn_stmt = db.conn.prepare(
-            "SELECT severity, kind, host, subject, message, domain, first_seen_at, consecutive_gens, acknowledged
+            "SELECT severity, kind, host, subject, message, domain, first_seen_at, consecutive_gens, acknowledged, finding_class
              FROM v_warnings ORDER BY severity DESC, kind, host",
         )?;
         let rows = warn_stmt
@@ -187,6 +188,7 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
                     first_seen_at: row.get(6)?,
                     consecutive_gens: row.get(7)?,
                     acknowledged: row.get::<_, i64>(8).unwrap_or(0) != 0,
+                    finding_class: row.get(9).ok(),
                 })
             })?
             .collect::<Result<_, _>>()?;

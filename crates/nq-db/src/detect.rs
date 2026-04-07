@@ -20,6 +20,9 @@ pub struct Finding {
     /// Numeric value for the thing being measured, if applicable.
     /// Used for peak tracking in warning_state.
     pub value: Option<f64>,
+    /// "signal" for substrate findings, "meta" for supervisory/check findings.
+    /// Meta findings are excluded from meta-check queries to prevent recursion.
+    pub finding_class: String,
 }
 
 /// Configurable thresholds for built-in detectors.
@@ -122,6 +125,7 @@ fn detect_wal_bloat(
                     wal_size_mb, pct,
                 ),
                 value: Some(wal_size_mb),
+                finding_class: "signal".into(),
             });
         }
     }
@@ -160,6 +164,7 @@ fn detect_freelist_bloat(
                     reclaimable_mb, pct,
                 ),
                 value: Some(reclaimable_mb),
+                finding_class: "signal".into(),
             });
         }
     }
@@ -191,6 +196,7 @@ fn detect_stale_hosts(
             subject: String::new(),
             message: format!("last seen {}s ago (gen {})", age_s, as_of_gen),
             value: Some(age_s as f64),
+                finding_class: "signal".into(),
         });
     }
     Ok(())
@@ -220,6 +226,7 @@ fn detect_stale_services(
             subject: service,
             message: format!("last seen {}s ago", age_s),
             value: Some(age_s as f64),
+                finding_class: "signal".into(),
         });
     }
     Ok(())
@@ -250,6 +257,7 @@ fn detect_service_status(
             subject: service,
             message: format!("status: {}", status),
             value: None,
+                finding_class: "signal".into(),
         });
     }
     Ok(())
@@ -279,6 +287,7 @@ fn detect_source_errors(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
             subject: String::new(),
             message: msg,
             value: None,
+                finding_class: "signal".into(),
         });
     }
     Ok(())
@@ -313,6 +322,7 @@ fn detect_metric_nan(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<
             subject: name.clone(),
             message: format!("{} is {}", name, kind),
             value: None,
+                finding_class: "signal".into(),
         });
     }
     Ok(())
@@ -341,6 +351,7 @@ fn detect_disk_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
             subject: String::new(),
             message: format!("{:.1}% used ({} MB free)", pct, avail_mb),
             value: Some(pct),
+                finding_class: "signal".into(),
         });
     }
     Ok(())
@@ -368,6 +379,7 @@ fn detect_memory_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Re
             subject: String::new(),
             message: format!("{:.1}% used ({} MB free)", pct, avail_mb),
             value: Some(pct),
+                finding_class: "signal".into(),
         });
     }
     Ok(())
@@ -448,6 +460,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                         now, avg, now - avg
                     ),
                     value: Some(now),
+                finding_class: "signal".into(),
                 });
             }
         }
@@ -465,6 +478,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                         now, avg, now - avg
                     ),
                     value: Some(now),
+                finding_class: "signal".into(),
                 });
             }
         }
@@ -482,6 +496,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                         now, avg, now / avg
                     ),
                     value: Some(now),
+                finding_class: "signal".into(),
                 });
             }
         }
@@ -542,6 +557,7 @@ fn detect_service_flap(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resul
             subject: service,
             message: format!("{} state transitions in last 12 generations", transitions),
             value: Some(transitions as f64),
+                finding_class: "signal".into(),
         });
     }
     Ok(())
@@ -591,6 +607,7 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             subject: service.clone(),
             message: format!("service '{}' was present historically but has disappeared", service),
             value: None,
+                finding_class: "signal".into(),
         });
     }
 
@@ -631,6 +648,7 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             subject: metric_name.clone(),
             message: format!("metric '{}' was present historically but has disappeared", metric_name),
             value: None,
+                finding_class: "signal".into(),
         });
     }
 
@@ -696,6 +714,7 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                     new_count, total
                 ),
                 value: Some(new_count as f64),
+                finding_class: "signal".into(),
             });
         }
 
@@ -711,6 +730,7 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                     vanished, total
                 ),
                 value: Some(vanished as f64),
+                finding_class: "signal".into(),
             });
         }
     }
@@ -770,6 +790,7 @@ fn detect_log_silence(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
             subject: source_id.clone(),
             message: format!("log source '{}' silent (baseline avg {:.0} lines/gen)", source_id, avg),
             value: Some(0.0),
+                finding_class: "signal".into(),
         });
     }
 
@@ -842,6 +863,7 @@ fn detect_error_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
                 source_id, errors, total, ratio * 100.0, baseline * 100.0
             ),
             value: Some(ratio),
+                finding_class: "signal".into(),
         });
     }
 
@@ -885,6 +907,7 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                     subject: name.clone(),
                     message: format!("check '{}' failed to execute: {}", name, e),
                     value: None,
+                    finding_class: "meta".into(),
                 });
             }
             Ok((row_count, rows)) => {
@@ -919,6 +942,7 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                         subject: format!("#{}", id),
                         message: msg,
                         value: Some(row_count as f64),
+                        finding_class: "meta".into(),
                     });
                 }
             }

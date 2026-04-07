@@ -372,8 +372,8 @@ pub fn update_warning_state(
     let now = fmt_ts(&OffsetDateTime::now_utc());
 
     let mut upsert = db.conn.prepare_cached(
-        "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, peak_value)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9)
+        "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, peak_value, finding_class)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9, ?10)
          ON CONFLICT(host, kind, subject) DO UPDATE SET
              domain = ?4,
              message = ?5,
@@ -384,7 +384,8 @@ pub fn update_warning_state(
                  ELSE 1
              END,
              peak_value = MAX(COALESCE(warning_state.peak_value, 0), COALESCE(?9, 0)),
-             severity = ?6",
+             severity = ?6,
+             finding_class = ?10",
     )?;
 
     for f in findings {
@@ -417,6 +418,7 @@ pub fn update_warning_state(
             generation_id,
             &now,
             f.value,
+            &f.finding_class,
         ])?;
     }
     drop(upsert);

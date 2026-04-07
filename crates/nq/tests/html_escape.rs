@@ -60,6 +60,7 @@ fn hostile_strings_are_escaped_in_overview_html() {
             first_seen_at: None,
             consecutive_gens: None,
             acknowledged: false,
+            finding_class: Some("signal".into()),
         }],
         history_generations: 10,
     };

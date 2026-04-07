@@ -556,14 +556,22 @@ pub fn render_overview(vm: &nq_db::OverviewVm) -> String {
         _ => "No generations yet".to_string(),
     };
 
-    // Build terse status summary
+    // Separate signal from meta findings
+    let signal_warnings: Vec<_> = vm.warnings.iter()
+        .filter(|w| w.finding_class.as_deref().unwrap_or("signal") == "signal")
+        .collect();
+    let meta_warnings: Vec<_> = vm.warnings.iter()
+        .filter(|w| w.finding_class.as_deref().unwrap_or("signal") == "meta")
+        .collect();
+
+    // Build terse status summary (signal only)
     let summary = if vm.generation_id.is_some() {
         let hosts_up = vm.hosts.iter().filter(|h| !h.stale).count();
         let hosts_stale = vm.hosts.iter().filter(|h| h.stale).count();
         let svcs_up = vm.services.iter().filter(|s| s.status == "up").count();
         let svcs_bad = vm.services.iter().filter(|s| s.status != "up" && s.status != "unknown").count();
-        let criticals = vm.warnings.iter().filter(|w| w.severity == "critical").count();
-        let warnings = vm.warnings.iter().filter(|w| w.severity == "warning").count();
+        let criticals = signal_warnings.iter().filter(|w| w.severity == "critical").count();
+        let warnings = signal_warnings.iter().filter(|w| w.severity == "warning").count();
 
         let mut parts = Vec::new();
 
@@ -595,9 +603,9 @@ pub fn render_overview(vm: &nq_db::OverviewVm) -> String {
         String::new()
     };
 
-    // Count findings by domain for the domain navigator
+    // Count findings by domain for the domain navigator (signal only)
     let mut domain_counts: std::collections::BTreeMap<&str, (usize, usize, usize)> = std::collections::BTreeMap::new();
-    for w in &vm.warnings {
+    for w in &signal_warnings {
         let domain = w.domain.as_deref().unwrap_or("?");
         let entry = domain_counts.entry(domain).or_insert((0, 0, 0));
         match w.severity.as_str() {
@@ -645,8 +653,7 @@ pub fn render_overview(vm: &nq_db::OverviewVm) -> String {
         })
         .collect();
 
-    let findings_rows: String = vm
-        .warnings
+    let findings_rows: String = signal_warnings
         .iter()
         .map(|w| {
             let sev_class = match w.severity.as_str() {
@@ -810,12 +817,13 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 
 <div class="main">
 
-<h2>Findings ({finding_count})</h2>
+<h2>Findings ({signal_count})</h2>
 <table id="findings-table">
 <tr><th></th><th>Domain</th><th>Kind</th><th>Host</th><th>Message</th><th>Gens</th></tr>
 {findings_rows}
 </table>
 {no_findings}
+{meta_section}
 
 <h2>Hosts</h2>
 <table>
@@ -978,8 +986,18 @@ loadSaved();
 </script>
 </body>
 </html>"#,
-        finding_count = vm.warnings.len(),
-        no_findings = if vm.warnings.is_empty() { "<p style=\"color:#484f58;font-size:13px;\">No active findings.</p>" } else { "" },
+        signal_count = signal_warnings.len(),
+        no_findings = if signal_warnings.is_empty() { "<p style=\"color:#484f58;font-size:13px;\">No active findings.</p>" } else { "" },
+        meta_section = if meta_warnings.is_empty() { String::new() } else {
+            let meta_rows: String = meta_warnings.iter().map(|w| {
+                format!("<tr style=\"color:#484f58;\"><td>{}</td><td>{}</td><td>{}</td></tr>",
+                    escape_html(&w.category),
+                    escape_html(&w.message),
+                    w.consecutive_gens.map(|g| g.to_string()).unwrap_or_default(),
+                )
+            }).collect();
+            format!("<details style=\"margin:12px 0;\"><summary style=\"color:#484f58;font-size:12px;cursor:pointer;\">Observatory health ({} meta)</summary><table style=\"font-size:12px;\"><tr><th>Kind</th><th>Message</th><th>Gens</th></tr>{}</table></details>", meta_warnings.len(), meta_rows)
+        },
     )
 }
 
