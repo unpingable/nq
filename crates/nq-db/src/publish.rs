@@ -371,33 +371,46 @@ pub fn update_warning_state(
 ) -> anyhow::Result<()> {
     let now = fmt_ts(&OffsetDateTime::now_utc());
 
+    let recovery_window: i64 = 3; // require 3 clean gens before clearing
+
     let mut upsert = db.conn.prepare_cached(
-        "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, peak_value, finding_class)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9, ?10)
+        "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, peak_value, finding_class, rule_hash, absent_gens)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9, ?10, ?11, 0)
          ON CONFLICT(host, kind, subject) DO UPDATE SET
              domain = ?4,
              message = ?5,
              last_seen_gen = ?7,
              last_seen_at = ?8,
              consecutive_gens = CASE
+                 -- Reset if rule_hash changed (semantic drift)
+                 WHEN ?11 IS NOT NULL AND warning_state.rule_hash IS NOT NULL AND warning_state.rule_hash != ?11 THEN 1
                  WHEN warning_state.last_seen_gen = ?7 - 1 THEN warning_state.consecutive_gens + 1
                  ELSE 1
              END,
              peak_value = MAX(COALESCE(warning_state.peak_value, 0), COALESCE(?9, 0)),
              severity = ?6,
-             finding_class = ?10",
+             finding_class = ?10,
+             rule_hash = ?11,
+             absent_gens = 0",
     )?;
 
     for f in findings {
-        // Look up existing consecutive_gens to compute severity
-        let prev_gens: i64 = db.conn.query_row(
-            "SELECT consecutive_gens FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
+        // Look up existing state for severity computation
+        let (prev_gens, prev_hash): (i64, Option<String>) = db.conn.query_row(
+            "SELECT consecutive_gens, rule_hash FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
             rusqlite::params![&f.host, &f.kind, &f.subject],
-            |row| row.get(0),
-        ).unwrap_or(0);
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap_or((0, None));
 
-        // Will be prev_gens + 1 if consecutive, else 1
-        let new_gens = {
+        // Reset consecutive_gens if rule_hash changed
+        let hash_changed = match (&f.rule_hash, &prev_hash) {
+            (Some(new), Some(old)) => new != old,
+            _ => false,
+        };
+
+        let new_gens = if hash_changed {
+            1
+        } else {
             let was_last_gen: bool = db.conn.query_row(
                 "SELECT last_seen_gen = ?1 - 1 FROM warning_state WHERE host = ?2 AND kind = ?3 AND subject = ?4",
                 rusqlite::params![generation_id, &f.host, &f.kind, &f.subject],
@@ -419,36 +432,42 @@ pub fn update_warning_state(
             &now,
             f.value,
             &f.finding_class,
+            &f.rule_hash,
         ])?;
     }
     drop(upsert);
 
-    // Build set of active (host, kind, subject) for deletion check
-    if findings.is_empty() {
-        db.conn.execute("DELETE FROM warning_state", [])?;
-    } else {
-        // Delete warnings not in current findings
-        let active_keys: Vec<(String, String, String)> = findings
-            .iter()
-            .map(|f| (f.host.clone(), f.kind.clone(), f.subject.clone()))
-            .collect();
+    // Recovery hysteresis: increment absent_gens for missing findings,
+    // only delete after recovery_window consecutive absent gens.
+    let active_keys: Vec<(String, String, String)> = findings
+        .iter()
+        .map(|f| (f.host.clone(), f.kind.clone(), f.subject.clone()))
+        .collect();
 
-        let mut del = db.conn.prepare_cached(
-            "DELETE FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
-        )?;
+    let existing: Vec<(String, String, String, i64)> = {
+        let mut stmt = db.conn.prepare("SELECT host, kind, subject, absent_gens FROM warning_state")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?;
+        rows.collect::<Result<_, _>>()?
+    };
 
-        // Get all existing keys
-        let existing: Vec<(String, String, String)> = {
-            let mut stmt = db.conn.prepare("SELECT host, kind, subject FROM warning_state")?;
-            let rows = stmt.query_map([], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })?;
-            rows.collect::<Result<_, _>>()?
-        };
+    let mut inc_absent = db.conn.prepare_cached(
+        "UPDATE warning_state SET absent_gens = absent_gens + 1 WHERE host = ?1 AND kind = ?2 AND subject = ?3",
+    )?;
+    let mut del = db.conn.prepare_cached(
+        "DELETE FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
+    )?;
 
-        for key in &existing {
-            if !active_keys.contains(key) {
-                del.execute(rusqlite::params![&key.0, &key.1, &key.2])?;
+    for (host, kind, subject, absent) in &existing {
+        let key = (host.clone(), kind.clone(), subject.clone());
+        if !active_keys.contains(&key) {
+            if *absent + 1 >= recovery_window {
+                // Cleared: enough consecutive absent gens
+                del.execute(rusqlite::params![host, kind, subject])?;
+            } else {
+                // Still in recovery window
+                inc_absent.execute(rusqlite::params![host, kind, subject])?;
             }
         }
     }

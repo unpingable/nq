@@ -23,6 +23,9 @@ pub struct Finding {
     /// "signal" for substrate findings, "meta" for supervisory/check findings.
     /// Meta findings are excluded from meta-check queries to prevent recursion.
     pub finding_class: String,
+    /// Semantic hash of the rule that produced this finding. If the rule
+    /// changes (thresholds, query text), state resets.
+    pub rule_hash: Option<String>,
 }
 
 /// Configurable thresholds for built-in detectors.
@@ -126,6 +129,7 @@ fn detect_wal_bloat(
                 ),
                 value: Some(wal_size_mb),
                 finding_class: "signal".into(),
+                rule_hash: None,
             });
         }
     }
@@ -165,6 +169,7 @@ fn detect_freelist_bloat(
                 ),
                 value: Some(reclaimable_mb),
                 finding_class: "signal".into(),
+                rule_hash: None,
             });
         }
     }
@@ -197,6 +202,7 @@ fn detect_stale_hosts(
             message: format!("last seen {}s ago (gen {})", age_s, as_of_gen),
             value: Some(age_s as f64),
                 finding_class: "signal".into(),
+                rule_hash: None,
         });
     }
     Ok(())
@@ -227,6 +233,7 @@ fn detect_stale_services(
             message: format!("last seen {}s ago", age_s),
             value: Some(age_s as f64),
                 finding_class: "signal".into(),
+                rule_hash: None,
         });
     }
     Ok(())
@@ -258,6 +265,7 @@ fn detect_service_status(
             message: format!("status: {}", status),
             value: None,
                 finding_class: "signal".into(),
+                rule_hash: None,
         });
     }
     Ok(())
@@ -288,6 +296,7 @@ fn detect_source_errors(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
             message: msg,
             value: None,
                 finding_class: "signal".into(),
+                rule_hash: None,
         });
     }
     Ok(())
@@ -323,6 +332,7 @@ fn detect_metric_nan(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<
             message: format!("{} is {}", name, kind),
             value: None,
                 finding_class: "signal".into(),
+                rule_hash: None,
         });
     }
     Ok(())
@@ -352,6 +362,7 @@ fn detect_disk_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
             message: format!("{:.1}% used ({} MB free)", pct, avail_mb),
             value: Some(pct),
                 finding_class: "signal".into(),
+                rule_hash: None,
         });
     }
     Ok(())
@@ -380,6 +391,7 @@ fn detect_memory_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Re
             message: format!("{:.1}% used ({} MB free)", pct, avail_mb),
             value: Some(pct),
                 finding_class: "signal".into(),
+                rule_hash: None,
         });
     }
     Ok(())
@@ -461,6 +473,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     ),
                     value: Some(now),
                 finding_class: "signal".into(),
+                rule_hash: None,
                 });
             }
         }
@@ -479,6 +492,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     ),
                     value: Some(now),
                 finding_class: "signal".into(),
+                rule_hash: None,
                 });
             }
         }
@@ -497,6 +511,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     ),
                     value: Some(now),
                 finding_class: "signal".into(),
+                rule_hash: None,
                 });
             }
         }
@@ -558,6 +573,7 @@ fn detect_service_flap(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resul
             message: format!("{} state transitions in last 12 generations", transitions),
             value: Some(transitions as f64),
                 finding_class: "signal".into(),
+                rule_hash: None,
         });
     }
     Ok(())
@@ -608,6 +624,7 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             message: format!("service '{}' was present historically but has disappeared", service),
             value: None,
                 finding_class: "signal".into(),
+                rule_hash: None,
         });
     }
 
@@ -649,6 +666,7 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             message: format!("metric '{}' was present historically but has disappeared", metric_name),
             value: None,
                 finding_class: "signal".into(),
+                rule_hash: None,
         });
     }
 
@@ -715,6 +733,7 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                 ),
                 value: Some(new_count as f64),
                 finding_class: "signal".into(),
+                rule_hash: None,
             });
         }
 
@@ -731,6 +750,7 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                 ),
                 value: Some(vanished as f64),
                 finding_class: "signal".into(),
+                rule_hash: None,
             });
         }
     }
@@ -791,6 +811,7 @@ fn detect_log_silence(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
             message: format!("log source '{}' silent (baseline avg {:.0} lines/gen)", source_id, avg),
             value: Some(0.0),
                 finding_class: "signal".into(),
+                rule_hash: None,
         });
     }
 
@@ -864,6 +885,7 @@ fn detect_error_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
             ),
             value: Some(ratio),
                 finding_class: "signal".into(),
+                rule_hash: None,
         });
     }
 
@@ -900,6 +922,7 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
     for (id, name, sql, mode, threshold, column) in &checks {
         match run_check_query(db, sql) {
             Err(e) => {
+                let hash = simple_hash(&format!("{}:{}:{:?}:{:?}", sql, mode, threshold, column));
                 out.push(Finding {
                     host: String::new(),
                     domain: "Δs".into(),
@@ -908,6 +931,7 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                     message: format!("check '{}' failed to execute: {}", name, e),
                     value: None,
                     finding_class: "meta".into(),
+                    rule_hash: Some(hash),
                 });
             }
             Ok((row_count, rows)) => {
@@ -935,6 +959,8 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                         _ => format!("check '{}' failed", name),
                     };
 
+                    // Hash the check semantics so state resets if the query changes
+                    let hash = simple_hash(&format!("{}:{}:{:?}:{:?}", sql, mode, threshold, column));
                     out.push(Finding {
                         host: String::new(),
                         domain: "Δg".into(),
@@ -943,6 +969,7 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                         message: msg,
                         value: Some(row_count as f64),
                         finding_class: "meta".into(),
+                        rule_hash: Some(hash),
                     });
                 }
             }
@@ -986,6 +1013,16 @@ fn run_check_query(db: &Connection, sql: &str) -> anyhow::Result<(usize, Vec<Vec
 
     let count = rows.len();
     Ok((count, rows))
+}
+
+/// FNV-1a hash for rule versioning. Not cryptographic — just change detection.
+fn simple_hash(s: &str) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x00000100000001B3);
+    }
+    format!("{:016x}", h)
 }
 
 fn check_threshold_exceeded(rows: &[Vec<String>], column: &str, threshold: f64) -> bool {
