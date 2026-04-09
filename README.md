@@ -1,14 +1,35 @@
 # nq
 
-**A local-first diagnostic monitor that classifies the kind of wrong, preserves evidence, and lets operators interrogate it with SQL.**
+**Most monitoring tells you a threshold crossed. NQ tells you what kind of failure you're looking at — including cases where the service still looks healthy.**
 
-Most monitoring flattens every problem into "something is red." NQ tells you *what kind of failure* you're looking at — missing, skewed, unstable, or degrading — because each one implies a different investigation.
+One binary. SQLite. No infrastructure. Classifies failures instead of just counting symptoms.
 
 **[Live demo](https://nq.neutral.zone)** — a real NQ instance monitoring a production host.
 
+## What NQ catches that dashboards miss
+
+**"Service up, substrate dying."** Your app reports healthy. Logs are quiet. But the WAL file is 20% of the database and growing. NQ classifies this as *storage layer under stress* — the persistence medium is degrading underneath normal-looking app health. A metric dashboard shows a number. NQ shows the contradiction.
+
+**"Signal missing, not zero."** A log source that was producing 200 lines/minute goes silent. The service is still up. The transport is working. There's just... nothing. NQ classifies this as an *observability gap* — silence from a running service is itself evidence of a problem. Most alerting can't distinguish "quiet" from "gone."
+
+**"Warning chronic, not new."** The same WAL bloat finding keeps showing up in Slack as "(new)" every time it cycles. NQ now tracks notification history durably — if it notified you about this identity before, it says "(recurring)" not "(new)." Escalations still pierce cooldown. Cyclical conditions stop pretending to be novel.
+
+## How to read a finding
+
+Every finding is a four-part proof, not a threshold alert:
+
+| Step | What it shows |
+|---|---|
+| **Observed** | The raw metric or condition |
+| **Contradiction** | Why the obvious "everything is fine" reading doesn't hold |
+| **Diagnosis** | What kind of failure this actually is |
+| **Next checks** | Where to look to confirm or refute |
+
+The finding card in the UI walks you through this ladder. You can stop at the metric if you're scanning. If you need to understand the classification, it justifies itself inline — no separate documentation required.
+
 ## Install
 
-Download a pre-built binary from [GitHub Releases](https://github.com/unpingable/nq/releases):
+Download from [GitHub Releases](https://github.com/unpingable/nq/releases):
 
 ```bash
 curl -sSL https://github.com/unpingable/nq/releases/latest/download/nq-linux-amd64 -o nq
@@ -53,32 +74,7 @@ mkdir -p /var/lib/nq
 nq serve -c aggregator.json
 ```
 
-Open `http://localhost:9848`. See the failure domain map.
-
-## Why not just Prometheus + Grafana?
-
-Grafana shows telemetry. NQ commits to diagnosis.
-
-Prometheus is excellent at collecting and storing metrics. Grafana is excellent at visualizing them. Neither tells you what kind of failure you're looking at. NQ sits alongside them (it scrapes the same exporters) and adds the layer they're missing: classification by failure type, persistence-based escalation, and SQL-native investigation.
-
-## What makes NQ different
-
-**Failure domains.** Every finding is classified:
-
-| Label | Meaning | You investigate... |
-|---|---|---|
-| **missing** | Signal stopped arriving | Connectivity, deployment, collection gaps |
-| **skewed** | Signal present but untrustworthy | Data integrity, exporter health |
-| **unstable** | Substrate under pressure | Resources, maintenance, capacity |
-| **degrading** | Worsening over time | What changed, drift, trends |
-
-Internally, these map to four domain codes (`Δo/Δs/Δg/Δh`) for compact reasoning and detector design.
-
-**Generations.** NQ captures coherent snapshots across logs, metrics, host state, services, and SQLite so you can investigate failures as they actually existed — not as five separate dashboards remember them. Cross-signal queries are just SQL joins through `generation_id`.
-
-**SQL is the interface.** No custom query language. Every table and view is queryable with standard SQL. The web UI includes a console. Saved queries become recurring checks.
-
-**One binary, zero infrastructure.** Statically linked Rust binary backed by SQLite. No Prometheus server, no Grafana, no Redis, no Kafka.
+Open `http://localhost:9848`.
 
 ## What NQ monitors
 
@@ -88,25 +84,31 @@ Internally, these map to four domain codes (`Δo/Δs/Δg/Δh`) for compact reaso
 - **Prometheus metrics**: any `/metrics` endpoint
 - **Logs**: journald and file sources (bounded observations, not raw storage)
 
+## Why not Prometheus + Grafana?
+
+Prometheus collects metrics. Grafana visualizes them. Neither tells you what kind of failure you're looking at.
+
+NQ sits alongside them (it scrapes the same exporters) and adds what's missing: classification by failure type, persistence-based escalation, and SQL-native investigation. It's the diagnostic layer, not a replacement for telemetry.
+
 ## Built-in detectors (15)
 
-| Detector | Domain | Catches |
+| Diagnosis | Detector | Catches |
 |---|---|---|
-| `stale_host` | missing | Host stopped reporting |
-| `stale_service` | missing | Service data stopped arriving |
-| `signal_dropout` | missing | Metric or service vanished |
-| `log_silence` | missing | Log source went quiet |
-| `source_error` | skewed | Publisher unreachable or erroring |
-| `metric_signal` | skewed | NaN/Inf metric values |
-| `error_shift` | skewed | Log error rate spiked |
-| `disk_pressure` | unstable | Disk > 90% |
-| `mem_pressure` | unstable | Memory > 85% |
-| `wal_bloat` | unstable | WAL > 5% of DB size |
-| `freelist_bloat` | unstable | Freelist > 20% of DB size |
-| `service_status` | unstable | Service down or degraded |
-| `resource_drift` | degrading | CPU/mem/disk trending worse |
-| `service_flap` | degrading | Service oscillating state |
-| `scrape_regime_shift` | degrading | Metric series count changed sharply |
+| Storage layer under stress | `wal_bloat` | WAL > 5% of DB |
+| Wasted storage accumulating | `freelist_bloat` | Freelist > 20% of DB |
+| Disk nearing capacity | `disk_pressure` | Disk > 90% |
+| Memory under pressure | `mem_pressure` | Memory > 85% |
+| Service down or degraded | `service_status` | Service not running normally |
+| Host stopped reporting | `stale_host` | No fresh data |
+| Service data stopped arriving | `stale_service` | Stale service data |
+| Signal vanished | `signal_dropout` | Metric or service disappeared |
+| Log source went quiet | `log_silence` | Log source silent when expected |
+| Collection failing | `source_error` | Publisher unreachable |
+| Corrupted metric values | `metric_signal` | NaN/Inf values |
+| Error rate spiked | `error_shift` | Log errors above baseline |
+| Resource usage trending worse | `resource_drift` | CPU/mem/disk trending up |
+| Service oscillating | `service_flap` | State cycling |
+| Metric collection shifted | `scrape_regime_shift` | Series count changed sharply |
 
 Plus user-defined checks from saved SQL queries.
 
@@ -114,27 +116,30 @@ Plus user-defined checks from saved SQL queries.
 
 Findings start at `info` and escalate based on persistence:
 
-- **info** — new finding, transient
+- **info** — new, possibly transient
 - **warning** — persisted 30+ generations (~30 min)
 - **critical** — persisted 180+ generations (~3 hours)
 
-Domain and severity are orthogonal. Domain says *what kind of failure*. Severity says *how persistent*. A spike that clears doesn't escalate. A condition that quietly persists does.
+A spike that clears doesn't escalate. A condition that quietly persists does.
 
 ## Notifications
 
-Webhook, Slack, and Discord. Fires on severity escalation only — not every generation. Each notification includes the failure domain, evidence, escalation history, and a link to the finding detail page.
+Webhook, Slack, and Discord. Fires on severity escalation, not every generation.
 
-## Saved queries & checks
+Notification identity is durable: if a cyclical condition resolves and returns, NQ labels it "(recurring)" not "(new)." Genuine escalations (warning to critical) always notify. Same-severity re-notifications are suppressed within a 24-hour cooldown.
 
-Save a SQL query. Promote it to a check. NQ runs it every generation:
+## SQL is the interface
 
-```bash
-nq check --db /var/lib/nq/nq.db
+Every table and view is queryable with standard SQL. The web UI includes a console. Saved queries become recurring checks:
+
+```sql
+-- What's actually wrong right now?
+SELECT * FROM v_warnings ORDER BY severity DESC, consecutive_gens DESC;
+
+-- Cross-signal: host resource state joined with service health
+SELECT h.host, h.disk_used_pct, h.mem_pressure_pct, s.service, s.status
+FROM v_hosts h JOIN v_services s ON h.host = s.host;
 ```
-
-## Finding lifecycle
-
-Findings have operator work states: new → acknowledged → watching → quiesced → closed. Acknowledgements have TTLs — they expire and re-surface if the finding persists. Suppressed findings keep lineage so you can see what they were suppressed by.
 
 ## Architecture
 
@@ -152,7 +157,20 @@ Monitored hosts              Central host
                                   └─────────┘
 ```
 
-Single binary. Schema version 22. 80 tests.
+Single binary. Schema version 23. 88 tests.
+
+## Failure domain taxonomy
+
+Under the hood, NQ classifies every finding into one of four failure domains. You don't need to know the codes to use NQ — the UI leads with plain-English labels — but the taxonomy drives the classification logic:
+
+| Domain | Code | What it means | Example |
+|---|---|---|---|
+| **Signal stopped arriving** | Δo | Something that was reporting has gone quiet | Host stopped reporting, log silence |
+| **Signal present but untrustworthy** | Δs | Data arrives but doesn't correlate with reality | Collection errors, NaN metrics, error spikes |
+| **Substrate under pressure** | Δg | Service looks up but the medium underneath is struggling | WAL bloat, disk pressure, service down |
+| **Worsening over time** | Δh | Within spec now but trending toward failure | Resource drift, service flapping |
+
+These map to a broader [15-domain failure taxonomy](docs/failure-domains.md) from research on temporal coherence in operational systems.
 
 ## Docs
 

@@ -1,6 +1,7 @@
 pub mod connect;
 pub mod detect;
 pub mod digest;
+pub mod finding_meta;
 pub mod migrate;
 pub mod notify;
 pub mod publish;

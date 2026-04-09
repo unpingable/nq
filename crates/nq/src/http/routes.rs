@@ -273,6 +273,8 @@ fn render_finding_detail(
     host_history: &Result<nq_db::QueryResult, anyhow::Error>,
     pivots: &[(&str, String)],
 ) -> String {
+    let meta = nq_db::finding_meta::finding_meta(kind);
+
     // Extract finding fields
     let (severity, domain, message, first_seen, consecutive, peak, notified_sev, work_state, owner, note, ext_ref) =
         if let Ok(ref r) = finding {
@@ -297,9 +299,8 @@ fn render_finding_detail(
             ("?", "?", "Error loading finding", "?", "0", "", "none", "new", "", "", "")
         };
 
-    let domain_label = match domain {
-        "Δo" => "missing", "Δs" => "skewed", "Δg" => "unstable", "Δh" => "degrading", d => d,
-    };
+    let domain_meta = nq_db::finding_meta::domain_meta(domain);
+    let domain_label = domain_meta.map(|d| d.operator_label).unwrap_or(domain);
 
     let sev_color = match severity {
         "critical" => "#da3633", "warning" => "#d29922", _ => "#484f58",
@@ -308,17 +309,21 @@ fn render_finding_detail(
     // Related findings
     let related_rows: String = if let Ok(ref r) = related {
         r.rows.iter().map(|row| {
-            format!("<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            let rk = row.get(2).map(|s| s.as_str()).unwrap_or("");
+            let rmeta = nq_db::finding_meta::finding_meta(rk);
+            format!("<tr><td>{}</td><td>{}</td><td><a href=\"/finding/{}/{}\">{}</a></td><td>{}</td><td>{}</td></tr>",
                 escape_html(row.get(0).map(|s| s.as_str()).unwrap_or("")),
-                escape_html(row.get(1).map(|s| s.as_str()).unwrap_or("")),
-                escape_html(row.get(2).map(|s| s.as_str()).unwrap_or("")),
+                escape_html(rmeta.plain_label),
+                urlencod(rk),
+                urlencod(&escape_html(row.get(3).map(|s| s.as_str()).unwrap_or(""))),
+                escape_html(rk),
                 escape_html(row.get(4).map(|s| s.as_str()).unwrap_or("")),
                 escape_html(row.get(5).map(|s| s.as_str()).unwrap_or("")),
             )
         }).collect()
     } else { String::new() };
 
-    // Host history sparkline data (disk_used_pct as simple text for now)
+    // Host history sparkline data
     let history_summary: String = if let Ok(ref r) = host_history {
         if r.rows.len() >= 2 {
             let latest = r.rows.first().and_then(|r| r.get(3)).and_then(|s| s.parse::<f64>().ok());
@@ -347,11 +352,22 @@ fn render_finding_detail(
         )
     }).collect::<Vec<_>>().join(" · ");
 
+    // Next checks from metadata
+    let next_checks_html: String = if meta.next_checks.is_empty() {
+        String::new()
+    } else {
+        let items: String = meta.next_checks.iter()
+            .map(|c| format!("<span class=\"pivot\">{}</span>", escape_html(c)))
+            .collect::<Vec<_>>().join(" ");
+        format!("<div class=\"ladder-section\"><div class=\"ladder-label\">Next checks</div><div class=\"pivots\">{}</div></div>", items)
+    };
+
     format!(
         r#"<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta http-equiv="refresh" content="30">
 <title>nq — {kind}/{host}</title>
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -359,17 +375,28 @@ body {{ font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; backgro
 a {{ color: #58a6ff; text-decoration: none; }}
 a:hover {{ text-decoration: underline; }}
 .back {{ font-size: 13px; margin-bottom: 16px; display: block; }}
-.finding-header {{ display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }}
-.sev-badge {{ padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; color: #fff; background: {sev_color}; }}
-.domain-badge {{ color: #8b949e; font-size: 14px; }}
-h1 {{ font-size: 16px; color: #f0f6fc; }}
+
+.finding-header {{ margin-bottom: 20px; }}
+.plain-title {{ font-size: 20px; color: #f0f6fc; font-weight: 600; margin-bottom: 6px; }}
+.domain-tag {{ display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; color: #8b949e; border: 1px solid #30363d; margin-right: 8px; }}
+.sev-badge {{ display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; color: #fff; background: {sev_color}; }}
+.kind-label {{ color: #484f58; font-size: 13px; }}
+
 .meta {{ color: #8b949e; font-size: 13px; margin: 8px 0 16px 0; }}
-.message {{ background: #161b22; border: 1px solid #21262d; border-radius: 6px; padding: 12px 16px; font-size: 13px; margin-bottom: 16px; }}
+
+.ladder {{ background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 16px 20px; margin: 16px 0; }}
+.ladder-section {{ margin-bottom: 14px; }}
+.ladder-section:last-child {{ margin-bottom: 0; }}
+.ladder-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #484f58; margin-bottom: 4px; }}
+.ladder-value {{ font-size: 13px; color: #c9d1d9; }}
+.ladder-value.contradiction {{ color: #d29922; }}
+.ladder-value.gloss {{ color: #8b949e; font-style: italic; }}
+
 h2 {{ font-size: 13px; text-transform: uppercase; color: #8b949e; letter-spacing: 1px; margin: 20px 0 8px 0; }}
 table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
 th {{ text-align: left; padding: 6px 12px 6px 0; color: #484f58; font-weight: 500; border-bottom: 1px solid #21262d; }}
 td {{ padding: 5px 12px 5px 0; border-bottom: 1px solid #161b22; }}
-.pivots {{ margin: 16px 0; }}
+.pivots {{ margin: 8px 0; }}
 .pivot {{ display: inline-block; background: #21262d; border: 1px solid #30363d; border-radius: 6px; padding: 4px 12px; font-size: 12px; margin: 2px; }}
 .pivot:hover {{ background: #30363d; text-decoration: none; }}
 .sql-box {{ margin-top: 24px; padding-top: 16px; border-top: 1px solid #21262d; }}
@@ -383,16 +410,31 @@ td {{ padding: 5px 12px 5px 0; border-bottom: 1px solid #161b22; }}
 <a class="back" href="/">&larr; back to overview</a>
 
 <div class="finding-header">
+    <div class="plain-title">{plain_label}</div>
     <span class="sev-badge">{severity}</span>
-    <span class="domain-badge">{domain} {domain_label}</span>
-    <h1>{kind}</h1>
+    <span class="domain-tag">{domain} {domain_label}</span>
+    <span class="kind-label">{kind}</span>
 </div>
 
 <div class="meta">
     {host_display}{subject_display} · {consecutive} consecutive generations · since {first_seen}{peak_display}{notified_display}
 </div>
 
-<div class="message">{message}</div>
+<div class="ladder">
+    <div class="ladder-section">
+        <div class="ladder-label">Observed</div>
+        <div class="ladder-value">{message}</div>
+    </div>
+    <div class="ladder-section">
+        <div class="ladder-label">Why this is not just a threshold alert</div>
+        <div class="ladder-value contradiction">{contradiction}</div>
+    </div>
+    <div class="ladder-section">
+        <div class="ladder-label">Why this matters</div>
+        <div class="ladder-value gloss">{gloss}</div>
+    </div>
+    {next_checks_html}
+</div>
 
 <div style="display:flex;gap:12px;align-items:center;margin:12px 0;">
     <span style="background:#21262d;border:1px solid #30363d;border-radius:6px;padding:3px 10px;font-size:12px;">{work_state}</span>
@@ -471,9 +513,12 @@ async function runQuery(e) {{
         sev_color = sev_color,
         domain = escape_html(domain),
         domain_label = escape_html(domain_label),
+        plain_label = escape_html(meta.plain_label),
         consecutive = escape_html(consecutive),
         first_seen = escape_html(first_seen),
         message = escape_html(message),
+        contradiction = escape_html(meta.contradiction),
+        gloss = escape_html(meta.gloss),
         host_display = if host.is_empty() { String::new() } else { format!("<strong>{}</strong>", escape_html(host)) },
         subject_display = if subject.is_empty() { String::new() } else { format!(" / {}", escape_html(subject)) },
         peak_display = if peak.is_empty() { String::new() } else { format!(" · peak: {}", escape_html(peak)) },
@@ -488,7 +533,7 @@ async function runQuery(e) {{
         related_section = if related_rows.is_empty() {
             String::new()
         } else {
-            format!("<h2>Related findings on this host</h2><table><tr><th>Sev</th><th>Domain</th><th>Kind</th><th>Message</th><th>Gens</th></tr>{}</table>", related_rows)
+            format!("<h2>Related findings on this host</h2><table><tr><th>Sev</th><th>Diagnosis</th><th>Kind</th><th>Message</th><th>Gens</th></tr>{}</table>", related_rows)
         },
     )
 }
@@ -615,16 +660,12 @@ pub fn render_overview(vm: &nq_db::OverviewVm) -> String {
         }
     }
 
-    let domain_labels = [
-        ("Δo", "missing", "No fresh state"),
-        ("Δs", "skewed", "Invalid signal"),
-        ("Δg", "unstable", "Substrate pressure"),
-        ("Δh", "degrading", "Adverse trend"),
-    ];
-
-    let domain_nav: String = domain_labels
+    let domain_nav: String = nq_db::finding_meta::DOMAINS
         .iter()
-        .map(|(code, label, desc)| {
+        .map(|dm| {
+            let code = dm.code;
+            let label = dm.operator_label;
+            let desc = dm.plain_label;
             let (crit, warn, info) = domain_counts.get(code as &str).copied().unwrap_or((0, 0, 0));
             let total = crit + warn + info;
             let active = if total > 0 { " active" } else { "" };
@@ -638,7 +679,7 @@ pub fn render_overview(vm: &nq_db::OverviewVm) -> String {
                 String::new()
             };
             // Show warmup indicator for trend detectors
-            let warmup = if *code == "Δh" && vm.history_generations < 6 {
+            let warmup = if code == "Δh" && vm.history_generations < 6 {
                 format!("<div class=\"domain-desc\" style=\"color:#d29922;\">warming ({}/6 gens)</div>", vm.history_generations)
             } else {
                 String::new()
@@ -662,6 +703,7 @@ pub fn render_overview(vm: &nq_db::OverviewVm) -> String {
                 _ => "sev-info",
             };
             let domain = w.domain.as_deref().unwrap_or("?");
+            let fmeta = nq_db::finding_meta::finding_meta(&w.category);
             let gens = w.consecutive_gens.map(|g| format!("{g}")).unwrap_or_default();
             let subject_path = if w.subject.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
                 String::new()
@@ -672,18 +714,18 @@ pub fn render_overview(vm: &nq_db::OverviewVm) -> String {
             format!(
                 "<tr class=\"{sev_class}\" data-domain=\"{domain}\">
                     <td class=\"sev-dot\"></td>
-                    <td>{}</td>
-                    <td><a href=\"{}\">{}</a></td>
-                    <td>{}</td>
-                    <td>{}</td>
-                    <td class=\"gens\">{}</td>
+                    <td><a href=\"{detail_url}\">{plain}</a><br><span class=\"kind-sub\">{kind} · {domain}</span></td>
+                    <td>{host}</td>
+                    <td>{message}</td>
+                    <td class=\"gens\">{gens}</td>
                 </tr>",
-                escape_html(domain),
-                escape_html(&detail_url),
-                escape_html(&w.category),
-                escape_html(&w.host),
-                escape_html(&w.message),
-                escape_html(&gens),
+                detail_url = escape_html(&detail_url),
+                plain = escape_html(fmeta.plain_label),
+                kind = escape_html(&w.category),
+                domain = escape_html(domain),
+                host = escape_html(&w.host),
+                message = escape_html(&w.message),
+                gens = escape_html(&gens),
             )
         })
         .collect();
@@ -787,6 +829,7 @@ tr.sev-warn .sev-dot::after {{ content: '●'; }}
 tr.sev-info .sev-dot {{ color: #484f58; }}
 tr.sev-info .sev-dot::after {{ content: '●'; }}
 .gens {{ color: #484f58; font-size: 11px; }}
+.kind-sub {{ color: #484f58; font-size: 11px; }}
 
 .status-up {{ color: #3fb950; }}
 .status-down {{ color: #da3633; font-weight: 600; }}
@@ -819,7 +862,7 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 
 <h2>Findings ({signal_count})</h2>
 <table id="findings-table">
-<tr><th></th><th>Domain</th><th>Kind</th><th>Host</th><th>Message</th><th>Gens</th></tr>
+<tr><th></th><th>Diagnosis</th><th>Host</th><th>Message</th><th>Gens</th></tr>
 {findings_rows}
 </table>
 {no_findings}
