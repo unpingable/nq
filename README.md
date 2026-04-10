@@ -14,6 +14,8 @@ One binary. SQLite. No infrastructure. Classifies failures instead of just count
 
 **"Warning chronic, not new."** The same WAL bloat finding keeps showing up in Slack as "(new)" every time it cycles. NQ now tracks notification history durably — if it notified you about this identity before, it says "(recurring)" not "(new)." Escalations still pierce cooldown. Cyclical conditions stop pretending to be novel.
 
+**"Host vanished, dashboard got quieter."** A host stops reporting. In most monitoring systems, all the alerts on that host quietly disappear because the detector stops emitting them. The fleet looks calmer during an outage. NQ treats this as a lie. When a host goes stale, its child findings (disk pressure, WAL bloat, service health) are *suppressed*, not deleted — last-known state is preserved with a "we can't see this right now, here's why" banner. Loss of observability reduces confidence; it does not fabricate health.
+
 ## How to read a finding
 
 Every finding is a four-part proof, not a threshold alert:
@@ -86,9 +88,21 @@ Open `http://localhost:9848`.
 
 ## Why not Prometheus + Grafana?
 
-Prometheus collects metrics. Grafana visualizes them. Neither tells you what kind of failure you're looking at.
+NQ is **Prom-compatible at the edge and anti-Prom in the middle.** It scrapes the same exporters (the ecosystem already emits in that direction), but it doesn't inherit Prometheus's worldview about what a "problem" is. Prom collects metrics. Grafana visualizes them. Neither tells you what kind of failure you're looking at, and neither has a first-class concept of state.
 
-NQ sits alongside them (it scrapes the same exporters) and adds what's missing: classification by failure type, persistence-based escalation, and SQL-native investigation. It's the diagnostic layer, not a replacement for telemetry.
+**The deeper difference: observability loss is first-class.** Prometheus alerting is expression-driven — if your query yields a series right now, the alert is active for that label set. `for` and `keep_firing_for` cushion timing, and `absent()` lets you alert on missing series, but none of that is the same as a backend model where a finding can be *suppressed because its parent observer died, last-known state preserved*. Alertmanager gives you notification-time grouping and inhibition, but that's notification semantics, not a truth model.
+
+NQ tracks three orthogonal state axes per finding:
+
+| Axis | Values | What it answers |
+|---|---|---|
+| **condition** | clear / pending / open | Is the thing actually wrong? |
+| **stability** | stable / flapping | Is it well-behaved or oscillating? *(roadmapped)* |
+| **visibility** | observed / suppressed | Can we see it right now? |
+
+When a host goes stale, its child findings stay in the database with `visibility=suppressed`, holding their last-known state. The dashboard shows them folded under the parent ("+5 suppressed by host unreachable") instead of letting them vanish. When the host recovers, they snap back to `observed`.
+
+This sounds like a small thing. It's not. It's the difference between a dashboard that gets calmer during an outage and one that gets louder about the right thing.
 
 ## Built-in detectors (15)
 

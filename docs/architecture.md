@@ -35,7 +35,7 @@ Monitored hosts                         Central host
 ```
 
 Single Rust binary. Subcommands: `nq publish`, `nq serve`, `nq query`.
-Schema version 11. 67 tests.
+Schema version 24. 93 tests.
 
 ## Data flow
 
@@ -131,6 +131,47 @@ Domain and severity are independent axes. Domain says what kind of
 failure (static, per-generation). Severity says how persistent
 (temporal, across generations). Escalation does not imply a taxonomy
 transition — a Δs finding at critical is still Δs, not Δh.
+
+## State axes
+
+A finding has three orthogonal state axes. Don't collapse them into one
+enum — they answer different questions:
+
+| Axis | Values | Question |
+|---|---|---|
+| **condition** | clear / pending_open / open / pending_close | Is the thing actually wrong? |
+| **stability** | stable / flapping | Is it well-behaved or oscillating? *(roadmapped)* |
+| **visibility** | observed / suppressed | Can we see it right now? |
+
+Severity (info / warning / critical) is a fourth axis derived from
+condition + persistence count, but it's a presentation choice rather
+than a structural state.
+
+### Visibility and observability masking
+
+When a parent finding (currently `stale_host`) opens for a host, child
+findings on that host are marked `visibility_state='suppressed'` instead
+of being garbage collected. Last-known state is preserved. The
+`absent_gens` counter does not advance for suppressed findings, the
+entity GC skips them, and the notifier filters them out.
+
+When the host recovers and child findings appear in the detector
+emission set again, they snap back to `visibility_state='observed'`
+automatically.
+
+The architectural invariant: **loss of observability must reduce
+confidence, not fabricate health.**
+
+This is what differentiates NQ's model from expression-based alerting
+systems where missing data means an inactive alert. Prometheus has
+`absent()` and Alertmanager has inhibition, but neither carries
+last-known-state across an observer-loss event. NQ does, because the
+warning_state row persists with `visibility_state='suppressed'` and
+`suppression_reason='host_unreachable'` until the parent clears.
+
+The current implementation handles `stale_host` as the only parent
+class. Generalizing to `agent_down`, `source_error`,
+`collector_partition`, etc., is straightforward and roadmapped.
 
 ## Failure domain tags
 

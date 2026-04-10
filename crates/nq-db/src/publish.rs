@@ -384,6 +384,11 @@ pub fn update_warning_state(
              consecutive_gens = CASE
                  -- Reset if rule_hash changed (semantic drift)
                  WHEN ?11 IS NOT NULL AND warning_state.rule_hash IS NOT NULL AND warning_state.rule_hash != ?11 THEN 1
+                 -- Preserve persistence across suppression round-trips: a
+                 -- finding reappearing after being suppressed is the same
+                 -- identity continuing, not a new event. Suppression was
+                 -- our blindness, not an interruption in the world.
+                 WHEN warning_state.visibility_state = 'suppressed' THEN warning_state.consecutive_gens + 1
                  WHEN warning_state.last_seen_gen = ?7 - 1 THEN warning_state.consecutive_gens + 1
                  ELSE 1
              END,
@@ -391,16 +396,19 @@ pub fn update_warning_state(
              severity = ?6,
              finding_class = ?10,
              rule_hash = ?11,
-             absent_gens = 0",
+             absent_gens = 0,
+             visibility_state = 'observed',
+             suppression_reason = NULL,
+             suppressed_since_gen = NULL",
     )?;
 
     for f in findings {
         // Look up existing state for severity computation
-        let (prev_gens, prev_hash): (i64, Option<String>) = db.conn.query_row(
-            "SELECT consecutive_gens, rule_hash FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
+        let (prev_gens, prev_hash, prev_visibility): (i64, Option<String>, String) = db.conn.query_row(
+            "SELECT consecutive_gens, rule_hash, visibility_state FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
             rusqlite::params![&f.host, &f.kind, &f.subject],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap_or((0, None));
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap_or((0, None, "observed".to_string()));
 
         // Reset consecutive_gens if rule_hash changed
         let hash_changed = match (&f.rule_hash, &prev_hash) {
@@ -410,6 +418,11 @@ pub fn update_warning_state(
 
         let new_gens = if hash_changed {
             1
+        } else if prev_visibility == "suppressed" {
+            // Reviving a suppressed finding: preserve persistence. The
+            // condition continued in reality during suppression; only our
+            // observation was missing. Treat this as continuation, not restart.
+            prev_gens + 1
         } else {
             let was_last_gen: bool = db.conn.query_row(
                 "SELECT last_seen_gen = ?1 - 1 FROM warning_state WHERE host = ?2 AND kind = ?3 AND subject = ?4",
@@ -477,21 +490,18 @@ pub fn update_warning_state(
                                   suppressed_since_gen = COALESCE(suppressed_since_gen, ?4)
          WHERE host = ?1 AND kind = ?2 AND subject = ?3"
     )?;
-    let mut unsuppress = db.conn.prepare_cached(
-        "UPDATE warning_state SET visibility_state = 'observed', suppression_reason = NULL, suppressed_since_gen = NULL
-         WHERE host = ?1 AND kind = ?2 AND subject = ?3"
-    )?;
 
-    for (host, kind, subject, absent, visibility) in &existing {
+    // Active findings have already been upserted (which clears suppression
+    // on revival). This loop only handles findings missing from the current
+    // emission.
+    for (host, kind, subject, absent, _visibility) in &existing {
         let key = (host.clone(), kind.clone(), subject.clone());
-        let host_masked = !host.is_empty() && kind != "stale_host" && stale_hosts.contains(host);
-
         if active_keys.contains(&key) {
-            // Currently observed — clear any prior suppression
-            if visibility != "observed" {
-                unsuppress.execute(rusqlite::params![host, kind, subject])?;
-            }
-        } else if host_masked {
+            continue; // upsert handled it
+        }
+
+        let host_masked = !host.is_empty() && kind != "stale_host" && stale_hosts.contains(host);
+        if host_masked {
             // Missing because we can't see the host — preserve state, mark suppressed.
             // Do NOT increment absent_gens; do NOT delete.
             suppress.execute(rusqlite::params![host, kind, subject, generation_id])?;
@@ -928,6 +938,24 @@ mod tests {
         }
     }
 
+    /// Insert a minimal hosts_current row so entity GC sees the host as
+    /// "known to the system." Real publishes go through publish_batch which
+    /// handles this; unit tests calling update_warning_state directly need it
+    /// to avoid the entity GC firing on a host with no current-state row.
+    fn ensure_host_known(db: &WriteDb, host: &str) {
+        // Generation row first (FK target)
+        db.conn.execute(
+            "INSERT OR IGNORE INTO generations (generation_id, started_at, completed_at, status, sources_expected, sources_ok, sources_failed, duration_ms)
+             VALUES (1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'complete', 1, 1, 0, 0)",
+            [],
+        ).unwrap();
+        db.conn.execute(
+            "INSERT OR IGNORE INTO hosts_current (host, as_of_generation, collected_at)
+             VALUES (?1, 1, '2026-01-01T00:00:00Z')",
+            rusqlite::params![host],
+        ).unwrap();
+    }
+
     fn count_visibility(db: &WriteDb, host: &str, kind: &str) -> Option<String> {
         db.conn.query_row(
             "SELECT visibility_state FROM warning_state WHERE host = ?1 AND kind = ?2",
@@ -940,6 +968,7 @@ mod tests {
     fn child_finding_suppressed_when_host_goes_stale() {
         let mut db = test_db();
         let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
 
         // Gen 1: host has both stale_host (somehow already firing for this test)
         // and disk_pressure observed.
@@ -978,6 +1007,7 @@ mod tests {
     fn suppressed_finding_does_not_age_out() {
         let mut db = test_db();
         let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
 
         // Gen 1: disk_pressure observed
         update_warning_state(&mut db, 1, &[finding("host-1", "disk_pressure", "", "Δg")], &esc).unwrap();
@@ -1007,6 +1037,7 @@ mod tests {
     fn child_finding_unsuppressed_when_host_recovers() {
         let mut db = test_db();
         let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
 
         // Gen 1: disk_pressure observed
         update_warning_state(&mut db, 1, &[finding("host-1", "disk_pressure", "", "Δg")], &esc).unwrap();
@@ -1035,6 +1066,7 @@ mod tests {
 
         let mut db = test_db();
         let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
 
         // Get disk_pressure to warning severity
         for g in 1..=35 {
@@ -1056,9 +1088,64 @@ mod tests {
     }
 
     #[test]
+    fn persistence_count_survives_suppression_round_trip() {
+        // Chatty's subtle trap: after suppression round-trip, the finding
+        // must NOT look like a brand-new identity. consecutive_gens and
+        // first_seen_at should be preserved across the suppression.
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Build up persistence: 35 generations of observed disk_pressure.
+        // This should reach 'warning' severity (>30 gens).
+        for g in 1..=35 {
+            update_warning_state(&mut db, g, &[finding("host-1", "disk_pressure", "", "Δg")], &esc).unwrap();
+        }
+
+        let (gens_before, first_seen_before, severity_before): (i64, String, String) = db.conn.query_row(
+            "SELECT consecutive_gens, first_seen_at, severity FROM warning_state
+             WHERE host = 'host-1' AND kind = 'disk_pressure'",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(gens_before, 35);
+        assert_eq!(severity_before, "warning");
+
+        // Gen 36-40: host stale, disk_pressure suppressed.
+        for g in 36..=40 {
+            update_warning_state(&mut db, g, &[finding("host-1", "stale_host", "", "Δo")], &esc).unwrap();
+        }
+
+        // Gen 41: host recovers. disk_pressure is observed again.
+        update_warning_state(&mut db, 41, &[finding("host-1", "disk_pressure", "", "Δg")], &esc).unwrap();
+
+        let (gens_after, first_seen_after, severity_after, vis_after): (i64, String, String, String) = db.conn.query_row(
+            "SELECT consecutive_gens, first_seen_at, severity, visibility_state FROM warning_state
+             WHERE host = 'host-1' AND kind = 'disk_pressure'",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap();
+
+        assert_eq!(vis_after, "observed", "should be observed after recovery");
+
+        // first_seen should NOT have moved — same identity, continuing.
+        assert_eq!(first_seen_after, first_seen_before,
+            "first_seen_at must be preserved across suppression round-trip");
+
+        // consecutive_gens should NOT have reset to 1.
+        // The condition continued in reality; suppression was just our blindness.
+        assert!(gens_after >= gens_before,
+            "consecutive_gens must not regress across suppression: was {gens_before}, now {gens_after}");
+
+        // Severity should still be at least warning (we earned it).
+        assert_ne!(severity_after, "info",
+            "severity must not collapse to info after suppression round-trip, got {severity_after}");
+    }
+
+    #[test]
     fn unrelated_host_finding_not_suppressed() {
         let mut db = test_db();
         let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+        ensure_host_known(&db, "host-2");
 
         // Two hosts each with disk_pressure
         update_warning_state(&mut db, 1, &[
