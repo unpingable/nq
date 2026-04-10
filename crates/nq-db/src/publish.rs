@@ -357,14 +357,62 @@ fn metric_matches_policy(name: &str, policies: &[(String, String)]) -> bool {
     false
 }
 
-/// Update warning_state table from detector findings.
+/// Compute the canonical identity string for a finding observation.
+///
+/// Format: `{scope}/{url_encode(host)}/{url_encode(detector_id)}/{url_encode(subject)}`
+///
+/// IMPORTANT: This is the canonical identity. Treat it as opaque.
+/// Never SPLIT, LIKE, or otherwise parse it from SQL. Use the denormalized
+/// host/detector_id/subject columns on finding_observations for queries.
+///
+/// The URL-encoding step is required because subject can contain '/' (e.g.
+/// "/var/lib/app/main.db") and host can theoretically contain special
+/// characters. Without encoding, the format is ambiguous.
+///
+/// FUTURE (federation): the scope component will become "site/{site_id}"
+/// when remote publishers exist. The encoding scheme is forward-compatible
+/// because URL encoding handles the '/' inside scope cleanly. Don't change
+/// the format without auditing every consumer of finding_key.
+///
+/// See docs/gaps/EVIDENCE_LAYER_GAP.md for full rationale.
+fn compute_finding_key(scope: &str, host: &str, detector_id: &str, subject: &str) -> String {
+    fn enc(s: &str) -> String {
+        s.bytes().map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{:02X}", b),
+        }).collect()
+    }
+    format!("{}/{}/{}/{}", scope, enc(host), enc(detector_id), enc(subject))
+}
+
+/// Update warning_state table from detector findings, atomically.
+///
+/// Wraps the entire lifecycle update + evidence write + masking + GC in a
+/// single transaction. If any step fails, the whole generation rolls back.
 ///
 /// For each finding:
-///   - If new: insert with first_seen = now, consecutive_gens = 1
-///   - If existing: bump last_seen and consecutive_gens, track peak value
-/// Warnings not in the current findings set are removed.
+///   - Append a row to finding_observations (the evidence layer)
+///   - Upsert into warning_state (the lifecycle row)
+///   - Apply masking, recovery hysteresis, ack TTL, entity GC
+///
+/// Warnings not in the current findings set are aged out unless their host
+/// is masked (then they're suppressed instead, preserving last-known state).
 pub fn update_warning_state(
     db: &mut WriteDb,
+    generation_id: i64,
+    findings: &[crate::detect::Finding],
+    escalation: &EscalationConfig,
+) -> anyhow::Result<()> {
+    let tx = db.conn.transaction()?;
+    update_warning_state_inner(&tx, generation_id, findings, escalation)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn update_warning_state_inner(
+    tx: &rusqlite::Transaction,
     generation_id: i64,
     findings: &[crate::detect::Finding],
     escalation: &EscalationConfig,
@@ -373,7 +421,7 @@ pub fn update_warning_state(
 
     let recovery_window: i64 = 3; // require 3 clean gens before clearing
 
-    let mut upsert = db.conn.prepare_cached(
+    let mut upsert = tx.prepare_cached(
         "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, peak_value, finding_class, rule_hash, absent_gens)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9, ?10, ?11, 0)
          ON CONFLICT(host, kind, subject) DO UPDATE SET
@@ -402,9 +450,16 @@ pub fn update_warning_state(
              suppressed_since_gen = NULL",
     )?;
 
+    let mut insert_obs = tx.prepare_cached(
+        "INSERT INTO finding_observations
+         (generation_id, finding_key, scope, detector_id, host, subject,
+          domain, severity, value, message, finding_class, rule_hash, observed_at)
+         VALUES (?1, ?2, 'local', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
+    )?;
+
     for f in findings {
         // Look up existing state for severity computation
-        let (prev_gens, prev_hash, prev_visibility): (i64, Option<String>, String) = db.conn.query_row(
+        let (prev_gens, prev_hash, prev_visibility): (i64, Option<String>, String) = tx.query_row(
             "SELECT consecutive_gens, rule_hash, visibility_state FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
             rusqlite::params![&f.host, &f.kind, &f.subject],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -424,7 +479,7 @@ pub fn update_warning_state(
             // observation was missing. Treat this as continuation, not restart.
             prev_gens + 1
         } else {
-            let was_last_gen: bool = db.conn.query_row(
+            let was_last_gen: bool = tx.query_row(
                 "SELECT last_seen_gen = ?1 - 1 FROM warning_state WHERE host = ?2 AND kind = ?3 AND subject = ?4",
                 rusqlite::params![generation_id, &f.host, &f.kind, &f.subject],
                 |row| row.get(0),
@@ -433,6 +488,27 @@ pub fn update_warning_state(
         };
 
         let severity = compute_severity(&f.kind, new_gens, escalation);
+
+        // Append the evidence row first. If this fails (e.g. UNIQUE
+        // constraint collision), the transaction rolls back the upsert too.
+        // observed_at is the detector emission time. TODO: this should be
+        // the source collection time once we wire that through; see
+        // open questions in EVIDENCE_LAYER_GAP.md.
+        let finding_key = compute_finding_key("local", &f.host, &f.kind, &f.subject);
+        insert_obs.execute(rusqlite::params![
+            generation_id,
+            &finding_key,
+            &f.kind,
+            &f.host,
+            &f.subject,
+            &f.domain,
+            severity,
+            f.value,
+            &f.message,
+            &f.finding_class,
+            &f.rule_hash,
+            &now,
+        ])?;
 
         upsert.execute(rusqlite::params![
             &f.host,
@@ -449,12 +525,13 @@ pub fn update_warning_state(
         ])?;
     }
     drop(upsert);
+    drop(insert_obs);
 
     // Build set of hosts that are currently masked by an open stale_host finding.
     // These hosts cannot have their child findings observed, so missing children
     // should be suppressed (preserving last-known state) rather than aged out.
     let stale_hosts: std::collections::HashSet<String> = {
-        let mut stmt = db.conn.prepare(
+        let mut stmt = tx.prepare(
             "SELECT host FROM warning_state WHERE kind = 'stale_host' AND visibility_state = 'observed'"
         )?;
         let rows: Vec<String> = stmt.query_map([], |row| row.get::<_, String>(0))?
@@ -472,20 +549,20 @@ pub fn update_warning_state(
         .collect();
 
     let existing: Vec<(String, String, String, i64, String)> = {
-        let mut stmt = db.conn.prepare("SELECT host, kind, subject, absent_gens, visibility_state FROM warning_state")?;
+        let mut stmt = tx.prepare("SELECT host, kind, subject, absent_gens, visibility_state FROM warning_state")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
         })?;
         rows.collect::<Result<_, _>>()?
     };
 
-    let mut inc_absent = db.conn.prepare_cached(
+    let mut inc_absent = tx.prepare_cached(
         "UPDATE warning_state SET absent_gens = absent_gens + 1 WHERE host = ?1 AND kind = ?2 AND subject = ?3",
     )?;
-    let mut del = db.conn.prepare_cached(
+    let mut del = tx.prepare_cached(
         "DELETE FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
     )?;
-    let mut suppress = db.conn.prepare_cached(
+    let mut suppress = tx.prepare_cached(
         "UPDATE warning_state SET visibility_state = 'suppressed', suppression_reason = 'host_unreachable',
                                   suppressed_since_gen = COALESCE(suppressed_since_gen, ?4)
          WHERE host = ?1 AND kind = ?2 AND subject = ?3"
@@ -514,8 +591,13 @@ pub fn update_warning_state(
         }
     }
 
+    // Drop cached statements before any further tx use to keep the borrow checker happy.
+    drop(inc_absent);
+    drop(del);
+    drop(suppress);
+
     // Ack TTL expiry: revert expired acks/quiesces/suppressions to 'new'
-    db.conn.execute(
+    tx.execute(
         "UPDATE warning_state SET work_state = 'new', ack_expires_at = NULL
          WHERE ack_expires_at IS NOT NULL
            AND ack_expires_at < ?1
@@ -531,7 +613,7 @@ pub fn update_warning_state(
     // observability was lost, not because the entity was retired. Counting
     // those toward GC would defeat the masking.
     let entity_gc_threshold: i64 = 10;
-    db.conn.execute(
+    tx.execute(
         "UPDATE warning_state SET entity_gone_gens = entity_gone_gens + 1
          WHERE host != '' AND visibility_state = 'observed' AND host NOT IN (
              SELECT host FROM hosts_current
@@ -542,7 +624,7 @@ pub fn update_warning_state(
         [],
     )?;
     // Reset entity_gone_gens for hosts that are still present
-    db.conn.execute(
+    tx.execute(
         "UPDATE warning_state SET entity_gone_gens = 0
          WHERE host != '' AND host IN (
              SELECT host FROM hosts_current
@@ -551,7 +633,7 @@ pub fn update_warning_state(
         [],
     )?;
     // Delete findings for entities gone too long
-    db.conn.execute(
+    tx.execute(
         "DELETE FROM warning_state WHERE entity_gone_gens > ?1",
         [entity_gc_threshold],
     )?;
@@ -943,12 +1025,17 @@ mod tests {
     /// handles this; unit tests calling update_warning_state directly need it
     /// to avoid the entity GC firing on a host with no current-state row.
     fn ensure_host_known(db: &WriteDb, host: &str) {
-        // Generation row first (FK target)
-        db.conn.execute(
-            "INSERT OR IGNORE INTO generations (generation_id, started_at, completed_at, status, sources_expected, sources_ok, sources_failed, duration_ms)
-             VALUES (1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'complete', 1, 1, 0, 0)",
-            [],
-        ).unwrap();
+        // Generation rows must exist for FK targets in finding_observations.
+        // Tests call update_warning_state with arbitrary generation_ids; in
+        // production publish_batch creates these. Pre-populate a range so
+        // tests don't have to manage generation lifecycle themselves.
+        for gen_id in 1..=200 {
+            db.conn.execute(
+                "INSERT OR IGNORE INTO generations (generation_id, started_at, completed_at, status, sources_expected, sources_ok, sources_failed, duration_ms)
+                 VALUES (?1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'complete', 1, 1, 0, 0)",
+                rusqlite::params![gen_id],
+            ).unwrap();
+        }
         db.conn.execute(
             "INSERT OR IGNORE INTO hosts_current (host, as_of_generation, collected_at)
              VALUES (?1, 1, '2026-01-01T00:00:00Z')",
@@ -1138,6 +1225,213 @@ mod tests {
         // Severity should still be at least warning (we earned it).
         assert_ne!(severity_after, "info",
             "severity must not collapse to info after suppression round-trip, got {severity_after}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Evidence layer tests (finding_observations)
+    // -----------------------------------------------------------------------
+    //
+    // These prove the gap spec EVIDENCE_LAYER_GAP.md acceptance criteria:
+    // every detector emission becomes an observation row, atomicity is real,
+    // and rollback works.
+
+    #[test]
+    fn observations_are_written_per_finding() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+        ensure_host_known(&db, "host-2");
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+            finding("host-1", "wal_bloat", "/var/lib/app/main.db", "Δg"),
+            finding("host-2", "mem_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM finding_observations WHERE generation_id = 1",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count, 3, "expected one observation per finding");
+
+        // Verify denormalized columns and finding_key
+        let key: String = db.conn.query_row(
+            "SELECT finding_key FROM finding_observations WHERE host = 'host-1' AND detector_id = 'wal_bloat'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(key, "local/host-1/wal_bloat/%2Fvar%2Flib%2Fapp%2Fmain.db",
+            "subject with slashes must be URL-encoded");
+    }
+
+    #[test]
+    fn observations_survive_lifecycle_deletion() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: emit a finding
+        update_warning_state(&mut db, 1, &[finding("host-1", "disk_pressure", "", "Δg")], &esc).unwrap();
+
+        // Gens 2-5: finding absent. After 3 absent gens, warning_state row is deleted.
+        for g in 2..=5 {
+            update_warning_state(&mut db, g, &[], &esc).unwrap();
+        }
+
+        // warning_state row should be gone
+        let ws_count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM warning_state WHERE host = 'host-1' AND kind = 'disk_pressure'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(ws_count, 0, "lifecycle row should be GC'd after recovery window");
+
+        // But the observation from gen 1 should still exist in finding_observations
+        let obs_count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM finding_observations WHERE host = 'host-1' AND detector_id = 'disk_pressure'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(obs_count, 1, "evidence must survive lifecycle GC");
+    }
+
+    #[test]
+    fn retention_cascades_to_observations() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Use gens 5 and 6 — gen 1 is referenced by hosts_current via the
+        // test fixture and can't be deleted without violating that FK.
+        update_warning_state(&mut db, 5, &[finding("host-1", "disk_pressure", "", "Δg")], &esc).unwrap();
+        update_warning_state(&mut db, 6, &[finding("host-1", "disk_pressure", "", "Δg")], &esc).unwrap();
+
+        let before: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM finding_observations WHERE generation_id IN (5, 6)",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(before, 2);
+
+        // Delete generation 5 — its observations should cascade away
+        db.conn.execute("DELETE FROM generations WHERE generation_id = 5", []).unwrap();
+
+        let after: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM finding_observations WHERE generation_id IN (5, 6)",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(after, 1, "cascade delete should remove gen 5's observation");
+
+        let surviving_gen: i64 = db.conn.query_row(
+            "SELECT generation_id FROM finding_observations WHERE generation_id IN (5, 6)",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(surviving_gen, 6);
+    }
+
+    #[test]
+    fn duplicate_finding_in_same_generation_fails() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Two findings with the same (host, kind, subject) in one generation.
+        // This shouldn't happen in normal detector operation; if it does,
+        // the UNIQUE constraint catches it as a bug.
+        let result = update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc);
+
+        assert!(result.is_err(),
+            "duplicate (generation_id, finding_key) must violate UNIQUE constraint");
+    }
+
+    #[test]
+    fn finding_key_handles_special_characters() {
+        // URL-encoding round-trip for subjects with /, spaces, unicode.
+        // No collisions allowed.
+        let k1 = compute_finding_key("local", "host-1", "wal_bloat", "/var/lib/app/main.db");
+        let k2 = compute_finding_key("local", "host-1", "wal_bloat", "/var/lib/app/other.db");
+        let k3 = compute_finding_key("local", "host-1", "wal_bloat", "");
+        let k4 = compute_finding_key("local", "host with spaces", "wal_bloat", "");
+        let k5 = compute_finding_key("local", "ホスト", "wal_bloat", "");
+        let k6 = compute_finding_key("site/home", "host-1", "wal_bloat", "/var/lib/app/main.db");
+
+        // All must be distinct
+        let keys = vec![&k1, &k2, &k3, &k4, &k5, &k6];
+        for (i, a) in keys.iter().enumerate() {
+            for (j, b) in keys.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b, "keys must be distinct: {a} vs {b}");
+                }
+            }
+        }
+
+        // The slash in the subject must be encoded — the literal subject path
+        // must NOT appear in the key, only its encoded form
+        assert!(k1.contains("%2F"), "subject slashes must be URL-encoded: {k1}");
+        assert!(!k1.contains("/var/lib"), "literal subject path must not appear: {k1}");
+
+        // Federation prefix must be parseable as scope
+        assert!(k6.starts_with("site/home/"), "federation prefix preserved: {k6}");
+    }
+
+    #[test]
+    fn observed_at_is_required() {
+        let db = test_db();
+        ensure_host_known(&db, "host-1");
+
+        // Direct insert without observed_at must fail
+        let result = db.conn.execute(
+            "INSERT INTO finding_observations
+             (generation_id, finding_key, scope, detector_id, host, subject, domain, finding_class)
+             VALUES (1, 'local/host-1/test/', 'local', 'test', 'host-1', '', 'Δg', 'signal')",
+            [],
+        );
+        assert!(result.is_err(), "observed_at NOT NULL must be enforced");
+    }
+
+    #[test]
+    fn observation_failure_rolls_back_lifecycle() {
+        // Chatty's required atomicity test: if the observation insert fails
+        // mid-transaction (here: pre-existing collision on UNIQUE constraint),
+        // the warning_state changes for that generation must also roll back.
+        // This proves the transaction wrapping is real, not aspirational.
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Pre-insert a finding_observations row that will collide with what
+        // update_warning_state would write at gen 1.
+        let conflicting_key = compute_finding_key("local", "host-1", "disk_pressure", "");
+        db.conn.execute(
+            "INSERT INTO finding_observations
+             (generation_id, finding_key, scope, detector_id, host, subject, domain, finding_class, observed_at)
+             VALUES (1, ?1, 'local', 'disk_pressure', 'host-1', '', 'Δg', 'signal', '2026-01-01T00:00:00Z')",
+            rusqlite::params![&conflicting_key],
+        ).unwrap();
+
+        // warning_state has no row for this finding yet
+        let count_before: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM warning_state WHERE host = 'host-1' AND kind = 'disk_pressure'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count_before, 0);
+
+        // Try to update warning_state with this finding at gen 1.
+        // The observation insert will hit the UNIQUE collision and fail.
+        let result = update_warning_state(
+            &mut db, 1,
+            &[finding("host-1", "disk_pressure", "", "Δg")],
+            &esc,
+        );
+        assert!(result.is_err(),
+            "expected failure due to observation collision, got {result:?}");
+
+        // warning_state MUST be unchanged — proving the rollback worked
+        let count_after: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM warning_state WHERE host = 'host-1' AND kind = 'disk_pressure'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count_after, 0,
+            "warning_state must be untouched after transaction rollback");
     }
 
     #[test]
