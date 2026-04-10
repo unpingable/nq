@@ -638,6 +638,30 @@ fn update_warning_state_inner(
         [entity_gc_threshold],
     )?;
 
+    // Generation lineage: write coverage counters into the generations row
+    // for this generation. Atomic with the rest of the lifecycle update.
+    // See docs/gaps/GENERATION_LINEAGE_GAP.md.
+    let findings_observed = findings.len() as i64;
+    let detectors_run: i64 = findings
+        .iter()
+        .map(|f| f.kind.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .len() as i64;
+    let findings_suppressed: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM warning_state WHERE visibility_state = 'suppressed'",
+        [],
+        |row| row.get(0),
+    )?;
+
+    tx.execute(
+        "UPDATE generations
+         SET findings_observed = ?1,
+             detectors_run = ?2,
+             findings_suppressed = ?3
+         WHERE generation_id = ?4",
+        rusqlite::params![findings_observed, detectors_run, findings_suppressed, generation_id],
+    )?;
+
     Ok(())
 }
 
@@ -1386,6 +1410,149 @@ mod tests {
             [],
         );
         assert!(result.is_err(), "observed_at NOT NULL must be enforced");
+    }
+
+    // -----------------------------------------------------------------------
+    // Generation lineage tests (GENERATION_LINEAGE_GAP)
+    // -----------------------------------------------------------------------
+    //
+    // Prove the generations row carries findings_observed, detectors_run,
+    // and findings_suppressed counters, populated atomically with the
+    // lifecycle update.
+
+    fn read_lineage(db: &WriteDb, gen_id: i64) -> (i64, i64, i64) {
+        db.conn.query_row(
+            "SELECT findings_observed, detectors_run, findings_suppressed FROM generations WHERE generation_id = ?1",
+            rusqlite::params![gen_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap()
+    }
+
+    #[test]
+    fn lineage_findings_observed_matches_input() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+        ensure_host_known(&db, "host-2");
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+            finding("host-1", "wal_bloat", "/var/lib/main.db", "Δg"),
+            finding("host-2", "mem_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        let (observed, _, _) = read_lineage(&db, 1);
+        assert_eq!(observed, 3, "findings_observed must equal input length");
+    }
+
+    #[test]
+    fn lineage_detectors_run_counts_distinct_kinds() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+        ensure_host_known(&db, "host-2");
+
+        // 3 findings across 2 distinct detectors
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+            finding("host-2", "disk_pressure", "", "Δg"),
+            finding("host-1", "mem_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        let (_, detectors, _) = read_lineage(&db, 1);
+        assert_eq!(detectors, 2, "detectors_run must count distinct kinds, not findings");
+    }
+
+    #[test]
+    fn lineage_suppressed_count_reflects_visibility_state() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: 2 findings observed normally
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+            finding("host-1", "wal_bloat", "/var/lib/main.db", "Δg"),
+        ], &esc).unwrap();
+        let (_, _, suppressed) = read_lineage(&db, 1);
+        assert_eq!(suppressed, 0, "no suppressed findings in healthy gen");
+
+        // Gen 2: host goes stale, both findings get suppressed
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "stale_host", "", "Δo"),
+        ], &esc).unwrap();
+        let (_, _, suppressed) = read_lineage(&db, 2);
+        assert_eq!(suppressed, 2, "both child findings should be suppressed at end of gen 2");
+    }
+
+    #[test]
+    fn lineage_empty_findings_zero_counters() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[], &esc).unwrap();
+
+        let (observed, detectors, suppressed) = read_lineage(&db, 1);
+        assert_eq!(observed, 0);
+        assert_eq!(detectors, 0);
+        assert_eq!(suppressed, 0);
+    }
+
+    #[test]
+    fn lineage_counters_atomic_with_rollback() {
+        // If the lifecycle update rolls back (observation collision), the
+        // generation row's counter columns must remain at their pre-call values.
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Pre-existing observation collides with what we'd write
+        let conflicting_key = compute_finding_key("local", "host-1", "disk_pressure", "");
+        db.conn.execute(
+            "INSERT INTO finding_observations
+             (generation_id, finding_key, scope, detector_id, host, subject, domain, finding_class, observed_at)
+             VALUES (1, ?1, 'local', 'disk_pressure', 'host-1', '', 'Δg', 'signal', '2026-01-01T00:00:00Z')",
+            rusqlite::params![&conflicting_key],
+        ).unwrap();
+
+        // Generation row currently has all-zero counters (defaults)
+        let (before_observed, before_detectors, before_suppressed) = read_lineage(&db, 1);
+        assert_eq!((before_observed, before_detectors, before_suppressed), (0, 0, 0));
+
+        // Try to update — should fail
+        let result = update_warning_state(
+            &mut db, 1,
+            &[finding("host-1", "disk_pressure", "", "Δg")],
+            &esc,
+        );
+        assert!(result.is_err());
+
+        // Counters MUST be unchanged
+        let (after_observed, after_detectors, after_suppressed) = read_lineage(&db, 1);
+        assert_eq!((after_observed, after_detectors, after_suppressed), (0, 0, 0),
+            "counter columns must roll back atomically with the rest of the transaction");
+    }
+
+    #[test]
+    fn lineage_pre_migration_rows_default_to_zero() {
+        // Pre-migration generation rows (or rows where update_warning_state
+        // never ran) should read with all-zero counters and NULL coverage_json.
+        let db = test_db();
+        ensure_host_known(&db, "host-1");
+
+        // No update_warning_state call yet — gen 1 has the default values
+        let (observed, detectors, suppressed): (i64, i64, i64) = db.conn.query_row(
+            "SELECT findings_observed, detectors_run, findings_suppressed FROM generations WHERE generation_id = 1",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!((observed, detectors, suppressed), (0, 0, 0));
+
+        let coverage: Option<String> = db.conn.query_row(
+            "SELECT coverage_json FROM generations WHERE generation_id = 1",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(coverage, None);
     }
 
     #[test]
