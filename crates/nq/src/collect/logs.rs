@@ -164,12 +164,23 @@ fn classify_severity(line: &str) -> &'static str {
 }
 
 fn extract_timestamp(line: &str) -> Option<OffsetDateTime> {
-    // Try ISO 8601 / RFC 3339 first
-    if line.len() >= 20 {
-        for start in 0..line.len().min(40) {
-            if let Ok(ts) = OffsetDateTime::parse(&line[start..start.min(line.len()).max(start + 20)], &Rfc3339) {
-                return Some(ts);
-            }
+    // Try to parse a 20-byte RFC 3339 timestamp at various offsets in the line.
+    // Slice by character boundaries (not byte indices) to avoid panics on
+    // multi-byte UTF-8 lines, and bound the end index to line.len() so we
+    // never overshoot.
+    let bytes = line.as_bytes();
+    if bytes.len() < 20 {
+        return None;
+    }
+    let max_start = bytes.len().saturating_sub(20).min(40);
+    for start in 0..=max_start {
+        let end = start + 20;
+        // Skip offsets that don't land on UTF-8 char boundaries.
+        if !line.is_char_boundary(start) || !line.is_char_boundary(end) {
+            continue;
+        }
+        if let Ok(ts) = OffsetDateTime::parse(&line[start..end], &Rfc3339) {
+            return Some(ts);
         }
     }
     None
@@ -177,8 +188,69 @@ fn extract_timestamp(line: &str) -> Option<OffsetDateTime> {
 
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max])
+        return s.to_string();
+    }
+    // Find the largest char boundary <= max so we never slice mid-codepoint.
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &s[..end])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_timestamp_real_log_line_does_not_panic() {
+        // The actual log line that took down nq-publish on 2026-04-09:
+        // byte index 59 was out of bounds. Repro and assert no panic.
+        let line = "2026-04-09 18:08:47,657 INFO labelwatch.runner rss=290.3MB";
+        let _ = extract_timestamp(line); // must not panic; result is fine if None
+    }
+
+    #[test]
+    fn extract_timestamp_short_line() {
+        // Lines shorter than 20 bytes must be handled cleanly.
+        assert_eq!(extract_timestamp(""), None);
+        assert_eq!(extract_timestamp("hi"), None);
+        assert_eq!(extract_timestamp("19 chars exactly!!!"), None);
+    }
+
+    #[test]
+    fn extract_timestamp_finds_rfc3339_at_start() {
+        let line = "2026-04-09T18:08:47Z some message";
+        let ts = extract_timestamp(line);
+        assert!(ts.is_some(), "should find RFC3339 timestamp at start of line");
+    }
+
+    #[test]
+    fn extract_timestamp_handles_multibyte_utf8() {
+        // Multi-byte UTF-8 characters in the line must not cause a slice
+        // panic at non-char-boundary byte indices.
+        let line = "日本語 log line with unicode characters and no timestamp";
+        let _ = extract_timestamp(line); // must not panic
+    }
+
+    #[test]
+    fn truncate_handles_multibyte_utf8() {
+        // Truncating mid-codepoint must round down to a char boundary,
+        // not panic with "byte index N is not a char boundary".
+        let s = "日本語のログ"; // 6 chars, 18 bytes
+        let result = truncate(s, 5);
+        assert!(result.ends_with("..."));
+        // Whatever it returns must be valid UTF-8 (no panic)
+        assert!(result.len() <= s.len() + 3);
+    }
+
+    #[test]
+    fn truncate_short_string_unchanged() {
+        assert_eq!(truncate("hello", 100), "hello");
+    }
+
+    #[test]
+    fn truncate_ascii_at_boundary() {
+        assert_eq!(truncate("hello world", 5), "hello...");
     }
 }
