@@ -437,17 +437,31 @@ pub fn update_warning_state(
     }
     drop(upsert);
 
+    // Build set of hosts that are currently masked by an open stale_host finding.
+    // These hosts cannot have their child findings observed, so missing children
+    // should be suppressed (preserving last-known state) rather than aged out.
+    let stale_hosts: std::collections::HashSet<String> = {
+        let mut stmt = db.conn.prepare(
+            "SELECT host FROM warning_state WHERE kind = 'stale_host' AND visibility_state = 'observed'"
+        )?;
+        let rows: Vec<String> = stmt.query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<_, _>>()?;
+        rows.into_iter().collect()
+    };
+
     // Recovery hysteresis: increment absent_gens for missing findings,
     // only delete after recovery_window consecutive absent gens.
-    let active_keys: Vec<(String, String, String)> = findings
+    // EXCEPT: if the finding's host is masked (stale_host open), suppress
+    // it instead of aging it out — preserve last-known state.
+    let active_keys: std::collections::HashSet<(String, String, String)> = findings
         .iter()
         .map(|f| (f.host.clone(), f.kind.clone(), f.subject.clone()))
         .collect();
 
-    let existing: Vec<(String, String, String, i64)> = {
-        let mut stmt = db.conn.prepare("SELECT host, kind, subject, absent_gens FROM warning_state")?;
+    let existing: Vec<(String, String, String, i64, String)> = {
+        let mut stmt = db.conn.prepare("SELECT host, kind, subject, absent_gens, visibility_state FROM warning_state")?;
         let rows = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
         })?;
         rows.collect::<Result<_, _>>()?
     };
@@ -458,17 +472,35 @@ pub fn update_warning_state(
     let mut del = db.conn.prepare_cached(
         "DELETE FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
     )?;
+    let mut suppress = db.conn.prepare_cached(
+        "UPDATE warning_state SET visibility_state = 'suppressed', suppression_reason = 'host_unreachable',
+                                  suppressed_since_gen = COALESCE(suppressed_since_gen, ?4)
+         WHERE host = ?1 AND kind = ?2 AND subject = ?3"
+    )?;
+    let mut unsuppress = db.conn.prepare_cached(
+        "UPDATE warning_state SET visibility_state = 'observed', suppression_reason = NULL, suppressed_since_gen = NULL
+         WHERE host = ?1 AND kind = ?2 AND subject = ?3"
+    )?;
 
-    for (host, kind, subject, absent) in &existing {
+    for (host, kind, subject, absent, visibility) in &existing {
         let key = (host.clone(), kind.clone(), subject.clone());
-        if !active_keys.contains(&key) {
-            if *absent + 1 >= recovery_window {
-                // Cleared: enough consecutive absent gens
-                del.execute(rusqlite::params![host, kind, subject])?;
-            } else {
-                // Still in recovery window
-                inc_absent.execute(rusqlite::params![host, kind, subject])?;
+        let host_masked = !host.is_empty() && kind != "stale_host" && stale_hosts.contains(host);
+
+        if active_keys.contains(&key) {
+            // Currently observed — clear any prior suppression
+            if visibility != "observed" {
+                unsuppress.execute(rusqlite::params![host, kind, subject])?;
             }
+        } else if host_masked {
+            // Missing because we can't see the host — preserve state, mark suppressed.
+            // Do NOT increment absent_gens; do NOT delete.
+            suppress.execute(rusqlite::params![host, kind, subject, generation_id])?;
+        } else if *absent + 1 >= recovery_window {
+            // Cleared: enough consecutive absent gens with no masking
+            del.execute(rusqlite::params![host, kind, subject])?;
+        } else {
+            // Still in recovery window
+            inc_absent.execute(rusqlite::params![host, kind, subject])?;
         }
     }
 
@@ -484,10 +516,14 @@ pub fn update_warning_state(
     // Entity GC: if a finding's host no longer appears in any current-state
     // table, increment entity_gone_gens. Delete after 10 gens of the entity
     // being gone. This handles host renames, retired services, deleted DBs.
+    //
+    // Suppressed findings are exempt: they're being intentionally held because
+    // observability was lost, not because the entity was retired. Counting
+    // those toward GC would defeat the masking.
     let entity_gc_threshold: i64 = 10;
     db.conn.execute(
         "UPDATE warning_state SET entity_gone_gens = entity_gone_gens + 1
-         WHERE host != '' AND host NOT IN (
+         WHERE host != '' AND visibility_state = 'observed' AND host NOT IN (
              SELECT host FROM hosts_current
              UNION SELECT host FROM services_current
              UNION SELECT host FROM metrics_current
@@ -867,5 +903,178 @@ mod tests {
             )
             .unwrap();
         assert_eq!(gen, r1.generation_id);
+    }
+
+    // -----------------------------------------------------------------------
+    // Visibility / masking tests
+    // -----------------------------------------------------------------------
+    //
+    // These prove the third state axis: when a host goes stale, child findings
+    // on that host are suppressed (visibility_state='suppressed') instead of
+    // being garbage collected. Last-known state is preserved.
+
+    use crate::detect::Finding;
+
+    fn finding(host: &str, kind: &str, subject: &str, domain: &str) -> Finding {
+        Finding {
+            host: host.into(),
+            kind: kind.into(),
+            subject: subject.into(),
+            domain: domain.into(),
+            message: format!("{kind} on {host}"),
+            value: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+        }
+    }
+
+    fn count_visibility(db: &WriteDb, host: &str, kind: &str) -> Option<String> {
+        db.conn.query_row(
+            "SELECT visibility_state FROM warning_state WHERE host = ?1 AND kind = ?2",
+            rusqlite::params![host, kind],
+            |row| row.get(0),
+        ).ok()
+    }
+
+    #[test]
+    fn child_finding_suppressed_when_host_goes_stale() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+
+        // Gen 1: host has both stale_host (somehow already firing for this test)
+        // and disk_pressure observed.
+        // Actually the realistic shape is: gen 1 disk_pressure observed normally.
+        let gen1_findings = vec![
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ];
+        update_warning_state(&mut db, 1, &gen1_findings, &esc).unwrap();
+
+        // Disk pressure exists, observed
+        assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("observed"));
+
+        // Gen 2: host goes stale. stale_host fires, disk_pressure no longer
+        // emitted (the host detector can't see anything).
+        let gen2_findings = vec![
+            finding("host-1", "stale_host", "", "Δo"),
+        ];
+        update_warning_state(&mut db, 2, &gen2_findings, &esc).unwrap();
+
+        // disk_pressure should still exist, but suppressed
+        let vis = count_visibility(&db, "host-1", "disk_pressure");
+        assert_eq!(vis.as_deref(), Some("suppressed"),
+            "child finding should be suppressed when host goes stale, got {vis:?}");
+
+        let reason: Option<String> = db.conn.query_row(
+            "SELECT suppression_reason FROM warning_state WHERE host = 'host-1' AND kind = 'disk_pressure'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(reason.as_deref(), Some("host_unreachable"));
+
+        // stale_host itself should NOT be suppressed (it IS the parent)
+        assert_eq!(count_visibility(&db, "host-1", "stale_host").as_deref(), Some("observed"));
+    }
+
+    #[test]
+    fn suppressed_finding_does_not_age_out() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+
+        // Gen 1: disk_pressure observed
+        update_warning_state(&mut db, 1, &[finding("host-1", "disk_pressure", "", "Δg")], &esc).unwrap();
+
+        // Gens 2-10: host stale, disk_pressure missing from emission.
+        // Without masking it would be deleted at gen 4 (recovery_window=3).
+        for g in 2..=10 {
+            update_warning_state(&mut db, g, &[finding("host-1", "stale_host", "", "Δo")], &esc).unwrap();
+        }
+
+        // disk_pressure should STILL be in warning_state
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM warning_state WHERE host = 'host-1' AND kind = 'disk_pressure'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count, 1, "suppressed finding should not be GC'd");
+
+        // absent_gens should NOT have been incremented
+        let absent: i64 = db.conn.query_row(
+            "SELECT absent_gens FROM warning_state WHERE host = 'host-1' AND kind = 'disk_pressure'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(absent, 0, "absent_gens should not advance for suppressed findings");
+    }
+
+    #[test]
+    fn child_finding_unsuppressed_when_host_recovers() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+
+        // Gen 1: disk_pressure observed
+        update_warning_state(&mut db, 1, &[finding("host-1", "disk_pressure", "", "Δg")], &esc).unwrap();
+
+        // Gen 2: host stale → disk_pressure suppressed
+        update_warning_state(&mut db, 2, &[finding("host-1", "stale_host", "", "Δo")], &esc).unwrap();
+        assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("suppressed"));
+
+        // Gen 3: host recovers, both disk_pressure and not-stale_host are emitted
+        update_warning_state(&mut db, 3, &[finding("host-1", "disk_pressure", "", "Δg")], &esc).unwrap();
+
+        // disk_pressure should be observed again
+        assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("observed"));
+
+        // stale_host should no longer exist (within recovery window — incremented absent)
+        let stale_absent: Option<i64> = db.conn.query_row(
+            "SELECT absent_gens FROM warning_state WHERE host = 'host-1' AND kind = 'stale_host'",
+            [], |row| row.get(0),
+        ).ok();
+        assert_eq!(stale_absent, Some(1), "stale_host should be in recovery window, not deleted");
+    }
+
+    #[test]
+    fn suppressed_finding_skipped_by_notification() {
+        use crate::notify::find_pending;
+
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+
+        // Get disk_pressure to warning severity
+        for g in 1..=35 {
+            update_warning_state(&mut db, g, &[finding("host-1", "disk_pressure", "", "Δg")], &esc).unwrap();
+        }
+        // It should be a candidate for notification now
+        let pending = find_pending(&db, "info").unwrap();
+        assert!(pending.iter().any(|p| p.kind == "disk_pressure"),
+            "disk_pressure at warning severity should be pending");
+
+        // Now suppress it
+        update_warning_state(&mut db, 36, &[finding("host-1", "stale_host", "", "Δo")], &esc).unwrap();
+        assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("suppressed"));
+
+        // Should no longer be a notification candidate
+        let pending = find_pending(&db, "info").unwrap();
+        assert!(!pending.iter().any(|p| p.kind == "disk_pressure"),
+            "suppressed disk_pressure should not be notified");
+    }
+
+    #[test]
+    fn unrelated_host_finding_not_suppressed() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+
+        // Two hosts each with disk_pressure
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+            finding("host-2", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        // host-1 goes stale, host-2 still healthy
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "stale_host", "", "Δo"),
+            finding("host-2", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        // host-1 disk_pressure: suppressed
+        assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("suppressed"));
+        // host-2 disk_pressure: observed
+        assert_eq!(count_visibility(&db, "host-2", "disk_pressure").as_deref(), Some("observed"));
     }
 }

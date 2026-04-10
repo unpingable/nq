@@ -61,6 +61,8 @@ fn hostile_strings_are_escaped_in_overview_html() {
             consecutive_gens: None,
             acknowledged: false,
             finding_class: Some("signal".into()),
+            visibility_state: "observed".into(),
+            suppression_reason: None,
         }],
         history_generations: 10,
     };

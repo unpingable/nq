@@ -51,7 +51,8 @@ pub fn find_pending(db: &WriteDb, min_severity: &str) -> anyhow::Result<Vec<Pend
          LEFT JOIN notification_history nh
            ON ws.host = nh.host AND ws.kind = nh.kind AND ws.subject = nh.subject
          WHERE (ws.notified_severity IS NULL OR ws.severity != ws.notified_severity)
-           AND COALESCE(ws.work_state, 'new') NOT IN ('quiesced', 'suppressed', 'closed')",
+           AND COALESCE(ws.work_state, 'new') NOT IN ('quiesced', 'suppressed', 'closed')
+           AND ws.visibility_state = 'observed'",
     )?;
 
     let now = time::OffsetDateTime::now_utc();

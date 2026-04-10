@@ -147,7 +147,7 @@ async fn finding_detail_inner(db: Db, kind: &str, host: &str, subject: &str) -> 
             "SELECT severity, domain, kind, host, subject, message,
                     first_seen_gen, first_seen_at, last_seen_gen, last_seen_at,
                     consecutive_gens, peak_value, acknowledged, notified_severity, notified_at,
-                    work_state, owner, note, external_ref
+                    work_state, owner, note, external_ref, visibility_state, suppression_reason
              FROM warning_state
              WHERE kind = '{}' AND host = '{}' AND subject = '{}'",
             kind.replace('\'', "''"),
@@ -276,7 +276,7 @@ fn render_finding_detail(
     let meta = nq_db::finding_meta::finding_meta(kind);
 
     // Extract finding fields
-    let (severity, domain, message, first_seen, consecutive, peak, notified_sev, work_state, owner, note, ext_ref) =
+    let (severity, domain, message, first_seen, consecutive, peak, notified_sev, work_state, owner, note, ext_ref, visibility, suppr_reason) =
         if let Ok(ref r) = finding {
             if let Some(row) = r.rows.first() {
                 (
@@ -291,12 +291,14 @@ fn render_finding_detail(
                     row.get(16).map(|s| s.as_str()).unwrap_or(""),
                     row.get(17).map(|s| s.as_str()).unwrap_or(""),
                     row.get(18).map(|s| s.as_str()).unwrap_or(""),
+                    row.get(19).map(|s| s.as_str()).unwrap_or("observed"),
+                    row.get(20).map(|s| s.as_str()).unwrap_or(""),
                 )
             } else {
-                ("?", "?", "Finding not found", "?", "0", "", "none", "new", "", "", "")
+                ("?", "?", "Finding not found", "?", "0", "", "none", "new", "", "", "", "observed", "")
             }
         } else {
-            ("?", "?", "Error loading finding", "?", "0", "", "none", "new", "", "", "")
+            ("?", "?", "Error loading finding", "?", "0", "", "none", "new", "", "", "", "observed", "")
         };
 
     let domain_meta = nq_db::finding_meta::domain_meta(domain);
@@ -362,6 +364,35 @@ fn render_finding_detail(
         format!("<div class=\"ladder-section\"><div class=\"ladder-label\">Next checks</div><div class=\"pivots\">{}</div></div>", items)
     };
 
+    // Visibility banner: if the finding is suppressed, show that prominently
+    // at the top of the ladder so the operator knows the data is last-known
+    // rather than current.
+    let visibility_banner = if visibility == "suppressed" {
+        let reason_text = match suppr_reason {
+            "host_unreachable" => "the host is unreachable",
+            "agent_down" => "the monitoring agent is down",
+            "parent_mask" => "a parent finding masks this one",
+            "maintenance" => "this is in a maintenance window",
+            other if !other.is_empty() => other,
+            _ => "an upstream condition has reduced confidence",
+        };
+        format!(
+            "<div class=\"visibility-banner\"><strong>Suppressed:</strong> showing last-known state because {}. \
+             This finding is held in suppression and not currently being re-evaluated.</div>",
+            reason_text
+        )
+    } else {
+        String::new()
+    };
+
+    // When suppressed, label the observed value as "last observed" since we
+    // can't see it right now.
+    let observed_label = if visibility == "suppressed" {
+        "Last observed"
+    } else {
+        "Observed"
+    };
+
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -391,6 +422,7 @@ a:hover {{ text-decoration: underline; }}
 .ladder-value {{ font-size: 13px; color: #c9d1d9; }}
 .ladder-value.contradiction {{ color: #d29922; }}
 .ladder-value.gloss {{ color: #8b949e; font-style: italic; }}
+.visibility-banner {{ background: #1c1f24; border: 1px solid #d29922; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 12px; color: #d29922; }}
 
 h2 {{ font-size: 13px; text-transform: uppercase; color: #8b949e; letter-spacing: 1px; margin: 20px 0 8px 0; }}
 table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
@@ -421,8 +453,9 @@ td {{ padding: 5px 12px 5px 0; border-bottom: 1px solid #161b22; }}
 </div>
 
 <div class="ladder">
+    {visibility_banner}
     <div class="ladder-section">
-        <div class="ladder-label">Observed</div>
+        <div class="ladder-label">{observed_label}</div>
         <div class="ladder-value">{message}</div>
     </div>
     <div class="ladder-section">
@@ -519,6 +552,8 @@ async function runQuery(e) {{
         message = escape_html(message),
         contradiction = escape_html(meta.contradiction),
         gloss = escape_html(meta.gloss),
+        visibility_banner = visibility_banner,
+        observed_label = observed_label,
         host_display = if host.is_empty() { String::new() } else { format!("<strong>{}</strong>", escape_html(host)) },
         subject_display = if subject.is_empty() { String::new() } else { format!(" / {}", escape_html(subject)) },
         peak_display = if peak.is_empty() { String::new() } else { format!(" · peak: {}", escape_html(peak)) },
@@ -601,10 +636,22 @@ pub fn render_overview(vm: &nq_db::OverviewVm) -> String {
         _ => "No generations yet".to_string(),
     };
 
-    // Separate signal from meta findings
-    let signal_warnings: Vec<_> = vm.warnings.iter()
+    // Separate signal from meta findings, then split signal into observed
+    // and suppressed. Suppressed findings are folded under their parent host.
+    let signal_all: Vec<_> = vm.warnings.iter()
         .filter(|w| w.finding_class.as_deref().unwrap_or("signal") == "signal")
         .collect();
+    let signal_warnings: Vec<_> = signal_all.iter()
+        .filter(|w| w.visibility_state == "observed")
+        .copied()
+        .collect();
+    let suppressed_by_host: std::collections::HashMap<String, usize> = {
+        let mut m = std::collections::HashMap::new();
+        for w in signal_all.iter().filter(|w| w.visibility_state == "suppressed") {
+            *m.entry(w.host.clone()).or_insert(0) += 1;
+        }
+        m
+    };
     let meta_warnings: Vec<_> = vm.warnings.iter()
         .filter(|w| w.finding_class.as_deref().unwrap_or("signal") == "meta")
         .collect();
@@ -711,10 +758,21 @@ pub fn render_overview(vm: &nq_db::OverviewVm) -> String {
                 format!("/{}", urlencod(w.subject.as_deref().unwrap_or("")))
             };
             let detail_url = format!("/finding/{}/{}{}", urlencod(&w.category), urlencod(&w.host), subject_path);
+
+            // For stale_host findings, append a "+N suppressed" badge showing
+            // how many child findings on this host are being held in suppression.
+            let suppressed_badge = if w.category == "stale_host" {
+                suppressed_by_host.get(&w.host).map(|n| {
+                    format!(" <span class=\"suppressed-badge\" title=\"child findings hidden because the host is unreachable\">+{n} suppressed</span>")
+                }).unwrap_or_default()
+            } else {
+                String::new()
+            };
+
             format!(
                 "<tr class=\"{sev_class}\" data-domain=\"{domain}\">
                     <td class=\"sev-dot\"></td>
-                    <td><a href=\"{detail_url}\">{plain}</a><br><span class=\"kind-sub\">{kind} · {domain}</span></td>
+                    <td><a href=\"{detail_url}\">{plain}</a>{suppressed_badge}<br><span class=\"kind-sub\">{kind} · {domain}</span></td>
                     <td>{host}</td>
                     <td>{message}</td>
                     <td class=\"gens\">{gens}</td>
@@ -830,6 +888,7 @@ tr.sev-info .sev-dot {{ color: #484f58; }}
 tr.sev-info .sev-dot::after {{ content: '●'; }}
 .gens {{ color: #484f58; font-size: 11px; }}
 .kind-sub {{ color: #484f58; font-size: 11px; }}
+.suppressed-badge {{ display: inline-block; background: #21262d; border: 1px solid #30363d; color: #8b949e; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 6px; }}
 
 .status-up {{ color: #3fb950; }}
 .status-down {{ color: #da3633; font-weight: 600; }}
