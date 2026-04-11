@@ -1,6 +1,9 @@
 # nq
 
-**Most monitoring tells you a threshold crossed. NQ tells you what kind of failure you're looking at — including cases where the service still looks healthy.**
+**NQ is IETF-brutalist monitoring.**
+**The shape is ugly because the incident log was.**
+
+It names failure modes plainly, preserves distinctions other dashboards collapse, and refuses decorative smoothness where it would hide operational truth. Most monitoring tells you a threshold crossed. NQ tells you what kind of failure you're looking at — including the cases where the service still looks healthy.
 
 One binary. SQLite. No infrastructure. Classifies failures instead of just counting symptoms.
 
