@@ -49,6 +49,13 @@ The shape of the failure. Cross-cutting analytical hook — once findings carry 
 
 ```rust
 pub enum FailureClass {
+    /// The thing this finding is about is not in its expected
+    /// operational state. The primary concern is the existence or
+    /// reachability of the subject itself, not a resource regime
+    /// around it.
+    /// Examples: service_status (down/degraded), process not running
+    Availability,
+
     /// Producer is creating faster than consumer can retire.
     /// Reversible if consumer catches up. Bounded only by the storage
     /// available to absorb the imbalance.
@@ -101,6 +108,10 @@ pub enum FailureClass {
 }
 ```
 
+**Why `Availability` exists as a separate class.** Without it, `service_status` findings would have to lie about their shape (claiming Stuckness or Pressure when neither fits) or fall into Unspecified (which is worse — Unspecified should mean "the detector legitimately can't classify," not "this is the most operationally important kind of finding and we don't have a slot for it"). Service-down is the canonical case where a finding is about the *existence* of the subject in its expected state, not about a regime around it. That's a distinct shape and it deserves its own variant.
+
+The boundary against the resource progression: Availability is about a binary-ish state (the thing is or isn't doing its job). Resource progression is about a continuous-ish state (more or less of a finite pool consumed). They never collapse into each other — a service that's down is not "exhausted," a disk at 95% is not "unavailable."
+
 **Boundary discipline:** these classes are a *progression* for resource problems, not synonyms.
 - Accumulation → Pressure → Saturation → Exhaustion is a temporal sequence: WAL bloat (accumulation) eventually contributes to disk pressure, which can become disk saturation under extreme load, which becomes filesystem exhaustion at 100%.
 - A single condition usually fits one class at a time. If it fits two, the more advanced one wins.
@@ -125,6 +136,9 @@ pub enum FailureClass {
 
 | Condition | Class | Why |
 |---|---|---|
+| systemd service in `failed` state | `Availability` | The subject itself is not in its expected operational state |
+| Docker container exited unexpectedly | `Availability` | Same — existence/operational state of the thing |
+| Process not running when it's expected to be | `Availability` | Same |
 | Clock offset 200ms from NTP source | `Drift` | Stateless divergence from a reference setpoint |
 | Config file hash differs from canonical | `Drift` | Same shape — diverged from expected |
 | Stuck transaction holding a lock for 30 minutes | `Stuckness` | Work that stopped progressing, system alive |
@@ -142,24 +156,35 @@ The first question every traditional-monitoring operator asks. *Is something act
 
 ```rust
 pub enum ServiceImpact {
-    /// The service appears to be functioning normally. The finding is
-    /// about substrate or future risk, not current degradation.
-    /// Examples: wal_bloat on a healthy host, disk_pressure at 88%
+    /// The observable operational state is currently fine. The finding
+    /// is about substrate, future risk, or regime shape — not present
+    /// degradation visible to consumers.
+    /// Examples: wal_bloat on a healthy host, disk_pressure at 88%,
+    /// stale_host where the host data is fresh enough that nothing has
+    /// actually broken yet
     NoneCurrent,
 
-    /// The service is degraded but not down. Some requests succeeding,
-    /// some failing or slow. Users may notice.
-    /// Examples: high error rate but service still up, partial outage
+    /// The observable operational state is partially degraded but not
+    /// fully broken. Some functionality is impaired, observers see
+    /// reduced quality, or downstream systems are receiving worse
+    /// signal than usual.
+    /// Examples: high error rate but service still up, partial outage,
+    /// log_silence where some logs are missing but the source is still
+    /// emitting some output
     Degraded,
 
-    /// The service is failing or about to fail. Hard outage imminent
-    /// or in progress.
-    /// Examples: service_status=down, exhaustion of a critical resource
+    /// The observable operational state is failing or about to fail.
+    /// Hard outage imminent or in progress.
+    /// Examples: service_status=down, exhaustion of a critical resource,
+    /// stale_host where the host has been completely silent long enough
+    /// that downstream depends on stale facts
     ImmediateRisk,
 }
 ```
 
-**Boundary discipline:** ServiceImpact is about the *service*, not the *substrate*. A 100GB WAL file is severe substrate degradation but might still be `NoneCurrent` if the service is responding. ServiceImpact answers "is the user seeing a problem?" — substrate health is a separate axis.
+**Boundary discipline:** ServiceImpact is about *current observable operational state*, not about *substrate health* or *future risk*. A 100GB WAL file is severe substrate degradation but is still `NoneCurrent` if the service is responding. ServiceImpact answers "is something actually broken right now?" — substrate degradation that *will* break things later is captured by `FailureClass` and `ActionBias`, not by inflating ServiceImpact.
+
+**The naming caveat:** "ServiceImpact" lands hardest for traditional ops people because it maps to their existing question (is the user seeing a problem?). For findings about substrate, observability, or witness loss, the axis still applies but reads as *observable operational consequence right now*, not literally end-user service. The variant docstrings above are written to cover both interpretations. If a future detector author finds a case where this stretches uncomfortably, that's a signal to re-examine the field — not to invent a parallel `SubstrateImpact` axis (which would split a single question into two).
 
 #### `ActionBias`
 
@@ -211,6 +236,18 @@ For v1 of this gap, only the detector baseline exists. Renderers fall through di
 
 **Emergency floor:** if a detector can't justify a baseline beyond `Watch`, it picks `Watch`. The operator and the projection layer can elevate from there. Detectors are not punished for being conservative.
 
+**Required consistency between ServiceImpact and ActionBias.** These two fields are not independent, and the spec enforces a floor relationship to prevent contradiction:
+
+| ServiceImpact | Minimum ActionBias |
+|---|---|
+| `NoneCurrent` | (no floor — `Watch` is valid) |
+| `Degraded` | `InvestigateNow` (someone needs to look at this today) |
+| `ImmediateRisk` | `InterveneNow` (this is the definition of the variant) |
+
+`ImmediateRisk` and `InterveneSoon` are not allowed to coexist on the same finding. If the impact is genuinely immediate, the action must be immediate too — that's what "immediate" means. A finding that wants to say "this might be immediate but maybe wait until tomorrow" is using one of the two fields wrong. Pick one: either downgrade `ImmediateRisk` to `Degraded` (if waiting is acceptable) or upgrade `InterveneSoon` to `InterveneNow` (if it really is immediate).
+
+This is a tested invariant — see acceptance criterion #5 below.
+
 ### 2. Two derived prose fields
 
 These are computed by the detector at emission time, but constrained by the typed nucleus above. The detector is expected to produce prose *consistent with* its FailureClass + ServiceImpact + ActionBias declarations.
@@ -235,7 +272,7 @@ These are detector-authored, but the typed nucleus is the contract. Renderers ca
 ```rust
 #[derive(Debug, Clone)]
 pub struct FindingDiagnosis {
-    pub shape: FailureClass,
+    pub failure_class: FailureClass,
     pub service_impact: ServiceImpact,
     pub action_bias: ActionBias,
     pub synopsis: String,
@@ -245,13 +282,15 @@ pub struct FindingDiagnosis {
 
 The existing `Finding` struct in `detect.rs` gains a `diagnosis: FindingDiagnosis` field. Existing detector functions update their return values to populate it. The detector orchestrator passes it through unchanged.
 
+The field is named `failure_class` rather than `shape` to match the type name and the SQL column. The Rust type, the struct field, and the database column all use the same noun. Future readers don't have to translate.
+
 ### 4. Schema additions (migration 027)
 
 Add columns to both `warning_state` and `finding_observations` so the diagnosis is queryable from both layers.
 
 ```sql
 -- warning_state: lifecycle row carries the most recent diagnosis
-ALTER TABLE warning_state ADD COLUMN shape_class TEXT;
+ALTER TABLE warning_state ADD COLUMN failure_class TEXT;
 ALTER TABLE warning_state ADD COLUMN service_impact TEXT;
 ALTER TABLE warning_state ADD COLUMN action_bias TEXT;
 ALTER TABLE warning_state ADD COLUMN synopsis TEXT;
@@ -259,7 +298,7 @@ ALTER TABLE warning_state ADD COLUMN why_care TEXT;
 
 -- finding_observations: each observation carries the diagnosis at the
 -- time of that emission. Lets you query historical posture changes.
-ALTER TABLE finding_observations ADD COLUMN shape_class TEXT;
+ALTER TABLE finding_observations ADD COLUMN failure_class TEXT;
 ALTER TABLE finding_observations ADD COLUMN service_impact TEXT;
 ALTER TABLE finding_observations ADD COLUMN action_bias TEXT;
 ALTER TABLE finding_observations ADD COLUMN synopsis TEXT;
@@ -268,46 +307,68 @@ ALTER TABLE finding_observations ADD COLUMN why_care TEXT;
 
 All columns are nullable. Pre-migration rows read as NULL, which is honest — they were created before diagnosis was tracked.
 
-The shape_class column SHOULD have a CHECK constraint enforcing the controlled vocabulary, but this is deferred to a follow-up because it would block adding new variants. For v1, application code is the source of truth and the column is bare TEXT.
+**Naming discipline:** the column is `failure_class`, NOT `shape_class`. This matches the Rust type name (`FailureClass`) directly and avoids collision with the existing `finding_class` column (added in migration 018, used to distinguish `signal` findings from `meta` findings about NQ itself). Two near-identical nouns in the same row would be a future-you-commits-manslaughter-against-clarity situation. The two columns answer different questions:
+
+- `finding_class` (existing): is this a substrate finding or a finding about NQ's own observability? (`signal` vs `meta`)
+- `failure_class` (new): what *shape* of failure is this finding describing? (`Accumulation`, `Pressure`, `Availability`, etc.)
+
+Different axes, distinct names, no overlap. If you find yourself wondering "which class is this?" the answer is in the docstring; if both feel ambiguous, rename one before merging.
+
+The `failure_class` column SHOULD have a CHECK constraint enforcing the controlled vocabulary, but this is deferred to a follow-up because it would block adding new variants. For v1, application code is the source of truth and the column is bare TEXT.
 
 ### 5. Detector updates
 
-All 17 existing detectors need to populate `FindingDiagnosis` for the findings they emit. This is the largest single piece of work in the gap. The mapping is roughly:
+All 17 existing detectors need to populate `FindingDiagnosis` for the findings they emit. This is the largest single piece of work in the gap.
+
+The mapping below is split into two parts: **static mappings** (the same diagnosis fields apply to every finding from this detector) and **value-dependent mappings** (the detector computes fields from the underlying measurement at emission time). Value-dependent rows are not hand-waving — they are explicit acknowledgment that the field cannot be statically derived from kind alone, and they specify the rule the detector must implement.
+
+#### Static mappings
 
 | Detector | shape | impact | action_bias |
 |---|---|---|---|
 | `wal_bloat` | Accumulation | NoneCurrent | InvestigateBusinessHours |
 | `freelist_bloat` | Accumulation | NoneCurrent | InvestigateBusinessHours |
-| `disk_pressure` | Pressure | varies (>95% = ImmediateRisk) | varies (>90% = InvestigateNow, >95% = InterveneSoon) |
-| `mem_pressure` | Pressure | NoneCurrent or Degraded | InvestigateNow |
-| `service_status` | (none — service is the primary concern) | ImmediateRisk if down | InterveneNow |
-| `stale_host` | Silence | varies | InvestigateNow |
-| `stale_service` | Silence | varies | InvestigateBusinessHours |
+| `mem_pressure` | Pressure | NoneCurrent | InvestigateNow |
 | `signal_dropout` | Silence | NoneCurrent | InvestigateBusinessHours |
 | `log_silence` | Silence | NoneCurrent | InvestigateBusinessHours |
 | `source_error` | Silence | NoneCurrent | InvestigateNow |
-| `metric_signal` | Drift (corrupted values) | NoneCurrent | InvestigateBusinessHours |
-| `error_shift` | (varies — shape depends on whether it's a regime change or a spike) | Degraded | InvestigateNow |
-| `resource_drift` | Pressure (early indicator) | NoneCurrent | Watch or InvestigateBusinessHours |
+| `metric_signal` | Drift | NoneCurrent | InvestigateBusinessHours |
 | `service_flap` | Flapping | Degraded | InvestigateNow |
-| `scrape_regime_shift` | Flapping (or Silence if vanishing) | NoneCurrent | InvestigateBusinessHours |
-| `check_failed` | Unspecified (user-defined check) | varies | varies |
+| `resource_drift` | Pressure | NoneCurrent | Watch |
 | `check_error` | Unspecified | NoneCurrent | InvestigateBusinessHours |
 
-Note that `disk_pressure` and `service_status` have *value-dependent* mappings. A 91% disk and a 99% disk are not the same. Detectors MUST be able to compute the diagnosis from the underlying value, not just the kind.
+#### Value-dependent mappings
+
+These detectors compute their fields per-instance from the measurement. The rule is specified, not deferred.
+
+| Detector | Rule |
+|---|---|
+| `disk_pressure` | shape=Pressure always. impact: NoneCurrent if ≤90%, Degraded if 90–95%, ImmediateRisk if >95%. action_bias: InvestigateBusinessHours if ≤90%, InvestigateNow if 90–95%, InterveneNow if >95% (NOT InterveneSoon — see ImmediateRisk constraint above). |
+| `service_status` | shape=Availability always. impact: NoneCurrent if status=up, Degraded if status=degraded, ImmediateRisk if status=down. action_bias: Watch if up, InvestigateNow if degraded, InterveneNow if down. |
+| `stale_host` | shape=Silence always. impact: NoneCurrent if generations_behind ≤5, Degraded if 6–20, ImmediateRisk if >20. action_bias: InvestigateBusinessHours if ≤5, InvestigateNow if 6–20, InterveneNow if >20. |
+| `stale_service` | shape=Silence always. impact: NoneCurrent if generations_behind ≤10, Degraded otherwise. action_bias: InvestigateBusinessHours unless impact=Degraded, then InvestigateNow. |
+| `error_shift` | shape: Drift if the spike is a regime change (sustained for >5 gens), Flapping if oscillating, otherwise Drift. impact: Degraded always (errors are degradation by definition). action_bias: InvestigateNow. |
+| `scrape_regime_shift` | shape: Silence if a large fraction of series vanished, Flapping otherwise. impact=NoneCurrent. action_bias=InvestigateBusinessHours. |
+| `check_failed` | shape=Unspecified (user-defined check, NQ can't infer the regime). impact=NoneCurrent. action_bias=Watch unless the saved-query metadata declares a higher posture (deferred — see open questions). |
+
+**Why these are value-dependent and not static:** A `disk_pressure` finding at 91% and one at 99% are not the same operational situation. A `stale_host` finding 3 generations behind and 50 generations behind are not the same. The detector knows the underlying value and is responsible for computing the right fields per emission. The cost is ~5 lines of mapping logic per detector; the benefit is that the diagnosis honestly reflects the magnitude.
+
+**Producer-side contract for value-dependent detectors:** the rule above is the contract. Tests MUST verify that the boundaries are honored (see acceptance criterion #5). If the rules later turn out to be miscalibrated for real workloads, change the rule in the spec and the test together — never let them drift apart.
 
 ### 6. Tests
 
 Required tests:
 
-1. **Every detector emits a non-default FindingDiagnosis.** A test that runs every built-in detector against canned input data and asserts that the emitted findings have non-NULL shape/impact/bias and non-empty synopsis/why_care. Catches a detector that forgets to populate the new fields.
-2. **`disk_pressure` action_bias escalates with value.** A finding at 88% must have lower urgency than one at 96%.
-3. **`service_status` for a down service emits ServiceImpact=ImmediateRisk and ActionBias=InterveneNow.** Non-negotiable.
+1. **Every detector emits a non-default FindingDiagnosis.** A test that runs every built-in detector against canned input data and asserts that the emitted findings have non-NULL failure_class/impact/bias and non-empty synopsis/why_care. Catches a detector that forgets to populate the new fields.
+2. **`disk_pressure` action_bias escalates with value.** A finding at 88% must have lower urgency than one at 96%, and 96% must produce InterveneNow (per the value-dependent mapping).
+3. **`service_status` for a down service emits failure_class=Availability, ServiceImpact=ImmediateRisk, ActionBias=InterveneNow.** Non-negotiable.
 4. **`wal_bloat` emits ServiceImpact=NoneCurrent regardless of severity.** WAL bloat is substrate, not service.
-5. **Synopsis and why_care must agree with typed fields.** A property-test-style check: if ServiceImpact=NoneCurrent, the why_care string must not contain words like "outage" or "service down." Lightweight contradiction check.
-6. **Round-trip persistence.** A finding written to warning_state and read back via v_warnings must preserve all five diagnosis fields.
-7. **Round-trip on finding_observations.** Same, for the evidence layer.
-8. **Pre-migration rows read as NULL.** Generations and findings created before the migration must still be queryable, with NULL diagnosis fields.
+5. **ImmediateRisk implies InterveneNow.** Required relationship test: any finding with `service_impact=ImmediateRisk` MUST also have `action_bias=InterveneNow`. Any finding with `service_impact=Degraded` MUST have `action_bias` of at least `InvestigateNow`. Run as a property test across all detector outputs from a fixture batch. This is the load-bearing consistency test for the relationship documented in §1.
+
+6. **Synopsis/why_care smoke test.** A *blacklist-based* smoke check: if `service_impact=NoneCurrent`, the `why_care` string must not contain the words "outage" or "service down" or "failing now." This catches the dumbest mistakes (a copy-pasted string from the wrong context) but is explicitly NOT a semantic guardrail. It is a floor, not a ceiling. Real prose alignment is the detector author's responsibility; the smoke test only catches the worst contradictions.
+7. **Round-trip persistence.** A finding written to warning_state and read back via v_warnings must preserve all five diagnosis fields.
+8. **Round-trip on finding_observations.** Same, for the evidence layer.
+9. **Pre-migration rows read as NULL.** Generations and findings created before the migration must still be queryable, with NULL diagnosis fields.
 
 ### 7. Renderer updates
 
@@ -315,7 +376,7 @@ The UI cards (`render_finding_detail` in `routes.rs`) should display the diagnos
 
 - The card headline becomes `synopsis` (already plain English), not the kind name.
 - A "Why this matters" sub-section uses `why_care`.
-- A status strip shows `service_impact`, `action_bias`, and `shape_class` as small badges.
+- A status strip shows `service_impact`, `action_bias`, and `failure_class` as small badges.
 - The existing finding_meta.rs static text becomes a fallback for findings that haven't been migrated to carry diagnosis (NULL columns).
 
 Slack and Discord payloads similarly: synopsis becomes the headline, why_care the body, action_bias becomes a badge.
@@ -365,20 +426,28 @@ This gap explicitly does NOT include:
 | Item | Lines |
 |---|---|
 | Migration 027 (10 ALTER TABLE statements) | ~25 SQL |
-| `FailureClass`, `ServiceImpact`, `ActionBias` enums in nq-db | ~80 Rust |
+| `FailureClass` enum (10 variants with docstrings) | ~60 Rust |
+| `ServiceImpact`, `ActionBias` enums | ~40 Rust |
 | `FindingDiagnosis` struct | ~10 Rust |
 | `Finding` struct extension | ~5 Rust |
-| Detector updates (17 detectors, ~10 lines each on average) | ~170 Rust |
+| Detector updates (17 detectors, ~15 lines each including value-dependent logic) | ~250 Rust |
 | Write path: include diagnosis in finding_observations insert | ~20 Rust |
 | Write path: include diagnosis in warning_state upsert | ~20 Rust |
 | `v_warnings` view recreation to expose diagnosis fields | ~30 SQL |
-| Renderer updates (UI card, Slack/Discord/webhook payloads) | ~80 Rust |
-| Tests (8 of them) | ~250 Rust |
-| **Total** | **~690** |
+| Renderer updates (UI card, Slack/Discord/webhook payloads) | ~120 Rust |
+| Tests (9 of them, including the value-dependent ones) | ~300 Rust |
+| **Total** | **~880** |
 
-Time: ~2-3 focused hours. The detector updates are mechanical but tedious — 17 detectors that each need a small judgment call about which class/impact/bias they emit. The schema and write path work is small but touches multiple files atomically.
+Time: **~4-6 focused hours, possibly more.** The earlier 2-3 hour estimate was written under the influence of recent success and was unrealistic. Honest accounting:
 
-This is the largest single gap in the structural prep series. It's bigger than EVIDENCE_LAYER and GENERATION_LINEAGE combined, because every detector has to learn to emit the new fields. It earns its keep because it's the *first* gap that touches the producer side of the contract — every prior gap added new infrastructure that producers wrote into transparently. This one requires every producer to learn a new language.
+- The 17 detector updates are mechanical *but* the value-dependent ones (disk_pressure, service_status, stale_host, stale_service, error_shift, scrape_regime_shift, check_failed) each require real per-instance logic, not just a static mapping. Plan ~30-45 minutes per value-dependent detector if you do the synopsis/why_care prose right.
+- The 10 statically-mapped detectors are faster (~10-15 minutes each) but still need synopsis/why_care prose written carefully. They are not free.
+- The renderer updates touch the UI cards, the finding detail page, the Slack/Discord payloads, AND the fallback rendering (which has its own visible-second-class requirements). Each surface needs to gracefully handle both populated and NULL diagnosis. This is more renderer work than any prior gap.
+- The 9 tests include a property-test-style consistency check (test 5) that runs across all detector outputs and a value-dependent boundary test (test 2). These are not toy tests; they take real time to write correctly.
+
+This is the largest single gap in the structural prep series by a meaningful margin. It's bigger than EVIDENCE_LAYER and GENERATION_LINEAGE combined, because every detector has to learn to emit the new fields *and* every renderer has to learn to consume them *and* the producer-side contract is the most carefully specified one yet. It earns its keep because it's the *first* gap that touches the producer side of the contract — every prior gap added new infrastructure that producers wrote into transparently. This one requires every producer to learn a new language.
+
+**Recommendation: do not try to do this in one sitting.** Plan it as two sessions: session 1 ships migration + enums + struct + write paths + statically-mapped detectors + the simple tests; session 2 ships value-dependent detectors + renderer updates + the property tests. Each session is ~2-3 hours and ends in a shippable state. The intermediate state (migration applied, half the detectors populating diagnosis, half still relying on fallback rendering) is exactly the half-migrated state the renderer fallback section was written to handle, so it's safe.
 
 ## Acceptance Criteria
 
@@ -386,9 +455,9 @@ This is the largest single gap in the structural prep series. It's bigger than E
 2. `warning_state` and `finding_observations` both have the five new diagnosis columns.
 3. `FailureClass`, `ServiceImpact`, `ActionBias` enums exist in nq-db with the variants and boundary documentation above.
 4. All 17 existing built-in detectors populate `FindingDiagnosis` deliberately. None default to a placeholder. None contradict their typed fields in the prose.
-5. All 8 tests above pass.
+5. All 9 tests above pass.
 6. All existing tests (114+ after the lineage gap) still pass — no regression.
-7. The live VM continues running normally after migration. Querying `SELECT shape_class, COUNT(*) FROM warning_state GROUP BY shape_class` returns sensible groupings within one generation cycle of redeployment.
+7. The live VM continues running normally after migration. Querying `SELECT failure_class, COUNT(*) FROM warning_state GROUP BY failure_class` returns sensible groupings within one generation cycle of redeployment.
 8. The finding detail page on the live UI shows the synopsis and why_care prominently for new findings. Pre-migration findings continue to render via the existing finding_meta.rs path (NULL diagnosis falls through to static metadata).
 
 ## Open Questions
