@@ -106,6 +106,36 @@ pub enum FailureClass {
 - A single condition usually fits one class at a time. If it fits two, the more advanced one wins.
 - Do not invent subclasses without retiring boundaries. The point of a small set is that operators can learn it.
 
+**Worked examples for the resource progression** (these matter — without them the boundaries drift):
+
+| Condition | Class | Why |
+|---|---|---|
+| Queue depth rising but well below limit | `Accumulation` | Producer/consumer imbalance, not yet near a bound |
+| WAL at 19% of DB and growing 100MB/day | `Accumulation` | Same shape: writes outpacing checkpoint retirement |
+| Disk at 91% with free space shrinking | `Pressure` | Approaching a bound, no failures yet |
+| Memory at 88% with swap rising | `Pressure` | Approaching a bound, OOM not triggering |
+| Connection pool at limit with waiters queueing | `Saturation` | At the bound, active queueing |
+| Conntrack table pinned near cap with `insert_failed > 0` | `Saturation` | At the bound, actively rejecting new state |
+| Request queue at depth_max with drops occurring | `Saturation` | At the bound, work is being lost |
+| PID space exhausted, `fork()` failing | `Exhaustion` | Past the bound, allocations rejected |
+| File descriptor limit hit, `open()` returning EMFILE | `Exhaustion` | Past the bound, allocations rejected |
+| Disk at 100%, writes returning ENOSPC | `Exhaustion` | Past the bound, allocations rejected |
+
+**Worked examples for the non-resource classes:**
+
+| Condition | Class | Why |
+|---|---|---|
+| Clock offset 200ms from NTP source | `Drift` | Stateless divergence from a reference setpoint |
+| Config file hash differs from canonical | `Drift` | Same shape — diverged from expected |
+| Stuck transaction holding a lock for 30 minutes | `Stuckness` | Work that stopped progressing, system alive |
+| Background worker hung but parent process up | `Stuckness` | Same shape |
+| Log source quiet for 10 generations when expected to emit | `Silence` | Telemetry source went dark |
+| `stale_host` finding for a host that stopped reporting | `Silence` | Same shape |
+| Service restarting every 5 minutes for 30 minutes | `Flapping` | Regime is unstable, "current state" is misleading |
+| Metric series count fluctuating ±20% per generation | `Flapping` | Same shape, applied to telemetry |
+
+The point of the worked examples is to lock the boundaries against drift. If a future detector author can't place a condition in this table by analogy, they should ask whether the condition is genuinely new (in which case the table needs an entry) or whether they're inventing a category that overlaps an existing one (in which case the existing class wins).
+
 #### `ServiceImpact`
 
 The first question every traditional-monitoring operator asks. *Is something actually failing right now?*
@@ -166,7 +196,20 @@ pub enum ActionBias {
 
 **Boundary discipline:** ActionBias is the operator-facing field that traditional-monitoring operators most need. It MUST be derivable but not duplicative of severity. A `warning`-severity finding can have any ActionBias from `Watch` to `InterveneNow` depending on trajectory and impact. The relationship is not 1:1 with severity.
 
-Detectors are required to emit ActionBias deliberately, not as a function of severity. If a detector can't justify the posture, it should pick `Watch` and let the operator escalate.
+**Detectors propose, projection elevates.** This is the most important constraint on ActionBias and the one most likely to go wrong if not stated upfront. Detectors do not have global context. A `wal_bloat` finding looks one way on a quiet dev machine and a completely different way on a production host whose disk is also at 91% used with shrinking free space. The detector emitting `wal_bloat` only sees the WAL — it does not know about the disk.
+
+The model:
+
+- **Detectors** emit a *baseline* ActionBias from local context only — what the detector itself can see (the value, the persistence, the trajectory of the metric it owns). For `wal_bloat`, that's roughly: warning severity → `InvestigateBusinessHours`, critical severity → `InvestigateNow`. No global knowledge.
+- **`DOMINANCE_PROJECTION_GAP` (a future gap)** is the layer that can *elevate* — never demote — the baseline based on co-located findings, host-wide pressure, or fleet context. If `wal_bloat` and `disk_pressure` both fire on the same host and disk_pressure is at 91%, the projection layer can promote both to `InvestigateNow` or higher because the regime is jointly worse than either finding sees individually.
+- The detector's baseline is what gets stored in `warning_state.action_bias` and `finding_observations.action_bias`. The projected/elevated value lives in the dominance projection's output (whatever that table ends up being called).
+- **Renderers display the elevated value when present, the detector baseline otherwise.**
+
+This separation is what prevents the fake-precision failure mode chatty named: `wal_bloat` on a dev box should NOT carry `InterveneNow` just because some other host's `wal_bloat` does. The detector says what it sees; the projection says what to do about it in context.
+
+For v1 of this gap, only the detector baseline exists. Renderers fall through directly to it. The elevation pass is `DOMINANCE_PROJECTION_GAP`'s job. This gap MUST NOT try to do context-aware action_bias selection from inside the detector loop — that's exactly the failure mode this constraint exists to prevent.
+
+**Emergency floor:** if a detector can't justify a baseline beyond `Watch`, it picks `Watch`. The operator and the projection layer can elevate from there. Detectors are not punished for being conservative.
 
 ### 2. Two derived prose fields
 
@@ -277,6 +320,19 @@ The UI cards (`render_finding_detail` in `routes.rs`) should display the diagnos
 
 Slack and Discord payloads similarly: synopsis becomes the headline, why_care the body, action_bias becomes a badge.
 
+**Fallback rendering MUST be visibly second-class.** This is non-negotiable. The transition state (some findings have typed diagnosis, some don't) creates a real risk that a half-migrated UI lets static legacy gloss masquerade as typed diagnosis. The operator looking at two cards must be able to tell which one has rich semantic data and which one is being rendered from per-kind static fallback.
+
+Concretely, the fallback path MUST:
+
+- Render the static `finding_meta.rs` plain_label and gloss in a visibly muted style (lower contrast, italic, or both).
+- Display a small "(legacy)" or "(unmigrated)" tag near the card headline so the operator knows the diagnosis fields are NULL for this finding.
+- Omit the typed badges (shape_class, service_impact, action_bias) entirely rather than rendering placeholders that look populated.
+- Never mix typed and fallback fields in the same card. A card is either fully typed or fully fallback. No mixed mode.
+
+This protects against the half-migrated lie: an operator seeing `wal_bloat` from a fully-migrated detector and `service_status` from a not-yet-migrated detector should immediately see the difference in the rendering, not have to inspect the underlying schema. The legacy treatment is deliberately less attractive so the migration pressure is visible in the UI itself.
+
+Once all 17 detectors are populating diagnosis (acceptance criterion #4), the fallback path becomes dead code and can be deprecated in a follow-up.
+
 This is renderer work that follows the schema work; both can ship in the same migration but the renderer changes are smaller and lower-risk.
 
 ## Why This Matters
@@ -341,7 +397,7 @@ This is the largest single gap in the structural prep series. It's bigger than E
 - **What about findings whose shape changes over time?** A WAL bloat that progresses into disk pressure is genuinely a different shape at gen N+100 than gen N. The current proposal recomputes the diagnosis on every emission, so this is handled — `finding_observations` will show the shape evolution, and `warning_state` always has the latest. This is correct but worth noting.
 - **Should the prose fields be the same per-instance, or vary?** A `wal_bloat` synopsis on a 5GB database might say different things than on a 50GB one. Detectors are free to vary the prose; the typed fields are the stable contract. Document this in the detector author guide (which is itself a thing that doesn't yet exist — a separate doc gap).
 - **What about findings from `check_failed` (user-defined SQL checks)?** These are `Unspecified` shape by default, but the saved-query model could let users declare a class for their checks. Defer to a follow-up that touches the saved-query schema.
-- **Should `finding_meta.rs` stay around at all?** It overlaps significantly with this gap. The honest answer is probably "yes for now, deprecate after this gap proves out." The static metadata is still useful for the *renderer fallback* path when diagnosis is NULL, and for documentation purposes.
+- **Should `finding_meta.rs` stay around at all?** It overlaps significantly with this gap. Sequenced answer: keep it during migration as the renderer fallback (rendered visibly second-class per §7), deprecate it once acceptance criterion #4 is met (all 17 detectors populate diagnosis), then delete it in a follow-up. Once typed diagnosis is universal, the static per-kind table is dead weight masquerading as documentation.
 
 ## References
 
