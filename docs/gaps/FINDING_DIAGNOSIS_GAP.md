@@ -1,10 +1,10 @@
 # Gap: Finding Diagnosis — typed semantics for operator legibility
 
-**Status:** specified, ready to build
+**Status:** built, shipped
 **Depends on:** schema v25 (finding_observations), v26 (lineage)
 **Build phase:** structural — adds typed semantics to the finding contract
 **Blocks:** `DOMINANCE_PROJECTION_GAP` (which needs typed shape to roll up by cause), the eventual full diagnosis schema (mechanism, trajectory.direction, related findings, runway)
-**Last updated:** 2026-04-11
+**Last updated:** 2026-04-13
 
 ## The Problem
 
