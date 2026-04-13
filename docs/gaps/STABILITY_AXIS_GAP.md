@@ -1,6 +1,6 @@
 # Gap: Stability Axis — presence pattern classification for findings
 
-**Status:** specified, not yet built
+**Status:** built, shipped
 **Depends on:** schema v27 (finding_diagnosis), finding_observations (evidence layer)
 **Build phase:** structural — adds the second state axis to the finding contract
 **Blocks:** `DOMINANCE_PROJECTION_GAP` (which needs stability to decide whether a finding represents a settled regime or transient noise), notification routing (stable findings route differently from flickering ones)
