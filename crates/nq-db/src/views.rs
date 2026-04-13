@@ -71,6 +71,32 @@ pub struct WarningVm {
     pub stability: Option<String>,
 }
 
+/// Per-host operational summary from dominance projection.
+/// One row per host, showing the dominant finding and folded counts.
+#[derive(Debug, Clone)]
+pub struct HostStateVm {
+    pub host: String,
+    pub dominant_kind: String,
+    pub dominant_subject: String,
+    pub dominant_severity: String,
+    pub dominant_failure_class: Option<String>,
+    pub dominant_service_impact: Option<String>,
+    pub dominant_action_bias: Option<String>,
+    pub dominant_stability: Option<String>,
+    pub dominant_synopsis: Option<String>,
+    /// Action bias after elevation from co-located findings.
+    pub elevated_action_bias: Option<String>,
+    /// Why elevation happened (if it did).
+    pub elevation_reason: Option<String>,
+    pub total_findings: i64,
+    pub observed_findings: i64,
+    pub suppressed_findings: i64,
+    pub subordinate_count: i64,
+    pub immediate_risk_count: i64,
+    pub degraded_count: i64,
+    pub flickering_count: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct HostDetailVm {
     pub host: String,
@@ -259,4 +285,95 @@ pub fn host_detail(db: &ReadDb, host: &str) -> anyhow::Result<HostDetailVm> {
         sqlite_dbs: vec![], // TODO: query monitored_dbs_current for this host
         recent_source_runs: recent_runs,
     })
+}
+
+/// Dominance projection: per-host operational summary.
+/// Returns one row per host with the dominant finding and folded counts.
+/// Applies action_bias elevation for compound regimes.
+pub fn host_states(db: &ReadDb) -> anyhow::Result<Vec<HostStateVm>> {
+    let mut stmt = db.conn.prepare(
+        "SELECT host, dominant_kind, dominant_subject, dominant_severity,
+                dominant_failure_class, dominant_service_impact, dominant_action_bias,
+                dominant_stability, dominant_synopsis, dominant_consecutive_gens,
+                total_findings, observed_findings, suppressed_findings,
+                immediate_risk_count, degraded_count, flickering_count, subordinate_count
+         FROM v_host_state
+         ORDER BY
+            CASE dominant_service_impact
+                WHEN 'immediate_risk' THEN 0
+                WHEN 'degraded' THEN 1
+                ELSE 2
+            END,
+            CASE dominant_severity
+                WHEN 'critical' THEN 0
+                WHEN 'warning' THEN 1
+                ELSE 2
+            END,
+            host",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(HostStateVm {
+            host: row.get(0)?,
+            dominant_kind: row.get(1)?,
+            dominant_subject: row.get(2)?,
+            dominant_severity: row.get(3)?,
+            dominant_failure_class: row.get(4)?,
+            dominant_service_impact: row.get(5)?,
+            dominant_action_bias: row.get(6)?,
+            dominant_stability: row.get(7)?,
+            dominant_synopsis: row.get(8)?,
+            elevated_action_bias: None,
+            elevation_reason: None,
+            total_findings: row.get(10)?,
+            observed_findings: row.get(11)?,
+            suppressed_findings: row.get(12)?,
+            immediate_risk_count: row.get(13)?,
+            degraded_count: row.get(14)?,
+            flickering_count: row.get(15)?,
+            subordinate_count: row.get(16)?,
+        })
+    })?;
+
+    let mut states: Vec<HostStateVm> = rows.collect::<Result<_, _>>()?;
+
+    // Action bias elevation: compound regimes promote action_bias.
+    // Never demotes below the detector's baseline.
+    for s in &mut states {
+        let baseline = s.dominant_action_bias.as_deref().unwrap_or("watch");
+
+        let mut elevated = baseline.to_string();
+        let mut reason: Option<String> = None;
+
+        // Rule 1: ImmediateRisk present → everything at least InvestigateNow
+        if s.immediate_risk_count > 0 && action_bias_rank(baseline) > action_bias_rank("investigate_now") {
+            elevated = "investigate_now".to_string();
+            reason = Some("co-located immediate risk finding".into());
+        }
+
+        // Rule 2: 2+ Degraded findings → at least InvestigateNow
+        if s.degraded_count >= 2 && action_bias_rank(&elevated) > action_bias_rank("investigate_now") {
+            elevated = "investigate_now".to_string();
+            reason = Some(format!("{} co-located degraded findings", s.degraded_count));
+        }
+
+        if elevated != baseline {
+            s.elevated_action_bias = Some(elevated);
+            s.elevation_reason = reason;
+        }
+    }
+
+    Ok(states)
+}
+
+/// Lower rank = more urgent. Used for elevation comparisons.
+fn action_bias_rank(s: &str) -> u8 {
+    match s {
+        "intervene_now" => 0,
+        "intervene_soon" => 1,
+        "investigate_now" => 2,
+        "investigate_business_hours" => 3,
+        "watch" => 4,
+        _ => 5,
+    }
 }

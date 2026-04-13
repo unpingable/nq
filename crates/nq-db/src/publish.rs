@@ -2063,6 +2063,141 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Dominance projection tests (DOMINANCE_PROJECTION_GAP)
+    // -----------------------------------------------------------------------
+
+    fn query_host_state(db: &WriteDb, host: &str) -> Option<(String, Option<String>, Option<String>)> {
+        // Returns (dominant_kind, dominant_service_impact, dominant_action_bias)
+        db.conn.query_row(
+            "SELECT dominant_kind, dominant_service_impact, dominant_action_bias FROM v_host_state WHERE host = ?1",
+            rusqlite::params![host],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).ok()
+    }
+
+    fn query_host_counts(db: &WriteDb, host: &str) -> Option<(i64, i64, i64)> {
+        // Returns (total, observed, subordinate_count)
+        db.conn.query_row(
+            "SELECT total_findings, observed_findings, subordinate_count FROM v_host_state WHERE host = ?1",
+            rusqlite::params![host],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).ok()
+    }
+
+    #[test]
+    fn projection_single_finding_host() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        let state = query_host_state(&db, "host-1");
+        assert!(state.is_some(), "host with one finding should appear in v_host_state");
+        let (kind, _, _) = state.unwrap();
+        assert_eq!(kind, "disk_pressure");
+
+        let (total, observed, subordinate) = query_host_counts(&db, "host-1").unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(observed, 1);
+        assert_eq!(subordinate, 0);
+    }
+
+    #[test]
+    fn projection_dominance_by_service_impact() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Two findings: one with diagnosis (ImmediateRisk), one without
+        let mut findings = vec![
+            finding("host-1", "wal_bloat", "/db", "Δg"),
+        ];
+        // Add a finding with ImmediateRisk diagnosis
+        findings.push(Finding {
+            host: "host-1".into(),
+            kind: "service_status".into(),
+            subject: "svc-1".into(),
+            domain: "Δg".into(),
+            message: "down".into(),
+            value: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Availability,
+                service_impact: ServiceImpact::ImmediateRisk,
+                action_bias: ActionBias::InterveneNow,
+                synopsis: "Service svc-1 is down.".into(),
+                why_care: "Service is not running.".into(),
+            }),
+        });
+
+        update_warning_state(&mut db, 1, &findings, &esc).unwrap();
+
+        let (kind, impact, _) = query_host_state(&db, "host-1").unwrap();
+        assert_eq!(kind, "service_status", "ImmediateRisk should dominate over NoneCurrent");
+        assert_eq!(impact.as_deref(), Some("immediate_risk"));
+    }
+
+    #[test]
+    fn projection_suppressed_excluded_from_dominance() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: disk_pressure observed
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        // Gen 2: stale_host fires → disk_pressure suppressed
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "stale_host", "", "Δo"),
+        ], &esc).unwrap();
+
+        // v_host_state should show stale_host as dominant (disk_pressure is suppressed)
+        let state = query_host_state(&db, "host-1");
+        assert!(state.is_some());
+        let (kind, _, _) = state.unwrap();
+        assert_eq!(kind, "stale_host", "suppressed finding should not dominate");
+    }
+
+    #[test]
+    fn projection_hostless_findings_excluded() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // A finding with empty host
+        update_warning_state(&mut db, 1, &[
+            finding("", "check_failed", "#1", "Δg"),
+        ], &esc).unwrap();
+
+        let state = query_host_state(&db, "");
+        assert!(state.is_none(), "host-less findings should not appear in v_host_state");
+    }
+
+    #[test]
+    fn projection_subordinate_count_correct() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+            finding("host-1", "wal_bloat", "/db1", "Δg"),
+            finding("host-1", "wal_bloat", "/db2", "Δg"),
+            finding("host-1", "mem_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        let (_, observed, subordinate) = query_host_counts(&db, "host-1").unwrap();
+        assert_eq!(observed, 4);
+        assert_eq!(subordinate, 3, "4 observed findings → 1 dominant + 3 subordinate");
+    }
+
+    // -----------------------------------------------------------------------
     // Stability axis tests (STABILITY_AXIS_GAP)
     // -----------------------------------------------------------------------
 

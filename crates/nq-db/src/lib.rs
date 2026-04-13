@@ -17,4 +17,4 @@ pub use publish::{publish_batch, update_warning_state, EscalationConfig, Publish
 pub use query::{query_read_only, QueryLimits, QueryResult};
 pub use retention::{prune, PruneStats};
 pub use snapshot::create_snapshot;
-pub use views::{host_detail, overview, HostDetailVm, OverviewVm};
+pub use views::{host_detail, host_states, overview, HostDetailVm, HostStateVm, OverviewVm};

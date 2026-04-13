@@ -72,7 +72,7 @@ fn hostile_strings_are_escaped_in_overview_html() {
         history_generations: 10,
     };
 
-    let html = render_overview(&vm);
+    let html = render_overview(&vm, &[]);
 
     // --- Escaped forms MUST be present ---
     assert!(

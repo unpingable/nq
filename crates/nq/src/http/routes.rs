@@ -76,8 +76,9 @@ async fn index(State(db): State<Db>) -> Html<String> {
         warnings: vec![],
         history_generations: 0,
     });
+    let host_states = nq_db::host_states(&db).unwrap_or_default();
 
-    Html(render_overview(&vm))
+    Html(render_overview(&vm, &host_states))
 }
 
 async fn api_overview(State(db): State<Db>) -> Json<serde_json::Value> {
@@ -651,7 +652,7 @@ async fn api_query(State(db): State<Db>, Query(params): Query<QueryParams>) -> J
     }
 }
 
-pub fn render_overview(vm: &nq_db::OverviewVm) -> String {
+pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm]) -> String {
     let gen_line = match (&vm.generation_id, &vm.generation_status, &vm.generation_age_s) {
         (Some(id), Some(status), Some(age)) => {
             format!(
@@ -977,6 +978,8 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 
 <div class="main">
 
+{host_state_section}
+
 <h2>Findings ({signal_count})</h2>
 <table id="findings-table">
 <tr><th></th><th>Diagnosis</th><th>Host</th><th>Message</th><th>Gens</th></tr>
@@ -1146,6 +1149,40 @@ loadSaved();
 </script>
 </body>
 </html>"#,
+        host_state_section = if host_states.is_empty() { String::new() } else {
+            let hs_rows: String = host_states.iter().map(|hs| {
+                let impact = hs.dominant_service_impact.as_deref().unwrap_or("?");
+                let impact_class = match impact {
+                    "immediate_risk" => "status-down",
+                    "degraded" => "status-degraded",
+                    _ => "",
+                };
+                let action = hs.elevated_action_bias.as_deref()
+                    .or(hs.dominant_action_bias.as_deref())
+                    .unwrap_or("?");
+                let synopsis = hs.dominant_synopsis.as_deref().unwrap_or(&hs.dominant_kind);
+                let sub_badge = if hs.subordinate_count > 0 {
+                    format!(" <span class=\"suppressed-badge\">+{} more</span>", hs.subordinate_count)
+                } else { String::new() };
+                let suppr_badge = if hs.suppressed_findings > 0 {
+                    format!(" <span class=\"suppressed-badge\">{} suppressed</span>", hs.suppressed_findings)
+                } else { String::new() };
+                let elevation_note = hs.elevation_reason.as_ref().map(|r| {
+                    format!(" <span class=\"diag-badge\" style=\"border-color:#d29922;color:#d29922;\" title=\"{}\">elevated</span>", escape_html(r))
+                }).unwrap_or_default();
+                format!(
+                    "<tr><td><strong>{host}</strong></td><td class=\"{impact_class}\">{synopsis}{sub_badge}{suppr_badge}{elevation_note}</td><td>{action}</td></tr>",
+                    host = escape_html(&hs.host),
+                    impact_class = impact_class,
+                    synopsis = escape_html(synopsis),
+                    sub_badge = sub_badge,
+                    suppr_badge = suppr_badge,
+                    elevation_note = elevation_note,
+                    action = escape_html(&action.replace('_', " ")),
+                )
+            }).collect();
+            format!("<h2>Host State</h2><table><tr><th>Host</th><th>Dominant</th><th>Posture</th></tr>{}</table>", hs_rows)
+        },
         signal_count = signal_warnings.len(),
         no_findings = if signal_warnings.is_empty() { "<p style=\"color:#484f58;font-size:13px;\">No active findings.</p>" } else { "" },
         meta_section = if meta_warnings.is_empty() { String::new() } else {
