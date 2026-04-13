@@ -151,6 +151,42 @@ impl ActionBias {
     }
 }
 
+/// Presence-pattern stability of a finding over recent history.
+/// Computed per-finding from observation history in the lifecycle pass,
+/// not per-detector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stability {
+    /// Finding appeared recently, not yet enough history to classify.
+    New,
+    /// Consistently present for at least stability_window generations.
+    Stable,
+    /// Oscillating: present-absent-present pattern in recent history.
+    Flickering,
+    /// Was present but now in the recovery window (absent_gens > 0).
+    Recovering,
+}
+
+impl Stability {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Stable => "stable",
+            Self::Flickering => "flickering",
+            Self::Recovering => "recovering",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "new" => Some(Self::New),
+            "stable" => Some(Self::Stable),
+            "flickering" => Some(Self::Flickering),
+            "recovering" => Some(Self::Recovering),
+            _ => None,
+        }
+    }
+}
+
 /// Typed diagnosis attached to a finding at emission time.
 ///
 /// The contract: detectors populate this deliberately. Renderers consume

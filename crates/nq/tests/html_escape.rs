@@ -67,6 +67,7 @@ fn hostile_strings_are_escaped_in_overview_html() {
             service_impact: None,
             action_bias: None,
             synopsis: None,
+            stability: None,
         }],
         history_generations: 10,
     };

@@ -68,6 +68,7 @@ pub struct WarningVm {
     pub service_impact: Option<String>,
     pub action_bias: Option<String>,
     pub synopsis: Option<String>,
+    pub stability: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -180,7 +181,7 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
     let warnings: Vec<WarningVm> = if gen_id.is_some() {
         let mut warn_stmt = db.conn.prepare(
             "SELECT severity, kind, host, subject, message, domain, first_seen_at, consecutive_gens, acknowledged, finding_class, visibility_state, suppression_reason,
-                    failure_class, service_impact, action_bias, synopsis
+                    failure_class, service_impact, action_bias, synopsis, stability
              FROM v_warnings ORDER BY severity DESC, kind, host",
         )?;
         let rows = warn_stmt
@@ -202,6 +203,7 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
                     service_impact: row.get(13).ok(),
                     action_bias: row.get(14).ok(),
                     synopsis: row.get(15).ok(),
+                    stability: row.get(16).ok(),
                 })
             })?
             .collect::<Result<_, _>>()?;

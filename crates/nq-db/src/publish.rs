@@ -576,6 +576,46 @@ fn update_warning_state_inner(
     drop(upsert);
     drop(insert_obs);
 
+    // Stability computation: classify each active finding's presence pattern.
+    // Runs after upserts (so consecutive_gens is current) and before masking.
+    let stability_window: i64 = 10;
+    let observation_window: i64 = 24;
+    {
+        let mut set_stability = tx.prepare_cached(
+            "UPDATE warning_state SET stability = ?4
+             WHERE host = ?1 AND kind = ?2 AND subject = ?3"
+        )?;
+
+        for f in findings {
+            let gens: i64 = tx.query_row(
+                "SELECT consecutive_gens FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
+                rusqlite::params![&f.host, &f.kind, &f.subject],
+                |row| row.get(0),
+            ).unwrap_or(0);
+
+            let stability = if gens < stability_window {
+                "new"
+            } else {
+                // Check for flickering: count observed gens in the observation window
+                let finding_key = compute_finding_key("local", &f.host, &f.kind, &f.subject);
+                let window_start = generation_id - observation_window;
+                let observed_in_window: i64 = tx.query_row(
+                    "SELECT COUNT(DISTINCT generation_id) FROM finding_observations
+                     WHERE finding_key = ?1 AND generation_id > ?2",
+                    rusqlite::params![&finding_key, window_start],
+                    |row| row.get(0),
+                ).unwrap_or(0);
+                // Gaps = gens in window where finding was absent
+                let window_gens = std::cmp::min(observation_window, generation_id);
+                let gaps = window_gens - observed_in_window;
+                if gaps >= 2 { "flickering" } else { "stable" }
+            };
+
+            set_stability.execute(rusqlite::params![&f.host, &f.kind, &f.subject, stability])?;
+        }
+        drop(set_stability);
+    }
+
     // Build masking map: host → suppression_reason, driven by MASKING_RULES.
     // Each rule identifies a parent finding kind; if that parent is observed,
     // all child findings on the same host are suppressed instead of aged out.
@@ -613,7 +653,8 @@ fn update_warning_state_inner(
     };
 
     let mut inc_absent = tx.prepare_cached(
-        "UPDATE warning_state SET absent_gens = absent_gens + 1 WHERE host = ?1 AND kind = ?2 AND subject = ?3",
+        "UPDATE warning_state SET absent_gens = absent_gens + 1, stability = 'recovering'
+         WHERE host = ?1 AND kind = ?2 AND subject = ?3",
     )?;
     let mut del = tx.prepare_cached(
         "DELETE FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
@@ -2019,5 +2060,157 @@ mod tests {
             why_care: "test".into(),
         };
         assert!(diag_degraded.action_bias >= ActionBias::InvestigateNow);
+    }
+
+    // -----------------------------------------------------------------------
+    // Stability axis tests (STABILITY_AXIS_GAP)
+    // -----------------------------------------------------------------------
+
+    fn get_stability(db: &WriteDb, host: &str, kind: &str) -> Option<String> {
+        db.conn.query_row(
+            "SELECT stability FROM warning_state WHERE host = ?1 AND kind = ?2",
+            rusqlite::params![host, kind],
+            |row| row.get(0),
+        ).ok().flatten()
+    }
+
+    #[test]
+    fn new_finding_has_stability_new() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        assert_eq!(get_stability(&db, "host-1", "disk_pressure").as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn finding_becomes_stable_after_window() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Run for 12 consecutive gens (stability_window = 10)
+        for g in 1..=12 {
+            update_warning_state(&mut db, g, &[
+                finding("host-1", "disk_pressure", "", "Δg"),
+            ], &esc).unwrap();
+        }
+
+        assert_eq!(get_stability(&db, "host-1", "disk_pressure").as_deref(), Some("stable"));
+    }
+
+    #[test]
+    fn flickering_detection() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Create a flickering pattern: present for 3, absent for 1, repeat.
+        // After enough history, the finding should be classified as flickering.
+        for cycle in 0..4 {
+            let base = cycle * 4;
+            // 3 gens present
+            for g in 1..=3 {
+                update_warning_state(&mut db, base + g, &[
+                    finding("host-1", "disk_pressure", "", "Δg"),
+                ], &esc).unwrap();
+            }
+            // 1 gen absent
+            update_warning_state(&mut db, base + 4, &[], &esc).unwrap();
+        }
+
+        // One more present gen to make it active with enough consecutive_gens
+        // that it would be "stable" if not for the gaps
+        for g in 17..=28 {
+            update_warning_state(&mut db, g, &[
+                finding("host-1", "disk_pressure", "", "Δg"),
+            ], &esc).unwrap();
+        }
+
+        // consecutive_gens should be ≥ 10 now, so the stability check
+        // looks at observation history. The gaps from earlier should
+        // make it flickering.
+        let stability = get_stability(&db, "host-1", "disk_pressure");
+        assert_eq!(stability.as_deref(), Some("flickering"),
+            "finding with gaps in observation history should be flickering");
+    }
+
+    #[test]
+    fn missing_finding_becomes_recovering() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: present
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        // Gen 2: absent → recovery window starts
+        update_warning_state(&mut db, 2, &[], &esc).unwrap();
+
+        assert_eq!(get_stability(&db, "host-1", "disk_pressure").as_deref(), Some("recovering"));
+    }
+
+    #[test]
+    fn suppressed_finding_preserves_stability() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Build up to stable (12 gens)
+        for g in 1..=12 {
+            update_warning_state(&mut db, g, &[
+                finding("host-1", "disk_pressure", "", "Δg"),
+            ], &esc).unwrap();
+        }
+        assert_eq!(get_stability(&db, "host-1", "disk_pressure").as_deref(), Some("stable"));
+
+        // Gen 13: host goes stale → disk_pressure suppressed
+        update_warning_state(&mut db, 13, &[
+            finding("host-1", "stale_host", "", "Δo"),
+        ], &esc).unwrap();
+
+        // Stability should still be "stable" (suppression doesn't recompute)
+        assert_eq!(get_stability(&db, "host-1", "disk_pressure").as_deref(), Some("stable"),
+            "suppressed finding should preserve pre-suppression stability");
+    }
+
+    #[test]
+    fn stability_null_for_pre_migration_rows() {
+        // Findings created before migration 028 should have NULL stability
+        let db = test_db();
+        ensure_host_known(&db, "host-1");
+
+        // Directly insert a warning_state row without stability
+        db.conn.execute(
+            "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, finding_class, absent_gens)
+             VALUES ('host-1', 'disk_pressure', '', 'Δg', 'test', 'info', 1, '2026-01-01', 1, '2026-01-01', 1, 'signal', 0)",
+            [],
+        ).unwrap();
+
+        assert_eq!(get_stability(&db, "host-1", "disk_pressure"), None,
+            "pre-migration rows should have NULL stability");
+    }
+
+    #[test]
+    fn stability_exposed_through_v_warnings() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        let stability: Option<String> = db.conn.query_row(
+            "SELECT stability FROM v_warnings WHERE host = 'host-1' AND kind = 'disk_pressure'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(stability.as_deref(), Some("new"), "v_warnings must expose stability");
     }
 }

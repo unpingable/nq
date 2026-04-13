@@ -799,6 +799,13 @@ pub fn render_overview(vm: &nq_db::OverviewVm) -> String {
             // fallback to finding_meta plain_label for unmigrated findings.
             let label = w.synopsis.as_deref().unwrap_or(fmeta.plain_label);
 
+            // Stability badge: only show for non-trivial states
+            let stability_badge = match w.stability.as_deref() {
+                Some("flickering") => " <span class=\"diag-badge\" style=\"border-color:#d29922;color:#d29922;\">flickering</span>",
+                Some("recovering") => " <span class=\"diag-badge\" style=\"border-color:#3fb950;color:#3fb950;\">resolving</span>",
+                _ => "",
+            };
+
             // Typed diagnosis badges (only when diagnosis is present)
             let diag_badges = if let Some(ref fc) = w.failure_class {
                 let ab_label = w.action_bias.as_deref().unwrap_or("");
@@ -820,7 +827,7 @@ pub fn render_overview(vm: &nq_db::OverviewVm) -> String {
             format!(
                 "<tr class=\"{sev_class}\" data-domain=\"{domain}\">
                     <td class=\"sev-dot\"></td>
-                    <td><a href=\"{detail_url}\">{label}</a>{suppressed_badge}{diag_badges}<br><span class=\"kind-sub\">{kind} · {domain}</span></td>
+                    <td><a href=\"{detail_url}\">{label}</a>{suppressed_badge}{diag_badges}{stability_badge}<br><span class=\"kind-sub\">{kind} · {domain}</span></td>
                     <td>{host}</td>
                     <td>{message}</td>
                     <td class=\"gens\">{gens}</td>
