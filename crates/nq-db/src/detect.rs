@@ -291,7 +291,13 @@ fn detect_wal_bloat(
                 value: Some(wal_size_mb),
                 finding_class: "signal".into(),
                 rule_hash: None,
-                diagnosis: None,
+                diagnosis: Some(FindingDiagnosis {
+                    failure_class: FailureClass::Accumulation,
+                    service_impact: ServiceImpact::NoneCurrent,
+                    action_bias: ActionBias::InvestigateBusinessHours,
+                    synopsis: format!("WAL is {:.1} MB ({:.1}% of database size).", wal_size_mb, pct),
+                    why_care: "WAL growing faster than checkpoints can retire it. If unaddressed, this contributes to disk pressure.".into(),
+                }),
             });
         }
     }
@@ -332,7 +338,13 @@ fn detect_freelist_bloat(
                 value: Some(reclaimable_mb),
                 finding_class: "signal".into(),
                 rule_hash: None,
-                diagnosis: None,
+                diagnosis: Some(FindingDiagnosis {
+                    failure_class: FailureClass::Accumulation,
+                    service_impact: ServiceImpact::NoneCurrent,
+                    action_bias: ActionBias::InvestigateBusinessHours,
+                    synopsis: format!("Freelist has {:.1} MB reclaimable ({:.1}% of database).", reclaimable_mb, pct),
+                    why_care: "Dead pages accumulating faster than VACUUM can reclaim. Disk usage grows without corresponding data growth.".into(),
+                }),
             });
         }
     }
@@ -410,27 +422,42 @@ fn detect_stale_services(
     out: &mut Vec<Finding>,
 ) -> anyhow::Result<()> {
     let mut stmt = db.prepare(
-        "SELECT host, service, age_s FROM v_services WHERE generations_behind > ?1",
+        "SELECT host, service, age_s, generations_behind FROM v_services WHERE generations_behind > ?1",
     )?;
     let rows = stmt.query_map([config.stale_generations], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?,
         ))
     })?;
     for row in rows {
-        let (host, service, age_s) = row?;
+        let (host, service, age_s, gens_behind) = row?;
+
+        // Value-dependent: NoneCurrent if ≤10 gens, Degraded otherwise
+        let (impact, bias) = if gens_behind > 10 {
+            (ServiceImpact::Degraded, ActionBias::InvestigateNow)
+        } else {
+            (ServiceImpact::NoneCurrent, ActionBias::InvestigateBusinessHours)
+        };
+
         out.push(Finding {
             host,
             domain: "Δo".into(),
             kind: "stale_service".into(),
-            subject: service,
+            subject: service.clone(),
             message: format!("last seen {}s ago", age_s),
             value: Some(age_s as f64),
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Silence,
+                service_impact: impact,
+                action_bias: bias,
+                synopsis: format!("Service '{}' has not reported in {} generations.", service, gens_behind),
+                why_care: "Service telemetry is stale. Current status unknown.".into(),
+            }),
         });
     }
     Ok(())
@@ -454,16 +481,34 @@ fn detect_service_status(
     for row in rows {
         let (host, service, status) = row?;
         let domain = "Δg"; // present-but-bad, not missing
+
+        // Value-dependent: up→NoneCurrent, degraded→Degraded, down→ImmediateRisk
+        let (impact, bias) = match status.as_str() {
+            "down" | "failed" | "dead" => (ServiceImpact::ImmediateRisk, ActionBias::InterveneNow),
+            "degraded" | "activating" | "deactivating" => (ServiceImpact::Degraded, ActionBias::InvestigateNow),
+            _ => (ServiceImpact::NoneCurrent, ActionBias::Watch),
+        };
+
         out.push(Finding {
             host,
             domain: domain.into(),
             kind: "service_status".into(),
-            subject: service,
+            subject: service.clone(),
             message: format!("status: {}", status),
             value: None,
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Availability,
+                service_impact: impact,
+                action_bias: bias,
+                synopsis: format!("Service '{}' is {}.", service, status),
+                why_care: match status.as_str() {
+                    "down" | "failed" | "dead" => "Service is not running. Immediate investigation required.".into(),
+                    "degraded" | "activating" | "deactivating" => "Service is in a transitional or degraded state.".into(),
+                    _ => format!("Service has unexpected status '{}'.", status),
+                },
+            }),
         });
     }
     Ok(())
@@ -487,15 +532,21 @@ fn detect_source_errors(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
             None => format!("last pull: {}", status),
         };
         out.push(Finding {
-            host: source,
+            host: source.clone(),
             domain: "Δs".into(),
             kind: "source_error".into(),
             subject: String::new(),
             message: msg,
             value: None,
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Silence,
+                service_impact: ServiceImpact::NoneCurrent,
+                action_bias: ActionBias::InvestigateNow,
+                synopsis: format!("Source '{}' is returning errors.", source),
+                why_care: "Collection is failing for this source. Downstream findings may be stale or missing.".into(),
+            }),
         });
     }
     Ok(())
@@ -530,9 +581,15 @@ fn detect_metric_nan(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<
             subject: name.clone(),
             message: format!("{} is {}", name, kind),
             value: None,
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Drift,
+                service_impact: ServiceImpact::NoneCurrent,
+                action_bias: ActionBias::InvestigateBusinessHours,
+                synopsis: format!("Metric '{}' is reporting {}.", name, kind),
+                why_care: "A metric reporting NaN or Inf usually means the underlying measurement is broken.".into(),
+            }),
         });
     }
     Ok(())
@@ -554,16 +611,39 @@ fn detect_disk_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
     })?;
     for row in rows {
         let (host, pct, avail_mb) = row?;
+
+        // Value-dependent: ≤90% → NoneCurrent/InvestigateBH,
+        // 90-95% → Degraded/InvestigateNow, >95% → ImmediateRisk/InterveneNow
+        let (impact, bias) = if pct > 95.0 {
+            (ServiceImpact::ImmediateRisk, ActionBias::InterveneNow)
+        } else if pct > 90.0 {
+            (ServiceImpact::Degraded, ActionBias::InvestigateNow)
+        } else {
+            (ServiceImpact::NoneCurrent, ActionBias::InvestigateBusinessHours)
+        };
+
         out.push(Finding {
-            host,
+            host: host.clone(),
             domain: "Δg".into(),
             kind: "disk_pressure".into(),
             subject: String::new(),
             message: format!("{:.1}% used ({} MB free)", pct, avail_mb),
             value: Some(pct),
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Pressure,
+                service_impact: impact,
+                action_bias: bias,
+                synopsis: format!("Disk is {:.1}% full on {} ({} MB remaining).", pct, host, avail_mb),
+                why_care: if pct > 95.0 {
+                    "Disk is critically full. Write failures imminent.".into()
+                } else if pct > 90.0 {
+                    "Disk is approaching capacity. Free space shrinking.".into()
+                } else {
+                    "Disk usage is elevated. Monitor for continued growth.".into()
+                },
+            }),
         });
     }
     Ok(())
@@ -585,15 +665,21 @@ fn detect_memory_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Re
     for row in rows {
         let (host, pct, avail_mb) = row?;
         out.push(Finding {
-            host,
+            host: host.clone(),
             domain: "Δg".into(),
             kind: "mem_pressure".into(),
             subject: String::new(),
             message: format!("{:.1}% used ({} MB free)", pct, avail_mb),
             value: Some(pct),
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Pressure,
+                service_impact: ServiceImpact::NoneCurrent,
+                action_bias: ActionBias::InvestigateNow,
+                synopsis: format!("Memory is {:.1}% used on {} ({} MB free).", pct, host, avail_mb),
+                why_care: "Memory pressure is elevated. OOM kills become more likely as free memory shrinks.".into(),
+            }),
         });
     }
     Ok(())
@@ -674,9 +760,15 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                         now, avg, now - avg
                     ),
                     value: Some(now),
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+                    finding_class: "signal".into(),
+                    rule_hash: None,
+                    diagnosis: Some(FindingDiagnosis {
+                        failure_class: FailureClass::Pressure,
+                        service_impact: ServiceImpact::NoneCurrent,
+                        action_bias: ActionBias::Watch,
+                        synopsis: format!("Disk usage on {} is trending upward (+{:.1}pp above trailing average).", host, now - avg),
+                        why_care: "Sustained upward drift in disk usage. Not urgent yet but worth watching.".into(),
+                    }),
                 });
             }
         }
@@ -694,9 +786,15 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                         now, avg, now - avg
                     ),
                     value: Some(now),
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+                    finding_class: "signal".into(),
+                    rule_hash: None,
+                    diagnosis: Some(FindingDiagnosis {
+                        failure_class: FailureClass::Pressure,
+                        service_impact: ServiceImpact::NoneCurrent,
+                        action_bias: ActionBias::Watch,
+                        synopsis: format!("Memory usage on {} is trending upward (+{:.1}pp above trailing average).", host, now - avg),
+                        why_care: "Sustained upward drift in memory usage. Not urgent yet but worth watching.".into(),
+                    }),
                 });
             }
         }
@@ -714,9 +812,15 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                         now, avg, now / avg
                     ),
                     value: Some(now),
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+                    finding_class: "signal".into(),
+                    rule_hash: None,
+                    diagnosis: Some(FindingDiagnosis {
+                        failure_class: FailureClass::Pressure,
+                        service_impact: ServiceImpact::NoneCurrent,
+                        action_bias: ActionBias::Watch,
+                        synopsis: format!("CPU load on {} is {:.1}x the trailing average.", host, now / avg),
+                        why_care: "Sustained upward drift in CPU load. Not urgent yet but worth watching.".into(),
+                    }),
                 });
             }
         }
@@ -774,12 +878,18 @@ fn detect_service_flap(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resul
             host,
             domain: "Δh".into(),
             kind: "service_flap".into(),
-            subject: service,
+            subject: service.clone(),
             message: format!("{} state transitions in last 12 generations", transitions),
             value: Some(transitions as f64),
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Flapping,
+                service_impact: ServiceImpact::Degraded,
+                action_bias: ActionBias::InvestigateNow,
+                synopsis: format!("Service '{}' has changed state {} times in 12 generations.", service, transitions),
+                why_care: "Rapid state oscillation means 'current status' is misleading. The regime itself is unstable.".into(),
+            }),
         });
     }
     Ok(())
@@ -829,9 +939,15 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             subject: service.clone(),
             message: format!("service '{}' was present historically but has disappeared", service),
             value: None,
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Silence,
+                service_impact: ServiceImpact::NoneCurrent,
+                action_bias: ActionBias::InvestigateBusinessHours,
+                synopsis: format!("Service '{}' was recently present but has vanished.", service),
+                why_care: "A previously visible service has stopped reporting. May indicate removal, rename, or collection failure.".into(),
+            }),
         });
     }
 
@@ -872,9 +988,15 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             subject: metric_name.clone(),
             message: format!("metric '{}' was present historically but has disappeared", metric_name),
             value: None,
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Silence,
+                service_impact: ServiceImpact::NoneCurrent,
+                action_bias: ActionBias::InvestigateBusinessHours,
+                synopsis: format!("Metric '{}' was recently present but has vanished.", metric_name),
+                why_care: "A previously visible metric series has stopped reporting. May indicate exporter change or collection failure.".into(),
+            }),
         });
     }
 
@@ -942,7 +1064,13 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                 value: Some(new_count as f64),
                 finding_class: "signal".into(),
                 rule_hash: None,
-                diagnosis: None,
+                diagnosis: Some(FindingDiagnosis {
+                    failure_class: FailureClass::Flapping,
+                    service_impact: ServiceImpact::NoneCurrent,
+                    action_bias: ActionBias::InvestigateBusinessHours,
+                    synopsis: format!("{} new metric series appeared this generation ({} total).", new_count, total),
+                    why_care: "Large burst of new series suggests exporter reconfiguration or label explosion.".into(),
+                }),
             });
         }
 
@@ -960,7 +1088,13 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                 value: Some(vanished as f64),
                 finding_class: "signal".into(),
                 rule_hash: None,
-                diagnosis: None,
+                diagnosis: Some(FindingDiagnosis {
+                    failure_class: FailureClass::Silence,
+                    service_impact: ServiceImpact::NoneCurrent,
+                    action_bias: ActionBias::InvestigateBusinessHours,
+                    synopsis: format!("{} metric series vanished in the last 2 generations ({} still active).", vanished, total),
+                    why_care: "Large fraction of series disappeared. Possible exporter failure or target loss.".into(),
+                }),
             });
         }
     }
@@ -1020,9 +1154,15 @@ fn detect_log_silence(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
             subject: source_id.clone(),
             message: format!("log source '{}' silent (baseline avg {:.0} lines/gen)", source_id, avg),
             value: Some(0.0),
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Silence,
+                service_impact: ServiceImpact::NoneCurrent,
+                action_bias: ActionBias::InvestigateBusinessHours,
+                synopsis: format!("Log source '{}' has gone silent (baseline was {:.0} lines/gen).", source_id, avg),
+                why_care: "A log source that normally emits output has gone quiet. May hide errors or indicate a process failure.".into(),
+            }),
         });
     }
 
@@ -1095,9 +1235,18 @@ fn detect_error_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
                 source_id, errors, total, ratio * 100.0, baseline * 100.0
             ),
             value: Some(ratio),
-                finding_class: "signal".into(),
-                rule_hash: None,
-                diagnosis: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Drift,
+                service_impact: ServiceImpact::Degraded,
+                action_bias: ActionBias::InvestigateNow,
+                synopsis: format!(
+                    "Error rate for '{}' spiked to {:.1}% (baseline {:.1}%).",
+                    source_id, ratio * 100.0, baseline * 100.0
+                ),
+                why_care: "Error rate is significantly above baseline. Something is producing more errors than usual.".into(),
+            }),
         });
     }
 
@@ -1144,7 +1293,13 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                     value: None,
                     finding_class: "meta".into(),
                     rule_hash: Some(hash),
-                    diagnosis: None,
+                    diagnosis: Some(FindingDiagnosis {
+                        failure_class: FailureClass::Unspecified,
+                        service_impact: ServiceImpact::NoneCurrent,
+                        action_bias: ActionBias::InvestigateBusinessHours,
+                        synopsis: format!("Saved check '{}' failed to execute.", name),
+                        why_care: "A user-defined check could not run. The check query may have a syntax error or reference missing tables.".into(),
+                    }),
                 });
             }
             Ok((row_count, rows)) => {
@@ -1179,11 +1334,17 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                         domain: "Δg".into(),
                         kind: "check_failed".into(),
                         subject: format!("#{}", id),
-                        message: msg,
+                        message: msg.clone(),
                         value: Some(row_count as f64),
                         finding_class: "meta".into(),
                         rule_hash: Some(hash),
-                        diagnosis: None,
+                        diagnosis: Some(FindingDiagnosis {
+                            failure_class: FailureClass::Unspecified,
+                            service_impact: ServiceImpact::NoneCurrent,
+                            action_bias: ActionBias::Watch,
+                            synopsis: format!("Saved check '{}' triggered.", name),
+                            why_care: "A user-defined check condition was met. Review the check definition for intended response.".into(),
+                        }),
                     });
                 }
             }

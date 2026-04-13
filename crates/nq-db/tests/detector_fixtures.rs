@@ -477,6 +477,155 @@ fn check_non_empty_fires_when_rows_returned() {
 }
 
 #[test]
+fn every_detector_emits_diagnosis() {
+    // Property test: every finding from every built-in detector must have
+    // a non-None diagnosis with non-empty synopsis and why_care.
+    // This catches a detector that forgets to populate the new fields.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+    let esc = EscalationConfig::default();
+
+    // Build a scenario that triggers many detectors: high disk, high mem,
+    // a down service, a source error, and enough history for trend detectors.
+    for i in 0..8 {
+        let mut b = host_batch(t, 0.5, 90.0, 95.0);
+        // Add a down service
+        b.collector_runs.push(CollectorRun {
+            source: "test-host".into(),
+            collector: CollectorKind::Services,
+            status: CollectorStatus::Ok,
+            collected_at: Some(t),
+            entity_count: Some(1),
+            error_message: None,
+        });
+        b.service_sets.push(ServiceSet {
+            host: "test-host".into(),
+            collected_at: t,
+            rows: vec![ServiceRow {
+                service: "broken-svc".into(),
+                status: if i % 2 == 0 { ServiceStatus::Down } else { ServiceStatus::Up },
+                health_detail_json: None,
+                pid: Some(100),
+                uptime_seconds: None,
+                last_restart: None,
+                eps: None,
+                queue_depth: None,
+                consumer_lag: None,
+                drop_count: None,
+            }],
+        });
+        let r = publish_batch(&mut db, &b).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        update_warning_state(&mut db, r.generation_id, &findings, &esc).unwrap();
+    }
+
+    // Also trigger source_error
+    let mut err_batch = empty_batch(t);
+    err_batch.source_runs[0].status = SourceStatus::Error;
+    err_batch.source_runs[0].error_message = Some("connection refused".into());
+    publish_batch(&mut db, &err_batch).unwrap();
+
+    // Add a saved-query check that will fire
+    db.conn().execute(
+        "INSERT INTO saved_queries (name, sql_text, check_mode, pinned, created_at, updated_at)
+         VALUES ('always_fire', 'SELECT 1', 'non_empty', 0, datetime('now'), datetime('now'))",
+        [],
+    ).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    assert!(!findings.is_empty(), "should have at least some findings to test");
+
+    let mut missing: Vec<String> = Vec::new();
+    for f in &findings {
+        match &f.diagnosis {
+            None => missing.push(format!("{}:{}", f.kind, f.subject)),
+            Some(d) => {
+                assert!(!d.synopsis.trim().is_empty(),
+                    "finding {}:{} has empty synopsis", f.kind, f.subject);
+                assert!(!d.why_care.trim().is_empty(),
+                    "finding {}:{} has empty why_care", f.kind, f.subject);
+            }
+        }
+    }
+
+    assert!(missing.is_empty(),
+        "these findings had no diagnosis: {:?}", missing);
+}
+
+#[test]
+fn disk_pressure_diagnosis_escalates_with_value() {
+    // Value-dependent: ≤90% → NoneCurrent, 90-95% → Degraded, >95% → ImmediateRisk
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // 91% disk → Degraded / InvestigateNow
+    let b = host_batch(t, 0.5, 50.0, 91.0);
+    publish_batch(&mut db, &b).unwrap();
+    let findings = run_all(db.conn(), &config).unwrap();
+    let disk = find_by_kind(&findings, "disk_pressure");
+    assert!(!disk.is_empty());
+    let d91 = disk[0].diagnosis.as_ref().unwrap();
+    assert_eq!(d91.service_impact, nq_db::ServiceImpact::Degraded, "91% should be Degraded");
+    assert_eq!(d91.action_bias, nq_db::ActionBias::InvestigateNow);
+
+    // 96% disk → ImmediateRisk / InterveneNow
+    let mut db2 = test_db();
+    let b2 = host_batch(t, 0.5, 50.0, 96.0);
+    publish_batch(&mut db2, &b2).unwrap();
+    let findings2 = run_all(db2.conn(), &config).unwrap();
+    let disk2 = find_by_kind(&findings2, "disk_pressure");
+    assert!(!disk2.is_empty());
+    let d96 = disk2[0].diagnosis.as_ref().unwrap();
+    assert_eq!(d96.service_impact, nq_db::ServiceImpact::ImmediateRisk, "96% should be ImmediateRisk");
+    assert_eq!(d96.action_bias, nq_db::ActionBias::InterveneNow);
+}
+
+#[test]
+fn service_status_down_emits_immediate_risk() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let mut b = empty_batch(t);
+    b.collector_runs.push(CollectorRun {
+        source: "test-host".into(),
+        collector: CollectorKind::Services,
+        status: CollectorStatus::Ok,
+        collected_at: Some(t),
+        entity_count: Some(1),
+        error_message: None,
+    });
+    b.service_sets.push(ServiceSet {
+        host: "test-host".into(),
+        collected_at: t,
+        rows: vec![ServiceRow {
+            service: "critical-svc".into(),
+            status: ServiceStatus::Down,
+            health_detail_json: None,
+            pid: None,
+            uptime_seconds: None,
+            last_restart: None,
+            eps: None,
+            queue_depth: None,
+            consumer_lag: None,
+            drop_count: None,
+        }],
+    });
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let svc = find_by_kind(&findings, "service_status");
+    assert!(!svc.is_empty(), "should detect service down");
+
+    let d = svc[0].diagnosis.as_ref().unwrap();
+    assert_eq!(d.failure_class, nq_db::FailureClass::Availability);
+    assert_eq!(d.service_impact, nq_db::ServiceImpact::ImmediateRisk);
+    assert_eq!(d.action_bias, nq_db::ActionBias::InterveneNow);
+}
+
+#[test]
 fn check_non_empty_passes_when_no_rows() {
     let mut db = test_db();
     let t = now();
