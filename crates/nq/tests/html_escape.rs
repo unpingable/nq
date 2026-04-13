@@ -63,6 +63,10 @@ fn hostile_strings_are_escaped_in_overview_html() {
             finding_class: Some("signal".into()),
             visibility_state: "observed".into(),
             suppression_reason: None,
+            failure_class: None,
+            service_impact: None,
+            action_bias: None,
+            synopsis: None,
         }],
         history_generations: 10,
     };

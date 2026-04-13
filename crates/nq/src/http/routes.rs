@@ -147,7 +147,8 @@ async fn finding_detail_inner(db: Db, kind: &str, host: &str, subject: &str) -> 
             "SELECT severity, domain, kind, host, subject, message,
                     first_seen_gen, first_seen_at, last_seen_gen, last_seen_at,
                     consecutive_gens, peak_value, acknowledged, notified_severity, notified_at,
-                    work_state, owner, note, external_ref, visibility_state, suppression_reason
+                    work_state, owner, note, external_ref, visibility_state, suppression_reason,
+                    failure_class, service_impact, action_bias, synopsis, why_care
              FROM warning_state
              WHERE kind = '{}' AND host = '{}' AND subject = '{}'",
             kind.replace('\'', "''"),
@@ -276,7 +277,8 @@ fn render_finding_detail(
     let meta = nq_db::finding_meta::finding_meta(kind);
 
     // Extract finding fields
-    let (severity, domain, message, first_seen, consecutive, peak, notified_sev, work_state, owner, note, ext_ref, visibility, suppr_reason) =
+    let (severity, domain, message, first_seen, consecutive, peak, notified_sev, work_state, owner, note, ext_ref, visibility, suppr_reason,
+         failure_class, _service_impact, action_bias, synopsis, why_care) =
         if let Ok(ref r) = finding {
             if let Some(row) = r.rows.first() {
                 (
@@ -293,16 +295,22 @@ fn render_finding_detail(
                     row.get(18).map(|s| s.as_str()).unwrap_or(""),
                     row.get(19).map(|s| s.as_str()).unwrap_or("observed"),
                     row.get(20).map(|s| s.as_str()).unwrap_or(""),
+                    row.get(21).map(|s| s.as_str()).unwrap_or(""),
+                    row.get(22).map(|s| s.as_str()).unwrap_or(""),
+                    row.get(23).map(|s| s.as_str()).unwrap_or(""),
+                    row.get(24).map(|s| s.as_str()).unwrap_or(""),
+                    row.get(25).map(|s| s.as_str()).unwrap_or(""),
                 )
             } else {
-                ("?", "?", "Finding not found", "?", "0", "", "none", "new", "", "", "", "observed", "")
+                ("?", "?", "Finding not found", "?", "0", "", "none", "new", "", "", "", "observed", "", "", "", "", "", "")
             }
         } else {
-            ("?", "?", "Error loading finding", "?", "0", "", "none", "new", "", "", "", "observed", "")
+            ("?", "?", "Error loading finding", "?", "0", "", "none", "new", "", "", "", "observed", "", "", "", "", "", "")
         };
 
     let domain_meta = nq_db::finding_meta::domain_meta(domain);
     let domain_label = domain_meta.map(|d| d.operator_label).unwrap_or(domain);
+    let has_diagnosis = !failure_class.is_empty();
 
     let sev_color = match severity {
         "critical" => "#da3633", "warning" => "#d29922", _ => "#484f58",
@@ -442,9 +450,10 @@ td {{ padding: 5px 12px 5px 0; border-bottom: 1px solid #161b22; }}
 <a class="back" href="/">&larr; back to overview</a>
 
 <div class="finding-header">
-    <div class="plain-title">{plain_label}</div>
+    <div class="plain-title">{headline}</div>
     <span class="sev-badge">{severity}</span>
     <span class="domain-tag">{domain} {domain_label}</span>
+    {diagnosis_badges}
     <span class="kind-label">{kind}</span>
 </div>
 
@@ -458,14 +467,7 @@ td {{ padding: 5px 12px 5px 0; border-bottom: 1px solid #161b22; }}
         <div class="ladder-label">{observed_label}</div>
         <div class="ladder-value">{message}</div>
     </div>
-    <div class="ladder-section">
-        <div class="ladder-label">Why this is not just a threshold alert</div>
-        <div class="ladder-value contradiction">{contradiction}</div>
-    </div>
-    <div class="ladder-section">
-        <div class="ladder-label">Why this matters</div>
-        <div class="ladder-value gloss">{gloss}</div>
-    </div>
+    {why_section}
     {next_checks_html}
 </div>
 
@@ -546,12 +548,36 @@ async function runQuery(e) {{
         sev_color = sev_color,
         domain = escape_html(domain),
         domain_label = escape_html(domain_label),
-        plain_label = escape_html(meta.plain_label),
+        headline = if has_diagnosis {
+            escape_html(synopsis)
+        } else {
+            format!("{} <span style=\"color:#484f58;font-size:12px;font-style:italic;\">(legacy)</span>", escape_html(meta.plain_label))
+        },
+        diagnosis_badges = if has_diagnosis {
+            format!(
+                "<span class=\"domain-tag\">{}</span><span class=\"domain-tag\">{}</span>",
+                escape_html(failure_class),
+                escape_html(&action_bias.replace('_', " ")),
+            )
+        } else {
+            String::new()
+        },
+        why_section = if has_diagnosis {
+            format!(
+                "<div class=\"ladder-section\"><div class=\"ladder-label\">Why this matters</div><div class=\"ladder-value\">{}</div></div>",
+                escape_html(why_care),
+            )
+        } else {
+            format!(
+                "<div class=\"ladder-section\"><div class=\"ladder-label\">Why this is not just a threshold alert</div><div class=\"ladder-value contradiction\" style=\"opacity:0.6;font-style:italic;\">{}</div></div>\
+                 <div class=\"ladder-section\"><div class=\"ladder-label\">Why this matters</div><div class=\"ladder-value gloss\" style=\"opacity:0.6;font-style:italic;\">{}</div></div>",
+                escape_html(meta.contradiction),
+                escape_html(meta.gloss),
+            )
+        },
         consecutive = escape_html(consecutive),
         first_seen = escape_html(first_seen),
         message = escape_html(message),
-        contradiction = escape_html(meta.contradiction),
-        gloss = escape_html(meta.gloss),
         visibility_banner = visibility_banner,
         observed_label = observed_label,
         host_display = if host.is_empty() { String::new() } else { format!("<strong>{}</strong>", escape_html(host)) },
@@ -769,16 +795,38 @@ pub fn render_overview(vm: &nq_db::OverviewVm) -> String {
                 String::new()
             };
 
+            // Use synopsis as the finding label when diagnosis is present,
+            // fallback to finding_meta plain_label for unmigrated findings.
+            let label = w.synopsis.as_deref().unwrap_or(fmeta.plain_label);
+
+            // Typed diagnosis badges (only when diagnosis is present)
+            let diag_badges = if let Some(ref fc) = w.failure_class {
+                let ab_label = w.action_bias.as_deref().unwrap_or("");
+                let ab_class = match ab_label {
+                    "intervene_now" => "diag-badge-urgent",
+                    "investigate_now" | "intervene_soon" => "diag-badge-active",
+                    _ => "diag-badge",
+                };
+                format!(
+                    " <span class=\"diag-badge\">{}</span><span class=\"{}\">{}</span>",
+                    escape_html(fc),
+                    ab_class,
+                    escape_html(&ab_label.replace('_', " ")),
+                )
+            } else {
+                String::new()
+            };
+
             format!(
                 "<tr class=\"{sev_class}\" data-domain=\"{domain}\">
                     <td class=\"sev-dot\"></td>
-                    <td><a href=\"{detail_url}\">{plain}</a>{suppressed_badge}<br><span class=\"kind-sub\">{kind} · {domain}</span></td>
+                    <td><a href=\"{detail_url}\">{label}</a>{suppressed_badge}{diag_badges}<br><span class=\"kind-sub\">{kind} · {domain}</span></td>
                     <td>{host}</td>
                     <td>{message}</td>
                     <td class=\"gens\">{gens}</td>
                 </tr>",
                 detail_url = escape_html(&detail_url),
-                plain = escape_html(fmeta.plain_label),
+                label = escape_html(label),
                 kind = escape_html(&w.category),
                 domain = escape_html(domain),
                 host = escape_html(&w.host),
@@ -889,6 +937,9 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 .gens {{ color: #484f58; font-size: 11px; }}
 .kind-sub {{ color: #484f58; font-size: 11px; }}
 .suppressed-badge {{ display: inline-block; background: #21262d; border: 1px solid #30363d; color: #8b949e; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 6px; }}
+.diag-badge {{ display: inline-block; background: #21262d; border: 1px solid #30363d; color: #8b949e; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }}
+.diag-badge-active {{ display: inline-block; background: #1c2333; border: 1px solid #1f6feb; color: #58a6ff; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }}
+.diag-badge-urgent {{ display: inline-block; background: #2d1215; border: 1px solid #da3633; color: #f85149; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }}
 
 .status-up {{ color: #3fb950; }}
 .status-down {{ color: #da3633; font-weight: 600; }}

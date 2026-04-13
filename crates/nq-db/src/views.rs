@@ -64,6 +64,10 @@ pub struct WarningVm {
     pub finding_class: Option<String>,
     pub visibility_state: String,
     pub suppression_reason: Option<String>,
+    pub failure_class: Option<String>,
+    pub service_impact: Option<String>,
+    pub action_bias: Option<String>,
+    pub synopsis: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -175,7 +179,8 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
     // Warnings from v_warnings view
     let warnings: Vec<WarningVm> = if gen_id.is_some() {
         let mut warn_stmt = db.conn.prepare(
-            "SELECT severity, kind, host, subject, message, domain, first_seen_at, consecutive_gens, acknowledged, finding_class, visibility_state, suppression_reason
+            "SELECT severity, kind, host, subject, message, domain, first_seen_at, consecutive_gens, acknowledged, finding_class, visibility_state, suppression_reason,
+                    failure_class, service_impact, action_bias, synopsis
              FROM v_warnings ORDER BY severity DESC, kind, host",
         )?;
         let rows = warn_stmt
@@ -193,6 +198,10 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
                     finding_class: row.get(9).ok(),
                     visibility_state: row.get::<_, String>(10).unwrap_or_else(|_| "observed".to_string()),
                     suppression_reason: row.get(11).ok(),
+                    failure_class: row.get(12).ok(),
+                    service_impact: row.get(13).ok(),
+                    action_bias: row.get(14).ok(),
+                    synopsis: row.get(15).ok(),
                 })
             })?
             .collect::<Result<_, _>>()?;
