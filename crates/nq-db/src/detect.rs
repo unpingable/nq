@@ -9,6 +9,164 @@
 
 use rusqlite::Connection;
 
+// ---------------------------------------------------------------------------
+// Typed diagnosis: the semantic nucleus that detectors attach to findings.
+// See docs/gaps/FINDING_DIAGNOSIS_GAP.md for boundary discipline and
+// worked examples.
+// ---------------------------------------------------------------------------
+
+/// The structural shape of the failure. Cross-cutting analytical hook.
+///
+/// Boundary discipline: these include a resource progression
+/// (Accumulation → Pressure → Saturation → Exhaustion) that is temporal,
+/// not synonymous. A single condition usually fits one class at a time;
+/// if it fits two, the more advanced one wins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureClass {
+    /// Subject is not in its expected operational state.
+    Availability,
+    /// Producer creating faster than consumer can retire.
+    Accumulation,
+    /// Finite resource approached but not yet exhausted.
+    Pressure,
+    /// At or near hard limit, actively rejecting/queueing work.
+    Saturation,
+    /// Resource completely consumed, allocations failing.
+    Exhaustion,
+    /// Stateless divergence from a reference value.
+    Drift,
+    /// Work that stopped progressing.
+    Stuckness,
+    /// Telemetry source has gone quiet.
+    Silence,
+    /// Condition oscillating between states.
+    Flapping,
+    /// Detector can't classify the shape.
+    Unspecified,
+}
+
+impl FailureClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Availability => "availability",
+            Self::Accumulation => "accumulation",
+            Self::Pressure => "pressure",
+            Self::Saturation => "saturation",
+            Self::Exhaustion => "exhaustion",
+            Self::Drift => "drift",
+            Self::Stuckness => "stuckness",
+            Self::Silence => "silence",
+            Self::Flapping => "flapping",
+            Self::Unspecified => "unspecified",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "availability" => Some(Self::Availability),
+            "accumulation" => Some(Self::Accumulation),
+            "pressure" => Some(Self::Pressure),
+            "saturation" => Some(Self::Saturation),
+            "exhaustion" => Some(Self::Exhaustion),
+            "drift" => Some(Self::Drift),
+            "stuckness" => Some(Self::Stuckness),
+            "silence" => Some(Self::Silence),
+            "flapping" => Some(Self::Flapping),
+            "unspecified" => Some(Self::Unspecified),
+            _ => None,
+        }
+    }
+}
+
+/// Current observable operational consequence.
+///
+/// About *present state*, not substrate health or future risk.
+/// A 100GB WAL is still NoneCurrent if the service is responding.
+///
+/// Required floor relationship with ActionBias:
+///   Degraded → at least InvestigateNow
+///   ImmediateRisk → exactly InterveneNow
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceImpact {
+    /// No current user-visible consequence.
+    NoneCurrent,
+    /// Partially degraded, some functionality impaired.
+    Degraded,
+    /// Failing or about to fail, hard outage imminent or in progress.
+    ImmediateRisk,
+}
+
+impl ServiceImpact {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NoneCurrent => "none_current",
+            Self::Degraded => "degraded",
+            Self::ImmediateRisk => "immediate_risk",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "none_current" => Some(Self::NoneCurrent),
+            "degraded" => Some(Self::Degraded),
+            "immediate_risk" => Some(Self::ImmediateRisk),
+            _ => None,
+        }
+    }
+}
+
+/// Operator posture. Not severity — recommended response shape.
+///
+/// Detectors propose a baseline from local context. The future dominance
+/// projection layer can elevate (never demote) based on co-located findings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ActionBias {
+    Watch,
+    InvestigateBusinessHours,
+    InvestigateNow,
+    InterveneSoon,
+    InterveneNow,
+}
+
+impl ActionBias {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Watch => "watch",
+            Self::InvestigateBusinessHours => "investigate_business_hours",
+            Self::InvestigateNow => "investigate_now",
+            Self::InterveneSoon => "intervene_soon",
+            Self::InterveneNow => "intervene_now",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "watch" => Some(Self::Watch),
+            "investigate_business_hours" => Some(Self::InvestigateBusinessHours),
+            "investigate_now" => Some(Self::InvestigateNow),
+            "intervene_soon" => Some(Self::InterveneSoon),
+            "intervene_now" => Some(Self::InterveneNow),
+            _ => None,
+        }
+    }
+}
+
+/// Typed diagnosis attached to a finding at emission time.
+///
+/// The contract: detectors populate this deliberately. Renderers consume
+/// the typed fields for filtering/grouping and the prose for display.
+/// synopsis and why_care must not contradict the typed nucleus.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FindingDiagnosis {
+    pub failure_class: FailureClass,
+    pub service_impact: ServiceImpact,
+    pub action_bias: ActionBias,
+    /// One sentence in ordinary ops language describing what is happening.
+    pub synopsis: String,
+    /// One sentence about consequence — what an operator should care about.
+    pub why_care: String,
+}
+
 /// A single detector output. Identity = (host, domain, kind, subject).
 #[derive(Debug, Clone)]
 pub struct Finding {
@@ -26,6 +184,9 @@ pub struct Finding {
     /// Semantic hash of the rule that produced this finding. If the rule
     /// changes (thresholds, query text), state resets.
     pub rule_hash: Option<String>,
+    /// Typed diagnosis. None for detectors not yet migrated; the renderer
+    /// falls back to finding_meta.rs static lookup when absent.
+    pub diagnosis: Option<FindingDiagnosis>,
 }
 
 /// Configurable thresholds for built-in detectors.
@@ -130,6 +291,7 @@ fn detect_wal_bloat(
                 value: Some(wal_size_mb),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
             });
         }
     }
@@ -170,6 +332,7 @@ fn detect_freelist_bloat(
                 value: Some(reclaimable_mb),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
             });
         }
     }
@@ -190,10 +353,36 @@ fn detect_stale_hosts(
             row.get::<_, String>(0)?,
             row.get::<_, i64>(1)?,
             row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?,
         ))
     })?;
     for row in rows {
-        let (host, age_s, as_of_gen) = row?;
+        let (host, age_s, as_of_gen, gens_behind) = row?;
+
+        // Value-dependent diagnosis per FINDING_DIAGNOSIS_GAP spec:
+        //   ≤5 gens behind: NoneCurrent / InvestigateBusinessHours
+        //   6-20 gens behind: Degraded / InvestigateNow
+        //   >20 gens behind: ImmediateRisk / InterveneNow
+        let (impact, bias) = if gens_behind > 20 {
+            (ServiceImpact::ImmediateRisk, ActionBias::InterveneNow)
+        } else if gens_behind > 5 {
+            (ServiceImpact::Degraded, ActionBias::InvestigateNow)
+        } else {
+            (ServiceImpact::NoneCurrent, ActionBias::InvestigateBusinessHours)
+        };
+
+        let synopsis = format!(
+            "{} has not reported in {} generations ({} seconds).",
+            host, gens_behind, age_s,
+        );
+        let why_care = if gens_behind > 20 {
+            "Host data is severely stale. Findings on this host may no longer reflect reality.".into()
+        } else if gens_behind > 5 {
+            "Host data is growing stale. Operational decisions based on this host's state are losing confidence.".into()
+        } else {
+            "Host missed recent collection cycles. Monitor for continued absence.".into()
+        };
+
         out.push(Finding {
             host,
             domain: "Δo".into(),
@@ -201,8 +390,15 @@ fn detect_stale_hosts(
             subject: String::new(),
             message: format!("last seen {}s ago (gen {})", age_s, as_of_gen),
             value: Some(age_s as f64),
-                finding_class: "signal".into(),
-                rule_hash: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Silence,
+                service_impact: impact,
+                action_bias: bias,
+                synopsis,
+                why_care,
+            }),
         });
     }
     Ok(())
@@ -234,6 +430,7 @@ fn detect_stale_services(
             value: Some(age_s as f64),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
         });
     }
     Ok(())
@@ -266,6 +463,7 @@ fn detect_service_status(
             value: None,
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
         });
     }
     Ok(())
@@ -297,6 +495,7 @@ fn detect_source_errors(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
             value: None,
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
         });
     }
     Ok(())
@@ -333,6 +532,7 @@ fn detect_metric_nan(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<
             value: None,
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
         });
     }
     Ok(())
@@ -363,6 +563,7 @@ fn detect_disk_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
             value: Some(pct),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
         });
     }
     Ok(())
@@ -392,6 +593,7 @@ fn detect_memory_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Re
             value: Some(pct),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
         });
     }
     Ok(())
@@ -474,6 +676,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     value: Some(now),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
                 });
             }
         }
@@ -493,6 +696,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     value: Some(now),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
                 });
             }
         }
@@ -512,6 +716,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     value: Some(now),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
                 });
             }
         }
@@ -574,6 +779,7 @@ fn detect_service_flap(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resul
             value: Some(transitions as f64),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
         });
     }
     Ok(())
@@ -625,6 +831,7 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             value: None,
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
         });
     }
 
@@ -667,6 +874,7 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             value: None,
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
         });
     }
 
@@ -734,6 +942,7 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                 value: Some(new_count as f64),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
             });
         }
 
@@ -751,6 +960,7 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                 value: Some(vanished as f64),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
             });
         }
     }
@@ -812,6 +1022,7 @@ fn detect_log_silence(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
             value: Some(0.0),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
         });
     }
 
@@ -886,6 +1097,7 @@ fn detect_error_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
             value: Some(ratio),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                diagnosis: None,
         });
     }
 
@@ -932,6 +1144,7 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                     value: None,
                     finding_class: "meta".into(),
                     rule_hash: Some(hash),
+                    diagnosis: None,
                 });
             }
             Ok((row_count, rows)) => {
@@ -970,6 +1183,7 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                         value: Some(row_count as f64),
                         finding_class: "meta".into(),
                         rule_hash: Some(hash),
+                        diagnosis: None,
                     });
                 }
             }

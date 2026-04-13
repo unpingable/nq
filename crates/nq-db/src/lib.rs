@@ -11,7 +11,7 @@ pub mod snapshot;
 pub mod views;
 
 pub use connect::{open_ro, open_rw, ReadDb, WriteDb};
-pub use detect::{DetectorConfig, Finding};
+pub use detect::{ActionBias, DetectorConfig, FailureClass, Finding, FindingDiagnosis, ServiceImpact};
 pub use migrate::migrate;
 pub use publish::{publish_batch, update_warning_state, EscalationConfig, PublishResult};
 pub use query::{query_read_only, QueryLimits, QueryResult};
