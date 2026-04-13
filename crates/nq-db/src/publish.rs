@@ -387,6 +387,32 @@ fn compute_finding_key(scope: &str, host: &str, detector_id: &str, subject: &str
     format!("{}/{}/{}/{}", scope, enc(host), enc(detector_id), enc(subject))
 }
 
+/// A rule for how a parent finding kind masks child findings.
+struct MaskingRule {
+    /// The kind of finding that acts as a parent (e.g. "stale_host").
+    parent_kind: &'static str,
+    /// What suppression_reason to write on masked children.
+    suppression_reason: &'static str,
+}
+
+/// Masking rules, evaluated in order. First matching rule wins for a given host.
+/// Adding a new parent kind is one entry here, not a code change in the masking loop.
+///
+/// Valid suppression_reason values after this table:
+///   host_unreachable — masked by stale_host
+///   source_unreachable — masked by source_error
+/// Reserved for future: agent_down, collector_partition, parent_mask, maintenance
+const MASKING_RULES: &[MaskingRule] = &[
+    MaskingRule {
+        parent_kind: "stale_host",
+        suppression_reason: "host_unreachable",
+    },
+    MaskingRule {
+        parent_kind: "source_error",
+        suppression_reason: "source_unreachable",
+    },
+];
+
 /// Update warning_state table from detector findings, atomically.
 ///
 /// Wraps the entire lifecycle update + evidence write + masking + GC in a
@@ -527,16 +553,23 @@ fn update_warning_state_inner(
     drop(upsert);
     drop(insert_obs);
 
-    // Build set of hosts that are currently masked by an open stale_host finding.
-    // These hosts cannot have their child findings observed, so missing children
-    // should be suppressed (preserving last-known state) rather than aged out.
-    let stale_hosts: std::collections::HashSet<String> = {
-        let mut stmt = tx.prepare(
-            "SELECT host FROM warning_state WHERE kind = 'stale_host' AND visibility_state = 'observed'"
-        )?;
-        let rows: Vec<String> = stmt.query_map([], |row| row.get::<_, String>(0))?
-            .collect::<Result<_, _>>()?;
-        rows.into_iter().collect()
+    // Build masking map: host → suppression_reason, driven by MASKING_RULES.
+    // Each rule identifies a parent finding kind; if that parent is observed,
+    // all child findings on the same host are suppressed instead of aged out.
+    // First matching rule wins (rules evaluated in table order).
+    let masking: std::collections::HashMap<String, &'static str> = {
+        let mut map = std::collections::HashMap::new();
+        for rule in MASKING_RULES {
+            let mut stmt = tx.prepare(
+                "SELECT host FROM warning_state WHERE kind = ?1 AND visibility_state = 'observed'"
+            )?;
+            let hosts: Vec<String> = stmt.query_map([rule.parent_kind], |row| row.get::<_, String>(0))?
+                .collect::<Result<_, _>>()?;
+            for host in hosts {
+                map.entry(host).or_insert(rule.suppression_reason);
+            }
+        }
+        map
     };
 
     // Recovery hysteresis: increment absent_gens for missing findings,
@@ -563,7 +596,7 @@ fn update_warning_state_inner(
         "DELETE FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
     )?;
     let mut suppress = tx.prepare_cached(
-        "UPDATE warning_state SET visibility_state = 'suppressed', suppression_reason = 'host_unreachable',
+        "UPDATE warning_state SET visibility_state = 'suppressed', suppression_reason = ?5,
                                   suppressed_since_gen = COALESCE(suppressed_since_gen, ?4)
          WHERE host = ?1 AND kind = ?2 AND subject = ?3"
     )?;
@@ -577,11 +610,18 @@ fn update_warning_state_inner(
             continue; // upsert handled it
         }
 
-        let host_masked = !host.is_empty() && kind != "stale_host" && stale_hosts.contains(host);
-        if host_masked {
+        // Check if this finding's host is masked by any parent rule.
+        // A parent kind never masks itself (prevents self-suppression loops).
+        let masking_reason = if !host.is_empty() {
+            masking.get(host.as_str()).copied()
+                .filter(|_| !MASKING_RULES.iter().any(|r| r.parent_kind == kind))
+        } else {
+            None
+        };
+        if let Some(reason) = masking_reason {
             // Missing because we can't see the host — preserve state, mark suppressed.
             // Do NOT increment absent_gens; do NOT delete.
-            suppress.execute(rusqlite::params![host, kind, subject, generation_id])?;
+            suppress.execute(rusqlite::params![host, kind, subject, generation_id, reason])?;
         } else if *absent + 1 >= recovery_window {
             // Cleared: enough consecutive absent gens with no masking
             del.execute(rusqlite::params![host, kind, subject])?;
@@ -1073,6 +1113,14 @@ mod tests {
             rusqlite::params![host, kind],
             |row| row.get(0),
         ).ok()
+    }
+
+    fn get_suppression_reason(db: &WriteDb, host: &str, kind: &str) -> Option<String> {
+        db.conn.query_row(
+            "SELECT suppression_reason FROM warning_state WHERE host = ?1 AND kind = ?2",
+            rusqlite::params![host, kind],
+            |row| row.get(0),
+        ).ok().flatten()
     }
 
     #[test]
@@ -1624,5 +1672,176 @@ mod tests {
         assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("suppressed"));
         // host-2 disk_pressure: observed
         assert_eq!(count_visibility(&db, "host-2", "disk_pressure").as_deref(), Some("observed"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Generalized masking tests (GENERALIZED_MASKING_GAP)
+    // -----------------------------------------------------------------------
+    //
+    // These prove source_error now participates as a masking parent alongside
+    // stale_host, using the data-driven MASKING_RULES table.
+
+    #[test]
+    fn source_error_masks_findings_on_same_host() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: disk_pressure observed on host-1
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+        assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("observed"));
+
+        // Gen 2: source_error fires for host-1, disk_pressure no longer emitted
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "source_error", "", "Δs"),
+        ], &esc).unwrap();
+
+        // disk_pressure should be suppressed with source_unreachable
+        assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("suppressed"));
+        assert_eq!(get_suppression_reason(&db, "host-1", "disk_pressure").as_deref(), Some("source_unreachable"));
+    }
+
+    #[test]
+    fn multiple_parents_first_rule_wins() {
+        // When both stale_host and source_error fire for the same host,
+        // the suppression reason comes from the first matching rule (host_unreachable).
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: disk_pressure observed
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        // Gen 2: both parents fire, child missing
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "stale_host", "", "Δo"),
+            finding("host-1", "source_error", "", "Δs"),
+        ], &esc).unwrap();
+
+        assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("suppressed"));
+        // stale_host is first in MASKING_RULES, so host_unreachable wins
+        assert_eq!(get_suppression_reason(&db, "host-1", "disk_pressure").as_deref(), Some("host_unreachable"));
+    }
+
+    #[test]
+    fn recovery_from_source_error_unsuppresses_children() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: disk_pressure observed
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        // Gen 2: source_error fires, disk_pressure suppressed
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "source_error", "", "Δs"),
+        ], &esc).unwrap();
+        assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("suppressed"));
+
+        // Gen 3: source recovers, disk_pressure re-emitted
+        update_warning_state(&mut db, 3, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        // disk_pressure should be observed again, persistence preserved
+        assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("observed"));
+
+        // Persistence must survive the round-trip (same invariant as stale_host)
+        let gens: i64 = db.conn.query_row(
+            "SELECT consecutive_gens FROM warning_state WHERE host = 'host-1' AND kind = 'disk_pressure'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert!(gens >= 2, "persistence must survive source_error suppression round-trip, got {gens}");
+    }
+
+    #[test]
+    fn source_error_does_not_mask_itself() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: source_error fires
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "source_error", "", "Δs"),
+        ], &esc).unwrap();
+
+        // Gen 2: source_error still firing (no other findings)
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "source_error", "", "Δs"),
+        ], &esc).unwrap();
+
+        // source_error must remain observed, not self-suppress
+        assert_eq!(count_visibility(&db, "host-1", "source_error").as_deref(), Some("observed"));
+    }
+
+    #[test]
+    fn source_error_masking_updates_lineage_suppressed_count() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: two findings on host-1
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+            finding("host-1", "wal_bloat", "/var/lib/main.db", "Δg"),
+        ], &esc).unwrap();
+        let (_, _, suppressed) = read_lineage(&db, 1);
+        assert_eq!(suppressed, 0);
+
+        // Gen 2: source_error fires, both children suppressed
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "source_error", "", "Δs"),
+        ], &esc).unwrap();
+        let (_, _, suppressed) = read_lineage(&db, 2);
+        assert_eq!(suppressed, 2, "source_error masking should show 2 suppressed findings in lineage");
+    }
+
+    #[test]
+    fn existing_stale_host_behavior_unchanged() {
+        // Regression guard: the refactor must not alter stale_host masking.
+        // This is a condensed version of the four original visibility tests.
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: observed
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+        assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("observed"));
+
+        // Gen 2: stale_host fires → child suppressed with host_unreachable
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "stale_host", "", "Δo"),
+        ], &esc).unwrap();
+        assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("suppressed"));
+        assert_eq!(get_suppression_reason(&db, "host-1", "disk_pressure").as_deref(), Some("host_unreachable"));
+
+        // stale_host itself is NOT suppressed
+        assert_eq!(count_visibility(&db, "host-1", "stale_host").as_deref(), Some("observed"));
+
+        // Gen 3-5: host still stale, child must not age out
+        for g in 3..=5 {
+            update_warning_state(&mut db, g, &[
+                finding("host-1", "stale_host", "", "Δo"),
+            ], &esc).unwrap();
+        }
+        let absent: i64 = db.conn.query_row(
+            "SELECT absent_gens FROM warning_state WHERE host = 'host-1' AND kind = 'disk_pressure'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(absent, 0, "suppressed finding must not increment absent_gens");
+
+        // Gen 6: host recovers → child unsuppressed
+        update_warning_state(&mut db, 6, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+        assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("observed"));
     }
 }

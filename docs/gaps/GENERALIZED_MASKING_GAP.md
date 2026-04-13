@@ -1,10 +1,10 @@
 # Gap: Generalized Masking — beyond `stale_host`
 
-**Status:** specified, not yet built
+**Status:** built, shipped
 **Depends on:** schema v24 (visibility_state), v26 (lineage)
 **Build phase:** structural prep, follows EVIDENCE_LAYER and GENERATION_LINEAGE
 **Blocks:** `DOMINANCE_PROJECTION_GAP`, `FEDERATION_GAP`
-**Last updated:** 2026-04-10
+**Last updated:** 2026-04-13
 
 ## The Problem
 
