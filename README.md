@@ -81,7 +81,9 @@ nq serve -c aggregator.json
 
 Open `http://localhost:9848`.
 
-## What NQ monitors
+## How it works
+
+### What NQ monitors
 
 - **Host metrics**: CPU, memory, disk, uptime, kernel
 - **Services**: systemd units, Docker containers (up/down/degraded/flapping)
@@ -89,7 +91,7 @@ Open `http://localhost:9848`.
 - **Prometheus metrics**: any `/metrics` endpoint
 - **Logs**: journald and file sources (bounded observations, not raw storage)
 
-## Why not Prometheus + Grafana?
+### Why not Prometheus + Grafana?
 
 NQ is **Prom-compatible at the edge and anti-Prom in the middle.** It scrapes the same exporters (the ecosystem already emits in that direction), but it doesn't inherit Prometheus's worldview about what a "problem" is. Prom collects metrics. Grafana visualizes them. Neither tells you what kind of failure you're looking at, and neither has a first-class concept of state.
 
@@ -107,7 +109,7 @@ When a host goes stale, its child findings stay in the database with `visibility
 
 This sounds like a small thing. It's not. It's the difference between a dashboard that gets calmer during an outage and one that gets louder about the right thing.
 
-## Built-in detectors (15)
+### Built-in detectors (15)
 
 | Diagnosis | Detector | Catches |
 |---|---|---|
@@ -129,7 +131,7 @@ This sounds like a small thing. It's not. It's the difference between a dashboar
 
 Plus user-defined checks from saved SQL queries.
 
-## Severity escalation
+### Severity escalation
 
 Findings start at `info` and escalate based on persistence:
 
@@ -139,13 +141,13 @@ Findings start at `info` and escalate based on persistence:
 
 A spike that clears doesn't escalate. A condition that quietly persists does.
 
-## Notifications
+### Notifications
 
 Webhook, Slack, and Discord. Fires on severity escalation, not every generation.
 
 Notification identity is durable: if a cyclical condition resolves and returns, NQ labels it "(recurring)" not "(new)." Genuine escalations (warning to critical) always notify. Same-severity re-notifications are suppressed within a 24-hour cooldown.
 
-## SQL is the interface
+### SQL is the interface
 
 Every table and view is queryable with standard SQL. The web UI includes a console. Saved queries become recurring checks:
 
@@ -158,7 +160,7 @@ SELECT h.host, h.disk_used_pct, h.mem_pressure_pct, s.service, s.status
 FROM v_hosts h JOIN v_services s ON h.host = s.host;
 ```
 
-## Architecture
+### Architecture
 
 ```
 Monitored hosts              Central host
@@ -174,11 +176,11 @@ Monitored hosts              Central host
                                   └─────────┘
 ```
 
-Single binary. Schema version 23. 88 tests.
+Single binary. Schema version 26. 114 tests.
 
-## Failure domain taxonomy
+## The deeper claim
 
-Under the hood, NQ classifies every finding into one of four failure domains. You don't need to know the codes to use NQ — the UI leads with plain-English labels — but the taxonomy drives the classification logic:
+NQ classifies every finding into one of four failure domains. You don't need to know the codes to use NQ — the UI leads with plain-English labels — but the taxonomy is what makes the classification load-bearing rather than decorative:
 
 | Domain | Code | What it means | Example |
 |---|---|---|---|
