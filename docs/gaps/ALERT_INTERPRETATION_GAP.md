@@ -2,7 +2,7 @@
 
 **Status:** Proposed
 **Depends on:** findings model, severity/escalation state, stability/persistence metadata (REGIME_FEATURES_GAP), existing notification send path
-**Related:** notification routing/inhibition roadmap, REGIME_FEATURES_GAP, future ACTION_OVERLAY_GAP (machine-action), future human-procedure overlay
+**Related:** `NOTIFICATION_ROUTING_GAP` (stub), `NOTIFICATION_INHIBITION_GAP` (stub), `REGIME_FEATURES_GAP`, `ACTION_OVERLAY_GAP` (stub — machine-action), `HUMAN_PROCEDURE_OVERLAY_GAP` (stub)
 **Blocks:** operator-legible Slack/email alerts, finding-first notification rendering
 **Last updated:** 2026-04-14
 
@@ -224,11 +224,13 @@ Rendering capability or action claims without an authority-state schema invites 
 
 until a formal authority/action-state model exists (states like *possible / proposed / requested / executed / blocked* with receipts and provenance). Silence is safer than fake authority.
 
-Deferred to a future ACTION_OVERLAY_GAP.
+Deferred to `ACTION_OVERLAY_GAP` (stub).
 
 ### Human-procedure overlay — out of scope
 
 Procedure linkage introduces a second artifact family with ownership, lifecycle, staleness, taxonomy, and cross-project reference concerns. It deserves its own spec after alert interpretation has stabilized. No `Procedure: ...` lines in v1, not even as placeholders.
+
+Deferred to `HUMAN_PROCEDURE_OVERLAY_GAP` (stub).
 
 ## V1 slice
 
@@ -380,8 +382,8 @@ Patch now:
 
 Then later:
 
-- ACTION_OVERLAY_GAP (machine-action, authority-state-aware)
-- human-procedure overlay spec
+- `ACTION_OVERLAY_GAP` (machine-action, authority-state-aware)
+- `HUMAN_PROCEDURE_OVERLAY_GAP` (procedure linkage with ownership and lifecycle)
 
 That is the least stupid sequencing.
 
@@ -400,6 +402,10 @@ In NQ terms this gap means: **do the Zabbix split, keep the Prometheus structure
 - docs/gaps/REGIME_FEATURES_GAP.md — supplies temporal class (transient / persistent / entrenched), dominance, and trajectory that the render consumes
 - docs/gaps/FINDING_DIAGNOSIS_GAP.md — the typed finding nucleus the render speaks from
 - docs/gaps/STABILITY_AXIS_GAP.md — stability primitives feeding persistence class
+- docs/gaps/NOTIFICATION_ROUTING_GAP.md (stub) — routing operates upstream; rendering is downstream
+- docs/gaps/NOTIFICATION_INHIBITION_GAP.md (stub) — inhibition operates upstream; rendering does not dedupe
+- docs/gaps/ACTION_OVERLAY_GAP.md (stub) — where machine-action rendering will eventually live, with authority-state
+- docs/gaps/HUMAN_PROCEDURE_OVERLAY_GAP.md (stub) — where procedure linkage will eventually live, with ownership/lifecycle
 - notification send path (current home of the interim patch)
 - Nagios plugin development guidelines (pager-era check output conventions)
 - Zabbix trigger vs event name separation (machine identifier vs operator-facing text)
