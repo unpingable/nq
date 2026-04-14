@@ -53,6 +53,39 @@ pub struct TrajectoryPayload {
     pub samples: i64,
 }
 
+/// Persistence-class: how established a finding is, derived from its
+/// presence pattern in finding_observations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistenceClass {
+    /// Finding has only recently appeared or has large gaps in history.
+    Transient,
+    /// Consistently present for a meaningful window but not yet entrenched.
+    Persistent,
+    /// Long-standing finding with near-total presence. Operational fixture.
+    Entrenched,
+}
+
+impl PersistenceClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Transient => "transient",
+            Self::Persistent => "persistent",
+            Self::Entrenched => "entrenched",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistencePayload {
+    pub streak_length_generations: i64,
+    pub present_ratio_window: f64,
+    pub interruption_count: i64,
+    pub window_generations: i64,
+    pub observed_generations: i64,
+    pub persistence_class: PersistenceClass,
+}
+
 // Basis/provenance per HISTORY_COMPACTION invariant #23 and
 // REGIME_FEATURES spec §Basis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -260,6 +293,117 @@ pub fn build_trajectory(metric: &str, samples: &[(i64, f64)]) -> TrajectoryPaylo
 }
 
 // ---------------------------------------------------------------------------
+// Persistence: streak length, present ratio, interruption count per finding.
+// ---------------------------------------------------------------------------
+
+/// Window for persistence computation (generations to look back).
+const PERSISTENCE_WINDOW: i64 = 50;
+
+/// Below this window coverage, mark insufficient_history.
+const PERSISTENCE_MIN_COVERAGE: i64 = 10;
+
+/// Persistence class thresholds (v1, intentionally conservative).
+const PERSISTENCE_TRANSIENT_RATIO: f64 = 0.2;
+const PERSISTENCE_ENTRENCHED_RATIO: f64 = 0.9;
+const PERSISTENCE_ENTRENCHED_STREAK: i64 = 50;
+
+/// Pure function: classify a finding from its measurements.
+pub fn classify_persistence(
+    streak_length: i64,
+    present_ratio: f64,
+    interruption_count: i64,
+    window_size: i64,
+) -> PersistenceClass {
+    // Very short streak with multiple interruptions → transient
+    if streak_length < 5 && interruption_count >= 3 {
+        return PersistenceClass::Transient;
+    }
+    // Low presence in window → transient
+    if present_ratio < PERSISTENCE_TRANSIENT_RATIO {
+        return PersistenceClass::Transient;
+    }
+    // High presence AND long streak AND enough window → entrenched
+    if present_ratio >= PERSISTENCE_ENTRENCHED_RATIO
+        && streak_length >= PERSISTENCE_ENTRENCHED_STREAK
+        && window_size >= PERSISTENCE_ENTRENCHED_STREAK
+    {
+        return PersistenceClass::Entrenched;
+    }
+    // Default middle band
+    PersistenceClass::Persistent
+}
+
+fn compute_finding_persistence(
+    tx: &rusqlite::Transaction,
+    generation_id: i64,
+) -> anyhow::Result<()> {
+    let window_start = generation_id - PERSISTENCE_WINDOW;
+    let window_size = std::cmp::min(PERSISTENCE_WINDOW, generation_id);
+
+    // Iterate over currently-observed findings in warning_state. Suppressed
+    // findings are excluded — their presence is our blindness, not regime.
+    let findings: Vec<(String, String, String, i64)> = {
+        let mut stmt = tx.prepare(
+            "SELECT host, kind, subject, consecutive_gens
+             FROM warning_state
+             WHERE visibility_state = 'observed'"
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })?;
+        rows.collect::<Result<_, _>>()?
+    };
+
+    for (host, kind, subject, streak) in &findings {
+        let finding_key = crate::publish::compute_finding_key("local", host, kind, subject);
+
+        // Count distinct generations in the window where this finding was observed.
+        let observed: i64 = tx.query_row(
+            "SELECT COUNT(DISTINCT generation_id) FROM finding_observations
+             WHERE finding_key = ?1 AND generation_id > ?2",
+            rusqlite::params![&finding_key, window_start],
+            |r| r.get(0),
+        ).unwrap_or(0);
+
+        let present_ratio = if window_size > 0 {
+            (observed as f64) / (window_size as f64)
+        } else {
+            0.0
+        };
+        // Interruptions = gens in window where finding was absent (observed < window).
+        let interruptions = window_size - observed;
+        let persistence_class = classify_persistence(*streak, present_ratio, interruptions, window_size);
+
+        let payload = PersistencePayload {
+            streak_length_generations: *streak,
+            present_ratio_window: present_ratio,
+            interruption_count: interruptions,
+            window_generations: window_size,
+            observed_generations: observed,
+            persistence_class,
+        };
+
+        let sufficient = window_size >= PERSISTENCE_MIN_COVERAGE;
+        upsert_feature(
+            tx, generation_id,
+            "finding", &finding_key, "persistence",
+            std::cmp::max(0, window_start + 1), generation_id,
+            BasisKind::DerivedFromFindings,
+            sufficient,
+            observed,
+            &serde_json::to_string(&payload)?,
+        )?;
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point — called from the lifecycle pass.
 // ---------------------------------------------------------------------------
 
@@ -270,7 +414,8 @@ pub fn build_trajectory(metric: &str, samples: &[(i64, f64)]) -> TrajectoryPaylo
 pub fn compute_features(db: &mut WriteDb, generation_id: i64) -> anyhow::Result<()> {
     let tx = db.conn.transaction()?;
     compute_host_trajectories(&tx, generation_id)?;
-    // Future commits add: persistence, recovery, co_occurrence, resolution
+    compute_finding_persistence(&tx, generation_id)?;
+    // Future commits add: recovery, co_occurrence, resolution
     tx.commit()?;
     Ok(())
 }
@@ -286,6 +431,27 @@ pub fn compute_features(db: &mut WriteDb, generation_id: i64) -> anyhow::Result<
 /// feature_type), all metrics for a host share the same row... that's
 /// wrong. To store per-(host, metric) features distinctly, use
 /// subject_id = "{host}/{metric}". Callers use this function.
+/// Read the most recent persistence feature for a finding identified by key.
+pub fn latest_finding_persistence(
+    db: &crate::ReadDb,
+    finding_key: &str,
+) -> anyhow::Result<Option<(PersistencePayload, bool)>> {
+    let row: Option<(String, i64)> = db.conn.query_row(
+        "SELECT payload_json, sufficient_history FROM regime_features
+         WHERE subject_kind = 'finding' AND subject_id = ?1 AND feature_type = 'persistence'
+         ORDER BY generation_id DESC LIMIT 1",
+        rusqlite::params![finding_key],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).ok();
+    match row {
+        Some((json, sufficient)) => {
+            let p: PersistencePayload = serde_json::from_str(&json)?;
+            Ok(Some((p, sufficient != 0)))
+        }
+        None => Ok(None),
+    }
+}
+
 pub fn latest_host_trajectory(
     db: &crate::ReadDb,
     host: &str,
@@ -460,6 +626,172 @@ mod tests {
             [], |r| r.get(0),
         ).unwrap();
         assert_eq!(sufficient, 0, "3 samples should be flagged insufficient_history");
+    }
+
+    // ------------------------------------------------------------------
+    // Persistence tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn classify_persistence_transient_low_ratio() {
+        let c = classify_persistence(3, 0.10, 30, 50);
+        assert_eq!(c, PersistenceClass::Transient, "ratio 0.10 should be transient");
+    }
+
+    #[test]
+    fn classify_persistence_transient_short_streak_with_interruptions() {
+        let c = classify_persistence(2, 0.25, 5, 50);
+        assert_eq!(c, PersistenceClass::Transient, "short streak + 3+ interruptions → transient");
+    }
+
+    #[test]
+    fn classify_persistence_persistent_mid_ratio() {
+        let c = classify_persistence(20, 0.5, 10, 50);
+        assert_eq!(c, PersistenceClass::Persistent);
+    }
+
+    #[test]
+    fn classify_persistence_entrenched() {
+        let c = classify_persistence(100, 0.95, 2, 100);
+        assert_eq!(c, PersistenceClass::Entrenched);
+    }
+
+    #[test]
+    fn classify_persistence_not_entrenched_without_streak() {
+        // High ratio but streak too short → still persistent, not entrenched
+        let c = classify_persistence(10, 0.95, 1, 50);
+        assert_eq!(c, PersistenceClass::Persistent);
+    }
+
+    // Helper: insert a finding_observation row for integration tests
+    fn insert_observation(db: &crate::WriteDb, gen_id: i64, finding_key: &str, host: &str, kind: &str, subject: &str) {
+        db.conn.execute(
+            "INSERT OR IGNORE INTO generations (generation_id, started_at, completed_at, status, sources_expected, sources_ok, sources_failed, duration_ms)
+             VALUES (?1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'complete', 1, 1, 0, 0)",
+            rusqlite::params![gen_id],
+        ).unwrap();
+        db.conn.execute(
+            "INSERT INTO finding_observations
+             (generation_id, finding_key, scope, detector_id, host, subject, domain, finding_class, observed_at)
+             VALUES (?1, ?2, 'local', ?3, ?4, ?5, 'Δg', 'signal', '2026-01-01T00:00:00Z')",
+            rusqlite::params![gen_id, finding_key, kind, host, subject],
+        ).unwrap();
+    }
+
+    fn insert_warning_state(db: &crate::WriteDb, host: &str, kind: &str, subject: &str, streak: i64) {
+        db.conn.execute(
+            "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, finding_class, absent_gens, visibility_state)
+             VALUES (?1, ?2, ?3, 'Δg', 'test', 'info', 1, '2026-01-01', 100, '2026-01-01', ?4, 'signal', 0, 'observed')",
+            rusqlite::params![host, kind, subject, streak],
+        ).unwrap();
+    }
+
+    #[test]
+    fn persistence_computed_for_observed_findings() {
+        let mut db = make_db();
+        insert_warning_state(&db, "host-1", "disk_pressure", "", 25);
+        let fk = crate::publish::compute_finding_key("local", "host-1", "disk_pressure", "");
+
+        // Observations for 25 consecutive generations ending at gen 25
+        for g in 1..=25 {
+            insert_observation(&db, g, &fk, "host-1", "disk_pressure", "");
+        }
+
+        compute_features(&mut db, 25).unwrap();
+
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM regime_features
+             WHERE subject_kind = 'finding' AND feature_type = 'persistence'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn persistence_classifies_entrenched_finding() {
+        let mut db = make_db();
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 60);
+        let fk = crate::publish::compute_finding_key("local", "host-1", "wal_bloat", "/db");
+
+        // Present in every generation for 60 gens — maximum persistence
+        for g in 1..=60 {
+            insert_observation(&db, g, &fk, "host-1", "wal_bloat", "/db");
+        }
+
+        compute_features(&mut db, 60).unwrap();
+
+        let payload_json: String = db.conn.query_row(
+            "SELECT payload_json FROM regime_features
+             WHERE subject_kind = 'finding' AND subject_id = ?1 AND feature_type = 'persistence'",
+            rusqlite::params![&fk],
+            |r| r.get(0),
+        ).unwrap();
+        let p: PersistencePayload = serde_json::from_str(&payload_json).unwrap();
+        assert_eq!(p.persistence_class, PersistenceClass::Entrenched);
+        assert!(p.present_ratio_window > 0.9);
+    }
+
+    #[test]
+    fn persistence_classifies_transient_with_gaps() {
+        let mut db = make_db();
+        insert_warning_state(&db, "host-1", "disk_pressure", "", 2);
+        let fk = crate::publish::compute_finding_key("local", "host-1", "disk_pressure", "");
+
+        // Only 4 observations in a 50-gen window → ratio 0.08
+        for g in [1, 10, 30, 50] {
+            insert_observation(&db, g, &fk, "host-1", "disk_pressure", "");
+        }
+
+        compute_features(&mut db, 50).unwrap();
+
+        let payload_json: String = db.conn.query_row(
+            "SELECT payload_json FROM regime_features WHERE subject_id = ?1 AND feature_type = 'persistence'",
+            rusqlite::params![&fk],
+            |r| r.get(0),
+        ).unwrap();
+        let p: PersistencePayload = serde_json::from_str(&payload_json).unwrap();
+        assert_eq!(p.persistence_class, PersistenceClass::Transient);
+        assert!(p.present_ratio_window < 0.2);
+    }
+
+    #[test]
+    fn persistence_insufficient_history_flag() {
+        let mut db = make_db();
+        insert_warning_state(&db, "host-1", "disk_pressure", "", 2);
+        let fk = crate::publish::compute_finding_key("local", "host-1", "disk_pressure", "");
+
+        // Only 2 generations exist — below MIN_COVERAGE of 10
+        for g in 1..=2 {
+            insert_observation(&db, g, &fk, "host-1", "disk_pressure", "");
+        }
+
+        compute_features(&mut db, 2).unwrap();
+
+        let sufficient: i64 = db.conn.query_row(
+            "SELECT sufficient_history FROM regime_features WHERE subject_id = ?1",
+            rusqlite::params![&fk],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(sufficient, 0, "window of 2 should flag insufficient");
+    }
+
+    #[test]
+    fn persistence_excludes_suppressed_findings() {
+        let mut db = make_db();
+        // Insert a finding and then mark it suppressed
+        insert_warning_state(&db, "host-1", "disk_pressure", "", 10);
+        db.conn.execute(
+            "UPDATE warning_state SET visibility_state = 'suppressed' WHERE host = 'host-1'",
+            [],
+        ).unwrap();
+
+        compute_features(&mut db, 20).unwrap();
+
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM regime_features WHERE feature_type = 'persistence'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 0, "suppressed findings should be excluded from persistence");
     }
 
     #[test]

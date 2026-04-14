@@ -375,7 +375,7 @@ fn metric_matches_policy(name: &str, policies: &[(String, String)]) -> bool {
 /// the format without auditing every consumer of finding_key.
 ///
 /// See docs/gaps/EVIDENCE_LAYER_GAP.md for full rationale.
-fn compute_finding_key(scope: &str, host: &str, detector_id: &str, subject: &str) -> String {
+pub fn compute_finding_key(scope: &str, host: &str, detector_id: &str, subject: &str) -> String {
     fn enc(s: &str) -> String {
         s.bytes().map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
