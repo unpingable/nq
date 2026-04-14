@@ -117,6 +117,51 @@ Derived from absence, discontinuity, or mismatch in expected evidence streams.
 
 Target use: prevent NQ from treating silence as health. Make uncertainty structurally visible.
 
+### 6. Resolution / Stabilization
+
+Derived from multi-generation evidence that a previously pressured or unstable condition is **converging, settling, or returning to steady reuse**. The load-bearing point: "quiet now" is not the same as "recovered." A detector going silent could mean the condition resolved, or it could mean NQ stopped seeing it. Resolution features make convergence a first-class fact instead of inferring health from the absence of alerts.
+
+| Feature | Type | Example |
+|---|---|---|
+| `recovery_phase` | enum | acute / improving / settling / steady_state |
+| `growth_direction` | enum | rising / falling / flat / bounded / unstable |
+| `plateau_depth_generations` | i64 | 18 |
+| `reuse_behavior` | enum | inactive / growing / cycling_reuse / stagnant |
+| `catchup_ratio` | f64 | 0.70 (e.g. prune rate / insert rate) |
+| `distance_from_peak` | f64 | 0.42 (current value normalized against prior peak) |
+| `residual_anomaly_class` | enum | none / transient / recurring / dominant |
+| `residual_event_count` | i64 | 1 |
+
+**Worked example (driftwatch, 2026-04-14):** DB file size flat for 60+ generations after 2GB/day growth. WAL collapsed from 12GB to 64MB. Freelist cycling (1.4-1.9GB range, indicating page reuse). Retention pruning 135k-232k edges/pass vs. ~500/pass the day before. One brief `busy=1` on TRUNCATE during an otherwise healthy pass.
+
+Without resolution features, NQ says: "no active findings on this DB." With them, it emits:
+
+```
+recovery_phase = settling
+growth_direction = flat
+reuse_behavior = cycling_reuse
+catchup_ratio = 0.70
+residual_anomaly_class = transient
+residual_event_count = 1
+```
+
+That lets diagnosis say "system is improving, not merely less noisy" and lets the operator see that the one lock event is present but non-dominant. The "boring explanation won" is itself a typed fact, not an absence.
+
+**Boundary discipline:**
+
+- `steady_state` is a strict claim. Requires sustained `flat` growth, active reuse, and no residual anomalies for a threshold window. `settling` is the more common truthful answer while things are still normalizing.
+- Resolution does NOT erase prior acute states — the finding's `first_seen_gen` and peak_value are preserved. Resolution describes the present regime, not revised history.
+- A single transient anomaly (`residual_anomaly_class = transient`, count 1-2) does not disqualify `settling`. A persistent or recurring residue (count >5 across window) escalates to `residual_anomaly_class = recurring` and blocks `steady_state`.
+- Resolution features are NOT predictive. "Settling" means "converging so far," not "will remain stable."
+
+**Target use cases:**
+
+- DB file size plateau after acute growth (driftwatch case above)
+- Queue backlog cleanup catching up to insert rate
+- Service flap settling after a bad deploy
+- Disk usage stabilizing after retention kicked in
+- WAL returning to bounded size after checkpoint pressure eased
+
 ## Output Model
 
 The feature layer should emit **typed facts**, not loose numeric annotations.
@@ -152,18 +197,24 @@ Bias: start with **append-only materialized facts** (Option B). NQ is already op
 ## Controlled Vocabulary
 
 Feature vocabulary (v1):
-- `rising`, `falling`, `flat`, `oscillating`
-- `persistent`, `intermittent`, `recurring`
-- `slow_recovery`, `co_occurring`
-- `insufficient_history`
+- Direction: `rising`, `falling`, `flat`, `bounded`, `oscillating`, `unstable`
+- Presence: `persistent`, `intermittent`, `recurring`
+- Recovery pace: `slow_recovery`, `co_occurring`
+- Recovery phase: `acute`, `improving`, `settling`, `steady_state`
+- Reuse: `inactive`, `growing`, `cycling_reuse`, `stagnant`
+- Residual: `none`, `transient`, `recurring`, `dominant`
+- Metadata: `insufficient_history`
 
 Regime hint vocabulary (v1, deliberately tiny):
 - `pressure` — approaching a resource bound
 - `accumulation` — producer outpacing consumer, multiple related findings
 - `observability_failure` — expected signals absent, system not necessarily healthy
 - `entrenchment` — persistent + recurring + slow recovery
+- `settling` — previously pressured, now converging with active reuse / catch-up
+- `steady_state` — settled for sustained window with no dominant residue
+- `intermittent_contention` — mostly healthy with transient, non-dominant anomalies
 
-Better a small honest vocabulary than a taxonomy that sounds clever and explains nothing.
+Better a small honest vocabulary than a taxonomy that sounds clever and explains nothing. The resolution hints (`settling`, `steady_state`, `intermittent_contention`) exist because "silence" is an ambiguous signal — without typed resolution, NQ can't distinguish "recovered" from "stopped looking."
 
 ## Integration Points
 
@@ -179,6 +230,7 @@ Better a small honest vocabulary than a taxonomy that sounds clever and explains
 2. **Finding persistence** — streak length, present ratio, interruption count for existing findings.
 3. **Finding recovery lag** — last recovery lag, recurrence interval where computable.
 4. **Simple co-occurrence** — pairwise co-occurrence depth for same-host overlapping findings.
+5. **Basic resolution** — `recovery_phase` (acute/improving/settling/steady_state) for findings that cleared, and `plateau_depth_generations` for metrics where `growth_direction = flat` is sustained. Enough to distinguish "recovered" from "stopped looking."
 
 That is enough to make the layer real without turning into a dissertation.
 
@@ -207,10 +259,11 @@ That is enough to make the layer real without turning into a dissertation.
 1. NQ has a named computation pass or module for regime features.
 2. At least one append-only or receipted output path exists for derived temporal facts.
 3. Detectors and/or diagnosis consume derived temporal facts instead of embedding one-off temporal logic.
-4. NQ can express at least trajectory, persistence, recovery, and co-occurrence as first-class feature types.
-5. Outputs carry basis/window metadata.
-6. Generation remains the primary clock.
-7. No new general-purpose TSDB is introduced.
+4. NQ can express at least trajectory, persistence, recovery, co-occurrence, and resolution as first-class feature types.
+5. NQ can distinguish "recovered" (`recovery_phase = settling` or `steady_state` with basis evidence) from "stopped looking" (silence without typed resolution fact).
+6. Outputs carry basis/window metadata.
+7. Generation remains the primary clock.
+8. No new general-purpose TSDB is introduced.
 
 ## References
 
