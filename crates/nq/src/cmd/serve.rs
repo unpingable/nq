@@ -70,6 +70,13 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                                 ).await;
                             }
 
+                            // Compute regime features — temporal facts derived
+                            // from history. Runs in its own transaction; failure
+                            // is logged but does not invalidate the generation.
+                            if let Err(e) = nq_db::compute_features(&mut db, result.generation_id) {
+                                warn!(err = %e, "regime feature computation failed");
+                            }
+
                             // Seal generation with content-addressed digest
                             match nq_db::digest::seal_generation(&mut db, result.generation_id) {
                                 Ok(hash) => {

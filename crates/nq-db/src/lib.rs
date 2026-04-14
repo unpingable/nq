@@ -7,6 +7,7 @@ pub mod migrate;
 pub mod notify;
 pub mod publish;
 pub mod query;
+pub mod regime;
 pub mod retention;
 pub mod snapshot;
 pub mod views;
@@ -14,6 +15,10 @@ pub mod views;
 pub use connect::{open_ro, open_rw, ReadDb, WriteDb};
 pub use detect::{ActionBias, DetectorConfig, FailureClass, Finding, FindingDiagnosis, ServiceImpact, Stability};
 pub use liveness::{read_liveness, write_liveness, LivenessArtifact, LivenessReadError, LIVENESS_FORMAT_VERSION};
+pub use regime::{
+    build_trajectory, compute_features, latest_host_trajectory, BasisKind, Direction,
+    TrajectoryPayload,
+};
 pub use migrate::migrate;
 pub use publish::{publish_batch, update_warning_state, EscalationConfig, PublishResult};
 pub use query::{query_read_only, QueryLimits, QueryResult};

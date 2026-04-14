@@ -33,6 +33,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (27, include_str!("../migrations/027_finding_diagnosis.sql")),
     (28, include_str!("../migrations/028_stability.sql")),
     (29, include_str!("../migrations/029_host_state.sql")),
+    (30, include_str!("../migrations/030_regime_features.sql")),
 ];
 
 pub fn migrate(db: &mut WriteDb) -> anyhow::Result<()> {
@@ -81,7 +82,7 @@ mod tests {
             .conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 29);
+        assert_eq!(version, 30);
 
         // Verify tables exist
         let count: i64 = db
