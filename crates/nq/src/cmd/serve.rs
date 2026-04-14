@@ -97,7 +97,7 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                             // the primary job is producing generations, not liveness.
                             if let Some(ref liveness_path) = pull_config.liveness.path {
                                 let path = std::path::PathBuf::from(liveness_path);
-                                let (findings_observed, findings_suppressed, detectors_run): (i64, i64, i64) = db.conn()
+                                let (findings_observed, detectors_run, findings_suppressed): (i64, i64, i64) = db.conn()
                                     .query_row(
                                         "SELECT findings_observed, detectors_run, findings_suppressed
                                          FROM generations WHERE generation_id = ?1",
