@@ -303,11 +303,36 @@ const PERSISTENCE_WINDOW: i64 = 50;
 const PERSISTENCE_MIN_COVERAGE: i64 = 10;
 
 /// Persistence class thresholds (v1, intentionally conservative).
+/// Frozen as doctrine — change requires updating the classifier tests and
+/// the worked examples below in the same commit.
 const PERSISTENCE_TRANSIENT_RATIO: f64 = 0.2;
 const PERSISTENCE_ENTRENCHED_RATIO: f64 = 0.9;
 const PERSISTENCE_ENTRENCHED_STREAK: i64 = 50;
 
-/// Pure function: classify a finding from its measurements.
+/// Classify a finding's persistence from its measurements.
+///
+/// Rules (evaluated in order; first match wins):
+/// 1. Short streak (< 5) with 3+ interruptions → `Transient`
+/// 2. Low presence ratio (< 0.2) → `Transient`
+/// 3. High presence (≥ 0.9) AND long streak (≥ 50) AND window covered (≥ 50)
+///    → `Entrenched`
+/// 4. Otherwise → `Persistent`
+///
+/// Canonical examples from live data (labelwatch-host, gen ~35520, 2026-04-14):
+///
+/// | Finding | streak | ratio | interruptions | class |
+/// |---|---|---|---|---|
+/// | `wal_bloat` on facts_work.sqlite | 106 | 1.0 | 0 | `Entrenched` |
+/// | `check_failed #11` (stock check) | 106 | 1.0 | 0 | `Entrenched` |
+/// | `check_failed #13` | 45 | 0.9 | 5 | `Persistent` |
+/// | `disk_pressure` (fresh) | 6 | 0.24 | 38 | `Persistent` |
+/// | `service_flap labelwatch-discovery` | 7 | 0.14 | 43 | `Transient` |
+/// | `error_shift nq-serve` (just fired) | 1 | 0.08 | 46 | `Transient` |
+///
+/// Read these horizontally: streak alone doesn't classify, ratio alone doesn't
+/// classify, but together they give the operator "how long has this been here
+/// and how consistent has it been?" Suppressed findings are excluded from
+/// classification entirely — their presence is our blindness.
 pub fn classify_persistence(
     streak_length: i64,
     present_ratio: f64,

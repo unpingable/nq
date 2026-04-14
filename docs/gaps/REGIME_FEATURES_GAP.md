@@ -1,10 +1,35 @@
 # Gap: Regime Features — temporal fact compiler between evidence and diagnosis
 
-**Status:** proposed
+**Status:** partial — trajectory + persistence shipped; recovery, co-occurrence, resolution pending
 **Depends on:** FINDING_DIAGNOSIS_GAP (typed nucleus to consume features), STABILITY_AXIS_GAP (presence pattern as input), finding_observations + hosts_history + metrics_history (the raw temporal substrate)
 **Build phase:** structural — adds the missing middle layer between stored evidence and typed diagnosis
 **Blocks:** trajectory/direction in diagnosis (currently deferred), forecasting/time-to-exhaustion, regime composition ("this host is in an accumulation regime" vs "three bad things are true near each other")
-**Last updated:** 2026-04-13
+**Last updated:** 2026-04-14
+
+## Shipped State (2026-04-14)
+
+Two of the five feature classes are live:
+
+**Trajectory (commit `34dd15e`)**
+- Subject: `host_metric` with subject_id `{host}/{metric}`
+- Metrics instrumented: `disk_used_pct`, `mem_pressure_pct`, `cpu_load_1m`
+- Window: 12 generations; minimum 6 for sufficient_history
+- Computed: `direction` (rising/falling/flat/oscillating), `slope_per_generation`, `first_value`, `last_value`, `samples`
+- Live example (labelwatch-host): disk_used_pct → `flat`, cpu_load_1m → `rising`, mem_pressure_pct → `rising`
+
+**Persistence (commit `6f8b556`)**
+- Subject: `finding` with subject_id `finding_key` (URL-encoded scope/host/detector/subject)
+- Window: 50 generations; minimum 10 for sufficient_history
+- Computed: `streak_length_generations`, `present_ratio_window`, `interruption_count`, `persistence_class` (transient/persistent/entrenched)
+- Canonical live examples (labelwatch-host, gen ~35520):
+  - `wal_bloat` on facts_work.sqlite — streak 106, ratio 1.0 → `entrenched`
+  - `check_failed #13` — streak 45, ratio 0.9 → `persistent`
+  - `service_flap labelwatch-discovery` — streak 7, ratio 0.14 → `transient`
+  - `error_shift nq-serve` (just fired) — streak 1, ratio 0.08 → `transient`
+
+Architecture verified against real contention. The `entrenched/persistent/transient` split is telling the operational truth — a single read of the table distinguishes operational fixtures from residue from just-fired alerts.
+
+**Still pending:** recovery lag, co-occurrence, resolution/stabilization, renderer surface.
 
 ## The Problem
 
