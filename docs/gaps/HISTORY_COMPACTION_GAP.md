@@ -34,6 +34,63 @@ The same table layout cannot serve both well. Dense wants compressed blobs; spar
 
 **Immutable compacted chunks.** Once a chunk is written, it is never modified. Compaction errors emit replacement chunks or rebuild from raw. This keeps correctness simple and makes chunk validation trivially re-runnable.
 
+## Architectural Invariants
+
+The following are frozen as doctrine. They affect every downstream decision and should not be revisited casually. If one proves wrong, revisit the whole section, not individual items.
+
+### Identity and semantics
+
+1. **Generation is the primary time axis.** Not wall-clock. Wall-clock is metadata/rendering only. Chunk semantics, windows, and feature computation key off generation. No silent reimport of fake continuity.
+2. **Scale or unit changes force a new series.** If `disk_used_pct` changes scale (10 → 100) or `mem` changes unit (MiB → bytes), allocate a new `series_id`. Unit drift in the same lineage is how you invent nonsense with confidence.
+3. **Series identity is stable across metric renames.** Rename = metadata update on the same `series_id`. Changing the internal identity on rename fabricates discontinuity the system didn't actually experience.
+
+### Storage separation
+
+4. **Metadata lives outside the blob.** `series_id`, generation bounds, sample count, encoding name, scale, checksum — all in SQLite columns. The blob is only the compressed value stream. Keeps pruning, lookup, and corruption handling sane.
+5. **Sparse state is represented semantically, not as a codec.** `finding_runs` (start_gen, end_gen, state) is the canonical compressed form for finding presence/absence. Do not "optimize" it into opaque blobs. Runs are already the right data model.
+6. **Scaled-int normalization happens before compression.** The codec only sees integers. How `73.42%` becomes `7342` is a series-registration decision, not a codec concern. Keeps codecs dumb and reusable.
+7. **Codec negotiation is explicit.** `encoding = 'delta_i64_v1'` is schema-level metadata. Future codecs coexist; no silent reinterpretation, no "v2 decoder is backwards-ish compatible probably."
+8. **Payload format is endian-independent by construction.** Varints already handle this, but if fixed-width fields ever appear in payloads, specify byte order. Cross-machine archaeology is tedious enough.
+
+### Compaction discipline
+
+9. **Chunks are immutable.** No in-place edit. Fix by replacement (emit a new chunk covering the range) or rebuild from raw.
+10. **No overlapping chunks for the same series.** For a given `series_id`, chunk generation ranges do not overlap. Replacement is explicit, not accidental coexistence.
+11. **Chunk write is transactional.** A chunk exists only if metadata row + payload + verification all commit together. Never "metadata row exists but payload is half a thought."
+12. **Verification is mandatory, not aspirational.** The compactor's flow is: read raw slice → encode → decode → byte-compare against source → only then commit chunk and consider raw eviction. No shortcut.
+13. **Contiguous-only chunks in v1.** If the compactor encounters a gap, it emits two chunks, not one with a bitmap. Missing generations break continuity; no silent imputation.
+14. **Compaction is subject-local.** One noisy host/database/subject does not drag unrelated history into the same maintenance action. Locality aligns with series/subject boundaries.
+15. **Compaction boundaries are deterministic.** Same input history yields the same chunk boundaries every time. Boundary choice does not depend on load, mood, or batching artifacts — unless that policy is explicitly modeled.
+16. **Compaction is restart-safe.** Process death mid-compaction leaves either intact raw rows or a completed chunk. Never "history vanished into a half-written idea."
+17. **Compaction is observable.** The compactor emits enough telemetry/facts to answer: rows compacted, chunk count, bytes before/after, verification failures, skipped ranges and why. The storage layer is not a dark forest under the epistemic machine.
+18. **Rebuild from raw is a first-class escape hatch.** Compressed history is reproducible from raw history for as long as raw is retained. A codec bug should never become literature.
+
+### Reader contract
+
+19. **Hot rows win on overlap.** If a query spans both hot rows and compacted chunks covering the same generation, hot rows authoritatively overlay chunk data. Overlap ambiguity is how history gets weird.
+20. **Query API is storage-agnostic.** Same semantic slice in → same reconstructed series out. Callers do not know whether data came from raw rows, chunk payloads, or finding runs.
+21. **Queries decode the minimum necessary.** Prune by metadata in SQLite → decode only overlapping chunks → merge with hot rows. No "decompress the archive and ask questions later."
+22. **Corruption behavior is explicit.** When a chunk fails to decode or a checksum mismatches, the reader's response is documented, not left to vibes. v1 default: hard fail on mismatch, log loudly, do not silently drop chunks.
+23. **Derived facts never depend on blob internals.** `regime_features` and diagnosis read reconstructed series, not raw payload bytes. Compression is a storage concern, not an epistemic one. This separation is load-bearing — if it breaks, compression changes start mutating semantic outputs.
+
+### Policy separation
+
+24. **A hot raw window is always retained.** Retention policy must guarantee some recent generations stay uncompressed. Makes debugging, codec rollout, and edge-case forensics possible.
+25. **Retention and compaction are separate policies.** "Eligible for compaction" and "eligible for deletion" are different questions. Valid to compact after N generations, delete raw after M, retain some series raw indefinitely.
+26. **Compression is opportunistic, not constitutional.** Some series will compress well; some will be rude. The invariant is correctness and bounded operational cost, not "every chunk gets smaller."
+27. **Compression is optional per series class.** Not every series deserves chunking. Leave series raw if cardinality is low, history is shallow, access is hot/random, or compression benefit is negligible. Otherwise you compress compulsively because the framework exists.
+
+### Deliberately deferred (do NOT freeze in v1)
+
+The following are explicitly not decided now. Revisit after v1 ships:
+- Predicate pushdown into blobs
+- Min/max side indexes inside chunk payloads
+- Delta-of-delta codec
+- Float codecs
+- Gap bitmaps (contiguous-only is v1)
+- Cross-chunk summary indexes
+- Automatic retention-aware compaction thresholds
+
 ## Three-Tier Model
 
 ```
