@@ -2,6 +2,7 @@ pub mod check;
 pub mod collect;
 pub mod publish;
 pub mod query;
+pub mod sentinel;
 pub mod serve;
 
 use crate::cli::{Cli, Command};
@@ -13,5 +14,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Query(cmd) => query::run(cmd),
         Command::Collect(cmd) => collect::run(cmd),
         Command::Check(cmd) => check::run(cmd),
+        Command::Sentinel(cmd) => sentinel::run(cmd).await,
     }
 }

@@ -20,6 +20,9 @@ pub enum Command {
     Collect(CollectCmd),
     /// Run all saved checks against the DB and report results
     Check(CheckCmd),
+    /// Run the liveness sentinel — watches NQ's liveness artifact and
+    /// alerts on staleness/silence from outside NQ's failure boundary.
+    Sentinel(SentinelCmd),
 }
 
 #[derive(Debug, Args)]
@@ -70,4 +73,11 @@ pub struct CheckCmd {
     /// Path to the nq database
     #[arg(long)]
     pub db: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct SentinelCmd {
+    /// Path to sentinel config file (JSON)
+    #[arg(long, short)]
+    pub config: PathBuf,
 }

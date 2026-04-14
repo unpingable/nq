@@ -838,6 +838,7 @@ dependencies = [
  "anyhow",
  "nq-core",
  "rusqlite",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",

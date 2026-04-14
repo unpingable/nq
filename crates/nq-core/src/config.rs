@@ -17,6 +17,22 @@ pub struct Config {
     pub bind_addr: String,
     #[serde(default)]
     pub notifications: NotificationConfig,
+    #[serde(default)]
+    pub liveness: LivenessConfig,
+}
+
+/// Configuration for writing the liveness artifact after each successful
+/// generation commit. Read by a separate sentinel process.
+/// See docs/gaps/SENTINEL_LIVENESS_GAP.md.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LivenessConfig {
+    /// Path to write the artifact. If None, no artifact is written.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Optional instance identity for the artifact. Forward-compat for
+    /// multi-instance witness. Humans pick it; it's not generated.
+    #[serde(default)]
+    pub instance_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

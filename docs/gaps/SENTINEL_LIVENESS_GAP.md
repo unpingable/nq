@@ -1,6 +1,6 @@
 # Gap: Sentinel Liveness — out-of-band witness for NQ itself
 
-**Status:** specified, not yet built
+**Status:** built, shipped
 **Depends on:** none (orthogonal to the store spine)
 **Build phase:** infrastructure — adds a constitutional boundary between NQ and its own observation
 **Blocks:** `INSTANCE_WITNESS_GAP` (multi-instance registry needs per-instance liveness first), NAS deployment (can't deploy to a second box without knowing when it stops)

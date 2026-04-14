@@ -91,6 +91,38 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                                     );
                                 }
                             }
+
+                            // Write liveness artifact for the sentinel watcher.
+                            // Failure to write is logged but does not crash the publisher —
+                            // the primary job is producing generations, not liveness.
+                            if let Some(ref liveness_path) = pull_config.liveness.path {
+                                let path = std::path::PathBuf::from(liveness_path);
+                                let (findings_observed, findings_suppressed, detectors_run): (i64, i64, i64) = db.conn()
+                                    .query_row(
+                                        "SELECT findings_observed, detectors_run, findings_suppressed
+                                         FROM generations WHERE generation_id = ?1",
+                                        rusqlite::params![result.generation_id],
+                                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                                    )
+                                    .unwrap_or((0, 0, 0));
+                                let now = time::OffsetDateTime::now_utc()
+                                    .format(&time::format_description::well_known::Rfc3339)
+                                    .unwrap_or_default();
+                                let artifact = nq_db::LivenessArtifact {
+                                    liveness_format_version: nq_db::LIVENESS_FORMAT_VERSION,
+                                    instance_id: pull_config.liveness.instance_id.clone(),
+                                    generated_at: now,
+                                    generation_id: result.generation_id,
+                                    schema_version: 29,
+                                    findings_observed,
+                                    findings_suppressed,
+                                    detectors_run,
+                                    status: "ok".into(),
+                                };
+                                if let Err(e) = nq_db::write_liveness(&path, &artifact) {
+                                    warn!(err = %e, path = %liveness_path, "liveness artifact write failed");
+                                }
+                            }
                         }
                         Err(e) => {
                             error!(err = %e, "publish failed");
