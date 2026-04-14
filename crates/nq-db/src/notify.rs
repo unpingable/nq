@@ -181,12 +181,84 @@ fn finding_url(base_url: &str, n: &PendingNotification) -> String {
     }
 }
 
-fn escalation_label(nk: &NotificationKind) -> String {
+/// Render the metadata line (escalation/generation/consecutive) in the order
+/// the spec requires: escalation leads when present, otherwise generation leads.
+fn format_metadata_line(nk: &NotificationKind, generation_id: i64, consecutive: i64) -> String {
     match nk {
-        NotificationKind::New => " (new)".to_string(),
-        NotificationKind::Recurring { last_severity } => format!(" (recurring, prev {})", last_severity),
-        NotificationKind::Escalated { from_severity } => format!(" (escalated from {})", from_severity),
+        NotificationKind::New => format!(
+            "Generation #{} · {} consecutive (new)",
+            generation_id, consecutive,
+        ),
+        NotificationKind::Recurring { last_severity } => format!(
+            "Generation #{} · {} consecutive · recurring (prev {})",
+            generation_id, consecutive, last_severity,
+        ),
+        NotificationKind::Escalated { from_severity } => format!(
+            "Escalated from {} · generation #{} · {} consecutive",
+            from_severity, generation_id, consecutive,
+        ),
     }
+}
+
+/// Render one finding's kind/subject as a human-legible bullet.
+fn format_finding_line(kind: &str, subject: &str) -> String {
+    if subject.is_empty() {
+        format!("• `{}`", kind)
+    } else {
+        format!("• `{}` on `{}`", kind, subject)
+    }
+}
+
+/// Render the "since" timestamp in operator-legible form.
+/// Full-precision RFC3339 stays in the structured payload and in the evidence footer.
+/// The human body gets YYYY-MM-DD HH:MM UTC plus an approximate relative age
+/// when the input is in the past.
+fn format_since(rfc3339_str: &str, now: time::OffsetDateTime) -> String {
+    let Some(then) = parse_rfc3339(rfc3339_str) else {
+        return rfc3339_str.to_string();
+    };
+    let absolute = format!(
+        "{:04}-{:02}-{:02} {:02}:{:02} UTC",
+        then.year(),
+        u8::from(then.month()),
+        then.day(),
+        then.hour(),
+        then.minute(),
+    );
+    if then > now {
+        return absolute;
+    }
+    let secs = (now - then).whole_seconds();
+    let relative = if secs < 60 {
+        "just now".to_string()
+    } else if secs < 3600 {
+        format!("~{}m ago", secs / 60)
+    } else if secs < 86400 {
+        format!("~{}h ago", secs / 3600)
+    } else {
+        format!("~{}d ago", secs / 86400)
+    };
+    format!("{} ({})", absolute, relative)
+}
+
+fn severity_emoji_slack(severity: &str) -> &'static str {
+    match severity {
+        "critical" => ":red_circle:",
+        "warning" => ":large_orange_circle:",
+        _ => ":white_circle:",
+    }
+}
+
+fn severity_emoji_discord(severity: &str) -> &'static str {
+    match severity {
+        "critical" => "\u{1F534}", // red circle
+        "warning" => "\u{1F7E0}",  // orange circle
+        _ => "\u{26AA}",           // white circle
+    }
+}
+
+fn scope_label(host: &str) -> &str {
+    if host.is_empty() { "global" } else { host }
 }
 
 /// Build a JSON payload for a webhook notification.
@@ -221,64 +293,68 @@ pub fn build_webhook_payload(n: &PendingNotification, generation_id: i64, base_u
 }
 
 /// Build a Slack message payload.
+///
+/// Render shape (per ALERT_INTERPRETATION_GAP v1, single-finding slice):
+///
+/// - subject-led headline: `SEVERITY on {host or global} (domain label)`
+/// - finding line as a bullet: `• kind on subject`
+/// - metadata line: escalation/generation/consecutive
+/// - since line: human-legible UTC time + approximate relative age
+/// - evidence footer: the raw check/predicate message, demoted to blockquote
+///
+/// The structured payload (`build_webhook_payload`) is the machine interface.
+/// The rendered text is a projection, not identity — do not parse it back.
 pub fn build_slack_payload(n: &PendingNotification, generation_id: i64, base_url: &str) -> serde_json::Value {
+    let now = time::OffsetDateTime::now_utc();
     let domain_label = domain_label(&n.domain);
-
-    let emoji = match n.severity.as_str() {
-        "critical" => ":red_circle:",
-        "warning" => ":large_orange_circle:",
-        _ => ":white_circle:",
-    };
-
-    let escalation = escalation_label(&n.notification_kind);
+    let emoji = severity_emoji_slack(&n.severity);
     let url = finding_url(base_url, n);
+    let scope = scope_label(&n.host);
+    let finding_line = format_finding_line(&n.kind, &n.subject);
+    let metadata = format_metadata_line(&n.notification_kind, generation_id, n.consecutive_gens);
+    let since_line = format_since(&n.first_seen_at, now);
 
     let text = format!(
-        "{} *<{}|[{} {}]>* {} `{}`/`{}` on *{}*\n>{}\n_gen #{} · {} consecutive · since {}_",
+        "{} *<{}|{} on {}>* _({})_\n{}\n_{}_\n_Since {}_\n> _Source:_ {}",
         emoji,
         url,
         n.severity.to_uppercase(),
+        scope,
         domain_label,
-        escalation,
-        n.kind,
-        if n.subject.is_empty() { "-" } else { &n.subject },
-        if n.host.is_empty() { "global" } else { &n.host },
+        finding_line,
+        metadata,
+        since_line,
         n.message,
-        generation_id,
-        n.consecutive_gens,
-        n.first_seen_at,
     );
 
     serde_json::json!({ "text": text })
 }
 
 /// Build a Discord message payload (uses `content` not `text`).
+///
+/// Parallel structure to the Slack payload. Uses Discord's small-text marker
+/// (`-#`) for metadata lines.
 pub fn build_discord_payload(n: &PendingNotification, generation_id: i64, base_url: &str) -> serde_json::Value {
+    let now = time::OffsetDateTime::now_utc();
     let domain_label = domain_label(&n.domain);
-
-    let emoji = match n.severity.as_str() {
-        "critical" => "\u{1F534}", // red circle
-        "warning" => "\u{1F7E0}",  // orange circle
-        _ => "\u{26AA}",           // white circle
-    };
-
-    let escalation = escalation_label(&n.notification_kind);
+    let emoji = severity_emoji_discord(&n.severity);
     let url = finding_url(base_url, n);
+    let scope = scope_label(&n.host);
+    let finding_line = format_finding_line(&n.kind, &n.subject);
+    let metadata = format_metadata_line(&n.notification_kind, generation_id, n.consecutive_gens);
+    let since_line = format_since(&n.first_seen_at, now);
 
     let content = format!(
-        "{} **[{} {}]**{} `{}`/`{}` on **{}**\n> {}\n-# gen #{} · {} consecutive · since {} · [detail]({})",
+        "{} **{} on {}** _({})_\n{}\n-# {}\n-# Since {}\n-# [detail]({})\n> _Source:_ {}",
         emoji,
         n.severity.to_uppercase(),
+        scope,
         domain_label,
-        escalation,
-        n.kind,
-        if n.subject.is_empty() { "-" } else { &n.subject },
-        if n.host.is_empty() { "global" } else { &n.host },
-        n.message,
-        generation_id,
-        n.consecutive_gens,
-        &n.first_seen_at[..19.min(n.first_seen_at.len())],
+        finding_line,
+        metadata,
+        since_line,
         url,
+        n.message,
     );
 
     serde_json::json!({ "content": content })
@@ -483,5 +559,151 @@ mod tests {
             |row| row.get(0),
         ).unwrap();
         assert_eq!(count, 1);
+    }
+
+    // ----- Render tests (ALERT_INTERPRETATION_GAP v1, single-finding slice) -----
+
+    fn sample_notification(
+        host: &str,
+        kind: &str,
+        subject: &str,
+        severity: &str,
+        message: &str,
+        nk: NotificationKind,
+        consecutive: i64,
+        first_seen_at: &str,
+    ) -> PendingNotification {
+        PendingNotification {
+            host: host.into(),
+            domain: "Δg".into(),
+            kind: kind.into(),
+            subject: subject.into(),
+            message: message.into(),
+            severity: severity.into(),
+            notification_kind: nk,
+            consecutive_gens: consecutive,
+            first_seen_at: first_seen_at.into(),
+            peak_value: None,
+        }
+    }
+
+    #[test]
+    fn slack_render_is_subject_led_and_demotes_predicate_to_footer() {
+        // The canonical 4:47 AM alert that motivated ALERT_INTERPRETATION_GAP.
+        let n = sample_notification(
+            "",
+            "check_failed",
+            "#1",
+            "critical",
+            "check 'critical findings': 1 row(s) (expected none)",
+            NotificationKind::Escalated { from_severity: "warning".into() },
+            181,
+            "2026-04-14T05:45:54.549615Z",
+        );
+
+        let payload = build_slack_payload(&n, 35053, "https://nq.example");
+        let text = payload["text"].as_str().unwrap();
+        let headline = text.lines().next().unwrap();
+
+        // Headline: severity-led, subject-led, no row-count predicate.
+        assert!(headline.contains("CRITICAL on global"), "headline not subject-led: {}", headline);
+        assert!(!headline.contains("row(s)"), "headline must not carry row-count: {}", headline);
+        assert!(!headline.contains("expected none"), "headline must not carry predicate: {}", headline);
+
+        // Finding line on its own bullet.
+        assert!(text.contains("• `check_failed` on `#1`"), "finding line missing: {}", text);
+
+        // Metadata preserved.
+        assert!(text.contains("Escalated from warning"), "escalation missing: {}", text);
+        assert!(text.contains("generation #35053"), "generation missing: {}", text);
+        assert!(text.contains("181 consecutive"), "consecutive count missing: {}", text);
+
+        // Human-legible time; nanoseconds stripped.
+        assert!(text.contains("Since 2026-04-14 05:45 UTC"), "pretty time missing: {}", text);
+        assert!(!text.contains("54.549615Z"), "nanoseconds must not leak into body: {}", text);
+
+        // Predicate message demoted to Source footer (preserved, not erased).
+        assert!(text.contains("_Source:_"), "source footer marker missing: {}", text);
+        assert!(text.contains("1 row(s) (expected none)"), "raw message must survive as evidence: {}", text);
+    }
+
+    #[test]
+    fn slack_render_subject_led_with_host() {
+        let n = sample_notification(
+            "labelwatch-main",
+            "wal_bloat",
+            "/data/facts_work.sqlite",
+            "critical",
+            "WAL size 8.3 GB exceeds threshold 2 GB",
+            NotificationKind::New,
+            5,
+            "2026-04-14T03:00:00Z",
+        );
+
+        let payload = build_slack_payload(&n, 35100, "https://nq.example");
+        let text = payload["text"].as_str().unwrap();
+        let headline = text.lines().next().unwrap();
+
+        assert!(headline.contains("CRITICAL on labelwatch-main"), "headline: {}", headline);
+        assert!(text.contains("• `wal_bloat` on `/data/facts_work.sqlite`"), "finding line: {}", text);
+        assert!(text.contains("Generation #35100 · 5 consecutive (new)"), "new metadata line: {}", text);
+        assert!(text.contains("_Source:_ WAL size 8.3 GB exceeds threshold 2 GB"), "evidence footer: {}", text);
+    }
+
+    #[test]
+    fn discord_render_parallels_slack_shape() {
+        let n = sample_notification(
+            "driftwatch-main",
+            "disk_pressure",
+            "/data",
+            "warning",
+            "disk at 87% (threshold 85%)",
+            NotificationKind::Escalated { from_severity: "info".into() },
+            12,
+            "2026-04-14T02:00:00Z",
+        );
+
+        let payload = build_discord_payload(&n, 35200, "https://nq.example");
+        let content = payload["content"].as_str().unwrap();
+        let headline = content.lines().next().unwrap();
+
+        assert!(headline.contains("WARNING on driftwatch-main"), "headline: {}", headline);
+        assert!(content.contains("• `disk_pressure` on `/data`"), "finding line: {}", content);
+        assert!(content.contains("Escalated from info · generation #35200 · 12 consecutive"), "metadata: {}", content);
+        assert!(content.contains("Since 2026-04-14 02:00 UTC"), "since line: {}", content);
+        assert!(content.contains("[detail](https://nq.example"), "detail link: {}", content);
+        assert!(content.contains("_Source:_ disk at 87%"), "evidence footer: {}", content);
+    }
+
+    #[test]
+    fn format_since_renders_absolute_and_relative_for_past_timestamp() {
+        // Fix "now" to make relative calculation deterministic.
+        let now = time::OffsetDateTime::parse(
+            "2026-04-14T06:00:00Z",
+            &time::format_description::well_known::Rfc3339,
+        ).unwrap();
+
+        let rendered = format_since("2026-04-14T05:15:00Z", now);
+        assert!(rendered.contains("2026-04-14 05:15 UTC"), "{}", rendered);
+        assert!(rendered.contains("~45m ago"), "{}", rendered);
+    }
+
+    #[test]
+    fn format_since_handles_future_timestamp_without_relative() {
+        let now = time::OffsetDateTime::parse(
+            "2026-04-14T06:00:00Z",
+            &time::format_description::well_known::Rfc3339,
+        ).unwrap();
+
+        let rendered = format_since("2099-01-01T00:00:00Z", now);
+        assert!(rendered.contains("2099-01-01 00:00 UTC"), "{}", rendered);
+        assert!(!rendered.contains("ago"), "future timestamps must not claim 'ago': {}", rendered);
+    }
+
+    #[test]
+    fn format_since_falls_back_on_unparseable_input() {
+        let now = time::OffsetDateTime::now_utc();
+        let rendered = format_since("not-a-timestamp", now);
+        assert_eq!(rendered, "not-a-timestamp");
     }
 }
