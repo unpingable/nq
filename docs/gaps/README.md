@@ -30,6 +30,9 @@ Specs carry one of these statuses in their header. The index below groups accord
 ### Operator surface
 - [`ALERT_INTERPRETATION_GAP`](ALERT_INTERPRETATION_GAP.md) — `proposed`. Render alerts from findings, not checks.
 
+### Self-governance
+- [`OBSERVER_DISTORTION_GAP`](OBSERVER_DISTORTION_GAP.md) — `proposed`. Δq detector domain: observers are members of the fault domain. Self-audit first (v1); host-wide deferred.
+
 ### Infrastructure plane
 - [`SENTINEL_LIVENESS_GAP`](SENTINEL_LIVENESS_GAP.md) — `specified, ready to build`. Out-of-band "something stopped moving."
 - [`WRITE_TX_INSTRUMENTATION_GAP`](WRITE_TX_INSTRUMENTATION_GAP.md) — `specified, ready to build`. In-band lock-holder biography.
