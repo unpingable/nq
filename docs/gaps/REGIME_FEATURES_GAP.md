@@ -1,10 +1,10 @@
 # Gap: Regime Features — temporal fact compiler between evidence and diagnosis
 
-**Status:** partial — trajectory + persistence shipped; recovery, co-occurrence, resolution pending
+**Status:** partial — trajectory + persistence shipped; recovery specced (this doc); co-occurrence, resolution pending
 **Depends on:** FINDING_DIAGNOSIS_GAP (typed nucleus to consume features), STABILITY_AXIS_GAP (presence pattern as input), finding_observations + hosts_history + metrics_history (the raw temporal substrate)
 **Build phase:** structural — adds the missing middle layer between stored evidence and typed diagnosis
 **Blocks:** trajectory/direction in diagnosis (currently deferred), forecasting/time-to-exhaustion, regime composition ("this host is in an accumulation regime" vs "three bad things are true near each other")
-**Last updated:** 2026-04-14
+**Last updated:** 2026-04-15
 
 ## Shipped State (2026-04-14)
 
@@ -29,7 +29,7 @@ Two of the five feature classes are live:
 
 Architecture verified against real contention. The `entrenched/persistent/transient` split is telling the operational truth — a single read of the table distinguishes operational fixtures from residue from just-fired alerts.
 
-**Still pending:** recovery lag, co-occurrence, resolution/stabilization, renderer surface.
+**Still pending:** recovery lag (specced below, unimplemented), co-occurrence, resolution/stabilization, renderer surface.
 
 ## The Problem
 
@@ -66,6 +66,14 @@ Generation is the epistemically honest unit because NQ only knows what it observ
 The system should not pretend to know continuous reality between observations.
 
 **This is not a TSDB.** Do not introduce a general-purpose time-series store. The novel thing is the interpreter, not the storage. Prometheus, SQLite snapshots, whatever miserable bucket of numbers you already have — the raw storage is fine. The missing piece is the computation pass that turns history into typed facts.
+
+**Findings remain idempotent; regime features describe episodes.** A finding says "this predicate is true for this subject at this generation" — same shape, same key, same predicate, every time. Regime features describe the temporal behavior of repeated observations, allowing identical predicates to be distinguished by persistence, recovery lag, recurrence, and atypicality without forking the finding identity. Two alerts that both read `wal_bloat on host X` can mean slow checkpoint starvation, a pinned reader, disk pressure feedback, post-restart cleanup lag, or recurring failure after apparent recovery. Same noun. Different weather system. The three-layer split is load-bearing:
+
+- **Finding** — "what is true right now?" Idempotent predicate result.
+- **Lifecycle** — "is this opening, open, closing, cleared?" Hysteresis and notification state in `warning_state`.
+- **Regime feature** — "what kind of pattern is this becoming?" Persistence, recovery lag, recurrence interval, atypicality.
+
+Recovery belongs in the regime layer, not as a second lifecycle truth source. Otherwise two systems both claim to know whether something "recovered" and the dashboard starts needing a theology department.
 
 ## Proposed Layer
 
@@ -109,11 +117,64 @@ Derived from prior appearance/clearance cycles of the same finding.
 
 | Feature | Type | Example |
 |---|---|---|
-| `last_recovery_lag_generations` | i64 | 14 |
-| `median_recovery_lag_generations` | i64 | 11 |
-| `recurrence_interval_generations` | i64 | 45 |
+| `last_recovery_lag_generations` | Option<i64> | 14 |
+| `median_recovery_lag_generations` | Option<i64> | 11 |
+| `last_recurrence_interval_generations` | Option<i64> | 45 |
+| `median_recurrence_interval_generations` | Option<i64> | 38 |
+| `prior_cycles_observed` | i64 | 4 |
+| `recovery_lag_class` | enum | `normal` / `slow` / `pathological` / `insufficient_history` |
 
 Target use: "this condition usually clears quickly, but not this time." "This host repeatedly returns to the same failure pattern."
+
+**Frozen v1 defaults (changing these requires updating classifier tests and worked examples in the same commit):**
+
+- **Window:** `500` generations. Fixed, no retention coupling yet. Long enough to see several cycles for fast-flapping findings; short enough that compute stays bounded.
+- **Subject:** `finding` (same as persistence). Basis: `derived_from_findings`.
+- **Emit cadence:** every generation, for every tracked finding identity with history in `finding_observations` / `warning_state` within the window. Scope explicitly includes currently-absent findings with prior cycles — recovery facts describe the episode shape across presence *and* absence, so restricting to currently-observed would smuggle in the wrong predicate. Features are useful both while a finding is actively firing (the median lag of *prior* cycles makes the current episode interpretable) and after it clears (the just-closed cycle becomes a new sample).
+- **Cycle filter:** presence and absence runs must be `≥ 2` generations to count. Single-generation blips are noise. This is the minimum that distinguishes "flickered once" from "actually went away and came back."
+- **Recovery lag** = length of a presence run that was followed by an absence run of ≥ 2 generations. Sampled once per such closed cycle.
+- **Recurrence interval** = length of an absence run bounded by presence on both sides (both ≥ 2 generations). Sampled once per such closed gap.
+- **Classification (self-referential, no per-kind ontology):**
+  - `insufficient_history` — fewer than 2 prior closed recovery cycles
+  - `normal` — `last_lag ≤ 2 × median_lag`
+  - `slow` — `2 × median_lag < last_lag ≤ 5 × median_lag`
+  - `pathological` — `last_lag > 5 × median_lag`
+- **Basis flag:** `sufficient_history = (prior_cycles_observed >= 2)`.
+
+**Rationale for self-referential thresholds:** A per-kind baseline table (`wal_bloat expected 3 gens, check_failed expected 1`) is tempting but couples the regime layer to a taxonomy we haven't earned. Self-referential means each finding's lag class is measured against its own past, which is honest about what NQ actually knows. Upgrade path: once enough cycles are observed across hosts, a per-kind baseline can be added as an additional classification basis without replacing the self-referential one.
+
+**Canonical worked examples (synthetic until run against live data; backfill after first compute pass):**
+
+| Scenario | prior_cycles | last_lag | median_lag | class |
+|---|---|---|---|---|
+| Just-appeared finding, no prior cycles | 0 | — | — | `insufficient_history` |
+| Stable flap — every cycle ~5 gens | 8 | 5 | 5 | `normal` |
+| Usually clears in 3 gens, this one took 8 | 4 | 8 | 3 | `slow` |
+| Usually clears in 3 gens, this one took 25 | 4 | 25 | 3 | `pathological` |
+| First-ever closed cycle (one sample) | 1 | 12 | 12 | `insufficient_history` |
+
+The last row is the important one: a single closed cycle gives you `last_lag` but not enough signal to classify atypicality. Prefer honest "insufficient_history" over fake confidence.
+
+**Output shape:**
+
+```rust
+pub struct RecoveryPayload {
+    pub last_recovery_lag_generations: Option<i64>,
+    pub median_recovery_lag_generations: Option<i64>,
+    pub last_recurrence_interval_generations: Option<i64>,
+    pub median_recurrence_interval_generations: Option<i64>,
+    pub prior_cycles_observed: i64,
+    pub window_generations: i64,
+    pub recovery_lag_class: RecoveryLagClass,
+}
+```
+
+**Non-goals for v1 recovery:**
+
+- Cross-finding aggregation (per-kind baseline medians). Upgrade later once self-referential is proven.
+- Continuous wall-clock rendering. Generation remains the unit. Rendering can multiply by generation_interval_seconds downstream.
+- Predicting when the next recurrence will happen. That is forecasting, not regime evidence.
+- Separate lifecycle state machine for "recovering." Lifecycle already handles `pending_close → clear` with 3-gen hysteresis; recovery features describe the *episode shape*, not the state.
 
 ### 4. Co-occurrence
 
@@ -225,6 +286,7 @@ Feature vocabulary (v1):
 - Direction: `rising`, `falling`, `flat`, `bounded`, `oscillating`, `unstable`
 - Presence: `persistent`, `intermittent`, `recurring`
 - Recovery pace: `slow_recovery`, `co_occurring`
+- Recovery lag class: `normal`, `slow`, `pathological`, `insufficient_history`
 - Recovery phase: `acute`, `improving`, `settling`, `steady_state`
 - Reuse: `inactive`, `growing`, `cycling_reuse`, `stagnant`
 - Residual: `none`, `transient`, `recurring`, `dominant`
@@ -253,7 +315,7 @@ Better a small honest vocabulary than a taxonomy that sounds clever and explains
 
 1. **Metric trajectory** — direction + slope for host resource metrics (disk, mem, CPU). Insufficient history flag.
 2. **Finding persistence** — streak length, present ratio, interruption count for existing findings.
-3. **Finding recovery lag** — last recovery lag, recurrence interval where computable.
+3. **Finding recovery lag** — last + median recovery lag, last + median recurrence interval, self-referential `recovery_lag_class` (normal/slow/pathological/insufficient_history). Window 500 gens, cycle filter ≥ 2 gens, emitted every generation for observed findings. See §3 above for frozen defaults.
 4. **Simple co-occurrence** — pairwise co-occurrence depth for same-host overlapping findings.
 5. **Basic resolution** — `recovery_phase` (acute/improving/settling/steady_state) for findings that cleared, and `plateau_depth_generations` for metrics where `growth_direction = flat` is sustained. Enough to distinguish "recovered" from "stopped looking."
 
