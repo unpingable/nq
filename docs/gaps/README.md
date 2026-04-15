@@ -29,6 +29,7 @@ Specs carry one of these statuses in their header. The index below groups accord
 
 ### Operator surface
 - [`ALERT_INTERPRETATION_GAP`](ALERT_INTERPRETATION_GAP.md) — `proposed`. Render alerts from findings, not checks.
+- [`DASHBOARD_MODE_SEPARATION_GAP`](DASHBOARD_MODE_SEPARATION_GAP.md) — `proposed`. Snapshots are evidence; live probes are instrumentation. The dashboard default should be live-probe state; snapshot data renders as historical evidence only. Supersedes an earlier STALE_SNAPSHOT_RENDER bandaid draft.
 
 ### Self-governance
 - [`OBSERVER_DISTORTION_GAP`](OBSERVER_DISTORTION_GAP.md) — `proposed`. Δq detector domain: observers are members of the fault domain. Self-audit first (v1); host-wide deferred.

@@ -183,9 +183,14 @@ And the brutal corollary:
 
 > **A monitor may sample pressure, but must not add pressure to the thing it samples.**
 
+## Downstream consumer: dashboard live probes
+
+`DASHBOARD_MODE_SEPARATION_GAP` inherits the Δq participation discipline wholesale. The live-probe framework in that gap is, operationally, "Δq applied to probes-on-demand instead of probes-on-timer." Every live probe must declare its participation mode in the same manifest, must be non-participatory against foreign substrate, and is subject to the same "a probe that mutates or locks is not a probe, it is an actor" rule. The live-probe surface is the first concrete consumer of the Δq manifest vocabulary.
+
 ## References
 
 - Incident evidence: continuity scope `case:driftwatch-disk-crisis-2026-04-15` (memories `mem_907a3906...`, `mem_bdb3a8ad...`, `mem_3e0e40c5...`)
+- `docs/gaps/DASHBOARD_MODE_SEPARATION_GAP.md` — downstream consumer of the Δq participation manifest; live probes inherit non-participatory discipline by design.
 - Fix commit: `734f14c` — `publisher: stop opening foreign SQLite DBs — parse file header instead`
 - `docs/gaps/EVIDENCE_LAYER_GAP.md` (finding pipe)
 - `docs/gaps/REGIME_FEATURES_GAP.md` (future consumer of composed Δq signals)
