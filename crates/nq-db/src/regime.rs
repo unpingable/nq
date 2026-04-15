@@ -571,6 +571,18 @@ fn extract_cycle_samples(runs: &[Run]) -> (Vec<i64>, Vec<i64>) {
     (recovery_lags, recurrence_intervals)
 }
 
+/// Split an ordered sample list into `(last, prior)`. Returns `(None, &[])`
+/// for an empty input. Used to isolate the cycle being classified from the
+/// baseline samples used to compute its classification median.
+fn split_last(samples: &[i64]) -> (Option<i64>, &[i64]) {
+    if samples.is_empty() {
+        (None, &[])
+    } else {
+        let (last, prior) = samples.split_last().unwrap();
+        (Some(*last), prior)
+    }
+}
+
 fn median_i64(values: &[i64]) -> Option<i64> {
     if values.is_empty() {
         return None;
@@ -653,11 +665,16 @@ fn compute_finding_recovery(
         let cleaned = filter_short_and_merge_runs(runs);
         let (recovery_lags, recurrence_intervals) = extract_cycle_samples(&cleaned);
 
-        let prior_cycles = recovery_lags.len() as i64;
-        let last_recovery_lag = recovery_lags.last().copied();
-        let median_recovery_lag = median_i64(&recovery_lags);
-        let last_recurrence_interval = recurrence_intervals.last().copied();
-        let median_recurrence_interval = median_i64(&recurrence_intervals);
+        // prior = closed cycles strictly before the last one. The last lag
+        // must never pollute its own baseline — otherwise a pathological
+        // cycle dampens itself toward slow/normal by contributing to the
+        // median it's compared against. See REGIME_FEATURES_GAP §3.
+        let (last_recovery_lag, prior_lags) = split_last(&recovery_lags);
+        let (last_recurrence_interval, prior_intervals) = split_last(&recurrence_intervals);
+
+        let prior_cycles = prior_lags.len() as i64;
+        let median_recovery_lag = median_i64(prior_lags);
+        let median_recurrence_interval = median_i64(prior_intervals);
 
         let class = classify_recovery_lag(last_recovery_lag, median_recovery_lag, prior_cycles);
 
@@ -1369,8 +1386,9 @@ mod tests {
                 |r| r.get::<_, String>(0),
             ).unwrap(),
         ).unwrap();
-        assert_eq!(p.prior_cycles_observed, 1);
+        assert_eq!(p.prior_cycles_observed, 0, "1 closed cycle → 0 prior baseline samples");
         assert_eq!(p.last_recovery_lag_generations, Some(5));
+        assert!(p.median_recovery_lag_generations.is_none(), "no baseline → no median");
         assert_eq!(p.recovery_lag_class, RecoveryLagClass::InsufficientHistory);
     }
 
@@ -1395,11 +1413,15 @@ mod tests {
                 |r| r.get::<_, String>(0),
             ).unwrap(),
         ).unwrap();
-        assert_eq!(p.prior_cycles_observed, 3);
+        // 3 total closed cycles → 2 prior baseline + 1 last. median is over baseline only.
+        assert_eq!(p.prior_cycles_observed, 2);
         assert_eq!(p.last_recovery_lag_generations, Some(5));
         assert_eq!(p.median_recovery_lag_generations, Some(5));
         assert_eq!(p.recovery_lag_class, RecoveryLagClass::Normal);
-        // Two bounded absences: gens 6-10 and 16-20, both length 5
+        // Two bounded absences (gens 6-10 and 16-20, both length 5); with
+        // split_last applied, last=5 and median is over the remaining 1
+        // prior sample = Some(5).
+        assert_eq!(p.last_recurrence_interval_generations, Some(5));
         assert_eq!(p.median_recurrence_interval_generations, Some(5));
     }
 
@@ -1426,7 +1448,9 @@ mod tests {
                 |r| r.get::<_, String>(0),
             ).unwrap(),
         ).unwrap();
-        assert_eq!(p.prior_cycles_observed, 3);
+        // 3 total closed cycles with lags [3, 3, 8]. Baseline = [3, 3];
+        // median of baseline = 3. last = 8. 8 > 2×3 = 6, 8 <= 5×3 = 15 → slow.
+        assert_eq!(p.prior_cycles_observed, 2);
         assert_eq!(p.last_recovery_lag_generations, Some(8));
         assert_eq!(p.median_recovery_lag_generations, Some(3));
         assert_eq!(p.recovery_lag_class, RecoveryLagClass::Slow);
@@ -1455,7 +1479,9 @@ mod tests {
                 |r| r.get::<_, String>(0),
             ).unwrap(),
         ).unwrap();
-        assert_eq!(p.prior_cycles_observed, 3);
+        // 3 total closed cycles with lags [2, 2, 20]. Baseline = [2, 2];
+        // median of baseline = 2. last = 20. 20 > 5×2 = 10 → pathological.
+        assert_eq!(p.prior_cycles_observed, 2);
         assert_eq!(p.last_recovery_lag_generations, Some(20));
         assert_eq!(p.median_recovery_lag_generations, Some(2));
         assert_eq!(p.recovery_lag_class, RecoveryLagClass::Pathological);
@@ -1481,9 +1507,11 @@ mod tests {
                 |r| r.get::<_, String>(0),
             ).unwrap(),
         ).unwrap();
-        // One closed cycle, presence length = 10+9 = 19 (the blip is dropped, not filled)
-        assert_eq!(p.prior_cycles_observed, 1);
+        // One closed cycle (presence length = 10+9 = 19 after blip filter + merge).
+        // With split_last: last=Some(19), baseline empty → prior=0.
+        assert_eq!(p.prior_cycles_observed, 0);
         assert_eq!(p.last_recovery_lag_generations, Some(19));
+        assert!(p.median_recovery_lag_generations.is_none());
         // No bounded absence — the only absence is trailing.
         assert!(p.last_recurrence_interval_generations.is_none());
     }
@@ -1510,8 +1538,9 @@ mod tests {
             ).unwrap(),
         ).unwrap();
         // Exactly one bounded absence run of length 6 (gens 9-14).
+        // With split_last: last=Some(6), baseline empty → median=None.
         assert_eq!(p.last_recurrence_interval_generations, Some(6));
-        assert_eq!(p.median_recurrence_interval_generations, Some(6));
+        assert!(p.median_recurrence_interval_generations.is_none());
     }
 
     #[test]
@@ -1564,6 +1593,55 @@ mod tests {
                 |r| r.get::<_, String>(0),
             ).unwrap(),
         ).unwrap();
+        // 2 total closed cycles → 1 prior baseline + 1 last. Still
+        // insufficient_history (prior < 2), but the scope guarantee holds:
+        // a finding with no warning_state row but with finding_observations
+        // history still gets a recovery feature emitted.
+        assert_eq!(p.prior_cycles_observed, 1);
+    }
+
+    /// Regression test for chatty's 2026-04-15 median-pollution concern:
+    /// when the last (possibly pathological) cycle is allowed to contribute
+    /// to its own baseline median, its outlier-ness is dampened and it may
+    /// misclassify as slow or normal. The split_last rule prevents that.
+    ///
+    /// Setup: baseline of two cycles with lags [2, 8], last cycle with
+    /// lag 30. Under the "median over all samples" rule (including last),
+    /// median = median([2, 8, 30]) = 8; 30 ≤ 5×8 = 40 → slow (wrong).
+    /// Under the "median over baseline only" rule, median = median([2, 8])
+    /// = 5; 30 > 5×5 = 25 → pathological (correct).
+    #[test]
+    fn recovery_pathological_not_masked_by_self_pollution() {
+        let mut db = make_db();
+        let fk = crate::publish::compute_finding_key("local", "host-1", "wal_bloat", "/db");
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 0);
+        // Presence runs (all ≥ 2 so they count): 2 gens, 8 gens, 30 gens.
+        // Absence runs (all ≥ 2 so they count): 3 gens, 3 gens, 3 gens (trailing).
+        for g in 1..=2 { insert_observation(&db, g, &fk, "host-1", "wal_bloat", "/db"); }
+        // absent 3-5
+        for g in 6..=13 { insert_observation(&db, g, &fk, "host-1", "wal_bloat", "/db"); }
+        // absent 14-16
+        for g in 17..=46 { insert_observation(&db, g, &fk, "host-1", "wal_bloat", "/db"); }
+        // absent 47-49 (trailing)
+        ensure_generation(&db, 49);
+        compute_features(&mut db, 49).unwrap();
+
+        let p: RecoveryPayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE feature_type = 'recovery' AND subject_id = ?1",
+                rusqlite::params![&fk],
+                |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        // Total closed cycles = 3 (lags 2, 8, 30). Prior baseline = [2, 8].
         assert_eq!(p.prior_cycles_observed, 2);
+        assert_eq!(p.last_recovery_lag_generations, Some(30));
+        // median([2, 8]) = (2+8)/2 = 5 (integer floor of average of two).
+        assert_eq!(p.median_recovery_lag_generations, Some(5));
+        // 30 > 5 × 5 = 25 → pathological. If split_last were broken and
+        // median were median([2, 8, 30]) = 8, we'd get slow (30 ≤ 40),
+        // which would be the exact failure mode this test guards.
+        assert_eq!(p.recovery_lag_class, RecoveryLagClass::Pathological);
     }
 }

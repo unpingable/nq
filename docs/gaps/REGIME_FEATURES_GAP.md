@@ -1,6 +1,6 @@
 # Gap: Regime Features — temporal fact compiler between evidence and diagnosis
 
-**Status:** partial — trajectory + persistence shipped; recovery specced (this doc); co-occurrence, resolution pending
+**Status:** partial — trajectory + persistence + recovery shipped; co-occurrence, observability, resolution pending
 **Depends on:** FINDING_DIAGNOSIS_GAP (typed nucleus to consume features), STABILITY_AXIS_GAP (presence pattern as input), finding_observations + hosts_history + metrics_history (the raw temporal substrate)
 **Build phase:** structural — adds the missing middle layer between stored evidence and typed diagnosis
 **Blocks:** trajectory/direction in diagnosis (currently deferred), forecasting/time-to-exhaustion, regime composition ("this host is in an accumulation regime" vs "three bad things are true near each other")
@@ -8,7 +8,7 @@
 
 ## Shipped State (2026-04-14)
 
-Two of the five feature classes are live:
+Three of the six feature classes are live (trajectory, persistence, recovery). Three remain pending (co-occurrence §4, observability §5, resolution §6):
 
 **Trajectory (commit `34dd15e`)**
 - Subject: `host_metric` with subject_id `{host}/{metric}`
@@ -29,7 +29,14 @@ Two of the five feature classes are live:
 
 Architecture verified against real contention. The `entrenched/persistent/transient` split is telling the operational truth — a single read of the table distinguishes operational fixtures from residue from just-fired alerts.
 
-**Still pending:** recovery lag (specced below, unimplemented), co-occurrence, resolution/stabilization, renderer surface.
+**Recovery shipped (2026-04-15)**
+- Commits: spec `f9ec30b`, implementation `c3ceff8`
+- Subject: `finding` with subject_id `finding_key`
+- Window: 500 generations; closed-cycle filter ≥ 2 generations
+- Computed: `last_recovery_lag_generations`, `median_recovery_lag_generations`, `last_recurrence_interval_generations`, `median_recurrence_interval_generations`, `prior_cycles_observed`, `recovery_lag_class` (normal/slow/pathological/insufficient_history — self-referential against own prior median)
+- Canonical worked examples: synthetic (see §3); backfill with live data after sufficient cycle history accumulates on labelwatch-host
+
+**Still pending:** co-occurrence (§4), observability (§5), resolution/stabilization (§6), renderer surface.
 
 ## The Problem
 
@@ -74,6 +81,21 @@ The system should not pretend to know continuous reality between observations.
 - **Regime feature** — "what kind of pattern is this becoming?" Persistence, recovery lag, recurrence interval, atypicality.
 
 Recovery belongs in the regime layer, not as a second lifecycle truth source. Otherwise two systems both claim to know whether something "recovered" and the dashboard starts needing a theology department.
+
+**Derived facts must have bounded retention.**
+
+Append-only is a storage discipline, not a license to grow without bound. Every feature class emitted into `regime_features` must have explicit retention / compaction / pruning semantics — otherwise NQ builds a time-series system while insisting it did not build a time-series system. That insistence will not save the disk.
+
+Concrete rules:
+
+- **Retention horizon per feature type.** Trajectory and persistence are useful at most one window back; once the window advances, older rows lose interpretive value. Recovery may want longer because rare cycles are informative, but "longer" is bounded, not infinite.
+- **Pruning is generation-keyed.** Prune by generation_id, not wall-clock. Matches the clock the rest of the system uses.
+- **Retention is coupled to the existing prune pass.** `nq serve`'s retention loop (see `crates/nq-db/src/retention.rs`) runs every N generations; `regime_features` pruning rides that loop, not a separate timer.
+- **Pruning must preserve the most recent sufficient_history row per (subject_kind, subject_id, feature_type)**, so consumers can always read "the latest" without a stale-data surprise after a prune pass.
+- **Storage budget.** Feature class × window × subject cardinality × generation cadence × emit rate gives a ceiling. That ceiling must fit under the configured `disk_budget`; retention horizons are tuned to satisfy it.
+- **Compaction is out of scope for v1** (see HISTORY_COMPACTION_GAP). Plain row-level pruning is sufficient until cardinality forces the issue.
+
+This paragraph exists because the 2026-04-15 driftwatch disk crisis reminded the entire project that an observer cheerfully appending facts *is* a write-side contributor to substrate pressure. NQ's derived-fact layer must not be the next sequel to that comedy.
 
 ## Proposed Layer
 
@@ -135,25 +157,29 @@ Target use: "this condition usually clears quickly, but not this time." "This ho
 - **Recovery lag** = length of a presence run that was followed by an absence run of ≥ 2 generations. Sampled once per such closed cycle.
 - **Recurrence interval** = length of an absence run bounded by presence on both sides (both ≥ 2 generations). Sampled once per such closed gap.
 - **Classification (self-referential, no per-kind ontology):**
-  - `insufficient_history` — fewer than 2 prior closed recovery cycles
+  - `insufficient_history` — fewer than 2 *prior* closed recovery cycles
   - `normal` — `last_lag ≤ 2 × median_lag`
   - `slow` — `2 × median_lag < last_lag ≤ 5 × median_lag`
   - `pathological` — `last_lag > 5 × median_lag`
+- **Prior-cycles-only median:** `median_lag` is computed from closed cycles **strictly before** the `last_lag` cycle. The current (last) event does not pollute its own baseline — otherwise a pathological cycle dampens itself into `slow` or `normal` by contributing to the very median it's being compared against. `prior_cycles_observed` therefore counts baseline samples, not total closed cycles (total = prior + 1).
 - **Basis flag:** `sufficient_history = (prior_cycles_observed >= 2)`.
 
 **Rationale for self-referential thresholds:** A per-kind baseline table (`wal_bloat expected 3 gens, check_failed expected 1`) is tempting but couples the regime layer to a taxonomy we haven't earned. Self-referential means each finding's lag class is measured against its own past, which is honest about what NQ actually knows. Upgrade path: once enough cycles are observed across hosts, a per-kind baseline can be added as an additional classification basis without replacing the self-referential one.
 
 **Canonical worked examples (synthetic until run against live data; backfill after first compute pass):**
 
+`prior_cycles` counts baseline samples only (cycles strictly before `last_lag`). Total closed cycles = prior + 1.
+
 | Scenario | prior_cycles | last_lag | median_lag | class |
 |---|---|---|---|---|
-| Just-appeared finding, no prior cycles | 0 | — | — | `insufficient_history` |
-| Stable flap — every cycle ~5 gens | 8 | 5 | 5 | `normal` |
-| Usually clears in 3 gens, this one took 8 | 4 | 8 | 3 | `slow` |
-| Usually clears in 3 gens, this one took 25 | 4 | 25 | 3 | `pathological` |
-| First-ever closed cycle (one sample) | 1 | 12 | 12 | `insufficient_history` |
+| Just-appeared finding, no cycles at all | 0 | — | — | `insufficient_history` |
+| First-ever closed cycle (one sample, no baseline) | 0 | 12 | — | `insufficient_history` |
+| Second closed cycle (one baseline sample, still not enough) | 1 | 7 | 8 | `insufficient_history` |
+| Stable flap — baseline of 8 cycles ~5 gens each | 8 | 5 | 5 | `normal` |
+| Usually clears in 3 gens, this one took 8 (baseline of 4) | 4 | 8 | 3 | `slow` |
+| Usually clears in 3 gens, this one took 25 (baseline of 4) | 4 | 25 | 3 | `pathological` |
 
-The last row is the important one: a single closed cycle gives you `last_lag` but not enough signal to classify atypicality. Prefer honest "insufficient_history" over fake confidence.
+The first three rows are the important ones: even with a `last_lag` value, fewer than 2 baseline samples gives no signal for atypicality. Prefer honest `insufficient_history` over fake confidence.
 
 **Output shape:**
 
@@ -315,7 +341,7 @@ Better a small honest vocabulary than a taxonomy that sounds clever and explains
 
 1. **Metric trajectory** — direction + slope for host resource metrics (disk, mem, CPU). Insufficient history flag.
 2. **Finding persistence** — streak length, present ratio, interruption count for existing findings.
-3. **Finding recovery lag** — last + median recovery lag, last + median recurrence interval, self-referential `recovery_lag_class` (normal/slow/pathological/insufficient_history). Window 500 gens, cycle filter ≥ 2 gens, emitted every generation for observed findings. See §3 above for frozen defaults.
+3. **Finding recovery lag** — last + median recovery lag, last + median recurrence interval, self-referential `recovery_lag_class` (normal/slow/pathological/insufficient_history). Window 500 gens, cycle filter ≥ 2 gens, emitted every generation for **every tracked finding identity with history in the window** (explicitly including currently-absent findings with prior cycles — recovery describes episode shape across presence AND absence, not a currently-observed predicate). See §3 above for frozen defaults.
 4. **Simple co-occurrence** — pairwise co-occurrence depth for same-host overlapping findings.
 5. **Basic resolution** — `recovery_phase` (acute/improving/settling/steady_state) for findings that cleared, and `plateau_depth_generations` for metrics where `growth_direction = flat` is sustained. Enough to distinguish "recovered" from "stopped looking."
 
