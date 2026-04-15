@@ -86,6 +86,44 @@ pub struct PersistencePayload {
     pub persistence_class: PersistenceClass,
 }
 
+/// Recovery-lag class: how the most recent closed cycle compares to this
+/// finding's own historical median. Self-referential by design — see
+/// REGIME_FEATURES_GAP §3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryLagClass {
+    /// Fewer than 2 closed recovery cycles in the window.
+    InsufficientHistory,
+    /// Last lag within 2× of this finding's median.
+    Normal,
+    /// Last lag between 2× and 5× of median.
+    Slow,
+    /// Last lag greater than 5× of median.
+    Pathological,
+}
+
+impl RecoveryLagClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InsufficientHistory => "insufficient_history",
+            Self::Normal => "normal",
+            Self::Slow => "slow",
+            Self::Pathological => "pathological",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecoveryPayload {
+    pub last_recovery_lag_generations: Option<i64>,
+    pub median_recovery_lag_generations: Option<i64>,
+    pub last_recurrence_interval_generations: Option<i64>,
+    pub median_recurrence_interval_generations: Option<i64>,
+    pub prior_cycles_observed: i64,
+    pub window_generations: i64,
+    pub recovery_lag_class: RecoveryLagClass,
+}
+
 // Basis/provenance per HISTORY_COMPACTION invariant #23 and
 // REGIME_FEATURES spec §Basis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -429,6 +467,231 @@ fn compute_finding_persistence(
 }
 
 // ---------------------------------------------------------------------------
+// Recovery: last/median recovery lag + recurrence interval per finding.
+// Derived from presence/absence run structure in finding_observations.
+// Self-referential classification — see REGIME_FEATURES_GAP §3.
+// ---------------------------------------------------------------------------
+
+/// Window for recovery computation (generations to look back).
+/// Fixed for v1, no retention coupling.
+const RECOVERY_WINDOW: i64 = 500;
+
+/// Minimum run length (presence or absence) to count toward a cycle.
+/// Runs shorter than this are treated as noise; adjacent same-kind runs
+/// separated by a dropped short run merge.
+const RECOVERY_MIN_RUN_LENGTH: i64 = 2;
+
+/// Minimum closed cycles required to classify recovery lag.
+/// Below this, class is `InsufficientHistory`.
+const RECOVERY_MIN_CYCLES_FOR_CLASS: i64 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunKind {
+    Present,
+    Absent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Run {
+    kind: RunKind,
+    length: i64,
+}
+
+/// Walk [window_start, current_gen] against the observed-generation set
+/// and emit one run per consecutive same-state segment.
+fn build_runs(
+    observed: &std::collections::BTreeSet<i64>,
+    window_start: i64,
+    current_gen: i64,
+) -> Vec<Run> {
+    if current_gen < window_start {
+        return Vec::new();
+    }
+    let mut runs: Vec<Run> = Vec::new();
+    let mut current: Option<Run> = None;
+    for g in window_start..=current_gen {
+        let kind = if observed.contains(&g) { RunKind::Present } else { RunKind::Absent };
+        match current.as_mut() {
+            Some(r) if r.kind == kind => r.length += 1,
+            _ => {
+                if let Some(r) = current.take() {
+                    runs.push(r);
+                }
+                current = Some(Run { kind, length: 1 });
+            }
+        }
+    }
+    if let Some(r) = current {
+        runs.push(r);
+    }
+    runs
+}
+
+/// Drop runs shorter than the minimum length and merge adjacent same-kind
+/// runs that become neighbours after the drop. 1-gen blips are treated
+/// as noise and disappear from the cycle analysis.
+fn filter_short_and_merge_runs(runs: Vec<Run>) -> Vec<Run> {
+    let kept: Vec<Run> = runs
+        .into_iter()
+        .filter(|r| r.length >= RECOVERY_MIN_RUN_LENGTH)
+        .collect();
+    let mut out: Vec<Run> = Vec::new();
+    for r in kept {
+        match out.last_mut() {
+            Some(last) if last.kind == r.kind => last.length += r.length,
+            _ => out.push(r),
+        }
+    }
+    out
+}
+
+/// Extract recovery-lag and recurrence-interval samples from a cleaned run list.
+///
+/// - Recovery lag sample = length of a presence run that is followed by an
+///   absence run. One sample per such closed cycle.
+/// - Recurrence interval sample = length of an absence run bounded by
+///   presence on both sides. One sample per such closed gap.
+fn extract_cycle_samples(runs: &[Run]) -> (Vec<i64>, Vec<i64>) {
+    let mut recovery_lags: Vec<i64> = Vec::new();
+    let mut recurrence_intervals: Vec<i64> = Vec::new();
+    for i in 0..runs.len() {
+        let r = runs[i];
+        if r.kind == RunKind::Present && i + 1 < runs.len() && runs[i + 1].kind == RunKind::Absent {
+            recovery_lags.push(r.length);
+        }
+        if r.kind == RunKind::Absent
+            && i >= 1
+            && i + 1 < runs.len()
+            && runs[i - 1].kind == RunKind::Present
+            && runs[i + 1].kind == RunKind::Present
+        {
+            recurrence_intervals.push(r.length);
+        }
+    }
+    (recovery_lags, recurrence_intervals)
+}
+
+fn median_i64(values: &[i64]) -> Option<i64> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<i64> = values.to_vec();
+    sorted.sort_unstable();
+    let n = sorted.len();
+    Some(if n % 2 == 1 {
+        sorted[n / 2]
+    } else {
+        (sorted[n / 2 - 1] + sorted[n / 2]) / 2
+    })
+}
+
+/// Classify the most recent closed-cycle recovery lag against this finding's
+/// own historical median. Self-referential — no per-kind ontology.
+///
+/// Rules (evaluated in order; first match wins):
+/// 1. `prior_cycles < 2` → `InsufficientHistory`
+/// 2. `last_lag` or `median_lag` is `None` → `InsufficientHistory` (defence in depth)
+/// 3. `last_lag <= 2 * median_lag` → `Normal`
+/// 4. `last_lag <= 5 * median_lag` → `Slow`
+/// 5. otherwise → `Pathological`
+pub fn classify_recovery_lag(
+    last_lag: Option<i64>,
+    median_lag: Option<i64>,
+    prior_cycles: i64,
+) -> RecoveryLagClass {
+    if prior_cycles < RECOVERY_MIN_CYCLES_FOR_CLASS {
+        return RecoveryLagClass::InsufficientHistory;
+    }
+    let (Some(last), Some(median)) = (last_lag, median_lag) else {
+        return RecoveryLagClass::InsufficientHistory;
+    };
+    if median <= 0 {
+        return RecoveryLagClass::InsufficientHistory;
+    }
+    if last <= 2 * median {
+        RecoveryLagClass::Normal
+    } else if last <= 5 * median {
+        RecoveryLagClass::Slow
+    } else {
+        RecoveryLagClass::Pathological
+    }
+}
+
+fn compute_finding_recovery(
+    tx: &rusqlite::Transaction,
+    generation_id: i64,
+) -> anyhow::Result<()> {
+    let window_start = std::cmp::max(0, generation_id - RECOVERY_WINDOW);
+
+    // Scope = every finding identity with history in the window. Explicitly
+    // NOT scoped to "currently observed" — recovery describes episode shape
+    // across presence AND absence, including findings that have since cleared.
+    let finding_keys: Vec<String> = {
+        let mut stmt = tx.prepare(
+            "SELECT DISTINCT finding_key FROM finding_observations
+             WHERE generation_id > ?1",
+        )?;
+        let rows = stmt.query_map([window_start], |r| r.get::<_, String>(0))?;
+        rows.collect::<Result<_, _>>()?
+    };
+
+    for finding_key in &finding_keys {
+        // Pull observed generations in the window for this finding.
+        let observed: std::collections::BTreeSet<i64> = {
+            let mut stmt = tx.prepare(
+                "SELECT DISTINCT generation_id FROM finding_observations
+                 WHERE finding_key = ?1 AND generation_id > ?2",
+            )?;
+            let rows = stmt.query_map(
+                rusqlite::params![finding_key, window_start],
+                |r| r.get::<_, i64>(0),
+            )?;
+            rows.collect::<Result<_, _>>()?
+        };
+
+        let runs = build_runs(&observed, window_start + 1, generation_id);
+        let cleaned = filter_short_and_merge_runs(runs);
+        let (recovery_lags, recurrence_intervals) = extract_cycle_samples(&cleaned);
+
+        let prior_cycles = recovery_lags.len() as i64;
+        let last_recovery_lag = recovery_lags.last().copied();
+        let median_recovery_lag = median_i64(&recovery_lags);
+        let last_recurrence_interval = recurrence_intervals.last().copied();
+        let median_recurrence_interval = median_i64(&recurrence_intervals);
+
+        let class = classify_recovery_lag(last_recovery_lag, median_recovery_lag, prior_cycles);
+
+        let window_size = generation_id - window_start;
+        let payload = RecoveryPayload {
+            last_recovery_lag_generations: last_recovery_lag,
+            median_recovery_lag_generations: median_recovery_lag,
+            last_recurrence_interval_generations: last_recurrence_interval,
+            median_recurrence_interval_generations: median_recurrence_interval,
+            prior_cycles_observed: prior_cycles,
+            window_generations: window_size,
+            recovery_lag_class: class,
+        };
+
+        let sufficient = prior_cycles >= RECOVERY_MIN_CYCLES_FOR_CLASS;
+        upsert_feature(
+            tx,
+            generation_id,
+            "finding",
+            finding_key,
+            "recovery",
+            window_start + 1,
+            generation_id,
+            BasisKind::DerivedFromFindings,
+            sufficient,
+            observed.len() as i64,
+            &serde_json::to_string(&payload)?,
+        )?;
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point — called from the lifecycle pass.
 // ---------------------------------------------------------------------------
 
@@ -440,7 +703,8 @@ pub fn compute_features(db: &mut WriteDb, generation_id: i64) -> anyhow::Result<
     let tx = db.conn.transaction()?;
     compute_host_trajectories(&tx, generation_id)?;
     compute_finding_persistence(&tx, generation_id)?;
-    // Future commits add: recovery, co_occurrence, resolution
+    compute_finding_recovery(&tx, generation_id)?;
+    // Future commits add: co_occurrence, resolution
     tx.commit()?;
     Ok(())
 }
@@ -471,6 +735,27 @@ pub fn latest_finding_persistence(
     match row {
         Some((json, sufficient)) => {
             let p: PersistencePayload = serde_json::from_str(&json)?;
+            Ok(Some((p, sufficient != 0)))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Read the most recent recovery feature for a finding identified by key.
+pub fn latest_finding_recovery(
+    db: &crate::ReadDb,
+    finding_key: &str,
+) -> anyhow::Result<Option<(RecoveryPayload, bool)>> {
+    let row: Option<(String, i64)> = db.conn.query_row(
+        "SELECT payload_json, sufficient_history FROM regime_features
+         WHERE subject_kind = 'finding' AND subject_id = ?1 AND feature_type = 'recovery'
+         ORDER BY generation_id DESC LIMIT 1",
+        rusqlite::params![finding_key],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).ok();
+    match row {
+        Some((json, sufficient)) => {
+            let p: RecoveryPayload = serde_json::from_str(&json)?;
             Ok(Some((p, sufficient != 0)))
         }
         None => Ok(None),
@@ -835,5 +1120,450 @@ mod tests {
             [], |r| r.get(0),
         ).unwrap();
         assert_eq!(count, 1, "upsert should replace, not duplicate");
+    }
+
+    // ------------------------------------------------------------------
+    // Recovery: pure helper tests
+    // ------------------------------------------------------------------
+
+    fn observed_set(gens: &[i64]) -> std::collections::BTreeSet<i64> {
+        gens.iter().copied().collect()
+    }
+
+    /// Ensure a generation row exists for the given id. Tests that call
+    /// compute_features(db, g) without having inserted observations at g
+    /// need this so the FK from regime_features.generation_id succeeds.
+    fn ensure_generation(db: &crate::WriteDb, gen_id: i64) {
+        db.conn.execute(
+            "INSERT OR IGNORE INTO generations (generation_id, started_at, completed_at, status, sources_expected, sources_ok, sources_failed, duration_ms)
+             VALUES (?1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'complete', 1, 1, 0, 0)",
+            rusqlite::params![gen_id],
+        ).unwrap();
+    }
+
+    #[test]
+    fn build_runs_alternating_presence_absence() {
+        // Gens 1-3 present, 4-6 absent, 7-9 present, 10-12 absent
+        let observed = observed_set(&[1, 2, 3, 7, 8, 9]);
+        let runs = build_runs(&observed, 1, 12);
+        assert_eq!(runs.len(), 4);
+        assert_eq!(runs[0], Run { kind: RunKind::Present, length: 3 });
+        assert_eq!(runs[1], Run { kind: RunKind::Absent, length: 3 });
+        assert_eq!(runs[2], Run { kind: RunKind::Present, length: 3 });
+        assert_eq!(runs[3], Run { kind: RunKind::Absent, length: 3 });
+    }
+
+    #[test]
+    fn build_runs_starts_with_absence_when_first_gen_unobserved() {
+        let observed = observed_set(&[5, 6, 7]);
+        let runs = build_runs(&observed, 1, 10);
+        assert_eq!(runs[0], Run { kind: RunKind::Absent, length: 4 });
+        assert_eq!(runs[1], Run { kind: RunKind::Present, length: 3 });
+        assert_eq!(runs[2], Run { kind: RunKind::Absent, length: 3 });
+    }
+
+    #[test]
+    fn filter_merges_across_single_gen_blip() {
+        // presence(5), absence(1), presence(3) → presence(8) after filter+merge
+        let runs = vec![
+            Run { kind: RunKind::Present, length: 5 },
+            Run { kind: RunKind::Absent, length: 1 },
+            Run { kind: RunKind::Present, length: 3 },
+        ];
+        let cleaned = filter_short_and_merge_runs(runs);
+        assert_eq!(cleaned.len(), 1);
+        assert_eq!(cleaned[0], Run { kind: RunKind::Present, length: 8 });
+    }
+
+    #[test]
+    fn filter_drops_single_gen_trailing_blip() {
+        // presence(5), absence(1) → presence(5), no closed cycle
+        let runs = vec![
+            Run { kind: RunKind::Present, length: 5 },
+            Run { kind: RunKind::Absent, length: 1 },
+        ];
+        let cleaned = filter_short_and_merge_runs(runs);
+        assert_eq!(cleaned, vec![Run { kind: RunKind::Present, length: 5 }]);
+    }
+
+    #[test]
+    fn extract_samples_one_closed_cycle() {
+        // presence(5) followed by absence(3) → one recovery_lag sample (5), no recurrence
+        let runs = vec![
+            Run { kind: RunKind::Present, length: 5 },
+            Run { kind: RunKind::Absent, length: 3 },
+        ];
+        let (lags, intervals) = extract_cycle_samples(&runs);
+        assert_eq!(lags, vec![5]);
+        assert!(intervals.is_empty());
+    }
+
+    #[test]
+    fn extract_samples_bounded_absence_gives_recurrence_interval() {
+        // presence(4), absence(7), presence(2) → recovery_lag=4, recurrence_interval=7
+        let runs = vec![
+            Run { kind: RunKind::Present, length: 4 },
+            Run { kind: RunKind::Absent, length: 7 },
+            Run { kind: RunKind::Present, length: 2 },
+        ];
+        let (lags, intervals) = extract_cycle_samples(&runs);
+        assert_eq!(lags, vec![4]);
+        assert_eq!(intervals, vec![7]);
+    }
+
+    #[test]
+    fn extract_samples_trailing_absence_not_bounded() {
+        // Absence that has no following presence → not a recurrence_interval sample.
+        let runs = vec![
+            Run { kind: RunKind::Present, length: 3 },
+            Run { kind: RunKind::Absent, length: 10 },
+        ];
+        let (_, intervals) = extract_cycle_samples(&runs);
+        assert!(intervals.is_empty(), "trailing absence is not a bounded gap");
+    }
+
+    #[test]
+    fn extract_samples_leading_absence_not_bounded() {
+        // Absence at start of window → no preceding presence, not a recurrence_interval sample.
+        let runs = vec![
+            Run { kind: RunKind::Absent, length: 10 },
+            Run { kind: RunKind::Present, length: 3 },
+        ];
+        let (_, intervals) = extract_cycle_samples(&runs);
+        assert!(intervals.is_empty(), "leading absence is not a bounded gap");
+    }
+
+    #[test]
+    fn median_i64_odd_count() {
+        assert_eq!(median_i64(&[3, 1, 2]), Some(2));
+    }
+
+    #[test]
+    fn median_i64_even_count() {
+        // average of two middles, integer floor: (2+4)/2 = 3
+        assert_eq!(median_i64(&[1, 2, 4, 5]), Some(3));
+    }
+
+    #[test]
+    fn median_i64_empty() {
+        assert_eq!(median_i64(&[]), None);
+    }
+
+    // ------------------------------------------------------------------
+    // Recovery: classifier tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn classify_recovery_zero_cycles_is_insufficient() {
+        assert_eq!(
+            classify_recovery_lag(None, None, 0),
+            RecoveryLagClass::InsufficientHistory
+        );
+    }
+
+    #[test]
+    fn classify_recovery_one_cycle_is_insufficient() {
+        // Even with a sample, a single cycle gives no signal for atypicality.
+        assert_eq!(
+            classify_recovery_lag(Some(10), Some(10), 1),
+            RecoveryLagClass::InsufficientHistory
+        );
+    }
+
+    #[test]
+    fn classify_recovery_normal_at_median() {
+        assert_eq!(
+            classify_recovery_lag(Some(5), Some(5), 4),
+            RecoveryLagClass::Normal
+        );
+    }
+
+    #[test]
+    fn classify_recovery_normal_at_2x_median() {
+        // Boundary: last == 2×median is still normal (≤ 2×)
+        assert_eq!(
+            classify_recovery_lag(Some(6), Some(3), 4),
+            RecoveryLagClass::Normal
+        );
+    }
+
+    #[test]
+    fn classify_recovery_slow_just_over_2x() {
+        assert_eq!(
+            classify_recovery_lag(Some(7), Some(3), 4),
+            RecoveryLagClass::Slow
+        );
+    }
+
+    #[test]
+    fn classify_recovery_slow_at_5x_median() {
+        // Boundary: last == 5×median is still slow (≤ 5×)
+        assert_eq!(
+            classify_recovery_lag(Some(15), Some(3), 4),
+            RecoveryLagClass::Slow
+        );
+    }
+
+    #[test]
+    fn classify_recovery_pathological_over_5x() {
+        assert_eq!(
+            classify_recovery_lag(Some(16), Some(3), 4),
+            RecoveryLagClass::Pathological
+        );
+    }
+
+    #[test]
+    fn classify_recovery_zero_median_is_insufficient() {
+        // Defensive — shouldn't happen with ≥2 filter, but don't divide-by-zero.
+        assert_eq!(
+            classify_recovery_lag(Some(1), Some(0), 4),
+            RecoveryLagClass::InsufficientHistory
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Recovery: integration with compute_features
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn recovery_insufficient_with_no_prior_cycles() {
+        let mut db = make_db();
+        let fk = crate::publish::compute_finding_key("local", "host-1", "disk_pressure", "");
+        // Currently firing for 10 gens with no prior history → no closed cycles
+        insert_warning_state(&db, "host-1", "disk_pressure", "", 10);
+        for g in 1..=10 {
+            insert_observation(&db, g, &fk, "host-1", "disk_pressure", "");
+        }
+        ensure_generation(&db, 10);
+        compute_features(&mut db, 10).unwrap();
+
+        let payload_json: String = db.conn.query_row(
+            "SELECT payload_json FROM regime_features
+             WHERE subject_kind = 'finding' AND subject_id = ?1 AND feature_type = 'recovery'",
+            rusqlite::params![&fk],
+            |r| r.get(0),
+        ).unwrap();
+        let p: RecoveryPayload = serde_json::from_str(&payload_json).unwrap();
+        assert_eq!(p.prior_cycles_observed, 0);
+        assert_eq!(p.recovery_lag_class, RecoveryLagClass::InsufficientHistory);
+        assert!(p.last_recovery_lag_generations.is_none());
+    }
+
+    #[test]
+    fn recovery_insufficient_with_one_closed_cycle() {
+        let mut db = make_db();
+        let fk = crate::publish::compute_finding_key("local", "host-1", "disk_pressure", "");
+        insert_warning_state(&db, "host-1", "disk_pressure", "", 0);
+        // Cycle: present gens 1-5, absent 6-10 (closed), then still absent through gen 15
+        for g in 1..=5 {
+            insert_observation(&db, g, &fk, "host-1", "disk_pressure", "");
+        }
+        ensure_generation(&db, 15);
+        compute_features(&mut db, 15).unwrap();
+
+        let p: RecoveryPayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE feature_type = 'recovery' AND subject_id = ?1",
+                rusqlite::params![&fk],
+                |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        assert_eq!(p.prior_cycles_observed, 1);
+        assert_eq!(p.last_recovery_lag_generations, Some(5));
+        assert_eq!(p.recovery_lag_class, RecoveryLagClass::InsufficientHistory);
+    }
+
+    #[test]
+    fn recovery_normal_with_stable_cycles() {
+        let mut db = make_db();
+        let fk = crate::publish::compute_finding_key("local", "host-1", "service_flap", "svc-a");
+        insert_warning_state(&db, "host-1", "service_flap", "svc-a", 0);
+        // Three present(5) / absent(5) cycles, ending in absence
+        // 1-5 pres, 6-10 abs, 11-15 pres, 16-20 abs, 21-25 pres, 26-30 abs
+        for g in 1..=5 { insert_observation(&db, g, &fk, "host-1", "service_flap", "svc-a"); }
+        for g in 11..=15 { insert_observation(&db, g, &fk, "host-1", "service_flap", "svc-a"); }
+        for g in 21..=25 { insert_observation(&db, g, &fk, "host-1", "service_flap", "svc-a"); }
+        ensure_generation(&db, 30);
+        compute_features(&mut db, 30).unwrap();
+
+        let p: RecoveryPayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE feature_type = 'recovery' AND subject_id = ?1",
+                rusqlite::params![&fk],
+                |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        assert_eq!(p.prior_cycles_observed, 3);
+        assert_eq!(p.last_recovery_lag_generations, Some(5));
+        assert_eq!(p.median_recovery_lag_generations, Some(5));
+        assert_eq!(p.recovery_lag_class, RecoveryLagClass::Normal);
+        // Two bounded absences: gens 6-10 and 16-20, both length 5
+        assert_eq!(p.median_recurrence_interval_generations, Some(5));
+    }
+
+    #[test]
+    fn recovery_slow_when_last_cycle_exceeds_2x_median() {
+        let mut db = make_db();
+        let fk = crate::publish::compute_finding_key("local", "host-1", "check_failed", "c1");
+        insert_warning_state(&db, "host-1", "check_failed", "c1", 0);
+        // Two short cycles (lag=3) then one longer one (lag=8): median=3, last=8 → slow (>2×, ≤5×)
+        for g in 1..=3 { insert_observation(&db, g, &fk, "host-1", "check_failed", "c1"); }
+        // absent 4-6
+        for g in 7..=9 { insert_observation(&db, g, &fk, "host-1", "check_failed", "c1"); }
+        // absent 10-12
+        for g in 13..=20 { insert_observation(&db, g, &fk, "host-1", "check_failed", "c1"); }
+        // absent 21-25 (closes the long cycle)
+        ensure_generation(&db, 25);
+        compute_features(&mut db, 25).unwrap();
+
+        let p: RecoveryPayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE feature_type = 'recovery' AND subject_id = ?1",
+                rusqlite::params![&fk],
+                |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        assert_eq!(p.prior_cycles_observed, 3);
+        assert_eq!(p.last_recovery_lag_generations, Some(8));
+        assert_eq!(p.median_recovery_lag_generations, Some(3));
+        assert_eq!(p.recovery_lag_class, RecoveryLagClass::Slow);
+    }
+
+    #[test]
+    fn recovery_pathological_when_last_cycle_exceeds_5x_median() {
+        let mut db = make_db();
+        let fk = crate::publish::compute_finding_key("local", "host-1", "wal_bloat", "/db");
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 0);
+        // Two short cycles (lag=2) then one very long (lag=20): median=2, last=20 → >5× → pathological
+        for g in 1..=2 { insert_observation(&db, g, &fk, "host-1", "wal_bloat", "/db"); }
+        // absent 3-5
+        for g in 6..=7 { insert_observation(&db, g, &fk, "host-1", "wal_bloat", "/db"); }
+        // absent 8-10
+        for g in 11..=30 { insert_observation(&db, g, &fk, "host-1", "wal_bloat", "/db"); }
+        // absent 31-35 (closes long cycle)
+        ensure_generation(&db, 35);
+        compute_features(&mut db, 35).unwrap();
+
+        let p: RecoveryPayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE feature_type = 'recovery' AND subject_id = ?1",
+                rusqlite::params![&fk],
+                |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        assert_eq!(p.prior_cycles_observed, 3);
+        assert_eq!(p.last_recovery_lag_generations, Some(20));
+        assert_eq!(p.median_recovery_lag_generations, Some(2));
+        assert_eq!(p.recovery_lag_class, RecoveryLagClass::Pathological);
+    }
+
+    #[test]
+    fn recovery_single_gen_blips_do_not_create_fake_cycles() {
+        let mut db = make_db();
+        let fk = crate::publish::compute_finding_key("local", "host-1", "service_flap", "svc-b");
+        insert_warning_state(&db, "host-1", "service_flap", "svc-b", 0);
+        // Long presence with a 1-gen absence blip: should be merged into one long presence.
+        // Present 1-10, absent 11 only, present 12-20, then absent 21-25 (real cycle close)
+        for g in 1..=10 { insert_observation(&db, g, &fk, "host-1", "service_flap", "svc-b"); }
+        for g in 12..=20 { insert_observation(&db, g, &fk, "host-1", "service_flap", "svc-b"); }
+        ensure_generation(&db, 25);
+        compute_features(&mut db, 25).unwrap();
+
+        let p: RecoveryPayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE feature_type = 'recovery' AND subject_id = ?1",
+                rusqlite::params![&fk],
+                |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        // One closed cycle, presence length = 10+9 = 19 (the blip is dropped, not filled)
+        assert_eq!(p.prior_cycles_observed, 1);
+        assert_eq!(p.last_recovery_lag_generations, Some(19));
+        // No bounded absence — the only absence is trailing.
+        assert!(p.last_recurrence_interval_generations.is_none());
+    }
+
+    #[test]
+    fn recovery_recurrence_interval_only_from_bounded_absences() {
+        let mut db = make_db();
+        let fk = crate::publish::compute_finding_key("local", "host-1", "disk_pressure", "");
+        insert_warning_state(&db, "host-1", "disk_pressure", "", 0);
+        // Absence at window start: gens 1-4 absent (not bounded — no prior presence).
+        // Present 5-8, absent 9-14 (bounded by presence on both sides), present 15-18.
+        // Trailing absence 19-25 (not bounded — no following presence).
+        for g in 5..=8 { insert_observation(&db, g, &fk, "host-1", "disk_pressure", ""); }
+        for g in 15..=18 { insert_observation(&db, g, &fk, "host-1", "disk_pressure", ""); }
+        ensure_generation(&db, 25);
+        compute_features(&mut db, 25).unwrap();
+
+        let p: RecoveryPayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE feature_type = 'recovery' AND subject_id = ?1",
+                rusqlite::params![&fk],
+                |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        // Exactly one bounded absence run of length 6 (gens 9-14).
+        assert_eq!(p.last_recurrence_interval_generations, Some(6));
+        assert_eq!(p.median_recurrence_interval_generations, Some(6));
+    }
+
+    #[test]
+    fn recovery_recompute_same_generation_upserts() {
+        let mut db = make_db();
+        let fk = crate::publish::compute_finding_key("local", "host-1", "disk_pressure", "");
+        for g in 1..=3 { insert_observation(&db, g, &fk, "host-1", "disk_pressure", ""); }
+        for g in 7..=9 { insert_observation(&db, g, &fk, "host-1", "disk_pressure", ""); }
+        ensure_generation(&db, 15);
+        compute_features(&mut db, 15).unwrap();
+        compute_features(&mut db, 15).unwrap();
+
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM regime_features
+             WHERE generation_id = 15 AND subject_id = ?1 AND feature_type = 'recovery'",
+            rusqlite::params![&fk],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1, "recovery upsert should replace, not duplicate");
+    }
+
+    #[test]
+    fn recovery_scope_includes_currently_absent_findings_with_history() {
+        // A finding that has NO current warning_state row but HAS history in
+        // finding_observations must still get a recovery feature emitted.
+        // This is the chatty-flagged failure mode — "observed only" would miss it.
+        let mut db = make_db();
+        let fk = crate::publish::compute_finding_key("local", "host-1", "past_issue", "");
+        // No warning_state row. Just historical observations forming a closed cycle.
+        for g in 1..=5 { insert_observation(&db, g, &fk, "host-1", "past_issue", ""); }
+        // Gens 6-10 absent — cycle is closed.
+        for g in 11..=14 { insert_observation(&db, g, &fk, "host-1", "past_issue", ""); }
+        // Gens 15-25 absent, second cycle closed.
+        ensure_generation(&db, 25);
+        compute_features(&mut db, 25).unwrap();
+
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM regime_features
+             WHERE subject_kind = 'finding' AND subject_id = ?1 AND feature_type = 'recovery'",
+            rusqlite::params![&fk],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1, "finding with history but no current warning_state must still get recovery feature");
+
+        let p: RecoveryPayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE feature_type = 'recovery' AND subject_id = ?1",
+                rusqlite::params![&fk],
+                |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        assert_eq!(p.prior_cycles_observed, 2);
     }
 }
