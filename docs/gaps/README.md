@@ -43,7 +43,7 @@ Specs carry one of these statuses in their header. The index below groups accord
 
 ### Deployment shapes
 - [`DESKTOP_FORENSICS_GAP`](DESKTOP_FORENSICS_GAP.md) — `proposed`. Pre-failure capture for single-operator workstations. Top-RSS process collector, pressure snapshots, post-restart summary. Have a recorder before the freeze. The laptop does not develop opinions.
-- [`ZFS_COLLECTOR_GAP`](ZFS_COLLECTOR_GAP.md) — `proposed`. Chronic-degraded-stability visibility via narrow operator-authored root helper. NQ stays unprivileged. Privileged reads through a fixed-scope sudoers NOPASSWD helper, not NQ-as-root. A degraded-but-stable pool is a regime, not an event.
+- [`ZFS_COLLECTOR_GAP`](ZFS_COLLECTOR_GAP.md) — `proposed`. Chronic-degraded-stability visibility. Two first-class adapter patterns: Prometheus exporter (zero new NQ code, fast path if exporter is "boring enough") or operator-authored sudoers-NOPASSWD helper (tighter control when exporter coverage is insufficient). NQ stays unprivileged either way. A degraded-but-stable pool is a regime, not an event.
 
 ### Infrastructure plane
 - [`SENTINEL_LIVENESS_GAP`](SENTINEL_LIVENESS_GAP.md) — `specified, ready to build`. Out-of-band "something stopped moving."

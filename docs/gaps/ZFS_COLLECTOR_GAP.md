@@ -1,4 +1,4 @@
-# Gap: ZFS Collector — chronic-degraded visibility via privileged-read helper
+# Gap: ZFS Collector — chronic-degraded visibility via bounded privileged-read adapter
 
 **Status:** `proposed` — drafted 2026-04-16, forced by deploying NQ on a ZFS NAS with a chronically-degraded pool (failed drive + two spares, pool otherwise stable)
 **Depends on:** OBSERVER_DISTORTION_GAP (the helper must be non-participatory and bounded; NQ-the-observer does not gain direct root), EVIDENCE_LAYER (pool state observations flow through the standard finding pipe), STABILITY_AXIS (chronic-degraded vs degrading is exactly what the stability axis distinguishes), REGIME_FEATURES (persistence + recovery context for recurring pool events)
@@ -33,21 +33,42 @@ The zoo is incomplete without this third regime being legible.
 
 ## Design Stance
 
-**NQ stays unprivileged; a narrow helper carries the privileged read.**
+**NQ stays unprivileged; a bounded adapter carries the privileged read.**
 
-The pattern is: a root-owned, operator-authored, read-only helper script/binary is installed at a known path (e.g. `/usr/local/libexec/nq-zfs-snapshot`). A sudoers entry grants `NOPASSWD` execution of *exactly that path, no arguments*, to the NQ-running user. The helper runs a fixed set of ZFS read commands and emits structured JSON to stdout. NQ invokes the helper, parses the JSON, emits findings.
+**Two adapter patterns are first-class.** Privileged ZFS visibility has two acceptable shapes, and an operator may choose either:
 
-This separates three concerns that root-running would collapse:
+1. **Prometheus exporter** — preferred when a maintained exporter exists and exposes sufficient pool / vdev / scrub / error metrics. NQ remains unprivileged and consumes the exporter through existing `prometheus_targets` configuration. Zero new NQ code. The exporter daemon handles the privilege boundary internally.
 
-- **Authority to read root-restricted state** lives in the helper's sudoers line. Reviewable, auditable, narrow.
-- **Policy for which commands run** lives in the helper's code. Operator-maintained, version-controlled by the operator.
-- **Interpretation of the output** lives in NQ. Domain logic, regime features, findings.
+2. **Operator-authored helper** — preferred when exporter coverage is insufficient, semantic control matters more than convenience, or the operator wants no additional daemon / open port. A root-owned, read-only helper script/binary runs fixed-scope `zpool` / `zfs` read commands and emits structured JSON. A sudoers entry grants `NOPASSWD` execution of exactly that helper path with no arguments.
 
-This is exactly the *"tool availability is not permission"* pattern from OBSERVER_DISTORTION_GAP, applied at the deployment boundary. The helper is tooled; the sudoers entry is permission; NQ never confuses the two.
+Both patterns preserve the invariant: NQ stays unprivileged. The helper pattern moves the privilege boundary to a reviewable script; the exporter pattern moves it to a separate daemon with its own security posture. Neither has NQ running as root.
 
-**The helper must be honest about what it does and refuses to do.**
+Chatty's framing generalizes: *adapter plurality beats substrate plurality*. NQ should not care whether the adapter is a Prometheus exporter or a sudo-constrained JSON helper. It should care that the observation is bounded, stable, and not pretending to be authority.
+
+**Choosing between adapters.** The exporter path is the fast path *when* the exporter is boring enough. "Boring enough" has specific criteria:
+
+- Maintained (recent commits; not a 2018 "works on my FreeNAS" README)
+- Simple deployment (systemd unit, no Kubernetes ceremony, no Docker compose for one daemon)
+- Read-only — no exposed endpoints that mutate pool state
+- No unexpected privilege sprawl — runs as a specific user with exactly the capabilities it needs, not as root for convenience
+- Exposes the metrics the detectors need: pool state, vdev state + error counts, scrub state + completion, capacity, spare assignment
+- Stable metric names (won't rename labels between minor versions and silently break detectors)
+
+If the available exporters fail this sniff test, the helper pattern is the controlled alternative. The helper is more work once but is entirely operator-owned. Both are legitimate outcomes of the "is the exporter boring enough" question.
+
+**The helper (when chosen) must be honest about what it does and refuses to do.**
 
 No argument passing (no `sudo nq-zfs-snapshot some_pool`; the pool list comes from `zpool list -H` inside the helper). No configuration knobs exposed to NQ. No write commands. No destroy, no import, no export, no replace, no clear. The helper runs a fixed script and exits. If NQ needs something different, the helper is updated by the operator and the sudoers entry is re-reviewed.
+
+**The exporter (when chosen) is not ours to harden.** The operator picked it; the operator reviews it; the operator updates it. NQ consumes the metrics and does not attempt to reach around the exporter into ZFS directly. If the exporter lies or stops, NQ notices the metric gap and emits the appropriate stale/silent finding — same shape as any other Prometheus source going silent.
+
+**Three concerns that privileged execution would collapse:**
+
+- **Authority to read root-restricted state** lives in either the helper's sudoers line or the exporter's install-time privilege grant. Reviewable, auditable, narrow.
+- **Policy for which commands run** lives in the adapter's code (helper script or exporter). Operator-maintained.
+- **Interpretation of the output** lives in NQ. Domain logic, regime features, findings.
+
+This is the *"tool availability is not permission"* pattern from OBSERVER_DISTORTION_GAP, applied at the deployment boundary. The adapter is tooled; the sudoers entry or exporter privilege grant is permission; NQ never confuses the two.
 
 **Chronic condition handling is regime-shaped, not exception-shaped.**
 
@@ -63,7 +84,20 @@ A degraded pool that has been degraded for N generations with stable error count
 
 ## V1 Slice
 
-### 1. The helper: `nq-zfs-snapshot`
+V1 supports both adapter patterns. The detectors are shared; the ingestion differs.
+
+### Path A: Prometheus exporter (zero new NQ code)
+
+For deployments where a boring-enough exporter is available:
+
+1. Operator installs the chosen exporter (systemd unit, appropriate user/capability grants, bound to `127.0.0.1`).
+2. Operator adds a `prometheus_targets` entry to `publisher.json` pointing at the exporter's `/metrics` endpoint.
+3. NQ's existing Prometheus scraper ingests the metrics via `metrics_history`.
+4. The ZFS detectors (see below) consume the metrics like any other scrape target. No ZFS-specific collector code required.
+
+This is the *fast path* for lil-nas-x and similar deployments once a maintained exporter is picked. Nothing in NQ changes.
+
+### Path B: Operator-authored helper `nq-zfs-snapshot`
 
 Root-owned, operator-installed at `/usr/local/libexec/nq-zfs-snapshot` (or wherever the operator prefers — the sudoers entry and NQ config are kept in sync). POSIX shell or small Rust binary; both acceptable. Shell is probably enough:
 
@@ -100,9 +134,9 @@ claude ALL=(root) NOPASSWD: /usr/local/libexec/nq-zfs-snapshot
 
 File permissions: `root:root 0755`. Crucially, **not** world-writable, not group-writable by NQ's user. The operator-maintained boundary depends on the helper being tamper-proof.
 
-### 2. ZFS collector (nq-side)
+### ZFS collector (nq-side, Path B only)
 
-New collector `crates/nq/src/collect/zfs.rs`:
+For deployments on the helper path. New collector `crates/nq/src/collect/zfs.rs`:
 
 - Declares Δq participation as `subprocess` with target `/usr/local/libexec/nq-zfs-snapshot` (path is configurable in `PublisherConfig`).
 - Declares platform capability as Linux-only in v1 (ZFS on FreeBSD / macOS / Windows is v2+).
@@ -124,7 +158,7 @@ Publisher config extension:
 
 Default disabled. Opt-in per deployment.
 
-### 3. Parser for `zpool status` output
+### Parser for `zpool status` output (Path B only)
 
 Plain-text parser in the ZFS collector. Extracts per-pool:
 
@@ -138,7 +172,9 @@ Plain-text parser in the ZFS collector. Extracts per-pool:
 
 Text parsing of `zpool status` is sketchy in principle (format is operator-facing, not machine-facing). Accept the risk in v1; if ZFS changes the format meaningfully, we adapt. A follow-up could use `zpool status -j` if/when it stabilizes across ZFS versions.
 
-### 4. Detectors
+### Detectors (shared across both paths)
+
+These detectors operate on ZFS state regardless of how it arrived. In Path A the state comes from `metrics_history` (scraped from an exporter); in Path B from the new ZFS collector's structured output. The detector logic is the same; only the read side differs.
 
 - **`zfs_pool_degraded`** — any pool in state DEGRADED. Severity `warning` while stable; escalates via regime features to `critical` on worsening.
 - **`zfs_vdev_faulted`** — any vdev in state FAULTED or UNAVAIL. Severity `critical` (beyond DEGRADED).
@@ -176,24 +212,42 @@ If a second drive faults or error counts start rising, the regime changes from `
 
 ## Acceptance Criteria (v1)
 
-1. `nq-zfs-snapshot` helper exists in the NQ repo under `deploy/helpers/` as a reference implementation. Operators customize per deployment but the canonical script is reviewable.
-2. Sudoers line template included in the deploy docs with the specific form: `<user> ALL=(root) NOPASSWD: /usr/local/libexec/nq-zfs-snapshot`.
-3. ZFS collector exists in the publisher, opt-in via config, Δq-declared as `subprocess`.
-4. Helper missing / sudoers misconfigured → collector emits `Skipped` with clear reason. NQ does not error on absence.
-5. Collector parses `zpool status` output into typed findings. A fixture test seeds the known-tricky outputs (DEGRADED with spare, RESILVERING, scrub-in-progress, SUSPENDED) and asserts correct finding emission.
-6. The six v1 detectors (pool_degraded, vdev_faulted, error_count_increased, scrub_overdue, spare_activated, pool_suspended) fire on matching inputs and do not fire otherwise.
-7. On `lil-nas-x`, the DEGRADED-but-stable pool produces exactly one persistent `zfs_pool_degraded` finding that does not escalate across multiple generations while error counts are flat. Test this against the actual deployment; it's the forcing scenario.
-8. If a second vdev transitions to FAULTED, or error counts rise, the regime features re-classify the finding and severity escalates. The transition is observable in the same finding's regime context.
-9. Helper execution is bounded by timeout; a stuck helper does not stall NQ's generation commit.
-10. No helper argument accepts input from NQ. The call is `sudo /usr/local/libexec/nq-zfs-snapshot` with no flags, ever.
+**Gap is satisfied when either Path A or Path B is deployed and the shared detector bar is met.** Both paths are first-class; neither is required.
+
+### Path-agnostic (shared)
+
+1. The six v1 detectors (`pool_degraded`, `vdev_faulted`, `error_count_increased`, `scrub_overdue`, `spare_activated`, `pool_suspended`) fire on matching inputs and do not fire otherwise, regardless of which adapter provided the data.
+2. On `lil-nas-x`, the DEGRADED-but-stable pool produces exactly one persistent `zfs_pool_degraded` finding that does not escalate across multiple generations while error counts are flat. This is the forcing scenario and applies to either adapter.
+3. If a second vdev transitions to FAULTED, or error counts rise, the regime features re-classify the finding and severity escalates. The transition is observable in the same finding's regime context.
+4. Adapter silence (exporter stops responding, helper fails) produces an appropriate stale/silent finding rather than masquerading as "all clear."
+
+### Path A (Prometheus exporter) specific
+
+5. The deploy docs name the "boring enough" criteria for exporter selection and at least one exporter NQ has been verified against (if/when the operator picks one). Named not as endorsement but as reviewed precedent.
+6. NQ's existing Prometheus scraper consumes the exporter with no ZFS-specific NQ code. The work is entirely on the operator's deployment side.
+7. A fixture test seeds synthetic Prometheus metrics in the canonical shape (pool state labels, vdev error counters, scrub timestamps) and asserts the detectors fire correctly.
+
+### Path B (helper) specific
+
+8. `nq-zfs-snapshot` helper exists in the NQ repo under `deploy/helpers/` as a reference implementation. Operators customize per deployment but the canonical script is reviewable.
+9. Sudoers line template included in the deploy docs with the specific form: `<user> ALL=(root) NOPASSWD: /usr/local/libexec/nq-zfs-snapshot`.
+10. ZFS collector exists in the publisher, opt-in via config, Δq-declared as `subprocess`.
+11. Helper missing / sudoers misconfigured → collector emits `Skipped` with clear reason. NQ does not error on absence.
+12. Collector parses `zpool status` output into typed findings. A fixture test seeds the known-tricky outputs (DEGRADED with spare, RESILVERING, scrub-in-progress, SUSPENDED) and asserts correct finding emission.
+13. Helper execution is bounded by timeout; a stuck helper does not stall NQ's generation commit.
+14. No helper argument accepts input from NQ. The call is `sudo /usr/local/libexec/nq-zfs-snapshot` with no flags, ever.
 
 ## Core invariant
 
-> **Privileged reads happen through narrow operator-authored helpers. NQ stays unprivileged. Authority to read is not the same as authority to act.**
+> **Privileged reads happen through bounded operator-controlled adapters. NQ stays unprivileged. Authority to read is not the same as authority to act.**
 
 Operational form:
 
-> **The helper does read-only ZFS inspection with fixed commands. The sudoers entry authorizes exactly that helper with no arguments. NQ invokes, parses, interprets — and never gains direct root. If the helper's fixed scope becomes insufficient, the operator updates the helper and re-reviews the sudoers line. No runtime flexibility on the privileged boundary.**
+> **The adapter — Prometheus exporter or sudoers-constrained helper — does read-only ZFS inspection at a fixed scope. The privilege grant (systemd capabilities for an exporter, NOPASSWD sudoers for a helper) authorizes exactly that adapter at exactly that scope. NQ invokes or scrapes, parses, interprets — and never gains direct root. If the adapter's fixed scope becomes insufficient, the operator updates the adapter and re-reviews the privilege grant. No runtime flexibility on the privileged boundary.**
+
+And the selection rule:
+
+> **Use an existing exporter when it is good enough. Use a helper when semantic control or privilege minimization matters more than convenience. The boring middle is usually where the bodies aren't buried.**
 
 And the regime rule, since chronic-degraded is the hard case:
 
