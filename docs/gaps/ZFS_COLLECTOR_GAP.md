@@ -292,10 +292,10 @@ And the regime rule, since chronic-degraded is the hard case:
 
 ## References
 
-- `docs/gaps/OBSERVER_DISTORTION_GAP.md` — Δq participation discipline. Helper-via-sudoers is the correct boundary pattern for privileged reads; NQ stays unprivileged.
+- **`~/git/nq-witness` — the witness contract home.** The adapter shape this gap requires (canonical JSON, `coverage` / `standing` declarations, per-vdev observations, chronic-condition semantics) is specified in `nq-witness/SPEC.md` and `nq-witness/profiles/zfs.md`. NQ consumes witness reports; the witness contract is maintained there, not here. This gap specifies what NQ *does* with valid ZFS evidence; nq-witness specifies what valid ZFS evidence *looks like*.
+- `docs/gaps/OBSERVER_DISTORTION_GAP.md` — Δq participation discipline. Helper-via-sudoers and localhost-bound-exporter are both valid boundary patterns for privileged reads; NQ stays unprivileged in both cases.
 - `docs/gaps/PORTABILITY_GAP.md` — capability manifest. ZFS collector declares Linux-only in v1.
 - `docs/gaps/STABILITY_AXIS_GAP.md` — chronic-degraded vs degrading distinction lives here.
 - `docs/gaps/REGIME_FEATURES_GAP.md` — persistence + recovery regime features that make a persistent DEGRADED finding legible without becoming panic theater.
 - `docs/gaps/FINDING_EXPORT_GAP.md` — ZFS findings flow through the same consumer contract.
-- `~/nq/` on `lil-nas-x` — live deployment as of 2026-04-16 (baseline without ZFS collector yet).
-- Operator-authored helper at `/usr/local/libexec/nq-zfs-snapshot` with sudoers NOPASSWD — pattern established during the 2026-04-16 deploy conversation.
+- `~/nq/` on `lil-nas-x` — live Path A-lite deployment as of 2026-04-16 via `pdf/zfs_exporter` v2.3.12. Partial coverage pending either a conforming witness or helper rollout.
