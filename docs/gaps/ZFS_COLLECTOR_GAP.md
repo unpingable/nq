@@ -56,6 +56,20 @@ Chatty's framing generalizes: *adapter plurality beats substrate plurality*. NQ 
 
 If the available exporters fail this sniff test, the helper pattern is the controlled alternative. The helper is more work once but is entirely operator-owned. Both are legitimate outcomes of the "is the exporter boring enough" question.
 
+**Path A coverage varies by exporter.** This matters operationally — most ZFS exporters in the wild expose a subset of what the full detector set needs. Two sub-tiers are worth naming explicitly:
+
+- **Path A-lite** — pool-level signal only. Pool health encoded as integer, capacity metrics, readonly flag. Sufficient for *coarse* liveness and gross state-transition detection. Insufficient for chronic-degraded forensics because it cannot distinguish stable-vs-worsening at the vdev level.
+
+- **Path A-full** — everything Path A-lite offers plus per-vdev state, per-vdev error counts (read/write/cksum), scrub state and last-completion, and spare assignment. Sufficient for the complete detector set this gap specifies. Rare in practice; most available exporters are A-lite.
+
+**Concrete precedent (2026-04-16):** `pdf/zfs_exporter` v2.3.12 deployed on `lil-nas-x` is **Path A-lite**. It exposes `zfs_pool_health` (integer), capacity, fragmentation, dataset stats. It does *not* expose per-vdev state, error counters, scrub completion, or spare status. Useful, but forensically insufficient for the chronic-degraded case this gap was written to handle.
+
+**The right posture for Path A-lite:**
+
+> **Admissible evidence, limited standing.**
+
+Path A-lite is evidence. It just doesn't get to testify about facts it can't see. Detectors that depend on vdev/scrub/spare detail must not be emitted from Path A-lite data alone — doing so would manufacture confidence the data cannot support. The gap spec is honest about what each adapter can source (see the Detectors section for per-detector path attribution).
+
 **The helper (when chosen) must be honest about what it does and refuses to do.**
 
 No argument passing (no `sudo nq-zfs-snapshot some_pool`; the pool list comes from `zpool list -H` inside the helper). No configuration knobs exposed to NQ. No write commands. No destroy, no import, no export, no replace, no clear. The helper runs a fixed script and exits. If NQ needs something different, the helper is updated by the operator and the sudoers entry is re-reviewed.
@@ -172,16 +186,26 @@ Plain-text parser in the ZFS collector. Extracts per-pool:
 
 Text parsing of `zpool status` is sketchy in principle (format is operator-facing, not machine-facing). Accept the risk in v1; if ZFS changes the format meaningfully, we adapt. A follow-up could use `zpool status -j` if/when it stabilizes across ZFS versions.
 
-### Detectors (shared across both paths)
+### Detectors
 
-These detectors operate on ZFS state regardless of how it arrived. In Path A the state comes from `metrics_history` (scraped from an exporter); in Path B from the new ZFS collector's structured output. The detector logic is the same; only the read side differs.
+Each detector is annotated with the adapter paths that can source it. A detector must not fire on data the adapter cannot reliably provide.
 
-- **`zfs_pool_degraded`** — any pool in state DEGRADED. Severity `warning` while stable; escalates via regime features to `critical` on worsening.
-- **`zfs_vdev_faulted`** — any vdev in state FAULTED or UNAVAIL. Severity `critical` (beyond DEGRADED).
-- **`zfs_error_count_increased`** — any vdev's read/write/cksum error counts increased since last generation. Severity `warning` on first rise; escalates on continued rise.
-- **`zfs_scrub_overdue`** — pool has no `scan:` line within configurable window (default 35 days — one month + a week's slack). Severity `warning`.
-- **`zfs_spare_activated`** — hot spare moved from available to in-use since last generation. Severity `warning` (operator should know the spare was consumed).
-- **`zfs_pool_suspended`** — pool in SUSPENDED state. Severity `critical`. This means writes are blocked; operator needs to know immediately.
+**Sourceable from Path A-lite, Path A-full, or Path B (helper):**
+
+- **`zfs_pool_degraded`** — pool state encoded as DEGRADED (via `zfs_pool_health` integer on Path A-lite; state string on Path B). Severity `warning` while stable; escalates via regime features to `critical` on worsening. Note: without vdev detail, Path A-lite can only report *that* the pool is degraded, not *which drive*.
+- **`zfs_pool_suspended`** — pool in SUSPENDED state. Severity `critical`. Writes are blocked; operator needs to know immediately.
+- **`zfs_pool_health_changed`** — any transition of `zfs_pool_health` integer / pool state string between generations. Severity `info` on improving transitions, `warning` on degrading transitions. Pure transition detector; does not require knowing *why* the transition happened. Works on any adapter.
+- **`zfs_pool_capacity_pressure`** — capacity metrics crossing thresholds (pool free bytes below configurable floor, allocated ratio above ceiling). Severity scales with absolute level.
+- **`zfs_adapter_silent`** — the chosen adapter (exporter scrape failing, helper failing, or simply not returning data) for more than N generations. Severity `warning` at first; escalates if it persists. Same shape as `stale_host`, scoped to the ZFS adapter specifically. The adapter cannot hide by disappearing.
+
+**Sourceable from Path A-full or Path B (helper) only:**
+
+- **`zfs_vdev_faulted`** — any vdev in state FAULTED or UNAVAIL. Severity `critical` (beyond DEGRADED). Requires per-vdev state. *Not emittable from Path A-lite.*
+- **`zfs_error_count_increased`** — any vdev's read/write/cksum error counts increased since last generation. Severity `warning` on first rise; escalates on continued rise. Requires per-vdev error counters. *Not emittable from Path A-lite.*
+- **`zfs_scrub_overdue`** — pool has no scrub completion within configurable window (default 35 days — one month + a week's slack). Severity `warning`. Requires scrub state. *Not emittable from Path A-lite.*
+- **`zfs_spare_activated`** — hot spare moved from available to in-use since last generation. Severity `warning` (operator should know the spare was consumed). Requires spare status. *Not emittable from Path A-lite.*
+
+**Honest rule:** a deployment running only Path A-lite produces the first set of findings with full confidence and does not produce the second set at all. Emitting the second set from A-lite data (by guessing or by under-specified inference) would violate the *admissible evidence, limited standing* invariant.
 
 ### 5. Live worked example (lil-nas-x)
 
@@ -216,16 +240,17 @@ If a second drive faults or error counts start rising, the regime changes from `
 
 ### Path-agnostic (shared)
 
-1. The six v1 detectors (`pool_degraded`, `vdev_faulted`, `error_count_increased`, `scrub_overdue`, `spare_activated`, `pool_suspended`) fire on matching inputs and do not fire otherwise, regardless of which adapter provided the data.
+1. Detectors fire only on data the adapter can actually source. `zfs_pool_degraded`, `zfs_pool_suspended`, `zfs_pool_health_changed`, `zfs_pool_capacity_pressure`, and `zfs_adapter_silent` are sourceable from any adapter including Path A-lite. `zfs_vdev_faulted`, `zfs_error_count_increased`, `zfs_scrub_overdue`, and `zfs_spare_activated` require Path A-full or Path B. A Path A-lite deployment must not emit the second group.
 2. On `lil-nas-x`, the DEGRADED-but-stable pool produces exactly one persistent `zfs_pool_degraded` finding that does not escalate across multiple generations while error counts are flat. This is the forcing scenario and applies to either adapter.
 3. If a second vdev transitions to FAULTED, or error counts rise, the regime features re-classify the finding and severity escalates. The transition is observable in the same finding's regime context.
 4. Adapter silence (exporter stops responding, helper fails) produces an appropriate stale/silent finding rather than masquerading as "all clear."
 
 ### Path A (Prometheus exporter) specific
 
-5. The deploy docs name the "boring enough" criteria for exporter selection and at least one exporter NQ has been verified against (if/when the operator picks one). Named not as endorsement but as reviewed precedent.
+5. The deploy docs name the "boring enough" criteria for exporter selection and name `pdf/zfs_exporter` v2.3.12 as a reviewed Path A-lite precedent (pool-level only, insufficient for full detector set).
 6. NQ's existing Prometheus scraper consumes the exporter with no ZFS-specific NQ code. The work is entirely on the operator's deployment side.
-7. A fixture test seeds synthetic Prometheus metrics in the canonical shape (pool state labels, vdev error counters, scrub timestamps) and asserts the detectors fire correctly.
+7. A fixture test seeds synthetic Prometheus metrics in the canonical shape (pool state, vdev error counters, scrub timestamps) and asserts the detectors that can be sourced from those metrics fire correctly, and that detectors which cannot be sourced remain silent.
+8. A Path A-lite deployment satisfies partial coverage only. Full acceptance (all four Path-A-full-or-B detectors) requires a richer exporter or the helper path. The `lil-nas-x` deployment explicitly runs as partial coverage pending either a richer exporter or helper rollout.
 
 ### Path B (helper) specific
 
