@@ -41,6 +41,9 @@ Specs carry one of these statuses in their header. The index below groups accord
 ### Storage
 - [`STORAGE_BACKEND_GAP`](STORAGE_BACKEND_GAP.md) — `proposed`. SQLite default, Postgres production target, contract-first. V1 is audit + fence (no `PgStore` implementation). Separates target-substrate (what NQ monitors) from own-substrate (where NQ records state). Scaling the store must not scale the trust assumptions.
 
+### Deployment shapes
+- [`DESKTOP_FORENSICS_GAP`](DESKTOP_FORENSICS_GAP.md) — `proposed`. Pre-failure capture for single-operator workstations. Top-RSS process collector, pressure snapshots, post-restart summary. Have a recorder before the freeze. The laptop does not develop opinions.
+
 ### Infrastructure plane
 - [`SENTINEL_LIVENESS_GAP`](SENTINEL_LIVENESS_GAP.md) — `specified, ready to build`. Out-of-band "something stopped moving."
 - [`WRITE_TX_INSTRUMENTATION_GAP`](WRITE_TX_INSTRUMENTATION_GAP.md) — `specified, ready to build`. In-band lock-holder biography.
