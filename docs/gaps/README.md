@@ -38,6 +38,9 @@ Specs carry one of these statuses in their header. The index below groups accord
 ### Consumer contract
 - [`FINDING_EXPORT_GAP`](FINDING_EXPORT_GAP.md) — `proposed`. Canonical `FindingSnapshot` DTO + `nq findings export` CLI. Identity + lifecycle + diagnosis + regime + observations + generation-context as one versioned object. Findings are evidence, not commands. Forced by Night Shift as first programmatic consumer.
 
+### Storage
+- [`STORAGE_BACKEND_GAP`](STORAGE_BACKEND_GAP.md) — `proposed`. SQLite default, Postgres production target, contract-first. V1 is audit + fence (no `PgStore` implementation). Separates target-substrate (what NQ monitors) from own-substrate (where NQ records state). Scaling the store must not scale the trust assumptions.
+
 ### Infrastructure plane
 - [`SENTINEL_LIVENESS_GAP`](SENTINEL_LIVENESS_GAP.md) — `specified, ready to build`. Out-of-band "something stopped moving."
 - [`WRITE_TX_INSTRUMENTATION_GAP`](WRITE_TX_INSTRUMENTATION_GAP.md) — `specified, ready to build`. In-band lock-holder biography.
