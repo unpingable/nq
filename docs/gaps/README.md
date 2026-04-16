@@ -35,6 +35,9 @@ Specs carry one of these statuses in their header. The index below groups accord
 - [`OBSERVER_DISTORTION_GAP`](OBSERVER_DISTORTION_GAP.md) — `proposed`. Δq detector domain: observers are members of the fault domain. Self-audit first (v1); host-wide deferred.
 - [`PORTABILITY_GAP`](PORTABILITY_GAP.md) — `proposed`. Platform capability honesty — Linux first-class, BSD/macOS degraded-mode with explicit capability declaration. Sibling of Δq (observer incapacity vs observer interference). No silent platform-dependent failures.
 
+### Consumer contract
+- [`FINDING_EXPORT_GAP`](FINDING_EXPORT_GAP.md) — `proposed`. Canonical `FindingSnapshot` DTO + `nq findings export` CLI. Identity + lifecycle + diagnosis + regime + observations + generation-context as one versioned object. Findings are evidence, not commands. Forced by Night Shift as first programmatic consumer.
+
 ### Infrastructure plane
 - [`SENTINEL_LIVENESS_GAP`](SENTINEL_LIVENESS_GAP.md) — `specified, ready to build`. Out-of-band "something stopped moving."
 - [`WRITE_TX_INSTRUMENTATION_GAP`](WRITE_TX_INSTRUMENTATION_GAP.md) — `specified, ready to build`. In-band lock-holder biography.
