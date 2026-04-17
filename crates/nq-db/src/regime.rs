@@ -1450,29 +1450,31 @@ pub fn compute_regime_annotation(
         .and_then(|json| serde_json::from_str(&json).ok());
 
     // Pick the most recent resolution row per metric for this host.
-    // A host has at most three resolution rows (disk / mem / cpu).
-    let host_resolutions: Vec<ResolutionPayload> = {
-        let mut stmt = conn.prepare(
-            "SELECT payload_json FROM regime_features
-             WHERE subject_kind = 'host_metric'
-               AND feature_type = 'resolution'
-               AND subject_id LIKE ?1
-             ORDER BY generation_id DESC",
-        )?;
-        let prefix = format!("{}/%", host);
-        let rows = stmt.query_map(rusqlite::params![prefix], |r| r.get::<_, String>(0))?;
-        let mut seen_metrics: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        let mut out: Vec<ResolutionPayload> = Vec::new();
-        for row in rows {
-            let json = row?;
-            if let Ok(p) = serde_json::from_str::<ResolutionPayload>(&json) {
-                if seen_metrics.insert(p.metric.clone()) {
-                    out.push(p);
-                }
-            }
+    // Enumerate the three pressure metrics explicitly rather than using
+    // a LIKE prefix match — a host name containing SQL wildcard chars
+    // ('_' or '%') would otherwise cross-contaminate. Exact-match
+    // per-metric closes that footgun and keeps the query intent clear:
+    // there are only three host pressure metrics, period.
+    let host_metrics = ["disk_used_pct", "mem_pressure_pct", "cpu_load_1m"];
+    let mut host_resolutions: Vec<ResolutionPayload> = Vec::new();
+    for metric in host_metrics {
+        let subject_id = format!("{host}/{metric}");
+        let payload: Option<ResolutionPayload> = conn
+            .query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE subject_kind = 'host_metric'
+                   AND subject_id = ?1
+                   AND feature_type = 'resolution'
+                 ORDER BY generation_id DESC LIMIT 1",
+                rusqlite::params![&subject_id],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok());
+        if let Some(p) = payload {
+            host_resolutions.push(p);
         }
-        out
-    };
+    }
 
     let badge = derive_regime_badge(
         persistence.as_ref(),
@@ -2942,6 +2944,50 @@ mod tests {
         // Resolving wins: the host has at least one settling pressure metric
         // and no acute or pathological signals.
         assert_eq!(badge, RegimeBadge::Resolving);
+    }
+
+    #[test]
+    fn compute_regime_annotation_does_not_cross_contaminate_via_like_wildcards() {
+        // Regression guard: a hostname containing '_' must not match
+        // foreign hosts. Under a naive LIKE '{host}/%' query, 'host_1'
+        // would match 'hostX1/disk_used_pct' because '_' is the SQL
+        // single-char wildcard. Exact per-metric matching closes that.
+        let db = make_db();
+        let fk = crate::publish::compute_finding_key("local", "host_1", "wal_bloat", "/db");
+        insert_warning_state(&db, "host_1", "wal_bloat", "/db", 5);
+        for g in 1..=5 {
+            insert_observation(&db, g, &fk, "host_1", "wal_bloat", "/db");
+        }
+
+        // Populate a resolution row for a foreign host 'hostX1' that
+        // would cross-match under LIKE-wildcard semantics.
+        ensure_generation(&db, 60);
+        let foreign_payload = ResolutionPayload {
+            metric: "disk_used_pct".to_string(),
+            recovery_phase: RecoveryPhase::Acute,
+            growth_direction: Direction::Rising,
+            plateau_depth_generations: 0,
+            peak_value: 90.0,
+            current_value: 90.0,
+            samples: 40,
+        };
+        db.conn.execute(
+            "INSERT INTO regime_features (generation_id, subject_kind, subject_id, feature_type,
+                                          window_start_generation, window_end_generation,
+                                          basis_kind, sufficient_history, history_points_used, payload_json)
+             VALUES (?1, 'host_metric', ?2, 'resolution', 10, 60, 'direct_history', 1, 40, ?3)",
+            rusqlite::params![
+                60,
+                "hostX1/disk_used_pct",
+                serde_json::to_string(&foreign_payload).unwrap(),
+            ],
+        ).unwrap();
+
+        // Query for 'host_1' — must not pick up 'hostX1'.
+        let ann = compute_regime_annotation(&db.conn, "host_1", "wal_bloat", "/db").unwrap();
+        // 'host_1' has no resolution row of its own, and persistence
+        // is too young for entrenched — badge should be None.
+        assert!(ann.is_none(), "wildcard cross-match leaked: {:?}", ann);
     }
 
     #[test]

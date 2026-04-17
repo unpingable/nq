@@ -60,6 +60,17 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                                 }
                             }
 
+                            // Compute regime features before sending notifications
+                            // so the notifier can annotate payloads with the
+                            // current generation's regime badge. If the order
+                            // were reversed, each alert would carry features
+                            // from the prior pass (or None for brand-new
+                            // findings), and the badge would silently lag one
+                            // generation behind the dashboard.
+                            if let Err(e) = nq_db::compute_features(&mut db, result.generation_id) {
+                                warn!(err = %e, "regime feature computation failed");
+                            }
+
                             // Send notifications for escalated findings
                             if !pull_config.notifications.channels.is_empty() {
                                 send_notifications(
@@ -68,13 +79,6 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                                     &pull_config.notifications,
                                     &notify_client,
                                 ).await;
-                            }
-
-                            // Compute regime features — temporal facts derived
-                            // from history. Runs in its own transaction; failure
-                            // is logged but does not invalidate the generation.
-                            if let Err(e) = nq_db::compute_features(&mut db, result.generation_id) {
-                                warn!(err = %e, "regime feature computation failed");
                             }
 
                             // Seal generation with content-addressed digest
