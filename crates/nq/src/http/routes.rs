@@ -683,7 +683,8 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
     let gen_line = match (&vm.generation_id, &vm.generation_status, &vm.generation_age_s) {
         (Some(id), Some(status), Some(age)) => {
             format!(
-                "Gen #{id} · {age}s ago · {}",
+                "Gen #{id} · {} ago · {}",
+                nq_core::humanize_duration_s(*age),
                 escape_html(status),
             )
         }

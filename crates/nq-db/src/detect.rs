@@ -7,6 +7,7 @@
 //! Detector logic is in Rust, not SQL. Thresholds are configurable but the
 //! interpretation stays in code.
 
+use nq_core::humanize_duration_s;
 use rusqlite::Connection;
 
 // ---------------------------------------------------------------------------
@@ -420,8 +421,10 @@ fn detect_stale_hosts(
         };
 
         let synopsis = format!(
-            "{} has not reported in {} generations ({} seconds).",
-            host, gens_behind, age_s,
+            "{} has not reported in {} · {} gens.",
+            host,
+            humanize_duration_s(age_s),
+            gens_behind,
         );
         let why_care = if gens_behind > 20 {
             "Host data is severely stale. Findings on this host may no longer reflect reality.".into()
@@ -436,7 +439,11 @@ fn detect_stale_hosts(
             domain: "Δo".into(),
             kind: "stale_host".into(),
             subject: String::new(),
-            message: format!("last seen {}s ago (gen {})", age_s, as_of_gen),
+            message: format!(
+                "last seen {} ago (gen {})",
+                humanize_duration_s(age_s),
+                as_of_gen,
+            ),
             value: Some(age_s as f64),
             finding_class: "signal".into(),
             rule_hash: None,
@@ -483,7 +490,7 @@ fn detect_stale_services(
             domain: "Δo".into(),
             kind: "stale_service".into(),
             subject: service.clone(),
-            message: format!("last seen {}s ago", age_s),
+            message: format!("last seen {} ago", humanize_duration_s(age_s)),
             value: Some(age_s as f64),
             finding_class: "signal".into(),
             rule_hash: None,
