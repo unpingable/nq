@@ -1,10 +1,10 @@
-# Gap: ZFS Collector — chronic-degraded visibility via bounded privileged-read adapter
+# Gap: ZFS Collector — chronic-degraded visibility via nq-witness conforming adapter
 
-**Status:** `proposed` — drafted 2026-04-16, forced by deploying NQ on a ZFS NAS with a chronically-degraded pool (failed drive + two spares, pool otherwise stable)
-**Depends on:** OBSERVER_DISTORTION_GAP (the helper must be non-participatory and bounded; NQ-the-observer does not gain direct root), EVIDENCE_LAYER (pool state observations flow through the standard finding pipe), STABILITY_AXIS (chronic-degraded vs degrading is exactly what the stability axis distinguishes), REGIME_FEATURES (persistence + recovery context for recurring pool events)
-**Build phase:** extension — adds one collector, one helper binary/script, and four detectors; no new substrate
+**Status:** `proposed` — drafted 2026-04-16, forced by deploying NQ on a ZFS NAS with a chronically-degraded pool (failed drive + two spares, pool otherwise stable). Rewritten 2026-04-17 to route all privileged ZFS visibility through the `nq-witness` contract, collapsing the earlier Path-A/Path-B dichotomy.
+**Depends on:** `nq-witness` (canonical witness contract; the ZFS profile at `~/git/nq-witness/profiles/zfs.md` defines what valid ZFS evidence looks like), OBSERVER_DISTORTION_GAP (the witness must be non-participatory and bounded; NQ-the-observer does not gain direct root), EVIDENCE_LAYER (pool state observations flow through the standard finding pipe), STABILITY_AXIS (chronic-degraded vs degrading is exactly what the stability axis distinguishes), REGIME_FEATURES (persistence + recovery context for recurring pool events)
+**Build phase:** extension — adds one collector (witness-report consumer) and a detector set gated by coverage tags; no new substrate
 **Blocks:** NQ's ability to represent "known-bad-but-stable" coherently; any chronic-condition acknowledgment story that isn't cosmetic; honest monitoring of ZFS-backed storage where NQ has no business being root
-**Last updated:** 2026-04-16
+**Last updated:** 2026-04-17
 
 ## The Problem
 
@@ -33,56 +33,37 @@ The zoo is incomplete without this third regime being legible.
 
 ## Design Stance
 
-**NQ stays unprivileged; a bounded adapter carries the privileged read.**
+**NQ stays unprivileged; a conforming `nq-witness` carries the privileged read.**
 
-**Two adapter patterns are first-class.** Privileged ZFS visibility has two acceptable shapes, and an operator may choose either:
+All privileged ZFS visibility — pool state, vdev detail, scrub completion, spare status — flows through the `nq-witness` contract (`~/git/nq-witness/SPEC.md`, profile at `profiles/zfs.md`). A witness is not merely a source of metrics; it is an evidence producer that declares its own coverage and standing. NQ consumes witness JSON reports, reads `coverage.can_testify` to decide which ZFS-specific detectors may fire this cycle, and treats a stale or failed witness as a first-class finding rather than absence.
 
-1. **Prometheus exporter** — preferred when a maintained exporter exists and exposes sufficient pool / vdev / scrub / error metrics. NQ remains unprivileged and consumes the exporter through existing `prometheus_targets` configuration. Zero new NQ code. The exporter daemon handles the privilege boundary internally.
+The earlier draft of this gap exposed a two-adapter dichotomy — "Path A" (Prometheus exporter) versus "Path B" (operator helper) — with sub-tiers for Path-A coverage. That dichotomy was a pre-witness framing and is superseded here. The privilege-model question the old Path-A/Path-B split was trying to answer is already solved inside the witness spec: `collection_mode` ∈ {`sudo_helper`, `root_exporter_localhost`, `unprivileged`} and `privilege_model` ∈ {`nopasswd_fixed_helper`, `root_exporter_localhost`, ...}. NQ doesn't need to know which one; it only cares that the report conforms.
 
-2. **Operator-authored helper** — preferred when exporter coverage is insufficient, semantic control matters more than convenience, or the operator wants no additional daemon / open port. A root-owned, read-only helper script/binary runs fixed-scope `zpool` / `zfs` read commands and emits structured JSON. A sudoers entry grants `NOPASSWD` execution of exactly that helper path with no arguments.
+**One pattern, three implementations of it.** A deployment can host the ZFS witness as:
 
-Both patterns preserve the invariant: NQ stays unprivileged. The helper pattern moves the privilege boundary to a reviewable script; the exporter pattern moves it to a separate daemon with its own security posture. Neither has NQ running as root.
+1. a `sudo_helper` invoked by the NQ process (root-owned script/binary at a fixed path; sudoers NOPASSWD for exactly that path, no arguments; emits canonical JSON on stdout);
+2. a `root_exporter_localhost` daemon bound to 127.0.0.1 with appropriate capabilities, exposing the canonical JSON at `/report` (and optionally a Prometheus projection at `/metrics`);
+3. an `unprivileged` witness, acceptable only if the deployment has specifically granted non-root access to `zpool`/`zfs`.
 
-Chatty's framing generalizes: *adapter plurality beats substrate plurality*. NQ should not care whether the adapter is a Prometheus exporter or a sudo-constrained JSON helper. It should care that the observation is bounded, stable, and not pretending to be authority.
+These are implementation shapes for the *same* contract. Choose whichever fits the deployment; the NQ consumer is identical.
 
-**Choosing between adapters.** The exporter path is the fast path *when* the exporter is boring enough. "Boring enough" has specific criteria:
+**Bare Prometheus exporters are explicitly second-class and do not satisfy this gap.**
 
-- Maintained (recent commits; not a 2018 "works on my FreeNAS" README)
-- Simple deployment (systemd unit, no Kubernetes ceremony, no Docker compose for one daemon)
-- Read-only — no exposed endpoints that mutate pool state
-- No unexpected privilege sprawl — runs as a specific user with exactly the capabilities it needs, not as root for convenience
-- Exposes the metrics the detectors need: pool state, vdev state + error counts, scrub state + completion, capacity, spare assignment
-- Stable metric names (won't rename labels between minor versions and silently break detectors)
+A Prometheus exporter that emits metrics without declaring `coverage.can_testify` / `standing` (e.g. `pdf/zfs_exporter` v2.3.12 as deployed on `lil-nas-x` on 2026-04-16) is not a witness under the contract. NQ's existing `prometheus_targets` pipeline can still scrape such exporters, and generic threshold/transition detectors (`metric_signal` and similar) will fire from the resulting `metrics_history` rows. But **none of the ZFS-specific detectors named in this gap fire from non-witness sources.** Emitting e.g. `zfs_vdev_faulted` from a bare exporter's metrics would manufacture confidence the source never declared — exactly the failure the witness contract exists to prevent.
 
-If the available exporters fail this sniff test, the helper pattern is the controlled alternative. The helper is more work once but is entirely operator-owned. Both are legitimate outcomes of the "is the exporter boring enough" question.
+For lil-nas-x specifically: the live `pdf/zfs_exporter` deployment provides coarse Prometheus signal (pool health integer, capacity, fragmentation) through NQ's existing scraper, but the forensic case this gap was written to handle — chronic-degraded visibility — is not satisfied until a conforming witness is in place. Options: wrap the exporter in a witness shim, replace it with a conforming witness-exporter, or deploy the reference `sudo_helper` witness from `nq-witness/examples/`.
 
-**Path A coverage varies by exporter.** This matters operationally — most ZFS exporters in the wild expose a subset of what the full detector set needs. Two sub-tiers are worth naming explicitly:
+**The witness (regardless of implementation) is honest about what it does and refuses to do.**
 
-- **Path A-lite** — pool-level signal only. Pool health encoded as integer, capacity metrics, readonly flag. Sufficient for *coarse* liveness and gross state-transition detection. Insufficient for chronic-degraded forensics because it cannot distinguish stable-vs-worsening at the vdev level.
+No argument passing from NQ to the witness. No configuration knobs exposed to NQ. No write commands in the witness's fixed command set. No destroy, no import, no export, no replace, no clear. If NQ needs something different, the witness is updated by the operator and the privilege grant is re-reviewed. This is the `nq-witness` spec's core invariant ("Privilege may increase visibility. It must not increase authority.") applied to the ZFS domain.
 
-- **Path A-full** — everything Path A-lite offers plus per-vdev state, per-vdev error counts (read/write/cksum), scrub state and last-completion, and spare assignment. Sufficient for the complete detector set this gap specifies. Rare in practice; most available exporters are A-lite.
+**Three concerns that privileged execution in NQ would collapse:**
 
-**Concrete precedent (2026-04-16):** `pdf/zfs_exporter` v2.3.12 deployed on `lil-nas-x` is **Path A-lite**. It exposes `zfs_pool_health` (integer), capacity, fragmentation, dataset stats. It does *not* expose per-vdev state, error counters, scrub completion, or spare status. Useful, but forensically insufficient for the chronic-degraded case this gap was written to handle.
-
-**The right posture for Path A-lite:**
-
-> **Admissible evidence, limited standing.**
-
-Path A-lite is evidence. It just doesn't get to testify about facts it can't see. Detectors that depend on vdev/scrub/spare detail must not be emitted from Path A-lite data alone — doing so would manufacture confidence the data cannot support. The gap spec is honest about what each adapter can source (see the Detectors section for per-detector path attribution).
-
-**The helper (when chosen) must be honest about what it does and refuses to do.**
-
-No argument passing (no `sudo nq-zfs-snapshot some_pool`; the pool list comes from `zpool list -H` inside the helper). No configuration knobs exposed to NQ. No write commands. No destroy, no import, no export, no replace, no clear. The helper runs a fixed script and exits. If NQ needs something different, the helper is updated by the operator and the sudoers entry is re-reviewed.
-
-**The exporter (when chosen) is not ours to harden.** The operator picked it; the operator reviews it; the operator updates it. NQ consumes the metrics and does not attempt to reach around the exporter into ZFS directly. If the exporter lies or stops, NQ notices the metric gap and emits the appropriate stale/silent finding — same shape as any other Prometheus source going silent.
-
-**Three concerns that privileged execution would collapse:**
-
-- **Authority to read root-restricted state** lives in either the helper's sudoers line or the exporter's install-time privilege grant. Reviewable, auditable, narrow.
-- **Policy for which commands run** lives in the adapter's code (helper script or exporter). Operator-maintained.
+- **Authority to read root-restricted state** lives in the witness's privilege grant (sudoers line, systemd capability set, etc.). Reviewable, auditable, narrow.
+- **Policy for which commands run** lives in the witness's code. Operator-maintained.
 - **Interpretation of the output** lives in NQ. Domain logic, regime features, findings.
 
-This is the *"tool availability is not permission"* pattern from OBSERVER_DISTORTION_GAP, applied at the deployment boundary. The adapter is tooled; the sudoers entry or exporter privilege grant is permission; NQ never confuses the two.
+This is the *"tool availability is not permission"* pattern from OBSERVER_DISTORTION_GAP, applied at the deployment boundary.
 
 **Chronic condition handling is regime-shaped, not exception-shaped.**
 
@@ -98,116 +79,84 @@ A degraded pool that has been degraded for N generations with stable error count
 
 ## V1 Slice
 
-V1 supports both adapter patterns. The detectors are shared; the ingestion differs.
+### Witness consumer (NQ side)
 
-### Path A: Prometheus exporter (zero new NQ code)
+New collector `crates/nq/src/collect/zfs.rs`:
 
-For deployments where a boring-enough exporter is available:
-
-1. Operator installs the chosen exporter (systemd unit, appropriate user/capability grants, bound to `127.0.0.1`).
-2. Operator adds a `prometheus_targets` entry to `publisher.json` pointing at the exporter's `/metrics` endpoint.
-3. NQ's existing Prometheus scraper ingests the metrics via `metrics_history`.
-4. The ZFS detectors (see below) consume the metrics like any other scrape target. No ZFS-specific collector code required.
-
-This is the *fast path* for lil-nas-x and similar deployments once a maintained exporter is picked. Nothing in NQ changes.
-
-### Path B: Operator-authored helper `nq-zfs-snapshot`
-
-Root-owned, operator-installed at `/usr/local/libexec/nq-zfs-snapshot` (or wherever the operator prefers — the sudoers entry and NQ config are kept in sync). POSIX shell or small Rust binary; both acceptable. Shell is probably enough:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-# Fixed-scope helper. No arguments. No writes. Reads pool state only.
-
-emit_json() {
-  local pools_json
-  pools_json=$(zpool list -Hp -o name,size,alloc,free,ckpoint,expandsz,frag,cap,dedup,health | \
-    awk -F'\t' 'BEGIN{print "["} NR>1{print ","} {printf "{\"name\":\"%s\",\"size_bytes\":%s,\"alloc_bytes\":%s,\"free_bytes\":%s,\"frag_pct\":\"%s\",\"cap_pct\":\"%s\",\"health\":\"%s\"}",$1,$2,$3,$4,$7,$8,$10} END{print "]"}')
-
-  local status_raw
-  status_raw=$(zpool status -P 2>&1)  # full paths; all pools
-
-  # Emit as a single JSON object with pools list + raw status for parsing on the NQ side
-  # (NQ side parses status_raw; helper stays dumb)
-  jq -n --argjson pools "$pools_json" --arg status "$status_raw" \
-    --arg captured_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{schema: "nq.zfs_snapshot.v1", captured_at: $captured_at, pools: $pools, status_raw: $status}'
-}
-
-emit_json
-```
-
-Sudoers line:
-
-```
-claude ALL=(root) NOPASSWD: /usr/local/libexec/nq-zfs-snapshot
-```
-
-(Where `claude` is the NQ user; adjust per deployment.)
-
-File permissions: `root:root 0755`. Crucially, **not** world-writable, not group-writable by NQ's user. The operator-maintained boundary depends on the helper being tamper-proof.
-
-### ZFS collector (nq-side, Path B only)
-
-For deployments on the helper path. New collector `crates/nq/src/collect/zfs.rs`:
-
-- Declares Δq participation as `subprocess` with target `/usr/local/libexec/nq-zfs-snapshot` (path is configurable in `PublisherConfig`).
-- Declares platform capability as Linux-only in v1 (ZFS on FreeBSD / macOS / Windows is v2+).
-- Shells to `sudo /usr/local/libexec/nq-zfs-snapshot`, with short timeout (5s default, configurable).
-- Parses the emitted JSON. Fails gracefully if helper missing / sudoers misconfigured / JSON malformed — emits a `Skipped` collector status with a clear reason, not a generic error.
-- Does NOT cache the helper's output across collector runs. Each generation is a fresh call. The helper is cheap.
+- Declares Δq participation as `subprocess` (when consuming a `sudo_helper` witness) or `http_get` (when consuming a `root_exporter_localhost` witness). The mode is configurable per deployment.
+- Declares platform capability as Linux-only in v1 (FreeBSD, macOS, Windows are v2+).
+- Ingests the canonical JSON report per `nq-witness/SPEC.md`. Verifies `schema == "nq.witness.v0"` and `witness.profile_version == "nq.witness.zfs.v0"`. Rejects reports with an unrecognized schema.
+- Reads `coverage.can_testify` and gates detector emission on a static coverage-tag requirement map (see the Detectors section — the precise mapping is deferred to v1 implementation and will be defined against a live witness, not guessed in advance).
+- Treats `witness.status == "failed"` as an adapter-silent condition (see `zfs_witness_silent` below). Treats `witness.status == "partial"` as degraded coverage for this cycle — detectors whose required tags moved to `cannot_testify` do not fire this cycle, but the coverage loss itself is observable as a finding.
+- Bounds collection by timeout (default 5s, configurable); a stuck witness does not stall NQ's generation commit.
+- Fails gracefully if the witness is absent / misconfigured / emits malformed JSON. Emits `Skipped` collector status with a clear reason, not a generic error.
+- Does NOT cache the witness output across collector runs. Each generation is a fresh call. ZFS state does not change fast enough to justify caching inside NQ; the witness is cheap.
 
 Publisher config extension:
 
 ```json
 {
-  "zfs": {
+  "zfs_witness": {
     "enabled": true,
-    "helper_path": "/usr/local/libexec/nq-zfs-snapshot",
+    "mode": "sudo_helper",
+    "helper_path": "/usr/local/libexec/nq-zfs-witness",
     "timeout_ms": 5000
   }
 }
 ```
 
-Default disabled. Opt-in per deployment.
+or
 
-### Parser for `zpool status` output (Path B only)
+```json
+{
+  "zfs_witness": {
+    "enabled": true,
+    "mode": "http",
+    "url": "http://127.0.0.1:9422/report",
+    "timeout_ms": 5000
+  }
+}
+```
 
-Plain-text parser in the ZFS collector. Extracts per-pool:
+Default disabled. Opt-in per deployment. The `mode` field selects how NQ reaches the witness; the JSON payload shape is identical in both cases.
 
-- `name`, `state` (ONLINE / DEGRADED / FAULTED / SUSPENDED / UNAVAIL)
-- `status_message` (if present — "One or more devices has been taken offline..." etc.)
-- `action_message` (if present)
-- `scan_state`, `scan_last_completed_at`, `scan_errors` (from the `scan:` line)
-- per-vdev: `name`, `state`, `read_errors`, `write_errors`, `cksum_errors`
-- hot spares in use vs available
-- overall pool health
+### Reference witness implementation (lives in nq-witness, not NQ)
 
-Text parsing of `zpool status` is sketchy in principle (format is operator-facing, not machine-facing). Accept the risk in v1; if ZFS changes the format meaningfully, we adapt. A follow-up could use `zpool status -j` if/when it stabilizes across ZFS versions.
+The canonical reference implementation of a ZFS witness — `nq-zfs-witness` — is maintained in `~/git/nq-witness/examples/`, not in this repo. Shipping it alongside NQ would couple the contract to one consumer; nq-witness is the contract home. Operators who want the reference `sudo_helper` copy it from there, install root-owned at a known path, and add the NOPASSWD sudoers entry per `profiles/zfs.md` recommendations.
+
+This gap specifies what NQ *does* with a conforming witness's output. It does not specify the witness's internals. If no reference implementation exists yet in nq-witness/examples at the time this gap is implemented, producing a minimal-viable helper — enough to emit a conforming report from `lil-nas-x` — is an explicit prerequisite.
 
 ### Detectors
 
-Each detector is annotated with the adapter paths that can source it. A detector must not fire on data the adapter cannot reliably provide.
+Detector emission is gated by the witness's declared coverage. Each detector declares the `coverage.can_testify` tags it requires; if a required tag is missing from a given witness report's coverage, the detector does not fire from that report.
 
-**Sourceable from Path A-lite, Path A-full, or Path B (helper):**
+**Gating rule (normative):**
 
-- **`zfs_pool_degraded`** — pool state encoded as DEGRADED (via `zfs_pool_health` integer on Path A-lite; state string on Path B). Severity `warning` while stable; escalates via regime features to `critical` on worsening. Note: without vdev detail, Path A-lite can only report *that* the pool is degraded, not *which drive*.
-- **`zfs_pool_suspended`** — pool in SUSPENDED state. Severity `critical`. Writes are blocked; operator needs to know immediately.
-- **`zfs_pool_health_changed`** — any transition of `zfs_pool_health` integer / pool state string between generations. Severity `info` on improving transitions, `warning` on degrading transitions. Pure transition detector; does not require knowing *why* the transition happened. Works on any adapter.
-- **`zfs_pool_capacity_pressure`** — capacity metrics crossing thresholds (pool free bytes below configurable floor, allocated ratio above ceiling). Severity scales with absolute level.
-- **`zfs_adapter_silent`** — the chosen adapter (exporter scrape failing, helper failing, or simply not returning data) for more than N generations. Severity `warning` at first; escalates if it persists. Same shape as `stale_host`, scoped to the ZFS adapter specifically. The adapter cannot hide by disappearing.
+> A detector fires only when every one of its required coverage tags is present in `witness.coverage.can_testify` for the current report. When any required tag is absent — whether because the witness never testified about it, or because a `partial` collection demoted it to `cannot_testify` this cycle — the detector stays silent. Emitting a detector whose coverage was never declared manufactures confidence the evidence cannot support.
 
-**Sourceable from Path A-full or Path B (helper) only:**
+The detector set this gap specifies — names and semantics — is:
 
-- **`zfs_vdev_faulted`** — any vdev in state FAULTED or UNAVAIL. Severity `critical` (beyond DEGRADED). Requires per-vdev state. *Not emittable from Path A-lite.*
-- **`zfs_error_count_increased`** — any vdev's read/write/cksum error counts increased since last generation. Severity `warning` on first rise; escalates on continued rise. Requires per-vdev error counters. *Not emittable from Path A-lite.*
-- **`zfs_scrub_overdue`** — pool has no scrub completion within configurable window (default 35 days — one month + a week's slack). Severity `warning`. Requires scrub state. *Not emittable from Path A-lite.*
-- **`zfs_spare_activated`** — hot spare moved from available to in-use since last generation. Severity `warning` (operator should know the spare was consumed). Requires spare status. *Not emittable from Path A-lite.*
+- **`zfs_pool_degraded`** — pool in state DEGRADED. Severity `warning` while stable; escalates via regime features to `critical` on worsening signals.
+- **`zfs_pool_suspended`** — pool in state SUSPENDED. Severity `critical`. Writes are blocked.
+- **`zfs_pool_health_changed`** — pool state transition between generations. Severity `info` on improving transitions, `warning` on degrading transitions. Pure transition detector.
+- **`zfs_pool_capacity_pressure`** — pool free bytes below configurable floor, or allocated ratio above ceiling. Severity scales with absolute level.
+- **`zfs_vdev_faulted`** — any vdev in state FAULTED or UNAVAIL. Severity `critical` (beyond pool DEGRADED).
+- **`zfs_error_count_increased`** — any vdev's read/write/checksum error counts rose since last generation. Severity `warning` on first rise; escalates on continued rise.
+- **`zfs_scrub_overdue`** — no scrub completion within configurable window (default 35 days — one month plus a week's slack). Severity `warning`.
+- **`zfs_spare_activated`** — hot spare moved from available to in-use since last generation. Severity `warning` (operator should know the spare was consumed).
+- **`zfs_witness_silent`** — witness report absent, stale beyond threshold, or status=`failed` for more than N generations. Severity `warning` at first; escalates if it persists. Same shape as `stale_host`, scoped to the ZFS witness specifically. A witness cannot hide by disappearing.
 
-**Honest rule:** a deployment running only Path A-lite produces the first set of findings with full confidence and does not produce the second set at all. Emitting the second set from A-lite data (by guessing or by under-specified inference) would violate the *admissible evidence, limited standing* invariant.
+**Detector → coverage-tag requirement map (deferred).** The precise mapping from each detector to its required `coverage.can_testify` tags is deferred until the reference witness has exercised the contract against live state (task 2 of the ZFS slice — laminating the mapping before the witness runs risks freezing guessed semantics into the spec). Illustrative, non-normative examples to prevent abstraction-soup reading:
 
-### 5. Live worked example (lil-nas-x)
+- `zfs_pool_degraded` likely requires `pool_state` (single tag).
+- `zfs_error_count_increased` likely requires `vdev_state` + `vdev_error_counters` (both tags; state so we know the vdev still exists, counters so we can compare).
+- `zfs_witness_silent` has no coverage requirement — it fires on witness metadata, not observation content.
+
+The full table lands in this gap after the reference witness emits real reports. Until then, treat the gating rule as the normative bar and the examples as illustrations only.
+
+**Non-witness sources are out of scope for these detectors.** A bare Prometheus exporter without a `coverage.can_testify` declaration does not satisfy the gating rule and does not fire the detectors named above. NQ's generic `metric_signal` detector may still emit threshold-based findings from such an exporter's metrics, but those findings carry no ZFS-domain standing and are not a substitute for witness-sourced detection.
+
+### Live worked example (lil-nas-x)
 
 After this gap lands, NQ on `lil-nas-x` should emit findings matching:
 
@@ -226,53 +175,40 @@ If a second drive faults or error counts start rising, the regime changes from `
 ## Non-goals
 
 - **No write operations from NQ.** Not `zpool replace`, not `zpool clear`, not `zfs destroy`, not anything. If NQ's diagnosis identifies a fix, it produces a `PlannedRepair` action_bias and a Night Shift packet (later). The human decides and acts.
-- **No helper that accepts arguments.** Any knob becomes an injection surface. If the helper needs flexibility, update the helper and update the sudoers entry. No runtime configurability from NQ.
-- **No NQ-as-root deployment recommended for ZFS visibility.** The helper pattern is the design, not a workaround.
+- **No arguments passed from NQ to the witness.** NQ calls the witness with no flags, ever. Any knob would be an injection surface. If the witness needs flexibility, the operator updates the witness implementation and re-reviews the privilege grant.
+- **No NQ-as-root deployment recommended for ZFS visibility.** The witness pattern is the design, not a workaround.
 - **No Windows / macOS ZFS in v1.** Linux ZoL only. FreeBSD ZFS is viable and declared `not_supported` (not `native`) in v1; promotion to v2 once a FreeBSD deployment appears.
-- **No parsing of `zpool status -j` (JSON output) in v1.** Format stability varies across ZFS versions. Text parsing is ugly but currently more portable. Revisit when `-j` is reliable across the versions we actually see.
+- **No `zpool status` parsing on the NQ side.** Parsing lives inside the witness implementation (per `nq-witness/profiles/zfs.md`). NQ consumes canonical JSON; it does not inspect raw `zpool` output. Parser fragility is the witness's problem, not NQ's.
 - **No direct ZFS event (zedlet) integration.** ZED provides real-time events but requires root-level daemon cooperation; that's a v2+ pattern and has its own boundary concerns.
-- **No SMART aggregation into the ZFS collector.** Drive health via SMART is a separate collector family; ZFS collector reports what ZFS sees, not what the drives report out-of-band.
+- **No SMART aggregation into the ZFS collector.** Drive health via SMART is a separate witness family (future `nq-witness/profiles/smart.md`); ZFS witness reports what ZFS sees, not what the drives report out-of-band.
 - **No pool-creation / import semantics.** NQ does not care whether a pool was imported from another machine. It reports what's currently mounted.
+- **No bare-exporter upgrade path inside this gap.** Wrapping `pdf/zfs_exporter` or similar into a witness-conforming shape is legitimate work, but it belongs in `nq-witness` (as an example or a shim profile), not in this gap. NQ's only job is to refuse non-witness sources for ZFS-specific detection.
 
 ## Acceptance Criteria (v1)
 
-**Gap is satisfied when either Path A or Path B is deployed and the shared detector bar is met.** Both paths are first-class; neither is required.
+Gap is satisfied when a conforming `nq-witness` ZFS witness is deployed and the detector bar below is met. The witness's implementation mode (`sudo_helper`, `root_exporter_localhost`, `unprivileged`) is irrelevant to acceptance — the consumer is identical across modes.
 
-### Path-agnostic (shared)
-
-1. Detectors fire only on data the adapter can actually source. `zfs_pool_degraded`, `zfs_pool_suspended`, `zfs_pool_health_changed`, `zfs_pool_capacity_pressure`, and `zfs_adapter_silent` are sourceable from any adapter including Path A-lite. `zfs_vdev_faulted`, `zfs_error_count_increased`, `zfs_scrub_overdue`, and `zfs_spare_activated` require Path A-full or Path B. A Path A-lite deployment must not emit the second group.
-2. On `lil-nas-x`, the DEGRADED-but-stable pool produces exactly one persistent `zfs_pool_degraded` finding that does not escalate across multiple generations while error counts are flat. This is the forcing scenario and applies to either adapter.
-3. If a second vdev transitions to FAULTED, or error counts rise, the regime features re-classify the finding and severity escalates. The transition is observable in the same finding's regime context.
-4. Adapter silence (exporter stops responding, helper fails) produces an appropriate stale/silent finding rather than masquerading as "all clear."
-
-### Path A (Prometheus exporter) specific
-
-5. The deploy docs name the "boring enough" criteria for exporter selection and name `pdf/zfs_exporter` v2.3.12 as a reviewed Path A-lite precedent (pool-level only, insufficient for full detector set).
-6. NQ's existing Prometheus scraper consumes the exporter with no ZFS-specific NQ code. The work is entirely on the operator's deployment side.
-7. A fixture test seeds synthetic Prometheus metrics in the canonical shape (pool state, vdev error counters, scrub timestamps) and asserts the detectors that can be sourced from those metrics fire correctly, and that detectors which cannot be sourced remain silent.
-8. A Path A-lite deployment satisfies partial coverage only. Full acceptance (all four Path-A-full-or-B detectors) requires a richer exporter or the helper path. The `lil-nas-x` deployment explicitly runs as partial coverage pending either a richer exporter or helper rollout.
-
-### Path B (helper) specific
-
-8. `nq-zfs-snapshot` helper exists in the NQ repo under `deploy/helpers/` as a reference implementation. Operators customize per deployment but the canonical script is reviewable.
-9. Sudoers line template included in the deploy docs with the specific form: `<user> ALL=(root) NOPASSWD: /usr/local/libexec/nq-zfs-snapshot`.
-10. ZFS collector exists in the publisher, opt-in via config, Δq-declared as `subprocess`.
-11. Helper missing / sudoers misconfigured → collector emits `Skipped` with clear reason. NQ does not error on absence.
-12. Collector parses `zpool status` output into typed findings. A fixture test seeds the known-tricky outputs (DEGRADED with spare, RESILVERING, scrub-in-progress, SUSPENDED) and asserts correct finding emission.
-13. Helper execution is bounded by timeout; a stuck helper does not stall NQ's generation commit.
-14. No helper argument accepts input from NQ. The call is `sudo /usr/local/libexec/nq-zfs-snapshot` with no flags, ever.
+1. **Schema and profile are verified.** NQ rejects reports where `schema` is not `nq.witness.v0` or `witness.profile_version` is not `nq.witness.zfs.v0`. Unknown versions emit a `zfs_witness_silent`-shaped finding with a clear reason, not silent ignore.
+2. **Detectors gate on declared coverage.** The gating rule (normative, stated in the Detectors section) holds for every detector in the v1 set. A detector whose required coverage tags are absent from `witness.coverage.can_testify` does not fire. A fixture test seeds conforming witness reports with varied `can_testify` arrays and asserts the correct subset of detectors fires.
+3. **Forcing scenario on `lil-nas-x`.** With a conforming witness reporting the DEGRADED-but-stable pool (one faulted vdev, two spares available, error counts flat across generations), NQ emits exactly one persistent `zfs_pool_degraded` finding that does not escalate across multiple generations. The stability axis plus regime features do the work; detector severity does not oscillate.
+4. **Escalation is observable.** If a second vdev transitions to FAULTED, or any vdev's error counts rise across generations, or a scrub reports new errors, the regime features re-classify the finding and severity escalates. The transition is visible in the finding's regime context, not as a new finding identity.
+5. **Witness silence is a finding, not a gap.** Witness report absent, stale beyond the profile's threshold, malformed JSON, or status=`failed` for more than N generations produces `zfs_witness_silent`. A disappeared witness cannot be mistaken for "all clear."
+6. **`partial` witness reports are handled honestly.** When a witness reports `status: "partial"` with a demoted `can_testify` array (e.g. `zpool status` timed out so `vdev_state` moves to `cannot_testify`), detectors requiring the demoted tags do not fire this cycle. The coverage regression itself is observable — the operator sees that the witness's forensic depth narrowed, even as pool-level evidence still flows.
+7. **Bounded collection.** Witness invocation is capped by timeout; a stuck witness does not stall NQ's generation commit. The collector emits `Skipped` with a clear reason rather than hanging.
+8. **Non-witness sources do not satisfy this gap.** A bare Prometheus exporter consumed via `prometheus_targets` is explicitly out-of-scope for the detectors named in this gap. `metric_signal` and other generic detectors may emit threshold-based findings from such sources, but those findings carry no ZFS-domain standing. The `lil-nas-x` deployment as of 2026-04-16 (running `pdf/zfs_exporter` v2.3.12) is explicitly non-conforming under this acceptance and produces only generic-metric coverage until a witness is in place.
+9. **Fixture coverage.** A conformance test seeds the four example reports from `nq-witness/profiles/zfs.md` (happy-path, chronic-degraded, partial-collection, and a crafted worsening-transition case) and asserts: (a) the correct detectors fire, (b) coverage-gated detectors stay silent when their tags are absent, (c) schema/profile-version mismatches raise the expected error, (d) regime features classify the chronic-degraded case as persistent+stable and the worsening-transition case as degrading.
 
 ## Core invariant
 
-> **Privileged reads happen through bounded operator-controlled adapters. NQ stays unprivileged. Authority to read is not the same as authority to act.**
+> **Privileged reads happen through a conforming `nq-witness`. NQ stays unprivileged. Authority to read is not the same as authority to act.**
 
 Operational form:
 
-> **The adapter — Prometheus exporter or sudoers-constrained helper — does read-only ZFS inspection at a fixed scope. The privilege grant (systemd capabilities for an exporter, NOPASSWD sudoers for a helper) authorizes exactly that adapter at exactly that scope. NQ invokes or scrapes, parses, interprets — and never gains direct root. If the adapter's fixed scope becomes insufficient, the operator updates the adapter and re-reviews the privilege grant. No runtime flexibility on the privileged boundary.**
+> **The witness — whether a `sudo_helper`, a localhost-bound exporter, or an unprivileged process — does read-only ZFS inspection at a fixed scope and emits a canonical report declaring what it can testify to. The privilege grant (NOPASSWD sudoers, systemd capabilities, etc.) authorizes exactly that witness at exactly that scope. NQ ingests, parses, gates detectors on declared coverage, and never gains direct root. If the witness's fixed scope becomes insufficient, the operator updates the witness implementation and re-reviews the privilege grant. No runtime flexibility on the privileged boundary.**
 
-And the selection rule:
+And the conformance rule:
 
-> **Use an existing exporter when it is good enough. Use a helper when semantic control or privilege minimization matters more than convenience. The boring middle is usually where the bodies aren't buried.**
+> **A Prometheus exporter that emits metrics without `coverage.can_testify` is not a witness, and bare-exporter metrics do not satisfy this gap's detector set. Some exporters are witnesses. Most are not. The distinction is declared coverage, not volume of samples.**
 
 And the regime rule, since chronic-degraded is the hard case:
 
@@ -280,9 +216,10 @@ And the regime rule, since chronic-degraded is the hard case:
 
 ## V2+ (explicitly deferred)
 
-- **FreeBSD ZFS support** via the same helper pattern. Capability promoted in PORTABILITY_GAP manifest.
-- **SMART collector** as a sibling, via a similar helper pattern (`nq-smart-snapshot`). Drive-level health that contextualizes ZFS pool state.
-- **ZED (ZFS Event Daemon) integration** for real-time event emission. Pushes instead of polls. Boundary concerns: ZED runs as root; a sidecar that receives ZED events and forwards structured JSON to NQ would be the right pattern.
+- **Detector → coverage-tag requirement map (normative table).** Deferred to v1 implementation; written after the reference witness has exercised the contract against live state. See the Detectors section for the deferral rationale and non-normative illustrative examples.
+- **FreeBSD ZFS support** via the same witness contract. Capability promoted in PORTABILITY_GAP manifest.
+- **SMART witness** as a sibling profile in `nq-witness/profiles/smart.md`. Drive-level health that contextualizes ZFS pool state.
+- **ZED (ZFS Event Daemon) integration** for real-time event emission. Pushes instead of polls. Boundary concerns: ZED runs as root; a sidecar witness that receives ZED events and emits conforming witness reports to NQ would be the right pattern.
 - **`zpool status -j` JSON output** once format stability is demonstrable across the ZFS versions NQ sees in deployment.
 - **Chronic condition acknowledgment** as a first-class lifecycle. NQ already has the structural pieces (`ack` in warning_state, regime features); this gap surfaces the need but doesn't ship the full ack UX.
 - **Night Shift watchbill for pool health** — `nightshift watchbill run zfs-pool-review`. Reconciles current state against prior, produces a planned-replacement packet when drives reach end-of-life indicators.
@@ -293,9 +230,9 @@ And the regime rule, since chronic-degraded is the hard case:
 ## References
 
 - **`~/git/nq-witness` — the witness contract home.** The adapter shape this gap requires (canonical JSON, `coverage` / `standing` declarations, per-vdev observations, chronic-condition semantics) is specified in `nq-witness/SPEC.md` and `nq-witness/profiles/zfs.md`. NQ consumes witness reports; the witness contract is maintained there, not here. This gap specifies what NQ *does* with valid ZFS evidence; nq-witness specifies what valid ZFS evidence *looks like*.
-- `docs/gaps/OBSERVER_DISTORTION_GAP.md` — Δq participation discipline. Helper-via-sudoers and localhost-bound-exporter are both valid boundary patterns for privileged reads; NQ stays unprivileged in both cases.
+- `docs/gaps/OBSERVER_DISTORTION_GAP.md` — Δq participation discipline. All three witness privilege models (`sudo_helper`, `root_exporter_localhost`, `unprivileged`) are valid boundary patterns; NQ stays unprivileged in every case.
 - `docs/gaps/PORTABILITY_GAP.md` — capability manifest. ZFS collector declares Linux-only in v1.
 - `docs/gaps/STABILITY_AXIS_GAP.md` — chronic-degraded vs degrading distinction lives here.
 - `docs/gaps/REGIME_FEATURES_GAP.md` — persistence + recovery regime features that make a persistent DEGRADED finding legible without becoming panic theater.
 - `docs/gaps/FINDING_EXPORT_GAP.md` — ZFS findings flow through the same consumer contract.
-- `~/nq/` on `lil-nas-x` — live Path A-lite deployment as of 2026-04-16 via `pdf/zfs_exporter` v2.3.12. Partial coverage pending either a conforming witness or helper rollout.
+- `~/nq/` on `lil-nas-x` — live non-witness deployment as of 2026-04-16 via `pdf/zfs_exporter` v2.3.12. Emits coarse Prometheus metrics consumed through NQ's existing scraper; does **not** satisfy this gap's witness requirement. The ZFS-specific detectors remain silent on lil-nas-x until a conforming witness is in place.
