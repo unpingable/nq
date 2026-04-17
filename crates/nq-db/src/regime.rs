@@ -156,6 +156,50 @@ impl RegimeHint {
     }
 }
 
+/// Resolution / stabilization phase for a pressured subject. V1 subset of
+/// REGIME_FEATURES_GAP §6 — three of the four spec variants are emitted.
+/// `SteadyState` is reserved: it is a strict claim that requires
+/// `reuse_behavior` and `residual_anomaly_class`, which this slice does
+/// not yet compute. Emitting it now would make a promise the evidence
+/// cannot keep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryPhase {
+    /// Currently at/near peak pressure, no convergence signal.
+    Acute,
+    /// Trajectory moving away from peak but not yet flat.
+    Improving,
+    /// Flat after visible prior pressure — converging but not
+    /// provably steady.
+    Settling,
+    /// Reserved: sustained flat + active reuse + no residual anomalies.
+    /// Never emitted in the V1 subset — requires fields deferred out
+    /// of scope per REGIME_FEATURES_GAP §6 boundary discipline.
+    SteadyState,
+}
+
+impl RecoveryPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Acute => "acute",
+            Self::Improving => "improving",
+            Self::Settling => "settling",
+            Self::SteadyState => "steady_state",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolutionPayload {
+    pub metric: String,
+    pub recovery_phase: RecoveryPhase,
+    pub growth_direction: Direction,
+    pub plateau_depth_generations: i64,
+    pub peak_value: f64,
+    pub current_value: f64,
+    pub samples: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoOccurrencePayload {
     pub co_occurrence: bool,
@@ -751,6 +795,173 @@ fn compute_finding_recovery(
 }
 
 // ---------------------------------------------------------------------------
+// Resolution / stabilization: post-peak recovery phase per host-metric.
+// V1 subset of REGIME_FEATURES_GAP §6 — recovery_phase + growth_direction
+// + plateau_depth only. catchup_ratio / reuse_behavior /
+// residual_anomaly_class are deferred; the classifier therefore cannot
+// claim SteadyState, which is reserved for the follow-up.
+// ---------------------------------------------------------------------------
+
+/// Window for resolution computation.
+const RESOLUTION_WINDOW: i64 = 50;
+
+/// Minimum samples in the window to classify a resolution phase.
+/// Below this, no resolution row is emitted — there is nothing durable
+/// to testify about yet.
+const RESOLUTION_MIN_SAMPLES: i64 = 10;
+
+/// Peak must exceed current by at least this fraction of current to
+/// count as "visible prior pressure." Lower margins admit noise as
+/// peaks; this filters for a real prior regime to recover from.
+const RESOLUTION_PEAK_MARGIN: f64 = 0.10;
+
+/// A trailing sample within this fraction of current_value counts as
+/// still on the current plateau. Tolerance is expressed relative to
+/// current so the check scales across metrics of different magnitudes.
+const RESOLUTION_PLATEAU_TOLERANCE: f64 = 0.05;
+
+/// Count the consecutive most-recent samples that sit within
+/// `RESOLUTION_PLATEAU_TOLERANCE` of the last sample's value.
+/// Walks from the end backward; stops at the first out-of-tolerance
+/// sample. Pure function over ordered `(gen, value)` pairs.
+pub fn plateau_depth(samples: &[(i64, f64)]) -> i64 {
+    if samples.is_empty() {
+        return 0;
+    }
+    let current = samples.last().unwrap().1;
+    // Tolerance relative to current magnitude; near-zero currents fall
+    // back to absolute tolerance to avoid divide-by-zero pathologies.
+    let tol = (current.abs() * RESOLUTION_PLATEAU_TOLERANCE).max(RESOLUTION_PLATEAU_TOLERANCE);
+    let mut depth = 0i64;
+    for (_, v) in samples.iter().rev() {
+        if (*v - current).abs() <= tol {
+            depth += 1;
+        } else {
+            break;
+        }
+    }
+    depth
+}
+
+/// Classify a resolution phase for a pressured subject.
+///
+/// Preconditions: caller has already verified that a prior peak exists
+/// (`peak_value > current_value * (1 + RESOLUTION_PEAK_MARGIN)`) — if
+/// that check fails, no resolution row should be emitted at all.
+///
+/// Rules (evaluated in order; first match wins):
+/// 1. `direction == Rising` → `Acute` (still worsening against peak)
+/// 2. `direction == Falling` → `Improving`
+/// 3. `direction == Flat` → `Settling` (prior pressure verified by caller)
+/// 4. anything else (Oscillating / Bounded / Unstable) → `Acute`
+///    (no clean recovery trajectory)
+///
+/// Never emits `SteadyState` — that variant requires fields deferred
+/// from the V1 subset.
+pub fn classify_recovery_phase(direction: Direction) -> RecoveryPhase {
+    match direction {
+        Direction::Rising => RecoveryPhase::Acute,
+        Direction::Falling => RecoveryPhase::Improving,
+        Direction::Flat => RecoveryPhase::Settling,
+        Direction::Oscillating | Direction::Bounded | Direction::Unstable => RecoveryPhase::Acute,
+    }
+}
+
+fn compute_host_resolution(
+    tx: &rusqlite::Transaction,
+    generation_id: i64,
+) -> anyhow::Result<()> {
+    let window_start = generation_id - RESOLUTION_WINDOW;
+
+    // Same three pressure metrics that trajectory computes. Rising on
+    // these = worse; falling = better — the directional interpretation
+    // is baked into the recovery phase classification.
+    let metrics = &[
+        ("disk_used_pct", "disk_used_pct"),
+        ("mem_pressure_pct", "mem_pressure_pct"),
+        ("cpu_load_1m", "cpu_load_1m"),
+    ];
+
+    let hosts: Vec<String> = {
+        let mut stmt = tx.prepare(
+            "SELECT DISTINCT host FROM hosts_history WHERE generation_id > ?1"
+        )?;
+        let rows = stmt.query_map([window_start], |r| r.get::<_, String>(0))?;
+        rows.collect::<Result<_, _>>()?
+    };
+
+    for host in &hosts {
+        for (col, metric_name) in metrics {
+            let sql = format!(
+                "SELECT generation_id, {col} FROM hosts_history
+                 WHERE host = ?1 AND generation_id > ?2 AND {col} IS NOT NULL
+                 ORDER BY generation_id ASC"
+            );
+            let samples: Vec<(i64, f64)> = {
+                let mut stmt = tx.prepare(&sql)?;
+                let rows = stmt.query_map(
+                    rusqlite::params![host, window_start],
+                    |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)),
+                )?;
+                rows.collect::<Result<_, _>>()?
+            };
+
+            // Minimum samples gate — no row if we can't testify yet.
+            if (samples.len() as i64) < RESOLUTION_MIN_SAMPLES {
+                continue;
+            }
+
+            let current_value = samples.last().unwrap().1;
+            let peak_value = samples.iter().map(|s| s.1).fold(f64::NEG_INFINITY, f64::max);
+
+            // Visible prior pressure gate. Without a peak above current,
+            // there is no recovery story to tell — skip emission entirely.
+            // Absence of a resolution row means "no regime to resolve
+            // from," not "we didn't check."
+            let margin_floor = current_value + current_value.abs() * RESOLUTION_PEAK_MARGIN;
+            if !(peak_value > margin_floor) {
+                continue;
+            }
+
+            // Direction for the *current* regime comes from the recent
+            // tail, not the full resolution window. A peak-then-flat
+            // shape would otherwise regress as Falling over the whole
+            // window and misclassify a settled plateau as Improving.
+            let tail_len = std::cmp::min(samples.len(), TRAJECTORY_WINDOW as usize);
+            let tail = &samples[samples.len() - tail_len..];
+            let trajectory = build_trajectory(metric_name, tail);
+            let depth = plateau_depth(&samples);
+            let phase = classify_recovery_phase(trajectory.direction);
+
+            let payload = ResolutionPayload {
+                metric: metric_name.to_string(),
+                recovery_phase: phase,
+                growth_direction: trajectory.direction,
+                plateau_depth_generations: depth,
+                peak_value,
+                current_value,
+                samples: samples.len() as i64,
+            };
+
+            let window_start_gen = samples.first().unwrap().0;
+            let window_end_gen = samples.last().unwrap().0;
+            let subject_id = format!("{host}/{metric_name}");
+            upsert_feature(
+                tx, generation_id,
+                "host_metric", &subject_id, "resolution",
+                window_start_gen, window_end_gen,
+                BasisKind::DirectHistory,
+                true,
+                samples.len() as i64,
+                &serde_json::to_string(&payload)?,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Co-occurrence: pairwise overlap of active findings on the same host.
 // One row per host per generation; carries the dominant pair only.
 // See REGIME_FEATURES_GAP §4.
@@ -986,7 +1197,7 @@ pub fn compute_features(db: &mut WriteDb, generation_id: i64) -> anyhow::Result<
     compute_finding_persistence(&tx, generation_id)?;
     compute_finding_recovery(&tx, generation_id)?;
     compute_finding_co_occurrence(&tx, generation_id)?;
-    // Future commit adds: resolution
+    compute_host_resolution(&tx, generation_id)?;
     tx.commit()?;
     Ok(())
 }
@@ -1060,6 +1271,32 @@ pub fn latest_host_co_occurrence(
     match row {
         Some((json, sufficient)) => {
             let p: CoOccurrencePayload = serde_json::from_str(&json)?;
+            Ok(Some((p, sufficient != 0)))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Read the most recent resolution feature for a (host, metric).
+/// Absent row → `None` means no visible prior pressure; the renderer
+/// should fall back to the trajectory for this subject rather than
+/// reporting a recovery phase.
+pub fn latest_host_resolution(
+    db: &crate::ReadDb,
+    host: &str,
+    metric: &str,
+) -> anyhow::Result<Option<(ResolutionPayload, bool)>> {
+    let subject_id = format!("{host}/{metric}");
+    let row: Option<(String, i64)> = db.conn.query_row(
+        "SELECT payload_json, sufficient_history FROM regime_features
+         WHERE subject_kind = 'host_metric' AND subject_id = ?1 AND feature_type = 'resolution'
+         ORDER BY generation_id DESC LIMIT 1",
+        rusqlite::params![subject_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).ok();
+    match row {
+        Some((json, sufficient)) => {
+            let p: ResolutionPayload = serde_json::from_str(&json)?;
             Ok(Some((p, sufficient != 0)))
         }
         None => Ok(None),
@@ -2139,6 +2376,210 @@ mod tests {
         ).unwrap();
         assert_eq!(p.active_finding_count, 1, "suppressed finding excluded");
         assert!(!p.co_occurrence);
+    }
+
+    // ------------------------------------------------------------------
+    // Resolution: pure helper + integration tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn plateau_depth_empty_is_zero() {
+        assert_eq!(plateau_depth(&[]), 0);
+    }
+
+    #[test]
+    fn plateau_depth_single_sample_is_one() {
+        assert_eq!(plateau_depth(&[(1, 50.0)]), 1);
+    }
+
+    #[test]
+    fn plateau_depth_counts_trailing_constant_run() {
+        // Values: 90, 80, 70, 60, 50, 50, 50, 50 — trailing plateau of 4.
+        let samples: Vec<(i64, f64)> = vec![
+            (1, 90.0), (2, 80.0), (3, 70.0), (4, 60.0),
+            (5, 50.0), (6, 50.0), (7, 50.0), (8, 50.0),
+        ];
+        assert_eq!(plateau_depth(&samples), 4);
+    }
+
+    #[test]
+    fn plateau_depth_tolerates_small_drift() {
+        // Current 50.0, tolerance is 5% of 50 = 2.5. All trailing within 2.5.
+        let samples: Vec<(i64, f64)> = vec![
+            (1, 80.0), (2, 51.0), (3, 49.5), (4, 50.5), (5, 50.0),
+        ];
+        assert_eq!(plateau_depth(&samples), 4);
+    }
+
+    #[test]
+    fn plateau_depth_breaks_on_out_of_tolerance_sample() {
+        let samples: Vec<(i64, f64)> = vec![
+            (1, 50.0), (2, 50.0), (3, 80.0), (4, 50.0), (5, 50.0),
+        ];
+        // Trailing run: gens 5, 4 within tolerance of 50.0; gen 3 is 80, breaks.
+        assert_eq!(plateau_depth(&samples), 2);
+    }
+
+    #[test]
+    fn classify_recovery_phase_maps_direction_to_phase() {
+        assert_eq!(classify_recovery_phase(Direction::Rising), RecoveryPhase::Acute);
+        assert_eq!(classify_recovery_phase(Direction::Falling), RecoveryPhase::Improving);
+        assert_eq!(classify_recovery_phase(Direction::Flat), RecoveryPhase::Settling);
+        assert_eq!(classify_recovery_phase(Direction::Oscillating), RecoveryPhase::Acute);
+        assert_eq!(classify_recovery_phase(Direction::Bounded), RecoveryPhase::Acute);
+        assert_eq!(classify_recovery_phase(Direction::Unstable), RecoveryPhase::Acute);
+    }
+
+    #[test]
+    fn resolution_emits_settling_for_flat_after_prior_peak() {
+        let mut db = make_db();
+        // Rise to a peak of 92, then flat at 50 for a plateau longer
+        // than TRAJECTORY_WINDOW so the tail-window direction is Flat.
+        for g in 1..=5 { insert_host_history(&db, g, "host-1", 50.0 + g as f64, 40.0, 1.0); }
+        for g in 6..=10 { insert_host_history(&db, g, "host-1", 92.0, 40.0, 1.0); }
+        for g in 11..=28 { insert_host_history(&db, g, "host-1", 50.0, 40.0, 1.0); }
+
+        compute_features(&mut db, 28).unwrap();
+
+        let payload_json: String = db.conn.query_row(
+            "SELECT payload_json FROM regime_features
+             WHERE subject_kind = 'host_metric'
+               AND subject_id = 'host-1/disk_used_pct'
+               AND feature_type = 'resolution'",
+            [], |r| r.get(0),
+        ).unwrap();
+        let p: ResolutionPayload = serde_json::from_str(&payload_json).unwrap();
+        assert_eq!(p.recovery_phase, RecoveryPhase::Settling);
+        assert_eq!(p.growth_direction, Direction::Flat);
+        assert!(p.plateau_depth_generations >= 10);
+        assert!((p.peak_value - 92.0).abs() < 0.01);
+        assert!((p.current_value - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn resolution_emits_improving_for_falling_trajectory() {
+        let mut db = make_db();
+        // Reach peak of 90 early, then steadily fall over 10+ gens.
+        insert_host_history(&db, 1, "host-1", 50.0, 40.0, 1.0);
+        for g in 2..=5 { insert_host_history(&db, g, "host-1", 90.0, 40.0, 1.0); }
+        for g in 6..=15 {
+            let v = 90.0 - (g - 5) as f64 * 3.0;
+            insert_host_history(&db, g, "host-1", v, 40.0, 1.0);
+        }
+
+        compute_features(&mut db, 15).unwrap();
+
+        let p: ResolutionPayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE subject_id = 'host-1/disk_used_pct' AND feature_type = 'resolution'",
+                [], |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        assert_eq!(p.recovery_phase, RecoveryPhase::Improving);
+        assert_eq!(p.growth_direction, Direction::Falling);
+    }
+
+    #[test]
+    fn resolution_emits_acute_for_rising_trajectory() {
+        let mut db = make_db();
+        // Prior peak at 99, a trough, then 12+ gens rising back up.
+        // Peak must still exceed current by RESOLUTION_PEAK_MARGIN (10%)
+        // so we stop the ramp below the prior peak — the subject is
+        // re-pressuring but hasn't yet matched its worst.
+        for g in 1..=5 { insert_host_history(&db, g, "host-1", 99.0, 40.0, 1.0); }
+        for g in 6..=10 { insert_host_history(&db, g, "host-1", 50.0, 40.0, 1.0); }
+        // Gens 11-25: rising from 50 to 85 (slope ~2.5/gen). Tail is
+        // last 12 samples (gens 14-25), all rising within that band.
+        for g in 11..=25 {
+            let v = 50.0 + (g - 10) as f64 * 2.5;
+            insert_host_history(&db, g, "host-1", v, 40.0, 1.0);
+        }
+
+        compute_features(&mut db, 25).unwrap();
+
+        let p: ResolutionPayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE subject_id = 'host-1/disk_used_pct' AND feature_type = 'resolution'",
+                [], |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        assert_eq!(p.recovery_phase, RecoveryPhase::Acute);
+        assert_eq!(p.growth_direction, Direction::Rising);
+    }
+
+    #[test]
+    fn resolution_skips_when_no_prior_peak() {
+        let mut db = make_db();
+        // Baseline-flat metric — no prior pressure at all.
+        for g in 1..=20 { insert_host_history(&db, g, "host-1", 50.0, 40.0, 1.0); }
+
+        compute_features(&mut db, 20).unwrap();
+
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM regime_features
+             WHERE subject_id = 'host-1/disk_used_pct' AND feature_type = 'resolution'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 0, "no prior peak → no resolution row");
+    }
+
+    #[test]
+    fn resolution_skips_when_peak_within_margin() {
+        let mut db = make_db();
+        // Peak only 5% above current — below RESOLUTION_PEAK_MARGIN (10%).
+        for g in 1..=5 { insert_host_history(&db, g, "host-1", 52.5, 40.0, 1.0); }
+        for g in 6..=15 { insert_host_history(&db, g, "host-1", 50.0, 40.0, 1.0); }
+
+        compute_features(&mut db, 15).unwrap();
+
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM regime_features
+             WHERE subject_id = 'host-1/disk_used_pct' AND feature_type = 'resolution'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 0, "peak within margin → not a recovery story");
+    }
+
+    #[test]
+    fn resolution_skips_when_insufficient_samples() {
+        let mut db = make_db();
+        // Fewer than RESOLUTION_MIN_SAMPLES = 10.
+        for g in 1..=5 { insert_host_history(&db, g, "host-1", 90.0, 40.0, 1.0); }
+        for g in 6..=8 { insert_host_history(&db, g, "host-1", 50.0, 40.0, 1.0); }
+
+        compute_features(&mut db, 8).unwrap();
+
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM regime_features
+             WHERE subject_id = 'host-1/disk_used_pct' AND feature_type = 'resolution'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 0, "insufficient samples → no row");
+    }
+
+    #[test]
+    fn resolution_never_emits_steady_state_in_v1() {
+        // V1 subset cannot claim SteadyState. Exhaustively run against
+        // a long flat-with-peak series and confirm phase is Settling.
+        let mut db = make_db();
+        for g in 1..=5 { insert_host_history(&db, g, "host-1", 95.0, 40.0, 1.0); }
+        // Keep current non-zero so the peak margin check has headroom.
+        for g in 6..=45 { insert_host_history(&db, g, "host-1", 50.0, 40.0, 1.0); }
+
+        compute_features(&mut db, 45).unwrap();
+
+        let p: ResolutionPayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE subject_id = 'host-1/disk_used_pct' AND feature_type = 'resolution'",
+                [], |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        assert_ne!(p.recovery_phase, RecoveryPhase::SteadyState,
+            "V1 subset must never emit steady_state");
+        assert_eq!(p.recovery_phase, RecoveryPhase::Settling);
     }
 
     #[test]
