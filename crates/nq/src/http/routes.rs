@@ -191,7 +191,11 @@ async fn finding_detail_inner(db: Db, kind: &str, host: &str, subject: &str) -> 
     // Build pivot queries based on detector kind
     let pivots = build_pivots(kind, host, subject);
 
-    Html(render_finding_detail(kind, host, subject, &finding, &related, &host_history, &pivots))
+    // Regime annotation — may be None when no features have been
+    // computed yet for this finding/host (e.g. brand-new deployment).
+    let regime = nq_db::compute_regime_annotation(db.conn(), host, kind, subject).unwrap_or(None);
+
+    Html(render_finding_detail(kind, host, subject, &finding, &related, &host_history, &pivots, regime.as_ref()))
 }
 
 fn build_pivots(kind: &str, host: &str, subject: &str) -> Vec<(&'static str, String)> {
@@ -274,6 +278,7 @@ fn render_finding_detail(
     related: &Result<nq_db::QueryResult, anyhow::Error>,
     host_history: &Result<nq_db::QueryResult, anyhow::Error>,
     pivots: &[(&str, String)],
+    regime: Option<&(nq_db::RegimeBadge, String)>,
 ) -> String {
     let meta = nq_db::finding_meta::finding_meta(kind);
 
@@ -554,14 +559,36 @@ async function runQuery(e) {{
         } else {
             format!("{} <span style=\"color:#484f58;font-size:12px;font-style:italic;\">(legacy)</span>", escape_html(meta.plain_label))
         },
-        diagnosis_badges = if has_diagnosis {
-            format!(
-                "<span class=\"domain-tag\">{}</span><span class=\"domain-tag\">{}</span>",
-                escape_html(failure_class),
-                escape_html(&action_bias.replace('_', " ")),
-            )
-        } else {
-            String::new()
+        diagnosis_badges = {
+            let mut out = if has_diagnosis {
+                format!(
+                    "<span class=\"domain-tag\">{}</span><span class=\"domain-tag\">{}</span>",
+                    escape_html(failure_class),
+                    escape_html(&action_bias.replace('_', " ")),
+                )
+            } else {
+                String::new()
+            };
+            if let Some((badge, sentence)) = regime {
+                // Minimal badge — one token on the card, sentence in title text.
+                // Background color follows badge semantics: worsening red,
+                // resolving green, stable neutral. None renders nothing.
+                let (bg, label) = match badge {
+                    nq_db::RegimeBadge::Worsening => ("#da3633", "worsening"),
+                    nq_db::RegimeBadge::Resolving => ("#3fb950", "resolving"),
+                    nq_db::RegimeBadge::Stable => ("#484f58", "stable"),
+                    nq_db::RegimeBadge::None => ("", ""),
+                };
+                if !label.is_empty() {
+                    out.push_str(&format!(
+                        "<span class=\"domain-tag\" style=\"background:{};color:#fff;\" title=\"{}\">regime: {}</span>",
+                        bg,
+                        escape_html(sentence),
+                        label,
+                    ));
+                }
+            }
+            out
         },
         why_section = if has_diagnosis {
             format!(

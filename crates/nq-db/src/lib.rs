@@ -16,10 +16,12 @@ pub use connect::{open_ro, open_rw, ReadDb, WriteDb};
 pub use detect::{ActionBias, DetectorConfig, FailureClass, Finding, FindingDiagnosis, ServiceImpact, Stability};
 pub use liveness::{read_liveness, write_liveness, LivenessArtifact, LivenessReadError, LIVENESS_FORMAT_VERSION};
 pub use regime::{
-    build_trajectory, classify_persistence, classify_recovery_lag, compute_features,
-    latest_finding_persistence, latest_finding_recovery, latest_host_trajectory, BasisKind,
+    badge_explanation, build_trajectory, classify_persistence, classify_recovery_lag,
+    classify_recovery_phase, compute_features, compute_regime_annotation, derive_regime_badge,
+    latest_finding_persistence, latest_finding_recovery, latest_host_co_occurrence,
+    latest_host_resolution, latest_host_trajectory, plateau_depth, BasisKind, CoOccurrencePayload,
     Direction, PersistenceClass, PersistencePayload, RecoveryLagClass, RecoveryPayload,
-    TrajectoryPayload,
+    RecoveryPhase, RegimeBadge, RegimeHint, ResolutionPayload, TrajectoryPayload,
 };
 pub use migrate::migrate;
 pub use publish::{publish_batch, update_warning_state, EscalationConfig, PublishResult};

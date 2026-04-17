@@ -33,6 +33,11 @@ pub struct PendingNotification {
     pub consecutive_gens: i64,
     pub first_seen_at: String,
     pub peak_value: Option<f64>,
+    /// Regime badge + explanation populated from the regime-features
+    /// store at `find_pending` time. `None` means no regime signal
+    /// strong enough to report — payload builders emit nothing for
+    /// this case rather than a literal "none" token.
+    pub regime: Option<(crate::regime::RegimeBadge, String)>,
 }
 
 // Cooldown: don't re-announce same identity as (new) within this window.
@@ -115,6 +120,8 @@ pub fn find_pending(db: &WriteDb, min_severity: &str) -> anyhow::Result<Vec<Pend
         };
 
         if current_rank >= min_rank {
+            let regime = crate::regime::compute_regime_annotation(&db.conn, &host, &kind, &subject)
+                .unwrap_or(None);
             pending.push(PendingNotification {
                 host,
                 domain,
@@ -126,6 +133,7 @@ pub fn find_pending(db: &WriteDb, min_severity: &str) -> anyhow::Result<Vec<Pend
                 consecutive_gens: gens,
                 first_seen_at: first_seen,
                 peak_value: peak,
+                regime,
             });
         }
     }
@@ -271,6 +279,11 @@ pub fn build_webhook_payload(n: &PendingNotification, generation_id: i64, base_u
         NotificationKind::Escalated { from_severity } => (Some(from_severity.as_str()), false),
     };
 
+    let (regime_badge, regime_explanation) = match &n.regime {
+        Some((b, s)) => (Some(b.as_str()), Some(s.as_str())),
+        None => (None, None),
+    };
+
     serde_json::json!({
         "version": "nq/v1",
         "generation_id": generation_id,
@@ -288,8 +301,23 @@ pub fn build_webhook_payload(n: &PendingNotification, generation_id: i64, base_u
             "consecutive_gens": n.consecutive_gens,
             "first_seen_at": n.first_seen_at,
             "peak_value": n.peak_value,
+            "regime_badge": regime_badge,
+            "regime_explanation": regime_explanation,
         }
     })
+}
+
+/// Render the one-line regime annotation used by Slack and Discord
+/// bodies. Returns an empty string when no regime is attached, so the
+/// caller can unconditionally interpolate it into a format string
+/// with a leading newline.
+fn format_regime_line(n: &PendingNotification) -> String {
+    match &n.regime {
+        Some((badge, sentence)) => {
+            format!("\n_Regime: {} — {}_", badge.as_str(), sentence)
+        }
+        None => String::new(),
+    }
 }
 
 /// Build a Slack message payload.
@@ -314,8 +342,10 @@ pub fn build_slack_payload(n: &PendingNotification, generation_id: i64, base_url
     let metadata = format_metadata_line(&n.notification_kind, generation_id, n.consecutive_gens);
     let since_line = format_since(&n.first_seen_at, now);
 
+    let regime_line = format_regime_line(n);
+
     let text = format!(
-        "{} *<{}|{} on {}>* _({})_\n{}\n_{}_\n_Since {}_\n> _Source:_ {}",
+        "{} *<{}|{} on {}>* _({})_\n{}\n_{}_\n_Since {}_{}\n> _Source:_ {}",
         emoji,
         url,
         n.severity.to_uppercase(),
@@ -324,6 +354,7 @@ pub fn build_slack_payload(n: &PendingNotification, generation_id: i64, base_url
         finding_line,
         metadata,
         since_line,
+        regime_line,
         n.message,
     );
 
@@ -344,8 +375,14 @@ pub fn build_discord_payload(n: &PendingNotification, generation_id: i64, base_u
     let metadata = format_metadata_line(&n.notification_kind, generation_id, n.consecutive_gens);
     let since_line = format_since(&n.first_seen_at, now);
 
+    // Discord uses its small-text marker (-#) for secondary lines.
+    let regime_line = match &n.regime {
+        Some((badge, sentence)) => format!("\n-# Regime: {} — {}", badge.as_str(), sentence),
+        None => String::new(),
+    };
+
     let content = format!(
-        "{} **{} on {}** _({})_\n{}\n-# {}\n-# Since {}\n-# [detail]({})\n> _Source:_ {}",
+        "{} **{} on {}** _({})_\n{}\n-# {}\n-# Since {}{}\n-# [detail]({})\n> _Source:_ {}",
         emoji,
         n.severity.to_uppercase(),
         scope,
@@ -353,6 +390,7 @@ pub fn build_discord_payload(n: &PendingNotification, generation_id: i64, base_u
         finding_line,
         metadata,
         since_line,
+        regime_line,
         url,
         n.message,
     );
@@ -584,6 +622,7 @@ mod tests {
             consecutive_gens: consecutive,
             first_seen_at: first_seen_at.into(),
             peak_value: None,
+            regime: None,
         }
     }
 
@@ -673,6 +712,118 @@ mod tests {
         assert!(content.contains("Since 2026-04-14 02:00 UTC"), "since line: {}", content);
         assert!(content.contains("[detail](https://nq.example"), "detail link: {}", content);
         assert!(content.contains("_Source:_ disk at 87%"), "evidence footer: {}", content);
+    }
+
+    #[test]
+    fn slack_renders_regime_line_when_annotation_present() {
+        let mut n = sample_notification(
+            "host-1",
+            "wal_bloat",
+            "/db",
+            "warning",
+            "WAL at 8GB",
+            NotificationKind::New,
+            12,
+            "2026-04-14T00:00:00Z",
+        );
+        n.regime = Some((
+            crate::regime::RegimeBadge::Resolving,
+            "host disk_used_pct settling after prior pressure".to_string(),
+        ));
+
+        let payload = build_slack_payload(&n, 100, "https://nq.example");
+        let text = payload["text"].as_str().unwrap();
+        assert!(
+            text.contains("Regime: resolving — host disk_used_pct settling after prior pressure"),
+            "regime line missing: {}", text
+        );
+    }
+
+    #[test]
+    fn slack_omits_regime_line_when_annotation_absent() {
+        let n = sample_notification(
+            "host-1",
+            "wal_bloat",
+            "/db",
+            "warning",
+            "WAL at 8GB",
+            NotificationKind::New,
+            12,
+            "2026-04-14T00:00:00Z",
+        );
+        // regime remains None from sample_notification default.
+        let payload = build_slack_payload(&n, 100, "https://nq.example");
+        let text = payload["text"].as_str().unwrap();
+        assert!(!text.contains("Regime:"), "must not emit regime line when absent: {}", text);
+    }
+
+    #[test]
+    fn discord_renders_regime_line_via_small_text_marker() {
+        let mut n = sample_notification(
+            "host-1",
+            "wal_bloat",
+            "/db",
+            "warning",
+            "WAL at 8GB",
+            NotificationKind::New,
+            12,
+            "2026-04-14T00:00:00Z",
+        );
+        n.regime = Some((
+            crate::regime::RegimeBadge::Worsening,
+            "recovery lag is pathological against its own baseline".to_string(),
+        ));
+
+        let payload = build_discord_payload(&n, 100, "https://nq.example");
+        let content = payload["content"].as_str().unwrap();
+        // Discord uses -# for secondary lines — confirm the regime line
+        // is demoted, not elevated to a body heading.
+        assert!(
+            content.contains("-# Regime: worsening — recovery lag is pathological against its own baseline"),
+            "discord regime line missing: {}", content
+        );
+    }
+
+    #[test]
+    fn webhook_payload_carries_regime_fields() {
+        let mut n = sample_notification(
+            "host-1",
+            "wal_bloat",
+            "/db",
+            "warning",
+            "WAL at 8GB",
+            NotificationKind::New,
+            12,
+            "2026-04-14T00:00:00Z",
+        );
+        n.regime = Some((
+            crate::regime::RegimeBadge::Stable,
+            "entrenched finding, recovery within baseline (60 gens)".to_string(),
+        ));
+
+        let payload = build_webhook_payload(&n, 100, "https://nq.example");
+        assert_eq!(payload["finding"]["regime_badge"], "stable");
+        assert_eq!(
+            payload["finding"]["regime_explanation"],
+            "entrenched finding, recovery within baseline (60 gens)"
+        );
+    }
+
+    #[test]
+    fn webhook_payload_regime_fields_null_when_absent() {
+        let n = sample_notification(
+            "host-1",
+            "wal_bloat",
+            "/db",
+            "warning",
+            "WAL at 8GB",
+            NotificationKind::New,
+            12,
+            "2026-04-14T00:00:00Z",
+        );
+        let payload = build_webhook_payload(&n, 100, "https://nq.example");
+        assert!(payload["finding"]["regime_badge"].is_null());
+        assert!(payload["finding"]["regime_explanation"].is_null());
     }
 
     #[test]

@@ -1303,6 +1303,195 @@ pub fn latest_host_resolution(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Regime badge: single-token summary for the finding card and notifier.
+// Commit 3 stop condition — one badge, one sentence, no dashboard work.
+// ---------------------------------------------------------------------------
+
+/// Badge rendered on a finding card and folded into the notifier payload.
+/// Four states, deliberately minimal. `None` means "no strong regime
+/// signal to report" and should render as no badge at all (not as a
+/// literal "none" token).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegimeBadge {
+    None,
+    Stable,
+    Resolving,
+    Worsening,
+}
+
+impl RegimeBadge {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Stable => "stable",
+            Self::Resolving => "resolving",
+            Self::Worsening => "worsening",
+        }
+    }
+}
+
+/// Derive a regime badge from features available in the store.
+///
+/// Inputs are already-read payloads so the function is pure and unit-
+/// testable. Priority order (first match wins):
+///
+/// 1. `worsening` — pathological recovery lag, or any host pressure
+///    metric in `Acute` recovery phase.
+/// 2. `resolving` — any host pressure metric in `Improving` or
+///    `Settling` phase.
+/// 3. `stable` — the finding is `Entrenched` and its last recovery
+///    cycle was `Normal` or `Slow` (i.e. within its own baseline).
+/// 4. `none` — no signal strong enough to badge. Quiet by default.
+///
+/// The priority order is deliberate: acute signals dominate, then
+/// recovery momentum, then long-standing-but-typical state. A finding
+/// can be both entrenched and in a worsening host regime; the
+/// worsening signal is the more operationally relevant one.
+pub fn derive_regime_badge(
+    persistence: Option<&PersistencePayload>,
+    recovery: Option<&RecoveryPayload>,
+    host_resolutions: &[ResolutionPayload],
+) -> RegimeBadge {
+    if recovery.map(|r| r.recovery_lag_class == RecoveryLagClass::Pathological).unwrap_or(false) {
+        return RegimeBadge::Worsening;
+    }
+    if host_resolutions.iter().any(|r| r.recovery_phase == RecoveryPhase::Acute) {
+        return RegimeBadge::Worsening;
+    }
+    if host_resolutions.iter().any(|r|
+        matches!(r.recovery_phase, RecoveryPhase::Improving | RecoveryPhase::Settling)
+    ) {
+        return RegimeBadge::Resolving;
+    }
+    let entrenched = persistence
+        .map(|p| p.persistence_class == PersistenceClass::Entrenched)
+        .unwrap_or(false);
+    let recovery_ok = recovery
+        .map(|r| matches!(r.recovery_lag_class, RecoveryLagClass::Normal | RecoveryLagClass::Slow))
+        .unwrap_or(false);
+    if entrenched && recovery_ok {
+        return RegimeBadge::Stable;
+    }
+    RegimeBadge::None
+}
+
+/// One-sentence operator-facing explanation for a non-`None` badge.
+/// Returns `None` when the badge is `None` — callers should render
+/// nothing rather than an empty string.
+pub fn badge_explanation(
+    badge: RegimeBadge,
+    persistence: Option<&PersistencePayload>,
+    recovery: Option<&RecoveryPayload>,
+    host_resolutions: &[ResolutionPayload],
+) -> Option<String> {
+    match badge {
+        RegimeBadge::None => None,
+        RegimeBadge::Worsening => {
+            if recovery.map(|r| r.recovery_lag_class == RecoveryLagClass::Pathological).unwrap_or(false) {
+                Some("recovery lag is pathological against its own baseline".to_string())
+            } else if let Some(r) = host_resolutions.iter().find(|r| r.recovery_phase == RecoveryPhase::Acute) {
+                Some(format!("host {} under acute pressure", r.metric))
+            } else {
+                Some("host regime is worsening".to_string())
+            }
+        }
+        RegimeBadge::Resolving => {
+            if let Some(r) = host_resolutions.iter().find(|r| r.recovery_phase == RecoveryPhase::Settling) {
+                Some(format!("host {} settling after prior pressure", r.metric))
+            } else if let Some(r) = host_resolutions.iter().find(|r| r.recovery_phase == RecoveryPhase::Improving) {
+                Some(format!("host {} improving", r.metric))
+            } else {
+                Some("host regime is resolving".to_string())
+            }
+        }
+        RegimeBadge::Stable => {
+            let streak = persistence.map(|p| p.streak_length_generations).unwrap_or(0);
+            Some(format!("entrenched finding, recovery within baseline ({} gens)", streak))
+        }
+    }
+}
+
+/// Read the regime features for a finding + its host, derive a badge,
+/// and produce the annotation tuple `(badge, sentence)`. Returns
+/// `None` when badge is `None` (no regime to report).
+///
+/// Takes a raw `&rusqlite::Connection` so callers with either a
+/// `WriteDb` or a `ReadDb` can use it without re-opening a handle.
+pub fn compute_regime_annotation(
+    conn: &rusqlite::Connection,
+    host: &str,
+    kind: &str,
+    subject: &str,
+) -> anyhow::Result<Option<(RegimeBadge, String)>> {
+    let finding_key = crate::publish::compute_finding_key("local", host, kind, subject);
+
+    let persistence: Option<PersistencePayload> = conn
+        .query_row(
+            "SELECT payload_json FROM regime_features
+             WHERE subject_kind = 'finding' AND subject_id = ?1 AND feature_type = 'persistence'
+             ORDER BY generation_id DESC LIMIT 1",
+            rusqlite::params![&finding_key],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok());
+
+    let recovery: Option<RecoveryPayload> = conn
+        .query_row(
+            "SELECT payload_json FROM regime_features
+             WHERE subject_kind = 'finding' AND subject_id = ?1 AND feature_type = 'recovery'
+             ORDER BY generation_id DESC LIMIT 1",
+            rusqlite::params![&finding_key],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok());
+
+    // Pick the most recent resolution row per metric for this host.
+    // A host has at most three resolution rows (disk / mem / cpu).
+    let host_resolutions: Vec<ResolutionPayload> = {
+        let mut stmt = conn.prepare(
+            "SELECT payload_json FROM regime_features
+             WHERE subject_kind = 'host_metric'
+               AND feature_type = 'resolution'
+               AND subject_id LIKE ?1
+             ORDER BY generation_id DESC",
+        )?;
+        let prefix = format!("{}/%", host);
+        let rows = stmt.query_map(rusqlite::params![prefix], |r| r.get::<_, String>(0))?;
+        let mut seen_metrics: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut out: Vec<ResolutionPayload> = Vec::new();
+        for row in rows {
+            let json = row?;
+            if let Ok(p) = serde_json::from_str::<ResolutionPayload>(&json) {
+                if seen_metrics.insert(p.metric.clone()) {
+                    out.push(p);
+                }
+            }
+        }
+        out
+    };
+
+    let badge = derive_regime_badge(
+        persistence.as_ref(),
+        recovery.as_ref(),
+        &host_resolutions,
+    );
+    let sentence = badge_explanation(
+        badge,
+        persistence.as_ref(),
+        recovery.as_ref(),
+        &host_resolutions,
+    );
+    match (badge, sentence) {
+        (RegimeBadge::None, _) => Ok(None),
+        (_, None) => Ok(None),
+        (b, Some(s)) => Ok(Some((b, s))),
+    }
+}
+
 pub fn latest_host_trajectory(
     db: &crate::ReadDb,
     host: &str,
@@ -2580,6 +2769,179 @@ mod tests {
         assert_ne!(p.recovery_phase, RecoveryPhase::SteadyState,
             "V1 subset must never emit steady_state");
         assert_eq!(p.recovery_phase, RecoveryPhase::Settling);
+    }
+
+    // ------------------------------------------------------------------
+    // Regime badge derivation — pure tests against crafted payloads.
+    // ------------------------------------------------------------------
+
+    fn persistence_fixture(class: PersistenceClass, streak: i64) -> PersistencePayload {
+        PersistencePayload {
+            streak_length_generations: streak,
+            present_ratio_window: 1.0,
+            interruption_count: 0,
+            window_generations: 50,
+            observed_generations: 50,
+            persistence_class: class,
+        }
+    }
+
+    fn recovery_fixture(class: RecoveryLagClass) -> RecoveryPayload {
+        RecoveryPayload {
+            last_recovery_lag_generations: Some(10),
+            median_recovery_lag_generations: Some(5),
+            last_recurrence_interval_generations: None,
+            median_recurrence_interval_generations: None,
+            prior_cycles_observed: 3,
+            window_generations: 500,
+            recovery_lag_class: class,
+        }
+    }
+
+    fn resolution_fixture(metric: &str, phase: RecoveryPhase, direction: Direction) -> ResolutionPayload {
+        ResolutionPayload {
+            metric: metric.to_string(),
+            recovery_phase: phase,
+            growth_direction: direction,
+            plateau_depth_generations: 12,
+            peak_value: 90.0,
+            current_value: 50.0,
+            samples: 40,
+        }
+    }
+
+    #[test]
+    fn badge_worsening_when_recovery_lag_pathological() {
+        let p = persistence_fixture(PersistenceClass::Entrenched, 60);
+        let r = recovery_fixture(RecoveryLagClass::Pathological);
+        let badge = derive_regime_badge(Some(&p), Some(&r), &[]);
+        assert_eq!(badge, RegimeBadge::Worsening);
+    }
+
+    #[test]
+    fn badge_worsening_when_host_resolution_acute() {
+        let p = persistence_fixture(PersistenceClass::Persistent, 10);
+        let r = recovery_fixture(RecoveryLagClass::Normal);
+        let res = vec![resolution_fixture("disk_used_pct", RecoveryPhase::Acute, Direction::Rising)];
+        let badge = derive_regime_badge(Some(&p), Some(&r), &res);
+        assert_eq!(badge, RegimeBadge::Worsening);
+    }
+
+    #[test]
+    fn badge_resolving_when_host_resolution_settling() {
+        let res = vec![resolution_fixture("mem_pressure_pct", RecoveryPhase::Settling, Direction::Flat)];
+        let badge = derive_regime_badge(None, None, &res);
+        assert_eq!(badge, RegimeBadge::Resolving);
+    }
+
+    #[test]
+    fn badge_resolving_when_host_resolution_improving() {
+        let res = vec![resolution_fixture("disk_used_pct", RecoveryPhase::Improving, Direction::Falling)];
+        let badge = derive_regime_badge(None, None, &res);
+        assert_eq!(badge, RegimeBadge::Resolving);
+    }
+
+    #[test]
+    fn badge_stable_when_entrenched_and_recovery_normal() {
+        let p = persistence_fixture(PersistenceClass::Entrenched, 120);
+        let r = recovery_fixture(RecoveryLagClass::Normal);
+        let badge = derive_regime_badge(Some(&p), Some(&r), &[]);
+        assert_eq!(badge, RegimeBadge::Stable);
+    }
+
+    #[test]
+    fn badge_stable_when_entrenched_and_recovery_slow() {
+        let p = persistence_fixture(PersistenceClass::Entrenched, 120);
+        let r = recovery_fixture(RecoveryLagClass::Slow);
+        let badge = derive_regime_badge(Some(&p), Some(&r), &[]);
+        assert_eq!(badge, RegimeBadge::Stable);
+    }
+
+    #[test]
+    fn badge_none_when_no_strong_signal() {
+        let p = persistence_fixture(PersistenceClass::Persistent, 10);
+        let r = recovery_fixture(RecoveryLagClass::InsufficientHistory);
+        let badge = derive_regime_badge(Some(&p), Some(&r), &[]);
+        assert_eq!(badge, RegimeBadge::None);
+    }
+
+    #[test]
+    fn badge_none_when_all_inputs_absent() {
+        let badge = derive_regime_badge(None, None, &[]);
+        assert_eq!(badge, RegimeBadge::None);
+    }
+
+    #[test]
+    fn badge_worsening_outranks_resolving_when_both_present() {
+        // Mixed signals on the host: one metric acute, another settling.
+        // Worsening wins — the acute signal is more operationally relevant.
+        let res = vec![
+            resolution_fixture("disk_used_pct", RecoveryPhase::Acute, Direction::Rising),
+            resolution_fixture("mem_pressure_pct", RecoveryPhase::Settling, Direction::Flat),
+        ];
+        let badge = derive_regime_badge(None, None, &res);
+        assert_eq!(badge, RegimeBadge::Worsening);
+    }
+
+    #[test]
+    fn badge_explanation_none_returns_none() {
+        assert!(badge_explanation(RegimeBadge::None, None, None, &[]).is_none());
+    }
+
+    #[test]
+    fn badge_explanation_worsening_names_pathological_lag() {
+        let r = recovery_fixture(RecoveryLagClass::Pathological);
+        let e = badge_explanation(RegimeBadge::Worsening, None, Some(&r), &[]).unwrap();
+        assert!(e.contains("pathological"), "got: {e}");
+    }
+
+    #[test]
+    fn badge_explanation_worsening_names_acute_metric() {
+        let res = vec![resolution_fixture("disk_used_pct", RecoveryPhase::Acute, Direction::Rising)];
+        let e = badge_explanation(RegimeBadge::Worsening, None, None, &res).unwrap();
+        assert!(e.contains("disk_used_pct"), "got: {e}");
+        assert!(e.contains("acute"), "got: {e}");
+    }
+
+    #[test]
+    fn badge_explanation_resolving_names_metric_and_phase() {
+        let res = vec![resolution_fixture("mem_pressure_pct", RecoveryPhase::Settling, Direction::Flat)];
+        let e = badge_explanation(RegimeBadge::Resolving, None, None, &res).unwrap();
+        assert!(e.contains("mem_pressure_pct"), "got: {e}");
+        assert!(e.contains("settling"), "got: {e}");
+    }
+
+    #[test]
+    fn badge_explanation_stable_includes_streak() {
+        let p = persistence_fixture(PersistenceClass::Entrenched, 147);
+        let r = recovery_fixture(RecoveryLagClass::Normal);
+        let e = badge_explanation(RegimeBadge::Stable, Some(&p), Some(&r), &[]).unwrap();
+        assert!(e.contains("147"), "got: {e}");
+    }
+
+    #[test]
+    fn compute_regime_annotation_reads_full_pipeline() {
+        // End-to-end: populate features via compute_features and confirm
+        // compute_regime_annotation surfaces a badge tuple.
+        let mut db = make_db();
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 60);
+        let fk = crate::publish::compute_finding_key("local", "host-1", "wal_bloat", "/db");
+        for g in 1..=60 {
+            insert_observation(&db, g, &fk, "host-1", "wal_bloat", "/db");
+        }
+        // Peak must live inside RESOLUTION_WINDOW (= 50 gens back from
+        // generation_id=60 → window is gens 11..=60). A peak earlier
+        // than that is not visible to the resolution detector.
+        for g in 11..=15 { insert_host_history(&db, g, "host-1", 95.0, 40.0, 1.0); }
+        for g in 16..=60 { insert_host_history(&db, g, "host-1", 50.0, 40.0, 1.0); }
+
+        compute_features(&mut db, 60).unwrap();
+
+        let ann = compute_regime_annotation(&db.conn, "host-1", "wal_bloat", "/db").unwrap();
+        let (badge, _sentence) = ann.expect("resolution + entrenchment should produce a badge");
+        // Resolving wins: the host has at least one settling pressure metric
+        // and no acute or pathological signals.
+        assert_eq!(badge, RegimeBadge::Resolving);
     }
 
     #[test]
