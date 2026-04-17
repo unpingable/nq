@@ -124,6 +124,48 @@ pub struct RecoveryPayload {
     pub recovery_lag_class: RecoveryLagClass,
 }
 
+/// Regime hint emitted by co-occurrence: a small named-dynamic vocabulary
+/// for pairs of findings that compose into a recognisable pattern.
+/// See REGIME_FEATURES_GAP §4. Pair → hint mapping lives in
+/// `CO_OCCURRENCE_SIGNATURES`; never in scattered match arms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegimeHint {
+    /// Resource-consumption findings trending the same way
+    /// (e.g. wal_bloat + disk_pressure).
+    Accumulation,
+    /// Co-occurring stress on related substrates
+    /// (e.g. disk_pressure + mem_pressure).
+    Pressure,
+    /// Multiple visibility-loss findings on the same host
+    /// (e.g. signal_dropout + log_silence).
+    ObservabilityFailure,
+    /// Service-level instability composing with infra signals
+    /// (e.g. service_flap + check_failed).
+    Entrenchment,
+}
+
+impl RegimeHint {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Accumulation => "accumulation",
+            Self::Pressure => "pressure",
+            Self::ObservabilityFailure => "observability_failure",
+            Self::Entrenchment => "entrenchment",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoOccurrencePayload {
+    pub co_occurrence: bool,
+    pub co_occurrence_depth_generations: i64,
+    pub dominant_pair: Option<(String, String)>,
+    pub regime_hint: Option<RegimeHint>,
+    pub window_generations: i64,
+    pub active_finding_count: i64,
+}
+
 // Basis/provenance per HISTORY_COMPACTION invariant #23 and
 // REGIME_FEATURES spec §Basis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -709,6 +751,228 @@ fn compute_finding_recovery(
 }
 
 // ---------------------------------------------------------------------------
+// Co-occurrence: pairwise overlap of active findings on the same host.
+// One row per host per generation; carries the dominant pair only.
+// See REGIME_FEATURES_GAP §4.
+// ---------------------------------------------------------------------------
+
+/// A pair must overlap (both observed) for at least this many consecutive
+/// most-recent generations to count as co-occurring.
+const CO_OCCURRENCE_MIN_DEPTH: i64 = 5;
+
+/// Lookback window for depth measurement. Capped so a single very long
+/// overlap doesn't dominate forever.
+const CO_OCCURRENCE_LOOKBACK: i64 = 50;
+
+/// Static pair → regime_hint signature table. Order-insensitive; both
+/// `(left, right)` and `(right, left)` lookups must agree. Kinds are
+/// compared as the lower-then-upper alphabetical pair so the runtime
+/// only normalises in one place.
+struct Signature {
+    a: &'static str,
+    b: &'static str,
+    hint: RegimeHint,
+}
+
+const CO_OCCURRENCE_SIGNATURES: &[Signature] = &[
+    // Accumulation — resource consumption trending the same direction.
+    Signature { a: "disk_pressure", b: "wal_bloat", hint: RegimeHint::Accumulation },
+    Signature { a: "disk_pressure", b: "freelist_bloat", hint: RegimeHint::Accumulation },
+    Signature { a: "freelist_bloat", b: "wal_bloat", hint: RegimeHint::Accumulation },
+    // Pressure — co-occurring stress across substrates.
+    Signature { a: "disk_pressure", b: "mem_pressure", hint: RegimeHint::Pressure },
+    Signature { a: "mem_pressure", b: "metric_signal", hint: RegimeHint::Pressure },
+    Signature { a: "check_failed", b: "service_status", hint: RegimeHint::Pressure },
+    // Observability failure — multiple visibility-loss findings.
+    Signature { a: "log_silence", b: "signal_dropout", hint: RegimeHint::ObservabilityFailure },
+    Signature { a: "signal_dropout", b: "stale_host", hint: RegimeHint::ObservabilityFailure },
+    Signature { a: "scrape_regime_shift", b: "signal_dropout", hint: RegimeHint::ObservabilityFailure },
+    // Entrenchment — service-level instability composing with infra signals.
+    Signature { a: "check_failed", b: "service_flap", hint: RegimeHint::Entrenchment },
+    Signature { a: "service_flap", b: "stale_service", hint: RegimeHint::Entrenchment },
+];
+
+/// Look up a regime hint for an unordered pair of finding kinds. Returns
+/// `None` when the pair has no signature — co-occurrence is still real,
+/// but it doesn't compose into a named regime yet.
+pub fn lookup_regime_hint(kind_a: &str, kind_b: &str) -> Option<RegimeHint> {
+    let (lo, hi) = if kind_a <= kind_b { (kind_a, kind_b) } else { (kind_b, kind_a) };
+    CO_OCCURRENCE_SIGNATURES
+        .iter()
+        .find(|s| s.a == lo && s.b == hi)
+        .map(|s| s.hint)
+}
+
+/// Count consecutive most-recent generations in which both finding_keys
+/// were observed. Walks `current_gen` down to `current_gen - lookback + 1`
+/// and stops at the first generation where either key is missing.
+fn pair_overlap_depth(
+    a_observed: &std::collections::BTreeSet<i64>,
+    b_observed: &std::collections::BTreeSet<i64>,
+    current_gen: i64,
+    lookback: i64,
+) -> i64 {
+    let mut depth = 0i64;
+    let floor = std::cmp::max(1, current_gen - lookback + 1);
+    let mut g = current_gen;
+    while g >= floor {
+        if a_observed.contains(&g) && b_observed.contains(&g) {
+            depth += 1;
+            g -= 1;
+        } else {
+            break;
+        }
+    }
+    depth
+}
+
+fn compute_finding_co_occurrence(
+    tx: &rusqlite::Transaction,
+    generation_id: i64,
+) -> anyhow::Result<()> {
+    // Active findings per host. Mirror persistence's exclusion of
+    // suppressed findings — co-occurrence describes regime, not blindness.
+    let active: Vec<(String, String, String)> = {
+        let mut stmt = tx.prepare(
+            "SELECT host, kind, subject
+             FROM warning_state
+             WHERE visibility_state = 'observed'
+             ORDER BY host, kind, subject"
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        rows.collect::<Result<_, _>>()?
+    };
+
+    // Group by host.
+    let mut per_host: std::collections::BTreeMap<String, Vec<(String, String)>> =
+        std::collections::BTreeMap::new();
+    for (host, kind, subject) in active {
+        per_host.entry(host).or_default().push((kind, subject));
+    }
+
+    let window_floor = std::cmp::max(0, generation_id - CO_OCCURRENCE_LOOKBACK);
+    let window_size = generation_id - window_floor;
+    let sufficient_history = generation_id >= CO_OCCURRENCE_MIN_DEPTH;
+
+    for (host, findings) in &per_host {
+        // Need at least two distinct findings to form a pair.
+        if findings.len() < 2 {
+            let payload = CoOccurrencePayload {
+                co_occurrence: false,
+                co_occurrence_depth_generations: 0,
+                dominant_pair: None,
+                regime_hint: None,
+                window_generations: window_size,
+                active_finding_count: findings.len() as i64,
+            };
+            upsert_feature(
+                tx, generation_id,
+                "host", host, "co_occurrence",
+                window_floor + 1, generation_id,
+                BasisKind::DerivedFromFindings,
+                sufficient_history,
+                window_size,
+                &serde_json::to_string(&payload)?,
+            )?;
+            continue;
+        }
+
+        // Pull the observation set once per finding on this host.
+        let mut observed_by_finding: Vec<((String, String), std::collections::BTreeSet<i64>)> =
+            Vec::with_capacity(findings.len());
+        for (kind, subject) in findings {
+            let fk = crate::publish::compute_finding_key("local", host, kind, subject);
+            let mut stmt = tx.prepare(
+                "SELECT DISTINCT generation_id FROM finding_observations
+                 WHERE finding_key = ?1 AND generation_id > ?2",
+            )?;
+            let observed: std::collections::BTreeSet<i64> = stmt
+                .query_map(rusqlite::params![&fk, window_floor], |r| r.get::<_, i64>(0))?
+                .collect::<Result<_, _>>()?;
+            observed_by_finding.push(((kind.clone(), subject.clone()), observed));
+        }
+
+        // Walk all unordered pairs, score by depth.
+        let mut best: Option<(i64, (String, String), Option<RegimeHint>)> = None;
+        for i in 0..observed_by_finding.len() {
+            for j in (i + 1)..observed_by_finding.len() {
+                let ((kind_i, _), obs_i) = &observed_by_finding[i];
+                let ((kind_j, _), obs_j) = &observed_by_finding[j];
+                if kind_i == kind_j {
+                    // Same kind, different subject — not a regime pair.
+                    continue;
+                }
+                let depth = pair_overlap_depth(obs_i, obs_j, generation_id, CO_OCCURRENCE_LOOKBACK);
+                if depth < CO_OCCURRENCE_MIN_DEPTH {
+                    continue;
+                }
+                let (lo, hi) = if kind_i <= kind_j {
+                    (kind_i.clone(), kind_j.clone())
+                } else {
+                    (kind_j.clone(), kind_i.clone())
+                };
+                let hint = lookup_regime_hint(&lo, &hi);
+                let candidate = (depth, (lo, hi), hint);
+                // Prefer greater depth; on tie prefer signatured pairs;
+                // final tiebreak is lexicographic to keep results stable.
+                let take = match &best {
+                    None => true,
+                    Some((bd, bp, bh)) => {
+                        if depth != *bd {
+                            depth > *bd
+                        } else if hint.is_some() != bh.is_some() {
+                            hint.is_some()
+                        } else {
+                            candidate.1 < *bp
+                        }
+                    }
+                };
+                if take {
+                    best = Some(candidate);
+                }
+            }
+        }
+
+        let payload = match best {
+            Some((depth, pair, hint)) => CoOccurrencePayload {
+                co_occurrence: true,
+                co_occurrence_depth_generations: depth,
+                dominant_pair: Some(pair),
+                regime_hint: hint,
+                window_generations: window_size,
+                active_finding_count: findings.len() as i64,
+            },
+            None => CoOccurrencePayload {
+                co_occurrence: false,
+                co_occurrence_depth_generations: 0,
+                dominant_pair: None,
+                regime_hint: None,
+                window_generations: window_size,
+                active_finding_count: findings.len() as i64,
+            },
+        };
+
+        upsert_feature(
+            tx, generation_id,
+            "host", host, "co_occurrence",
+            window_floor + 1, generation_id,
+            BasisKind::DerivedFromFindings,
+            sufficient_history,
+            window_size,
+            &serde_json::to_string(&payload)?,
+        )?;
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point — called from the lifecycle pass.
 // ---------------------------------------------------------------------------
 
@@ -721,7 +985,8 @@ pub fn compute_features(db: &mut WriteDb, generation_id: i64) -> anyhow::Result<
     compute_host_trajectories(&tx, generation_id)?;
     compute_finding_persistence(&tx, generation_id)?;
     compute_finding_recovery(&tx, generation_id)?;
-    // Future commits add: co_occurrence, resolution
+    compute_finding_co_occurrence(&tx, generation_id)?;
+    // Future commit adds: resolution
     tx.commit()?;
     Ok(())
 }
@@ -773,6 +1038,28 @@ pub fn latest_finding_recovery(
     match row {
         Some((json, sufficient)) => {
             let p: RecoveryPayload = serde_json::from_str(&json)?;
+            Ok(Some((p, sufficient != 0)))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Read the most recent co-occurrence feature for a host. Returns the
+/// payload alongside its sufficient_history flag. Absent row → `None`.
+pub fn latest_host_co_occurrence(
+    db: &crate::ReadDb,
+    host: &str,
+) -> anyhow::Result<Option<(CoOccurrencePayload, bool)>> {
+    let row: Option<(String, i64)> = db.conn.query_row(
+        "SELECT payload_json, sufficient_history FROM regime_features
+         WHERE subject_kind = 'host' AND subject_id = ?1 AND feature_type = 'co_occurrence'
+         ORDER BY generation_id DESC LIMIT 1",
+        rusqlite::params![host],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).ok();
+    match row {
+        Some((json, sufficient)) => {
+            let p: CoOccurrencePayload = serde_json::from_str(&json)?;
             Ok(Some((p, sufficient != 0)))
         }
         None => Ok(None),
@@ -1643,5 +1930,236 @@ mod tests {
         // median were median([2, 8, 30]) = 8, we'd get slow (30 ≤ 40),
         // which would be the exact failure mode this test guards.
         assert_eq!(p.recovery_lag_class, RecoveryLagClass::Pathological);
+    }
+
+    // ------------------------------------------------------------------
+    // Co-occurrence: pure helper + integration tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn lookup_regime_hint_is_order_insensitive() {
+        let h1 = lookup_regime_hint("wal_bloat", "disk_pressure");
+        let h2 = lookup_regime_hint("disk_pressure", "wal_bloat");
+        assert_eq!(h1, Some(RegimeHint::Accumulation));
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn lookup_regime_hint_unknown_pair_returns_none() {
+        assert_eq!(lookup_regime_hint("wal_bloat", "service_flap"), None);
+    }
+
+    #[test]
+    fn pair_overlap_depth_counts_consecutive_recent_gens() {
+        let a = observed_set(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        let b = observed_set(&[5, 6, 7, 8, 9, 10]);
+        // Both present from gen 5 to gen 10 → depth 6.
+        assert_eq!(pair_overlap_depth(&a, &b, 10, 50), 6);
+    }
+
+    #[test]
+    fn pair_overlap_depth_breaks_on_first_gap() {
+        // Both present at 8, 9, 10 but b missing at 7 → depth 3.
+        let a = observed_set(&[5, 6, 7, 8, 9, 10]);
+        let b = observed_set(&[5, 6, 8, 9, 10]);
+        assert_eq!(pair_overlap_depth(&a, &b, 10, 50), 3);
+    }
+
+    #[test]
+    fn pair_overlap_depth_zero_when_current_gen_missing() {
+        let a = observed_set(&[1, 2, 3]);
+        let b = observed_set(&[1, 2, 3]);
+        // Current gen is 10; both missing at 10 → 0.
+        assert_eq!(pair_overlap_depth(&a, &b, 10, 50), 0);
+    }
+
+    #[test]
+    fn co_occurrence_emits_dominant_pair_with_hint() {
+        let mut db = make_db();
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 7);
+        insert_warning_state(&db, "host-1", "disk_pressure", "", 7);
+        let fk_wal = crate::publish::compute_finding_key("local", "host-1", "wal_bloat", "/db");
+        let fk_disk = crate::publish::compute_finding_key("local", "host-1", "disk_pressure", "");
+
+        // Both observed for the last 7 consecutive gens (gens 4..=10).
+        for g in 4..=10 {
+            insert_observation(&db, g, &fk_wal, "host-1", "wal_bloat", "/db");
+            insert_observation(&db, g, &fk_disk, "host-1", "disk_pressure", "");
+        }
+
+        compute_features(&mut db, 10).unwrap();
+
+        let payload_json: String = db.conn.query_row(
+            "SELECT payload_json FROM regime_features
+             WHERE subject_kind = 'host' AND subject_id = 'host-1' AND feature_type = 'co_occurrence'",
+            [], |r| r.get(0),
+        ).unwrap();
+        let p: CoOccurrencePayload = serde_json::from_str(&payload_json).unwrap();
+        assert!(p.co_occurrence);
+        assert_eq!(p.co_occurrence_depth_generations, 7);
+        assert_eq!(
+            p.dominant_pair,
+            Some(("disk_pressure".to_string(), "wal_bloat".to_string())),
+            "pair stored in lexicographic order"
+        );
+        assert_eq!(p.regime_hint, Some(RegimeHint::Accumulation));
+    }
+
+    #[test]
+    fn co_occurrence_below_min_depth_emits_negative_row() {
+        let mut db = make_db();
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 3);
+        insert_warning_state(&db, "host-1", "disk_pressure", "", 3);
+        let fk_wal = crate::publish::compute_finding_key("local", "host-1", "wal_bloat", "/db");
+        let fk_disk = crate::publish::compute_finding_key("local", "host-1", "disk_pressure", "");
+
+        // Only 3 overlapping gens — below CO_OCCURRENCE_MIN_DEPTH = 5.
+        for g in 8..=10 {
+            insert_observation(&db, g, &fk_wal, "host-1", "wal_bloat", "/db");
+            insert_observation(&db, g, &fk_disk, "host-1", "disk_pressure", "");
+        }
+        // Need history far enough back so sufficient_history is true.
+        ensure_generation(&db, 10);
+
+        compute_features(&mut db, 10).unwrap();
+
+        let payload_json: String = db.conn.query_row(
+            "SELECT payload_json FROM regime_features
+             WHERE subject_kind = 'host' AND subject_id = 'host-1' AND feature_type = 'co_occurrence'",
+            [], |r| r.get(0),
+        ).unwrap();
+        let p: CoOccurrencePayload = serde_json::from_str(&payload_json).unwrap();
+        assert!(!p.co_occurrence, "below MIN_DEPTH should not flag co_occurrence");
+        assert_eq!(p.dominant_pair, None);
+        assert_eq!(p.regime_hint, None);
+        assert_eq!(p.active_finding_count, 2);
+    }
+
+    #[test]
+    fn co_occurrence_single_finding_emits_negative_row() {
+        let mut db = make_db();
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 10);
+        let fk = crate::publish::compute_finding_key("local", "host-1", "wal_bloat", "/db");
+        for g in 1..=10 {
+            insert_observation(&db, g, &fk, "host-1", "wal_bloat", "/db");
+        }
+
+        compute_features(&mut db, 10).unwrap();
+
+        let p: CoOccurrencePayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE subject_kind = 'host' AND subject_id = 'host-1' AND feature_type = 'co_occurrence'",
+                [], |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        assert!(!p.co_occurrence);
+        assert_eq!(p.active_finding_count, 1);
+    }
+
+    #[test]
+    fn co_occurrence_unsignatured_pair_still_emits_co_occurrence_true() {
+        let mut db = make_db();
+        // Two findings that don't appear in CO_OCCURRENCE_SIGNATURES.
+        insert_warning_state(&db, "host-1", "stale_host", "", 7);
+        insert_warning_state(&db, "host-1", "service_flap", "svc-a", 7);
+        let fk_a = crate::publish::compute_finding_key("local", "host-1", "stale_host", "");
+        let fk_b = crate::publish::compute_finding_key("local", "host-1", "service_flap", "svc-a");
+        for g in 4..=10 {
+            insert_observation(&db, g, &fk_a, "host-1", "stale_host", "");
+            insert_observation(&db, g, &fk_b, "host-1", "service_flap", "svc-a");
+        }
+
+        compute_features(&mut db, 10).unwrap();
+
+        let p: CoOccurrencePayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE subject_kind = 'host' AND subject_id = 'host-1' AND feature_type = 'co_occurrence'",
+                [], |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        assert!(p.co_occurrence, "unsignatured pair still co-occurs");
+        assert_eq!(p.co_occurrence_depth_generations, 7);
+        assert_eq!(p.regime_hint, None, "no signature → no hint");
+    }
+
+    #[test]
+    fn co_occurrence_prefers_signatured_over_unsignatured_at_equal_depth() {
+        let mut db = make_db();
+        // Three findings, two pairs at equal depth: one signatured, one not.
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 7);
+        insert_warning_state(&db, "host-1", "disk_pressure", "", 7);
+        insert_warning_state(&db, "host-1", "service_flap", "svc-a", 7);
+        let fk_wal = crate::publish::compute_finding_key("local", "host-1", "wal_bloat", "/db");
+        let fk_disk = crate::publish::compute_finding_key("local", "host-1", "disk_pressure", "");
+        let fk_flap = crate::publish::compute_finding_key("local", "host-1", "service_flap", "svc-a");
+        for g in 4..=10 {
+            insert_observation(&db, g, &fk_wal, "host-1", "wal_bloat", "/db");
+            insert_observation(&db, g, &fk_disk, "host-1", "disk_pressure", "");
+            insert_observation(&db, g, &fk_flap, "host-1", "service_flap", "svc-a");
+        }
+
+        compute_features(&mut db, 10).unwrap();
+
+        let p: CoOccurrencePayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE subject_kind = 'host' AND subject_id = 'host-1' AND feature_type = 'co_occurrence'",
+                [], |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        assert_eq!(p.regime_hint, Some(RegimeHint::Accumulation),
+            "signatured pair should win the tiebreak");
+    }
+
+    #[test]
+    fn co_occurrence_excludes_suppressed_findings() {
+        let mut db = make_db();
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 7);
+        insert_warning_state(&db, "host-1", "disk_pressure", "", 7);
+        // Suppress one of them — should drop to single active finding.
+        db.conn.execute(
+            "UPDATE warning_state SET visibility_state = 'suppressed' WHERE kind = 'wal_bloat'",
+            [],
+        ).unwrap();
+        let fk_disk = crate::publish::compute_finding_key("local", "host-1", "disk_pressure", "");
+        for g in 4..=10 {
+            insert_observation(&db, g, &fk_disk, "host-1", "disk_pressure", "");
+        }
+
+        compute_features(&mut db, 10).unwrap();
+
+        let p: CoOccurrencePayload = serde_json::from_str(
+            &db.conn.query_row(
+                "SELECT payload_json FROM regime_features
+                 WHERE subject_kind = 'host' AND feature_type = 'co_occurrence'",
+                [], |r| r.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        assert_eq!(p.active_finding_count, 1, "suppressed finding excluded");
+        assert!(!p.co_occurrence);
+    }
+
+    #[test]
+    fn co_occurrence_insufficient_history_flag_set_below_min_depth_window() {
+        let mut db = make_db();
+        // generation_id = 3 < CO_OCCURRENCE_MIN_DEPTH (5).
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 2);
+        insert_warning_state(&db, "host-1", "disk_pressure", "", 2);
+        let fk_wal = crate::publish::compute_finding_key("local", "host-1", "wal_bloat", "/db");
+        let fk_disk = crate::publish::compute_finding_key("local", "host-1", "disk_pressure", "");
+        for g in 1..=3 {
+            insert_observation(&db, g, &fk_wal, "host-1", "wal_bloat", "/db");
+            insert_observation(&db, g, &fk_disk, "host-1", "disk_pressure", "");
+        }
+        compute_features(&mut db, 3).unwrap();
+
+        let sufficient: i64 = db.conn.query_row(
+            "SELECT sufficient_history FROM regime_features
+             WHERE subject_kind = 'host' AND feature_type = 'co_occurrence'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(sufficient, 0, "generation count below MIN_DEPTH should flag insufficient");
     }
 }
