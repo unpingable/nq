@@ -146,15 +146,29 @@ The detector set this gap specifies — names and semantics — is:
 - **`zfs_spare_activated`** — hot spare moved from available to in-use since last generation. Severity `warning` (operator should know the spare was consumed).
 - **`zfs_witness_silent`** — witness report absent, stale beyond threshold, or status=`failed` for more than N generations. Severity `warning` at first; escalates if it persists. Same shape as `stale_host`, scoped to the ZFS witness specifically. A witness cannot hide by disappearing.
 
-**Detector → coverage-tag requirement map (deferred).** The precise mapping from each detector to its required `coverage.can_testify` tags is deferred until the reference witness has exercised the contract against live state (task 2 of the ZFS slice — laminating the mapping before the witness runs risks freezing guessed semantics into the spec). Illustrative, non-normative examples to prevent abstraction-soup reading:
+**Detector → coverage-tag requirement map (normative).**
 
-- `zfs_pool_degraded` likely requires `pool_state` (single tag).
-- `zfs_error_count_increased` likely requires `vdev_state` + `vdev_error_counters` (both tags; state so we know the vdev still exists, counters so we can compare).
-- `zfs_witness_silent` has no coverage requirement — it fires on witness metadata, not observation content.
+Each detector declares the set of `coverage.can_testify` tags that MUST all be present in the witness report for the detector to fire. Every tag named below is from the controlled vocabulary defined in `nq-witness/profiles/zfs.md`. A detector's row is AND over its required tags; there are no OR-ed alternatives in v1.
 
-The full table lands in this gap after the reference witness emits real reports. Until then, treat the gating rule as the normative bar and the examples as illustrations only.
+| Detector | Required `can_testify` tags | Why |
+|---|---|---|
+| `zfs_pool_degraded` | `pool_state` | Needs the pool's current state string (or `health_numeric` which is derived from state). No vdev information is required to report that a pool is DEGRADED. |
+| `zfs_pool_suspended` | `pool_state` | Same as above; SUSPENDED is a pool-level state value. |
+| `zfs_pool_health_changed` | `pool_state` | Transition detection on the pool state value between generations. |
+| `zfs_pool_capacity_pressure` | `pool_capacity` | Allocated / free byte counts. Independent of vdev detail. |
+| `zfs_vdev_faulted` | `vdev_state` | Requires a per-vdev observation with a state field; fires on FAULTED or UNAVAIL. |
+| `zfs_error_count_increased` | `vdev_state` + `vdev_error_counters` | Both: `vdev_state` so NQ knows the vdev identity persisted across generations; `vdev_error_counters` so the comparison is meaningful. Missing either makes the detector's claim ("counts rose on *this* vdev") unsupported. |
+| `zfs_scrub_overdue` | `scrub_completion` | `last_completed_at` timestamp, compared against the configured window. `scrub_state` alone is insufficient because an `in_progress` scan is not a completion. |
+| `zfs_spare_activated` | `spare_state` | Fires on `is_active` transitioning from false to true for a configured spare; requires the spare observation kind. |
+| `zfs_witness_silent` | *(none)* | Fires on witness metadata (`status`, `collected_at`, absence of report). No observation-content coverage is required — a completely empty `can_testify` array is still enough to raise this detector. |
+
+**Scar-tissue note on the required-fields vs coverage-tag granularity gap.** Coverage tags are observation-level, not field-level. A witness can honestly declare `vdev_state` without emitting `vdev_guid` / `vdev_path` / `vdev_type` (all profile-required fields within a `zfs_vdev` observation). For v1 detectors this is tolerable: none of the detectors above need guid or path — they key by the observation's `subject` field, which any profile-conformant witness populates. A future detector class that cared about physical-slot identity would expose the tension immediately. When that happens, the right move is probably to add finer-grained tags (`vdev_identity`) to the profile, not to patch around it in the detector. Tracked as open debt in `nq-witness/OPEN_ISSUES.md`.
+
+**Witness silence, partial coverage, and detector firing.** The gating rule treats all three of "never testified," "demoted this cycle," and "witness silent / absent" identically for firing purposes. But only the first two are *detector* silence; the third is an *observability* event and is itself reported via `zfs_witness_silent`. This keeps the observability-failure mode from masquerading as a healthy quiet pool.
 
 **Non-witness sources are out of scope for these detectors.** A bare Prometheus exporter without a `coverage.can_testify` declaration does not satisfy the gating rule and does not fire the detectors named above. NQ's generic `metric_signal` detector may still emit threshold-based findings from such an exporter's metrics, but those findings carry no ZFS-domain standing and are not a substitute for witness-sourced detection.
+
+**Reference witness output confirmed.** The MVP bash witness at `nq-witness/examples/nq-zfs-witness` emits `can_testify` containing `pool_state`, `pool_capacity`, `fragmentation`, `vdev_state`, `vdev_error_counters`, `scrub_state`, `scrub_completion`, `spare_state` on a healthy collection against `lil-nas-x` (2026-04-17). That is sufficient to fire every detector in the table above. A witness that declared fewer tags would fire a deterministic subset — e.g. a coverage with only `pool_state` and `pool_capacity` would fire `zfs_pool_degraded` / `zfs_pool_suspended` / `zfs_pool_health_changed` / `zfs_pool_capacity_pressure`, and nothing else. That's the normative test: the same NQ consumer code against the same report shape produces different detector output based solely on declared coverage.
 
 ### Live worked example (lil-nas-x)
 
@@ -216,7 +230,6 @@ And the regime rule, since chronic-degraded is the hard case:
 
 ## V2+ (explicitly deferred)
 
-- **Detector → coverage-tag requirement map (normative table).** Deferred to v1 implementation; written after the reference witness has exercised the contract against live state. See the Detectors section for the deferral rationale and non-normative illustrative examples.
 - **FreeBSD ZFS support** via the same witness contract. Capability promoted in PORTABILITY_GAP manifest.
 - **SMART witness** as a sibling profile in `nq-witness/profiles/smart.md`. Drive-level health that contextualizes ZFS pool state.
 - **ZED (ZFS Event Daemon) integration** for real-time event emission. Pushes instead of polls. Boundary concerns: ZED runs as root; a sidecar witness that receives ZED events and emits conforming witness reports to NQ would be the right pattern.
@@ -230,6 +243,7 @@ And the regime rule, since chronic-degraded is the hard case:
 ## References
 
 - **`~/git/nq-witness` — the witness contract home.** The adapter shape this gap requires (canonical JSON, `coverage` / `standing` declarations, per-vdev observations, chronic-condition semantics) is specified in `nq-witness/SPEC.md` and `nq-witness/profiles/zfs.md`. NQ consumes witness reports; the witness contract is maintained there, not here. This gap specifies what NQ *does* with valid ZFS evidence; nq-witness specifies what valid ZFS evidence *looks like*.
+- **`~/git/nq-witness/OPEN_ISSUES.md` — constitutional-debt register.** Known places where the witness spec is currently wrong, incomplete, or lying. The `collection_mode` enum's missing unprivileged-subprocess value is issue #1; consumers of this gap should read it before assuming the spec is self-consistent. When writing the NQ-side witness consumer, a mismatched `collection_mode` / `privilege_model` pair should log a warning rather than be silently papered over.
 - `docs/gaps/OBSERVER_DISTORTION_GAP.md` — Δq participation discipline. All three witness privilege models (`sudo_helper`, `root_exporter_localhost`, `unprivileged`) are valid boundary patterns; NQ stays unprivileged in every case.
 - `docs/gaps/PORTABILITY_GAP.md` — capability manifest. ZFS collector declares Linux-only in v1.
 - `docs/gaps/STABILITY_AXIS_GAP.md` — chronic-degraded vs degrading distinction lives here.
