@@ -4,6 +4,7 @@ pub mod digest;
 pub mod export;
 pub mod finding_meta;
 pub mod liveness;
+pub mod liveness_export;
 pub mod migrate;
 pub mod notify;
 pub mod publish;
@@ -21,6 +22,10 @@ pub use export::{
 };
 pub use detect::{ActionBias, DetectorConfig, FailureClass, Finding, FindingDiagnosis, ServiceImpact, Stability};
 pub use liveness::{read_liveness, write_liveness, LivenessArtifact, LivenessReadError, LIVENESS_FORMAT_VERSION};
+pub use liveness_export::{
+    export_liveness, LivenessExportError, LivenessExportMetadata, LivenessFreshness,
+    LivenessSnapshot, LivenessSource, LivenessWitness,
+};
 pub use regime::{
     badge_explanation, build_trajectory, classify_persistence, classify_recovery_lag,
     classify_recovery_phase, compute_features, compute_regime_annotation, derive_regime_badge,

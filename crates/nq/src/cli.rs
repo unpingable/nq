@@ -26,6 +26,11 @@ pub enum Command {
     /// Consumer-facing finding surface (canonical JSON export).
     /// See docs/gaps/FINDING_EXPORT_GAP.md.
     Findings(FindingsCmd),
+    /// Consumer-facing liveness surface (canonical JSON export of
+    /// the sentinel liveness artifact). Single-instance today; the
+    /// shape is forward-compatible with a future multi-instance
+    /// registry via the `instance_id` field.
+    Liveness(LivenessCmd),
 }
 
 #[derive(Debug, Args)]
@@ -83,6 +88,42 @@ pub struct FindingsExportCmd {
     /// Maximum observations to embed per snapshot (default: 10).
     #[arg(long, default_value_t = 10)]
     pub observations_limit: usize,
+}
+
+#[derive(Debug, Args)]
+pub struct LivenessCmd {
+    #[command(subcommand)]
+    pub action: LivenessAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LivenessAction {
+    /// Export the liveness artifact as a canonical `LivenessSnapshot`.
+    ///
+    /// Output is admissible evidence about whether this NQ instance is
+    /// still producing generations. It does not authorize the consumer
+    /// to decide the observed system is dead — only that this witness
+    /// has (or hasn't) reported recently.
+    Export(LivenessExportCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct LivenessExportCmd {
+    /// Path to the liveness artifact file (typically `liveness.json`
+    /// alongside the NQ database, per the aggregator config).
+    #[arg(long)]
+    pub artifact: PathBuf,
+
+    /// Output format: `jsonl` (default, one-line compact) or `json`
+    /// (pretty-printed).
+    #[arg(long, short, default_value = "jsonl")]
+    pub format: String,
+
+    /// Staleness threshold in seconds. When provided, the snapshot's
+    /// `freshness.fresh` field reflects the verdict. When omitted,
+    /// `fresh` is null and the caller must apply their own policy.
+    #[arg(long)]
+    pub stale_threshold_seconds: Option<i64>,
 }
 
 #[derive(Debug, Args)]

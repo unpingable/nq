@@ -1,6 +1,7 @@
 pub mod check;
 pub mod collect;
 pub mod findings;
+pub mod liveness;
 pub mod publish;
 pub mod query;
 pub mod sentinel;
@@ -17,5 +18,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Check(cmd) => check::run(cmd),
         Command::Sentinel(cmd) => sentinel::run(cmd).await,
         Command::Findings(cmd) => findings::run(cmd),
+        Command::Liveness(cmd) => liveness::run(cmd),
     }
 }
