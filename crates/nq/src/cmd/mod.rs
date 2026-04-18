@@ -1,5 +1,6 @@
 pub mod check;
 pub mod collect;
+pub mod findings;
 pub mod publish;
 pub mod query;
 pub mod sentinel;
@@ -15,5 +16,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Collect(cmd) => collect::run(cmd),
         Command::Check(cmd) => check::run(cmd),
         Command::Sentinel(cmd) => sentinel::run(cmd).await,
+        Command::Findings(cmd) => findings::run(cmd),
     }
 }

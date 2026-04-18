@@ -23,6 +23,66 @@ pub enum Command {
     /// Run the liveness sentinel — watches NQ's liveness artifact and
     /// alerts on staleness/silence from outside NQ's failure boundary.
     Sentinel(SentinelCmd),
+    /// Consumer-facing finding surface (canonical JSON export).
+    /// See docs/gaps/FINDING_EXPORT_GAP.md.
+    Findings(FindingsCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct FindingsCmd {
+    #[command(subcommand)]
+    pub action: FindingsAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FindingsAction {
+    /// Export finding snapshots as canonical JSON.
+    ///
+    /// Output is admissible evidence for downstream reconciliation, not
+    /// an authorization token. Consumers must re-check current finding
+    /// state before acting on a stale snapshot.
+    Export(FindingsExportCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct FindingsExportCmd {
+    /// Path to the nq database.
+    #[arg(long)]
+    pub db: PathBuf,
+
+    /// Output format: `jsonl` (default, one FindingSnapshot per line —
+    /// streaming-friendly) or `json` (pretty-printed array).
+    #[arg(long, short, default_value = "jsonl")]
+    pub format: String,
+
+    /// Return only findings whose `last_seen_gen` exceeds this value.
+    /// Consumers maintain a watermark and fetch deltas via this flag.
+    #[arg(long)]
+    pub changed_since_generation: Option<i64>,
+
+    /// Restrict to a specific detector kind (e.g. `wal_bloat`).
+    #[arg(long)]
+    pub detector: Option<String>,
+
+    /// Restrict to a specific host.
+    #[arg(long)]
+    pub host: Option<String>,
+
+    /// Exact-match on the canonical finding_key. Wins over other filters.
+    #[arg(long)]
+    pub finding_key: Option<String>,
+
+    /// Include cleared findings (default: false).
+    #[arg(long, default_value_t = false)]
+    pub include_cleared: bool,
+
+    /// Include suppressed findings (default: false).
+    #[arg(long, default_value_t = false)]
+    pub include_suppressed: bool,
+
+    /// Maximum observations to embed per snapshot (default: 10).
+    #[arg(long, default_value_t = 10)]
+    pub observations_limit: usize,
 }
 
 #[derive(Debug, Args)]

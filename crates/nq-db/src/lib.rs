@@ -1,6 +1,7 @@
 pub mod connect;
 pub mod detect;
 pub mod digest;
+pub mod export;
 pub mod finding_meta;
 pub mod liveness;
 pub mod migrate;
@@ -13,6 +14,11 @@ pub mod snapshot;
 pub mod views;
 
 pub use connect::{open_ro, open_rw, ReadDb, WriteDb};
+pub use export::{
+    export_findings, export_findings_from_conn, ExportFilter, ExportMetadata, FindingDiagnosisExport,
+    FindingIdentity, FindingLifecycle, FindingRegimeContext, FindingSnapshot, GenerationContext,
+    ObservationRecord, ObservationsSummary, CONTRACT_VERSION, SCHEMA_ID,
+};
 pub use detect::{ActionBias, DetectorConfig, FailureClass, Finding, FindingDiagnosis, ServiceImpact, Stability};
 pub use liveness::{read_liveness, write_liveness, LivenessArtifact, LivenessReadError, LIVENESS_FORMAT_VERSION};
 pub use regime::{
