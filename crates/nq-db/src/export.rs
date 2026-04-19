@@ -43,6 +43,18 @@ use serde::Serialize;
 pub const SCHEMA_ID: &str = "nq.finding_snapshot.v1";
 pub const CONTRACT_VERSION: u32 = 1;
 
+/// Minimum DB schema version the v1 export contract can read against.
+/// Bumped when the export references a column added by a later migration.
+/// Kept distinct from `CURRENT_SCHEMA_VERSION` so consumers can run
+/// against a slightly-older DB as long as every column the exporter
+/// touches is present.
+///
+/// v1 touches: `warning_state.absent_gens` (migration 020),
+/// `warning_state.failure_class` etc. (027), `warning_state.stability`
+/// (028), and `regime_features` (030). The most recent of those is
+/// 30; exporter requires `>= 30`.
+pub const MIN_SCHEMA_FOR_EXPORT: u32 = 30;
+
 // ---------------------------------------------------------------------------
 // Filter — what export_findings accepts.
 // ---------------------------------------------------------------------------
@@ -215,6 +227,25 @@ pub fn export_findings_from_conn(
     conn: &rusqlite::Connection,
     filter: &ExportFilter,
 ) -> anyhow::Result<Vec<FindingSnapshot>> {
+    // Preflight: refuse to run against a DB whose schema predates the
+    // export contract's requirements. A silent query against a missing
+    // column would produce an opaque "no such column" error that tells
+    // the consumer nothing about remediation. This check replaces that
+    // with a specific, actionable message. First-contact scar from
+    // nightshift Phase 1 consumer work (2026-04-18).
+    let schema_version = crate::migrate::read_schema_version(conn).unwrap_or(0);
+    if schema_version < MIN_SCHEMA_FOR_EXPORT {
+        anyhow::bail!(
+            "nq database schema version {} is below the minimum {} required by the \
+             v1 finding export contract (nq.finding_snapshot.v1). Open this database \
+             with a writable NQ binary to apply pending migrations (e.g. `nq publish` \
+             or `nq serve` against this database path will migrate on startup). \
+             Aborting export rather than producing partial or mis-shaped output.",
+            schema_version,
+            MIN_SCHEMA_FOR_EXPORT,
+        );
+    }
+
     let current_generation = conn
         .query_row(
             "SELECT COALESCE(MAX(generation_id), 0) FROM generations",
@@ -994,5 +1025,63 @@ mod tests {
         assert_eq!(derive_condition_state("observed", 0, 3), "clear");
         assert_eq!(derive_condition_state("suppressed", 5, 0), "suppressed");
         assert_eq!(derive_condition_state("observed", 5, 3), "open");
+    }
+
+    // ------------------------------------------------------------------
+    // Regression guard: upstream DB shape not ready.
+    //
+    // First-contact scar from nightshift Phase 1 (2026-04-18). The
+    // exporter must refuse, with a specific and actionable error, to
+    // run against a DB whose schema predates MIN_SCHEMA_FOR_EXPORT.
+    // Opaque "no such column" SQL errors tell a consumer nothing.
+    // ------------------------------------------------------------------
+
+    fn make_unmigrated_db() -> crate::WriteDb {
+        // Open a fresh SQLite file without calling migrate(). user_version
+        // is 0. Any table the export touches will be missing, so the
+        // preflight must intercept BEFORE any query executes.
+        crate::open_rw(std::path::Path::new(":memory:")).unwrap()
+    }
+
+    #[test]
+    fn export_refuses_when_schema_version_below_minimum() {
+        let db = make_unmigrated_db();
+        let err = export_findings_from_conn(&db.conn, &ExportFilter::default())
+            .expect_err("unmigrated DB must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("schema version"),
+            "error message must name the schema-version problem: {msg}"
+        );
+        assert!(
+            msg.contains("finding export contract"),
+            "error message must name the contract: {msg}"
+        );
+        assert!(
+            msg.contains("migration"),
+            "error message must suggest remediation via migration: {msg}"
+        );
+    }
+
+    #[test]
+    fn export_works_after_migration() {
+        // Paired positive case: same DB, after migrate(), succeeds cleanly.
+        // Proves the preflight is the gate, not an always-fail.
+        let db = make_db(); // make_db calls migrate() internally
+        let snapshots =
+            export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        assert_eq!(snapshots.len(), 0);
+    }
+
+    #[test]
+    fn preflight_reads_user_version_correctly() {
+        // Direct check of the helper that backs the preflight.
+        let db = make_unmigrated_db();
+        let v = crate::migrate::read_schema_version(&db.conn).unwrap();
+        assert_eq!(v, 0, "fresh unmigrated DB has user_version 0");
+
+        let db = make_db();
+        let v = crate::migrate::read_schema_version(&db.conn).unwrap();
+        assert_eq!(v, crate::CURRENT_SCHEMA_VERSION);
     }
 }

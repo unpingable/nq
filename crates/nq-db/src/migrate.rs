@@ -1,6 +1,18 @@
 use crate::WriteDb;
 use tracing::info;
 
+/// The current (latest) schema version the code expects. Kept in sync
+/// with the last entry of `MIGRATIONS` below. Exposed for consumer
+/// surfaces (e.g. the finding export path) so they can preflight
+/// against a DB whose schema is older than the code was built for.
+pub const CURRENT_SCHEMA_VERSION: u32 = 30;
+
+/// Read `PRAGMA user_version` from an arbitrary connection. Returns 0
+/// for a freshly-opened SQLite file that's never been migrated.
+pub fn read_schema_version(conn: &rusqlite::Connection) -> anyhow::Result<u32> {
+    Ok(conn.pragma_query_value(None, "user_version", |row| row.get(0))?)
+}
+
 /// Embedded migrations. Each entry is (version, sql).
 /// Applied in order. `PRAGMA user_version` tracks what's been run.
 const MIGRATIONS: &[(u32, &str)] = &[

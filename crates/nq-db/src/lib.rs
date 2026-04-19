@@ -34,7 +34,7 @@ pub use regime::{
     Direction, PersistenceClass, PersistencePayload, RecoveryLagClass, RecoveryPayload,
     RecoveryPhase, RegimeBadge, RegimeHint, ResolutionPayload, TrajectoryPayload,
 };
-pub use migrate::migrate;
+pub use migrate::{migrate, read_schema_version, CURRENT_SCHEMA_VERSION};
 pub use publish::{publish_batch, update_warning_state, EscalationConfig, PublishResult};
 pub use query::{query_read_only, QueryLimits, QueryResult};
 pub use retention::{prune, PruneStats};
