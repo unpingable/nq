@@ -229,6 +229,23 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
                 "SMART data out-of-band (witness does not include it)",
             ],
         },
+        "zfs_error_count_increased" => FindingMeta {
+            plain_label: "ZFS vdev errors rising",
+            operator_label: "ZFS Error Count Rise",
+            gloss: "Read, write, or checksum error counters on a specific vdev \
+                    strictly rose since the previous cycle. Edge-triggered — \
+                    fires on the rise itself, not on persistent elevation.",
+            contradiction: "The pool may still report OK or DEGRADED without change; \
+                            the vdev may still be ONLINE. The detector catches the \
+                            trajectory, not the current-state label. Rising errors \
+                            precede state changes.",
+            next_checks: &[
+                "which counter rose (read / write / checksum)",
+                "magnitude of the rise vs prior cycles",
+                "device path + model (for SMART cross-reference out-of-band)",
+                "scrub schedule — a rise during scrub means the pool is finding bad data",
+            ],
+        },
         "zfs_witness_silent" => FindingMeta {
             plain_label: "ZFS witness stopped reporting",
             operator_label: "ZFS Witness Silent",

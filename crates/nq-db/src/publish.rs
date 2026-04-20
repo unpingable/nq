@@ -478,6 +478,25 @@ fn publish_zfs_witness(
                             &collected_at,
                         ],
                     )?;
+                    // Narrow history projection for edge-triggered detectors.
+                    // Retained until the owning generation is pruned (CASCADE).
+                    tx.execute(
+                        "INSERT INTO zfs_vdev_errors_history
+                            (generation_id, host, subject, pool, vdev_state,
+                             read_errors, write_errors, checksum_errors, collected_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        rusqlite::params![
+                            generation_id,
+                            &row.host,
+                            &v.subject,
+                            &v.pool,
+                            &v.state,
+                            v.read_errors,
+                            v.write_errors,
+                            v.checksum_errors,
+                            &collected_at,
+                        ],
+                    )?;
                 }
                 ZfsObservation::Scan(s) => {
                     tx.execute(

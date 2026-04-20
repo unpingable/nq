@@ -295,6 +295,7 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     // ZFS witness detectors — gated on declared coverage, not inferred.
     detect_zfs_pool_degraded(db, &mut findings)?;
     detect_zfs_vdev_faulted(db, &mut findings)?;
+    detect_zfs_error_count_increased(db, &mut findings)?;
     detect_zfs_witness_silent(db, &mut findings)?;
     // Saved query checks
     run_saved_checks(db, &mut findings)?;
@@ -1677,6 +1678,153 @@ fn detect_zfs_vdev_faulted(
         });
     }
     Ok(())
+}
+
+/// Δh: Error counters rose on a ZFS vdev between the last two cycles.
+/// Edge-triggered. Gated on both `vdev_state` AND `vdev_error_counters`.
+///
+/// Name semantics: this detector answers "did counters strictly increase
+/// since the previous cycle?" It does NOT answer "are counters currently
+/// nonzero" — a persistent "errors present" signal is a separate detector
+/// that Phase D can add when the need arises. Keeping the detector
+/// strictly edge-triggered prevents the ontology drift where "an error
+/// happened" fuses with "errors exist."
+///
+/// Skip-conditions (no fire, no finding):
+///   - no prior row in history for this vdev → first observation,
+///     no delta available
+///   - any counter strictly decreased vs the prior row → reset event
+///     (`zpool clear`), pool re-import, identity churn. Not our
+///     business to interpret — a separate detector can classify.
+///   - coverage missing for either `vdev_state` or `vdev_error_counters`
+fn detect_zfs_error_count_increased(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    // Window-function pair: for each (host, subject), take the two most
+    // recent rows. Detector compares them in code to classify deltas
+    // honestly — a single SQL predicate can't distinguish "counters rose"
+    // from "counters reset then rose."
+    let mut stmt = db.prepare(
+        "WITH ranked AS (
+             SELECT h.host, h.subject, h.pool, h.vdev_state,
+                    h.read_errors, h.write_errors, h.checksum_errors,
+                    h.generation_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY h.host, h.subject
+                        ORDER BY h.generation_id DESC
+                    ) AS rn
+             FROM zfs_vdev_errors_history h
+             INNER JOIN zfs_witness_coverage_current c1
+                ON c1.host = h.host AND c1.tag = 'vdev_state'
+               AND c1.can_testify = 1
+             INNER JOIN zfs_witness_coverage_current c2
+                ON c2.host = h.host AND c2.tag = 'vdev_error_counters'
+               AND c2.can_testify = 1
+         ),
+         latest AS (SELECT * FROM ranked WHERE rn = 1),
+         prior  AS (SELECT * FROM ranked WHERE rn = 2)
+         SELECT latest.host, latest.subject, latest.pool,
+                latest.vdev_state,
+                latest.read_errors,  prior.read_errors,
+                latest.write_errors, prior.write_errors,
+                latest.checksum_errors, prior.checksum_errors
+         FROM latest
+         INNER JOIN prior
+            ON prior.host = latest.host AND prior.subject = latest.subject",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<i64>>(4)?,
+            row.get::<_, Option<i64>>(5)?,
+            row.get::<_, Option<i64>>(6)?,
+            row.get::<_, Option<i64>>(7)?,
+            row.get::<_, Option<i64>>(8)?,
+            row.get::<_, Option<i64>>(9)?,
+        ))
+    })?;
+
+    for row in rows {
+        let (
+            host, subject, pool, vdev_state,
+            cur_r, prev_r,
+            cur_w, prev_w,
+            cur_c, prev_c,
+        ) = row?;
+
+        let dr = signed_delta(cur_r, prev_r);
+        let dw = signed_delta(cur_w, prev_w);
+        let dc = signed_delta(cur_c, prev_c);
+
+        // Skip: any counter strictly decreased. Reset, re-import, identity
+        // churn — not a rise event and not this detector's story to tell.
+        if dr < 0 || dw < 0 || dc < 0 {
+            continue;
+        }
+        // Skip: nothing rose. Counters held steady, no edge.
+        if dr == 0 && dw == 0 && dc == 0 {
+            continue;
+        }
+
+        // At least one counter strictly rose.
+        let parts = [
+            ("read", dr),
+            ("write", dw),
+            ("checksum", dc),
+        ]
+        .iter()
+        .filter(|(_, d)| *d > 0)
+        .map(|(name, d)| format!("{name}+{d}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+        let state_tail = vdev_state
+            .as_deref()
+            .map(|s| format!(" [state={s}]"))
+            .unwrap_or_default();
+
+        let message = format!("vdev {subject} error counters rose: {parts}{state_tail}");
+        let synopsis = format!(
+            "Error counters on ZFS vdev {subject} (pool {pool}) rose \
+             since the previous cycle: {parts}."
+        );
+        let why_care = "Rising error counters signal active data corruption or \
+                        device degradation in progress. Each rise narrows the \
+                        window before this vdev must be taken out of service.".into();
+
+        let total_delta = dr + dw + dc;
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "zfs_error_count_increased".into(),
+            subject,
+            message,
+            value: Some(total_delta as f64),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Drift,
+                service_impact: ServiceImpact::Degraded,
+                action_bias: ActionBias::InvestigateNow,
+                synopsis,
+                why_care,
+            }),
+        });
+        let _ = pool; // retained in SQL for clarity; message already references it
+    }
+    Ok(())
+}
+
+/// Treat NULL on either side of a counter as 0 — missing values
+/// indicate an incomplete prior observation, not a negative delta.
+/// Returns the signed delta `current - prior`.
+fn signed_delta(current: Option<i64>, prior: Option<i64>) -> i64 {
+    current.unwrap_or(0) - prior.unwrap_or(0)
 }
 
 /// Δo: ZFS witness silent — the witness itself has gone dark or reports

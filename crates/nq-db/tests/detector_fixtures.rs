@@ -1063,6 +1063,188 @@ fn zfs_vdev_faulted_stays_silent_on_online_vdev() {
 }
 
 #[test]
+fn zfs_error_count_increased_fires_when_counters_rise() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // Gen 1: checksum=0
+    let b1 = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "DEGRADED",
+        &[("tank/raidz2-0/disk-b", "DEGRADED", 0, 0, 0, false)],
+        &["pool_state", "vdev_state", "vdev_error_counters"],
+        t,
+    );
+    publish_batch(&mut db, &b1).unwrap();
+    let f1 = run_all(db.conn(), &config).unwrap();
+    assert!(find_by_kind(&f1, "zfs_error_count_increased").is_empty(),
+        "no prior row on first cycle — no edge");
+
+    // Gen 2: checksum=47 (rose)
+    let b2 = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "DEGRADED",
+        &[("tank/raidz2-0/disk-b", "FAULTED", 3, 0, 47, false)],
+        &["pool_state", "vdev_state", "vdev_error_counters"],
+        t,
+    );
+    publish_batch(&mut db, &b2).unwrap();
+    let f2 = run_all(db.conn(), &config).unwrap();
+    let rises = find_by_kind(&f2, "zfs_error_count_increased");
+    assert_eq!(rises.len(), 1, "checksum rose from 0 to 47, detector fires");
+    assert_eq!(rises[0].subject, "tank/raidz2-0/disk-b");
+    assert_eq!(rises[0].domain, "Δh");
+    assert!(rises[0].message.contains("checksum+47"), "message: {}", rises[0].message);
+    assert!(rises[0].message.contains("read+3"));
+
+    let d = rises[0].diagnosis.as_ref().unwrap();
+    assert_eq!(d.failure_class, nq_db::FailureClass::Drift);
+    assert_eq!(d.service_impact, nq_db::ServiceImpact::Degraded);
+}
+
+#[test]
+fn zfs_error_count_increased_silent_when_counters_steady() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    for _ in 0..2 {
+        let b = zfs_witness_batch_with_vdevs(
+            "lil-nas-x", "tank", "DEGRADED",
+            &[("tank/raidz2-0/disk-b", "FAULTED", 3, 0, 47, false)],
+            &["pool_state", "vdev_state", "vdev_error_counters"],
+            t,
+        );
+        publish_batch(&mut db, &b).unwrap();
+    }
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    assert!(find_by_kind(&findings, "zfs_error_count_increased").is_empty(),
+        "counters steady cycle-over-cycle must not fire edge detector");
+}
+
+#[test]
+fn zfs_error_count_increased_silent_on_reset_event() {
+    // zpool clear event: counters drop to 0. Not this detector's story;
+    // any counter decreasing means identity-weirdness — skip, not "improved."
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // Gen 1: counters populated
+    let b1 = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "DEGRADED",
+        &[("tank/raidz2-0/disk-b", "DEGRADED", 3, 0, 47, false)],
+        &["pool_state", "vdev_state", "vdev_error_counters"],
+        t,
+    );
+    publish_batch(&mut db, &b1).unwrap();
+
+    // Gen 2: counters reset to 0 (zpool clear)
+    let b2 = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "ONLINE",
+        &[("tank/raidz2-0/disk-b", "ONLINE", 0, 0, 0, false)],
+        &["pool_state", "vdev_state", "vdev_error_counters"],
+        t,
+    );
+    publish_batch(&mut db, &b2).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    assert!(find_by_kind(&findings, "zfs_error_count_increased").is_empty(),
+        "reset event (counters dropped) must not fire the edge detector");
+}
+
+#[test]
+fn zfs_error_count_increased_silent_on_reset_and_rise() {
+    // Counters reset and a new rise begins. The rise is real but the
+    // comparison is to a stale pre-reset baseline; detector should skip
+    // per chatty: "any counter decreasing → identity weirdness → skip."
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // Gen 1: read=10, checksum=47
+    let b1 = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "DEGRADED",
+        &[("tank/raidz2-0/disk-b", "DEGRADED", 10, 0, 47, false)],
+        &["pool_state", "vdev_state", "vdev_error_counters"],
+        t,
+    );
+    publish_batch(&mut db, &b1).unwrap();
+
+    // Gen 2: read rose to 15 BUT checksum dropped to 5 (partial reset).
+    // The checksum drop signals identity weirdness — skip.
+    let b2 = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "DEGRADED",
+        &[("tank/raidz2-0/disk-b", "DEGRADED", 15, 0, 5, false)],
+        &["pool_state", "vdev_state", "vdev_error_counters"],
+        t,
+    );
+    publish_batch(&mut db, &b2).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    assert!(find_by_kind(&findings, "zfs_error_count_increased").is_empty(),
+        "rise-with-drop is identity churn territory — detector skips");
+}
+
+#[test]
+fn zfs_error_count_increased_silent_without_state_coverage() {
+    // vdev_error_counters is declared but vdev_state is NOT. Detector
+    // requires both — without the state, the claim "counts rose on
+    // *this* vdev" loses the identity grounding that makes the delta
+    // meaningful.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let b1 = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "DEGRADED",
+        &[("tank/raidz2-0/disk-b", "DEGRADED", 0, 0, 0, false)],
+        &["pool_state", "vdev_error_counters" /* vdev_state absent */],
+        t,
+    );
+    publish_batch(&mut db, &b1).unwrap();
+
+    let b2 = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "DEGRADED",
+        &[("tank/raidz2-0/disk-b", "FAULTED", 3, 0, 47, false)],
+        &["pool_state", "vdev_error_counters"],
+        t,
+    );
+    publish_batch(&mut db, &b2).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    assert!(find_by_kind(&findings, "zfs_error_count_increased").is_empty(),
+        "detector requires both vdev_state AND vdev_error_counters");
+}
+
+#[test]
+fn zfs_error_count_increased_silent_without_error_counter_coverage() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let b1 = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "DEGRADED",
+        &[("tank/raidz2-0/disk-b", "DEGRADED", 0, 0, 0, false)],
+        &["pool_state", "vdev_state" /* vdev_error_counters absent */],
+        t,
+    );
+    publish_batch(&mut db, &b1).unwrap();
+
+    let b2 = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "DEGRADED",
+        &[("tank/raidz2-0/disk-b", "FAULTED", 3, 0, 47, false)],
+        &["pool_state", "vdev_state"],
+        t,
+    );
+    publish_batch(&mut db, &b2).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    assert!(find_by_kind(&findings, "zfs_error_count_increased").is_empty(),
+        "counters missing from coverage means detector cannot fire");
+}
+
+#[test]
 fn zfs_pool_degraded_gated_off_partial_coverage_demotion() {
     // Simulate the §Partial collection case: witness ran, zpool_list
     // succeeded so pool_state is testified, but a subsequent second
