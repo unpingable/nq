@@ -211,6 +211,24 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
                 "last scrub completion and whether it found errors",
             ],
         },
+        "zfs_vdev_faulted" => FindingMeta {
+            plain_label: "ZFS vdev failed",
+            operator_label: "ZFS Vdev Faulted",
+            gloss: "A specific device in a ZFS pool is in state FAULTED or UNAVAIL. \
+                    The pool's redundancy still protects data if other vdevs are healthy, \
+                    but the failure surface has narrowed. Multiple faulted vdevs in one \
+                    pool exhaust redundancy and escalate to ImmediateRisk.",
+            contradiction: "The pool reports DEGRADED (not FAULTED) — data is still \
+                            accessible — but this specific device is gone. The pool is \
+                            functioning on reduced redundancy; a second device failure \
+                            may cross into data loss.",
+            next_checks: &[
+                "device path + GUID (for replacement ordering)",
+                "error counter trajectory across generations",
+                "spare availability and whether one has activated",
+                "SMART data out-of-band (witness does not include it)",
+            ],
+        },
         "zfs_witness_silent" => FindingMeta {
             plain_label: "ZFS witness stopped reporting",
             operator_label: "ZFS Witness Silent",

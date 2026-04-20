@@ -294,6 +294,7 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     detect_error_shift(db, &mut findings)?;
     // ZFS witness detectors — gated on declared coverage, not inferred.
     detect_zfs_pool_degraded(db, &mut findings)?;
+    detect_zfs_vdev_faulted(db, &mut findings)?;
     detect_zfs_witness_silent(db, &mut findings)?;
     // Saved query checks
     run_saved_checks(db, &mut findings)?;
@@ -1538,6 +1539,140 @@ fn detect_zfs_pool_degraded(
                            durability has narrowed. If a second failure lands before \
                            repair, the pool may enter a state that blocks writes or \
                            loses data.".into(),
+            }),
+        });
+    }
+    Ok(())
+}
+
+/// Δh: ZFS vdev in state FAULTED or UNAVAIL. Gated on `vdev_state` coverage.
+///
+/// Fires per-vdev, unlike `zfs_pool_degraded` which fires per-pool. A single
+/// pool can carry multiple faulted vdevs; each is its own finding. Service
+/// impact depends on how much redundancy remains — a single FAULTED in a
+/// raidz2 with spares still functioning is Degraded; a second FAULTED on
+/// top is ImmediateRisk (pool is one failure from data loss).
+///
+/// Per the ZFS profile, UNAVAIL means the device is effectively gone (no
+/// path, not just erroring). Treated the same as FAULTED for firing
+/// purposes — both are "this vdev cannot serve reads right now."
+fn detect_zfs_vdev_faulted(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    // Gate on vdev_state coverage. Vdevs whose witness didn't testify
+    // to vdev_state this cycle don't appear in the result set.
+    let mut stmt = db.prepare(
+        "SELECT v.host, v.subject, v.pool, v.state, v.read_errors,
+                v.write_errors, v.checksum_errors, v.status_note,
+                v.is_replacing
+         FROM zfs_vdevs_current v
+         INNER JOIN zfs_witness_coverage_current c
+            ON c.host = v.host AND c.tag = 'vdev_state' AND c.can_testify = 1
+         WHERE v.state IN ('FAULTED', 'UNAVAIL')",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<i64>>(4)?,
+            row.get::<_, Option<i64>>(5)?,
+            row.get::<_, Option<i64>>(6)?,
+            row.get::<_, Option<String>>(7)?,
+            row.get::<_, i64>(8)?,
+        ))
+    })?;
+
+    // Count faulted vdevs per (host, pool) so the first one in a pool can
+    // be diagnosed as Degraded and any additional ones as ImmediateRisk.
+    // The count comes from the same query result set; we materialise and
+    // then classify.
+    let mut hits: Vec<(String, String, String, String, Option<i64>, Option<i64>, Option<i64>, Option<String>, i64)> =
+        Vec::new();
+    for r in rows {
+        hits.push(r?);
+    }
+    let mut fault_count_per_pool: std::collections::HashMap<(String, String), usize> =
+        std::collections::HashMap::new();
+    for h in &hits {
+        *fault_count_per_pool.entry((h.0.clone(), h.2.clone())).or_insert(0) += 1;
+    }
+
+    for (host, subject, pool, state, read_err, write_err, cksum_err, status_note, is_replacing)
+        in hits
+    {
+        let pool_fault_count = *fault_count_per_pool
+            .get(&(host.clone(), pool.clone()))
+            .unwrap_or(&1);
+
+        let (impact, bias) = if pool_fault_count >= 2 {
+            // Two or more faulted vdevs in the same pool: redundancy
+            // consumed, one more failure before data loss. Escalate.
+            (ServiceImpact::ImmediateRisk, ActionBias::InterveneNow)
+        } else {
+            // Single faulted vdev, pool likely still serving with narrower
+            // redundancy. Regime features may escalate later based on
+            // error-count trajectory.
+            (ServiceImpact::Degraded, ActionBias::InvestigateNow)
+        };
+
+        let errs_summary = format!(
+            "r={} w={} c={}",
+            read_err.unwrap_or(0),
+            write_err.unwrap_or(0),
+            cksum_err.unwrap_or(0),
+        );
+        let note_tail = status_note
+            .as_deref()
+            .map(|n| format!(" — {n}"))
+            .unwrap_or_default();
+        let message = format!(
+            "vdev {subject} is {state} (errors: {errs_summary}){note_tail}"
+        );
+
+        let synopsis = if pool_fault_count >= 2 {
+            format!(
+                "ZFS pool {pool} has {pool_fault_count} vdevs in {state}. Redundancy exhausted; \
+                 one more failure risks data loss."
+            )
+        } else {
+            let replacing_note = if is_replacing == 1 {
+                " A spare is actively replacing this device."
+            } else {
+                ""
+            };
+            format!(
+                "ZFS vdev {subject} is in state {state} (pool {pool}).{replacing_note}"
+            )
+        };
+
+        let why_care = if pool_fault_count >= 2 {
+            "Multiple vdevs have failed within the same pool. The pool's \
+             redundancy guarantees no longer hold; any further device failure \
+             may cause data loss or block writes.".into()
+        } else {
+            "A single device has failed. The pool's remaining redundancy still \
+             protects data, but the surface area for a second failure has \
+             narrowed. Plan the repair.".into()
+        };
+
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "zfs_vdev_faulted".into(),
+            subject,
+            message,
+            value: cksum_err.map(|c| c as f64),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Availability,
+                service_impact: impact,
+                action_bias: bias,
+                synopsis,
+                why_care,
             }),
         });
     }

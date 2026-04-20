@@ -833,6 +833,235 @@ fn zfs_witness_silent_stays_silent_when_fresh_and_ok() {
     assert!(d.is_empty(), "fresh ok witness must not fire silent detector");
 }
 
+/// Build a witness batch describing a pool plus one or more vdevs.
+/// `vdevs`: slice of (subject, state, r/w/c error counts, is_replacing).
+fn zfs_witness_batch_with_vdevs(
+    host: &str,
+    pool: &str,
+    pool_state: &str,
+    vdevs: &[(&str, &str, i64, i64, i64, bool)],
+    can_testify: &[&str],
+    received_at: OffsetDateTime,
+) -> Batch {
+    use nq_core::wire::{
+        ZfsObservation, ZfsPoolObservation, ZfsVdevObservation, ZfsWitnessCoverage,
+        ZfsWitnessHeader, ZfsWitnessReport, ZfsWitnessStanding,
+    };
+    let mut observations = vec![ZfsObservation::Pool(ZfsPoolObservation {
+        subject: pool.into(),
+        state: Some(pool_state.into()),
+        health_numeric: Some(match pool_state {
+            "ONLINE" => 0,
+            "DEGRADED" => 3,
+            "FAULTED" => 6,
+            _ => -1,
+        }),
+        size_bytes: Some(1_000_000_000_000),
+        alloc_bytes: Some(100_000_000_000),
+        free_bytes: Some(900_000_000_000),
+        readonly: Some(false),
+        fragmentation_ratio: Some(0.0),
+    })];
+    for (subject, state, r, w, c, replacing) in vdevs {
+        observations.push(ZfsObservation::Vdev(ZfsVdevObservation {
+            subject: (*subject).into(),
+            pool: pool.into(),
+            vdev_name: Some(subject.rsplit('/').next().unwrap_or(subject).into()),
+            state: Some((*state).into()),
+            read_errors: Some(*r),
+            write_errors: Some(*w),
+            checksum_errors: Some(*c),
+            status_note: if *state == "FAULTED" { Some("too many errors".into()) } else { None },
+            is_spare: Some(false),
+            is_replacing: Some(*replacing),
+        }));
+    }
+    let report = ZfsWitnessReport {
+        schema: "nq.witness.v0".into(),
+        witness: ZfsWitnessHeader {
+            id: format!("zfs.local.{host}"),
+            witness_type: "zfs".into(),
+            host: host.into(),
+            profile_version: "nq.witness.zfs.v0".into(),
+            collection_mode: "subprocess".into(),
+            privilege_model: "unprivileged".into(),
+            collected_at: received_at,
+            duration_ms: Some(5),
+            status: "ok".into(),
+            observed_subject: None,
+        },
+        coverage: ZfsWitnessCoverage {
+            can_testify: can_testify.iter().map(|s| s.to_string()).collect(),
+            cannot_testify: vec![],
+        },
+        standing: ZfsWitnessStanding {
+            authoritative_for: vec![],
+            advisory_for: vec![],
+            inadmissible_for: vec![],
+        },
+        observations,
+        errors: vec![],
+    };
+    Batch {
+        cycle_started_at: received_at,
+        cycle_completed_at: received_at,
+        sources_expected: 1,
+        source_runs: vec![SourceRun {
+            source: host.into(),
+            status: SourceStatus::Ok,
+            received_at,
+            collected_at: Some(received_at),
+            duration_ms: Some(5),
+            error_message: None,
+        }],
+        collector_runs: vec![CollectorRun {
+            source: host.into(),
+            collector: CollectorKind::ZfsWitness,
+            status: CollectorStatus::Ok,
+            collected_at: Some(received_at),
+            entity_count: Some((1 + vdevs.len()) as u32),
+            error_message: None,
+        }],
+        host_rows: vec![],
+        service_sets: vec![],
+        sqlite_db_sets: vec![],
+        metric_sets: vec![],
+        log_sets: vec![],
+        zfs_witness_rows: vec![ZfsWitnessRow {
+            host: host.into(),
+            collected_at: received_at,
+            report,
+        }],
+    }
+}
+
+#[test]
+fn zfs_vdev_faulted_fires_with_coverage() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // One FAULTED vdev, one ONLINE. Both coverage tags declared.
+    let b = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "DEGRADED",
+        &[
+            ("tank/raidz2-0/disk-a", "ONLINE", 0, 0, 0, false),
+            ("tank/raidz2-0/disk-b", "FAULTED", 3, 0, 47, true),
+        ],
+        &["pool_state", "vdev_state"],
+        t,
+    );
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let faulted = find_by_kind(&findings, "zfs_vdev_faulted");
+    assert_eq!(faulted.len(), 1, "one faulted vdev should produce one finding");
+    assert_eq!(faulted[0].domain, "Δh");
+    assert_eq!(faulted[0].subject, "tank/raidz2-0/disk-b");
+    assert_eq!(faulted[0].host, "lil-nas-x");
+
+    let d = faulted[0].diagnosis.as_ref().unwrap();
+    assert_eq!(d.failure_class, nq_db::FailureClass::Availability);
+    assert_eq!(d.service_impact, nq_db::ServiceImpact::Degraded,
+        "single FAULTED with redundancy remaining is Degraded, not ImmediateRisk");
+    assert_eq!(d.action_bias, nq_db::ActionBias::InvestigateNow);
+    assert!(faulted[0].message.contains("r=3"));
+    assert!(faulted[0].message.contains("c=47"));
+    assert!(d.synopsis.contains("spare is actively replacing"));
+}
+
+#[test]
+fn zfs_vdev_faulted_stays_silent_without_coverage() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // FAULTED vdev present, but vdev_state is NOT in can_testify.
+    // Detector must not fire — witness declared no coverage for vdev_state.
+    let b = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "DEGRADED",
+        &[("tank/raidz2-0/disk-b", "FAULTED", 3, 0, 47, false)],
+        &["pool_state" /* vdev_state absent */],
+        t,
+    );
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let faulted = find_by_kind(&findings, "zfs_vdev_faulted");
+    assert!(faulted.is_empty(),
+        "vdev_faulted MUST NOT fire without vdev_state in can_testify");
+}
+
+#[test]
+fn zfs_vdev_faulted_unavail_also_fires() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // UNAVAIL is functionally "device is gone" — treated the same as FAULTED.
+    let b = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "DEGRADED",
+        &[("tank/raidz2-0/disk-b", "UNAVAIL", 0, 0, 0, false)],
+        &["pool_state", "vdev_state"],
+        t,
+    );
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let faulted = find_by_kind(&findings, "zfs_vdev_faulted");
+    assert_eq!(faulted.len(), 1, "UNAVAIL should also fire the detector");
+    assert!(faulted[0].message.contains("UNAVAIL"));
+}
+
+#[test]
+fn zfs_vdev_faulted_escalates_on_multiple_faults_in_same_pool() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // Two FAULTED vdevs in the same pool: redundancy exhausted.
+    // Both findings escalate to ImmediateRisk.
+    let b = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "DEGRADED",
+        &[
+            ("tank/raidz2-0/disk-a", "FAULTED", 0, 0, 5, false),
+            ("tank/raidz2-0/disk-b", "FAULTED", 3, 0, 47, false),
+        ],
+        &["pool_state", "vdev_state"],
+        t,
+    );
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let faulted = find_by_kind(&findings, "zfs_vdev_faulted");
+    assert_eq!(faulted.len(), 2, "both faulted vdevs fire");
+    for f in &faulted {
+        let d = f.diagnosis.as_ref().unwrap();
+        assert_eq!(d.service_impact, nq_db::ServiceImpact::ImmediateRisk,
+            "2+ FAULTED in same pool means redundancy exhausted: ImmediateRisk");
+        assert_eq!(d.action_bias, nq_db::ActionBias::InterveneNow);
+        assert!(d.synopsis.contains("Redundancy exhausted"));
+    }
+}
+
+#[test]
+fn zfs_vdev_faulted_stays_silent_on_online_vdev() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let b = zfs_witness_batch_with_vdevs(
+        "lil-nas-x", "tank", "ONLINE",
+        &[("tank/raidz2-0/disk-a", "ONLINE", 0, 0, 0, false)],
+        &["pool_state", "vdev_state"],
+        t,
+    );
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    assert!(find_by_kind(&findings, "zfs_vdev_faulted").is_empty());
+}
+
 #[test]
 fn zfs_pool_degraded_gated_off_partial_coverage_demotion() {
     // Simulate the §Partial collection case: witness ran, zpool_list
