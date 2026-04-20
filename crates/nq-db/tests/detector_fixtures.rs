@@ -41,6 +41,7 @@ fn empty_batch(t: OffsetDateTime) -> Batch {
         sqlite_db_sets: vec![],
         metric_sets: vec![],
             log_sets: vec![],
+            zfs_witness_rows: vec![],
     }
 }
 

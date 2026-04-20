@@ -164,6 +164,34 @@ pub struct PublisherConfig {
     pub prometheus_targets: Vec<PrometheusTarget>,
     #[serde(default)]
     pub log_sources: Vec<LogSourceConfig>,
+    #[serde(default)]
+    pub zfs_witness: Option<ZfsWitnessConfig>,
+}
+
+/// Invokes a conforming `nq-witness` ZFS reference implementation as a
+/// subprocess. The witness emits the canonical JSON report on stdout; the
+/// collector parses it, validates schema/profile_version, and stores the
+/// result. HTTP mode (root_exporter_localhost) is a deliberate follow-up.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZfsWitnessConfig {
+    #[serde(default = "default_zfs_witness_helper_path")]
+    pub helper_path: String,
+    /// Wrapper command that invokes `helper_path`. Typical values:
+    ///   []             — run helper_path directly (subprocess mode)
+    ///   ["sudo","-n"]  — invoke via passwordless sudo (sudo_helper mode)
+    /// The helper must accept no arguments in any mode.
+    #[serde(default)]
+    pub wrapper: Vec<String>,
+    #[serde(default = "default_zfs_witness_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+fn default_zfs_witness_helper_path() -> String {
+    "/usr/local/libexec/nq-zfs-witness".to_string()
+}
+
+fn default_zfs_witness_timeout_ms() -> u64 {
+    5_000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

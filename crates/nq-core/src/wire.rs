@@ -27,6 +27,8 @@ pub struct Collectors {
     pub prometheus: Option<CollectorPayload<Vec<MetricSample>>>,
     #[serde(default)]
     pub logs: Option<CollectorPayload<Vec<LogObservation>>>,
+    #[serde(default)]
+    pub zfs_witness: Option<CollectorPayload<ZfsWitnessReport>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,4 +126,154 @@ pub struct MetricSample {
     /// gauge, counter, histogram, summary, untyped
     #[serde(default)]
     pub metric_type: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// nq-witness report — canonical shape consumed by the ZFS witness collector.
+// Mirrors nq.witness.v0 / nq.witness.zfs.v0. See ~/git/nq-witness/SPEC.md.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZfsWitnessReport {
+    pub schema: String,
+    pub witness: ZfsWitnessHeader,
+    pub coverage: ZfsWitnessCoverage,
+    pub standing: ZfsWitnessStanding,
+    #[serde(default)]
+    pub observations: Vec<ZfsObservation>,
+    #[serde(default)]
+    pub errors: Vec<ZfsWitnessError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZfsWitnessHeader {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub witness_type: String,
+    pub host: String,
+    pub profile_version: String,
+    pub collection_mode: String,
+    pub privilege_model: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub collected_at: OffsetDateTime,
+    pub duration_ms: Option<i64>,
+    pub status: String,
+    #[serde(default)]
+    pub observed_subject: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZfsWitnessCoverage {
+    #[serde(default)]
+    pub can_testify: Vec<String>,
+    #[serde(default)]
+    pub cannot_testify: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZfsWitnessStanding {
+    #[serde(default)]
+    pub authoritative_for: Vec<String>,
+    #[serde(default)]
+    pub advisory_for: Vec<String>,
+    #[serde(default)]
+    pub inadmissible_for: Vec<String>,
+}
+
+/// Observation variant, tagged by `kind` field in the JSON.
+///
+/// Unknown kinds are accepted (serde deserialises into the `Other` arm)
+/// so that profile growth doesn't break NQ. The collector records unknowns
+/// but does not persist them as typed observations; the coverage-tag gating
+/// discipline means detectors never fire on unknown shapes anyway.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum ZfsObservation {
+    #[serde(rename = "zfs_pool")]
+    Pool(ZfsPoolObservation),
+    #[serde(rename = "zfs_vdev")]
+    Vdev(ZfsVdevObservation),
+    #[serde(rename = "zfs_scan")]
+    Scan(ZfsScanObservation),
+    #[serde(rename = "zfs_spare")]
+    Spare(ZfsSpareObservation),
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZfsPoolObservation {
+    pub subject: String,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub health_numeric: Option<i64>,
+    #[serde(default)]
+    pub size_bytes: Option<i64>,
+    #[serde(default)]
+    pub alloc_bytes: Option<i64>,
+    #[serde(default)]
+    pub free_bytes: Option<i64>,
+    #[serde(default)]
+    pub readonly: Option<bool>,
+    #[serde(default)]
+    pub fragmentation_ratio: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZfsVdevObservation {
+    pub subject: String,
+    pub pool: String,
+    #[serde(default)]
+    pub vdev_name: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub read_errors: Option<i64>,
+    #[serde(default)]
+    pub write_errors: Option<i64>,
+    #[serde(default)]
+    pub checksum_errors: Option<i64>,
+    #[serde(default)]
+    pub status_note: Option<String>,
+    #[serde(default)]
+    pub is_spare: Option<bool>,
+    #[serde(default)]
+    pub is_replacing: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZfsScanObservation {
+    pub subject: String,
+    pub pool: String,
+    #[serde(default)]
+    pub scan_type: Option<String>,
+    #[serde(default)]
+    pub scan_state: Option<String>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub last_completed_at: Option<OffsetDateTime>,
+    #[serde(default)]
+    pub errors_found: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZfsSpareObservation {
+    pub subject: String,
+    pub pool: String,
+    #[serde(default)]
+    pub spare_name: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub is_active: Option<bool>,
+    #[serde(default)]
+    pub replacing_vdev_guid: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZfsWitnessError {
+    pub kind: String,
+    pub detail: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub observed_at: OffsetDateTime,
 }

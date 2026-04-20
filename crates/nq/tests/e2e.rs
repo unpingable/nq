@@ -244,6 +244,7 @@ fn state_to_batch(state: &PublisherState, canonical_host: &str) -> Batch {
         sqlite_db_sets,
         metric_sets: vec![],
             log_sets: vec![],
+            zfs_witness_rows: vec![],
     }
 }
 

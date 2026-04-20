@@ -332,6 +332,9 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
         }
     }
 
+    // 9. Delete+replace zfs_witness_* tables for successful witness collections.
+    publish_zfs_witness(&tx, generation_id, batch)?;
+
     tx.commit()?;
 
     Ok(PublishResult {
@@ -339,6 +342,206 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
         sources_ok,
         sources_failed,
     })
+}
+
+/// Publish a ZFS witness report: replace prior per-host rows wholesale.
+///
+/// Set semantics per host: the witness's current cycle is the truth. A
+/// pool/vdev/spare/scan present last cycle but absent this cycle is gone.
+/// Detectors query the current tables; history is not retained in Phase A.
+fn publish_zfs_witness(
+    tx: &rusqlite::Transaction<'_>,
+    generation_id: i64,
+    batch: &nq_core::Batch,
+) -> anyhow::Result<()> {
+    use nq_core::wire::ZfsObservation;
+    for row in &batch.zfs_witness_rows {
+        let report = &row.report;
+        // Witness metadata
+        tx.execute("DELETE FROM zfs_witness_current WHERE host = ?1", [&row.host])?;
+        tx.execute(
+            "INSERT INTO zfs_witness_current
+                (host, witness_id, witness_type, witness_host, observed_subject,
+                 profile_version, collection_mode, privilege_model, witness_status,
+                 witness_collected_at, duration_ms, as_of_generation, received_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            rusqlite::params![
+                &row.host,
+                &report.witness.id,
+                &report.witness.witness_type,
+                &report.witness.host,
+                &report.witness.observed_subject,
+                &report.witness.profile_version,
+                &report.witness.collection_mode,
+                &report.witness.privilege_model,
+                &report.witness.status,
+                fmt_ts(&report.witness.collected_at),
+                report.witness.duration_ms,
+                generation_id,
+                fmt_ts(&row.collected_at),
+            ],
+        )?;
+
+        // Coverage. can_testify=1 for declared tags, 0 for cannot_testify.
+        tx.execute(
+            "DELETE FROM zfs_witness_coverage_current WHERE host = ?1",
+            [&row.host],
+        )?;
+        {
+            let mut ins = tx.prepare_cached(
+                "INSERT OR REPLACE INTO zfs_witness_coverage_current (host, tag, can_testify)
+                 VALUES (?1, ?2, ?3)",
+            )?;
+            for tag in &report.coverage.can_testify {
+                ins.execute(rusqlite::params![&row.host, tag, 1])?;
+            }
+            for tag in &report.coverage.cannot_testify {
+                ins.execute(rusqlite::params![&row.host, tag, 0])?;
+            }
+        }
+
+        // Standing.
+        tx.execute(
+            "DELETE FROM zfs_witness_standing_current WHERE host = ?1",
+            [&row.host],
+        )?;
+        {
+            let mut ins = tx.prepare_cached(
+                "INSERT OR REPLACE INTO zfs_witness_standing_current (host, fact, standing)
+                 VALUES (?1, ?2, ?3)",
+            )?;
+            for fact in &report.standing.authoritative_for {
+                ins.execute(rusqlite::params![&row.host, fact, "authoritative"])?;
+            }
+            for fact in &report.standing.advisory_for {
+                ins.execute(rusqlite::params![&row.host, fact, "advisory"])?;
+            }
+            for fact in &report.standing.inadmissible_for {
+                ins.execute(rusqlite::params![&row.host, fact, "inadmissible"])?;
+            }
+        }
+
+        // Observations: wipe then insert per kind.
+        tx.execute("DELETE FROM zfs_pools_current WHERE host = ?1", [&row.host])?;
+        tx.execute("DELETE FROM zfs_vdevs_current WHERE host = ?1", [&row.host])?;
+        tx.execute("DELETE FROM zfs_scans_current WHERE host = ?1", [&row.host])?;
+        tx.execute("DELETE FROM zfs_spares_current WHERE host = ?1", [&row.host])?;
+        tx.execute(
+            "DELETE FROM zfs_witness_errors_current WHERE host = ?1",
+            [&row.host],
+        )?;
+
+        let collected_at = fmt_ts(&row.collected_at);
+        for obs in &report.observations {
+            match obs {
+                ZfsObservation::Pool(p) => {
+                    tx.execute(
+                        "INSERT INTO zfs_pools_current
+                            (host, pool, state, health_numeric, size_bytes, alloc_bytes,
+                             free_bytes, readonly, fragmentation_ratio, as_of_generation, collected_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                        rusqlite::params![
+                            &row.host,
+                            &p.subject,
+                            &p.state,
+                            p.health_numeric,
+                            p.size_bytes,
+                            p.alloc_bytes,
+                            p.free_bytes,
+                            p.readonly.map(|b| b as i64),
+                            p.fragmentation_ratio,
+                            generation_id,
+                            &collected_at,
+                        ],
+                    )?;
+                }
+                ZfsObservation::Vdev(v) => {
+                    tx.execute(
+                        "INSERT INTO zfs_vdevs_current
+                            (host, subject, pool, vdev_name, state, read_errors,
+                             write_errors, checksum_errors, status_note, is_spare,
+                             is_replacing, as_of_generation, collected_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                        rusqlite::params![
+                            &row.host,
+                            &v.subject,
+                            &v.pool,
+                            &v.vdev_name,
+                            &v.state,
+                            v.read_errors,
+                            v.write_errors,
+                            v.checksum_errors,
+                            &v.status_note,
+                            v.is_spare.unwrap_or(false) as i64,
+                            v.is_replacing.unwrap_or(false) as i64,
+                            generation_id,
+                            &collected_at,
+                        ],
+                    )?;
+                }
+                ZfsObservation::Scan(s) => {
+                    tx.execute(
+                        "INSERT INTO zfs_scans_current
+                            (host, pool, scan_type, scan_state, last_completed_at,
+                             errors_found, as_of_generation, collected_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        rusqlite::params![
+                            &row.host,
+                            &s.pool,
+                            &s.scan_type,
+                            &s.scan_state,
+                            s.last_completed_at.as_ref().map(fmt_ts),
+                            s.errors_found,
+                            generation_id,
+                            &collected_at,
+                        ],
+                    )?;
+                }
+                ZfsObservation::Spare(sp) => {
+                    tx.execute(
+                        "INSERT INTO zfs_spares_current
+                            (host, subject, pool, spare_name, state, is_active,
+                             replacing_vdev_guid, as_of_generation, collected_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        rusqlite::params![
+                            &row.host,
+                            &sp.subject,
+                            &sp.pool,
+                            &sp.spare_name,
+                            &sp.state,
+                            sp.is_active.unwrap_or(false) as i64,
+                            &sp.replacing_vdev_guid,
+                            generation_id,
+                            &collected_at,
+                        ],
+                    )?;
+                }
+                ZfsObservation::Other => {
+                    // Unknown kind: intentionally dropped on the floor. The
+                    // coverage-gating discipline means detectors never fire
+                    // on unknown shapes, so persisting them would just be
+                    // dead weight.
+                }
+            }
+        }
+
+        // Witness-reported collection errors.
+        for (ordinal, err) in report.errors.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO zfs_witness_errors_current
+                    (host, ordinal, kind, detail, observed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    &row.host,
+                    ordinal as i64,
+                    &err.kind,
+                    &err.detail,
+                    fmt_ts(&err.observed_at),
+                ],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Check if a metric name matches any policy pattern.
@@ -847,6 +1050,7 @@ mod tests {
             sqlite_db_sets: vec![],
             metric_sets: vec![],
             log_sets: vec![],
+            zfs_witness_rows: vec![],
         };
         let result = publish_batch(&mut db, &batch).unwrap();
         assert_eq!(result.sources_ok, 0);
@@ -896,6 +1100,7 @@ mod tests {
             sqlite_db_sets: vec![],
             metric_sets: vec![],
             log_sets: vec![],
+            zfs_witness_rows: vec![],
         };
         let result = publish_batch(&mut db, &batch).unwrap();
         assert_eq!(result.sources_ok, 1);
@@ -973,6 +1178,7 @@ mod tests {
             sqlite_db_sets: vec![],
             metric_sets: vec![],
             log_sets: vec![],
+            zfs_witness_rows: vec![],
         };
         publish_batch(&mut db, &batch1).unwrap();
 
@@ -1027,6 +1233,7 @@ mod tests {
             sqlite_db_sets: vec![],
             metric_sets: vec![],
             log_sets: vec![],
+            zfs_witness_rows: vec![],
         };
         publish_batch(&mut db, &batch2).unwrap();
 
@@ -1087,6 +1294,7 @@ mod tests {
             sqlite_db_sets: vec![],
             metric_sets: vec![],
             log_sets: vec![],
+            zfs_witness_rows: vec![],
         };
         let r1 = publish_batch(&mut db, &batch1).unwrap();
 
@@ -1109,6 +1317,7 @@ mod tests {
             sqlite_db_sets: vec![],
             metric_sets: vec![],
             log_sets: vec![],
+            zfs_witness_rows: vec![],
         };
         let r2 = publish_batch(&mut db, &batch2).unwrap();
         assert!(r2.generation_id > r1.generation_id);
@@ -2347,5 +2556,290 @@ mod tests {
             [], |row| row.get(0),
         ).unwrap();
         assert_eq!(stability.as_deref(), Some("new"), "v_warnings must expose stability");
+    }
+
+    // -----------------------------------------------------------------
+    // ZFS witness ingestion spine — Phase A of ZFS_COLLECTOR_GAP.
+    // Definition of done: a conforming witness report can be collected,
+    // stored, queried back in current-gen form, with coverage honored.
+    // -----------------------------------------------------------------
+
+    /// Chronic-degraded fixture lifted from
+    /// `~/git/nq-witness/examples/zfs_status_fixture.md` (shortened to one
+    /// pool, six vdevs, one in-use spare + one available spare).
+    const WITNESS_FIXTURE: &str = r#"{
+      "schema": "nq.witness.v0",
+      "witness": {
+        "id": "zfs.local.lil-nas-x",
+        "type": "zfs",
+        "host": "lil-nas-x",
+        "profile_version": "nq.witness.zfs.v0",
+        "collection_mode": "subprocess",
+        "privilege_model": "unprivileged",
+        "collected_at": "2026-04-20T19:00:00Z",
+        "duration_ms": 42,
+        "status": "ok"
+      },
+      "coverage": {
+        "can_testify": ["pool_state","pool_capacity","vdev_state","vdev_error_counters","scrub_state","scrub_completion","spare_state"],
+        "cannot_testify": ["smart_drive_health","enclosure_slot_mapping","dataset_capacity","dataset_properties"]
+      },
+      "standing": {
+        "authoritative_for": ["current_pool_state","current_vdev_state","current_vdev_error_counts","last_scrub_completion","spare_assignment"],
+        "advisory_for": ["chronic_vs_worsening_regime_classification"],
+        "inadmissible_for": ["drive_smart_health","authorization","remediation"]
+      },
+      "observations": [
+        {"kind":"zfs_pool","subject":"tank","state":"DEGRADED","health_numeric":3,"size_bytes":79989470920704,"alloc_bytes":8277407145984,"free_bytes":71712063774720,"readonly":false,"fragmentation_ratio":0.0},
+        {"kind":"zfs_scan","subject":"tank","pool":"tank","scan_type":"scrub","scan_state":"completed","last_completed_at":"2026-04-12T07:26:33Z","errors_found":0},
+        {"kind":"zfs_vdev","subject":"tank/raidz2-0/ata-EXAMPLE-DISK-0000000001","pool":"tank","vdev_name":"ata-EXAMPLE-DISK-0000000001","state":"ONLINE","read_errors":0,"write_errors":0,"checksum_errors":0,"status_note":null,"is_spare":false,"is_replacing":false},
+        {"kind":"zfs_vdev","subject":"tank/raidz2-0/ata-EXAMPLE-DISK-0000000002","pool":"tank","vdev_name":"ata-EXAMPLE-DISK-0000000002","state":"FAULTED","read_errors":3,"write_errors":0,"checksum_errors":47,"status_note":"too many errors","is_spare":false,"is_replacing":true},
+        {"kind":"zfs_vdev","subject":"tank/raidz2-0/ata-EXAMPLE-SPARE-0000000001","pool":"tank","vdev_name":"ata-EXAMPLE-SPARE-0000000001","state":"ONLINE","read_errors":0,"write_errors":0,"checksum_errors":0,"status_note":null,"is_spare":true,"is_replacing":true},
+        {"kind":"zfs_spare","subject":"tank/spare/ata-EXAMPLE-SPARE-0000000001","pool":"tank","spare_name":"ata-EXAMPLE-SPARE-0000000001","state":"INUSE","is_active":true,"replacing_vdev_guid":null},
+        {"kind":"zfs_spare","subject":"tank/spare/ata-EXAMPLE-SPARE-0000000002","pool":"tank","spare_name":"ata-EXAMPLE-SPARE-0000000002","state":"AVAIL","is_active":false,"replacing_vdev_guid":null}
+      ],
+      "errors": []
+    }"#;
+
+    fn witness_batch(host: &str, report_json: &str) -> Batch {
+        let t = now();
+        let report: nq_core::wire::ZfsWitnessReport =
+            serde_json::from_str(report_json).expect("fixture parses");
+        Batch {
+            cycle_started_at: t,
+            cycle_completed_at: t,
+            sources_expected: 1,
+            source_runs: vec![SourceRun {
+                source: host.into(),
+                status: SourceStatus::Ok,
+                received_at: t,
+                collected_at: Some(t),
+                duration_ms: Some(15),
+                error_message: None,
+            }],
+            collector_runs: vec![CollectorRun {
+                source: host.into(),
+                collector: CollectorKind::ZfsWitness,
+                status: CollectorStatus::Ok,
+                collected_at: Some(t),
+                entity_count: Some(report.observations.len() as u32),
+                error_message: None,
+            }],
+            host_rows: vec![],
+            service_sets: vec![],
+            sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
+            zfs_witness_rows: vec![ZfsWitnessRow {
+                host: host.into(),
+                collected_at: t,
+                report,
+            }],
+        }
+    }
+
+    #[test]
+    fn zfs_witness_fixture_round_trips_through_current_gen() {
+        let mut db = test_db();
+        let batch = witness_batch("lil-nas-x", WITNESS_FIXTURE);
+        publish_batch(&mut db, &batch).unwrap();
+
+        // Witness metadata round-trips through v_zfs_witness.
+        let (witness_id, status, collection_mode, privilege_model): (String, String, String, String) = db.conn.query_row(
+            "SELECT witness_id, witness_status, collection_mode, privilege_model
+             FROM v_zfs_witness WHERE host = 'lil-nas-x'",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).unwrap();
+        assert_eq!(witness_id, "zfs.local.lil-nas-x");
+        assert_eq!(status, "ok");
+        assert_eq!(collection_mode, "subprocess",
+            "subprocess mode must survive round-trip — the OPEN_ISSUES #1 fix is load-bearing for gating");
+        assert_eq!(privilege_model, "unprivileged");
+
+        // Pool observations round-trip through v_zfs_pools.
+        let (pool_state, health_numeric, witness_status): (String, i64, String) = db.conn.query_row(
+            "SELECT state, health_numeric, witness_status FROM v_zfs_pools
+             WHERE host = 'lil-nas-x' AND pool = 'tank'",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!(pool_state, "DEGRADED");
+        assert_eq!(health_numeric, 3);
+        assert_eq!(witness_status, "ok");
+
+        // All 6 vdevs stored (4 online + 1 faulted + 1 spare-in-use).
+        let vdev_count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM zfs_vdevs_current WHERE host = 'lil-nas-x'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(vdev_count, 3,
+            "fixture has 3 leaf vdevs: 1 ONLINE + 1 FAULTED + 1 replacing SPARE");
+
+        // Faulted vdev detail preserved: error counters + is_replacing + status_note.
+        let (state, ck_err, is_replacing, note): (String, i64, i64, String) = db.conn.query_row(
+            "SELECT state, checksum_errors, is_replacing, status_note
+             FROM zfs_vdevs_current
+             WHERE host = 'lil-nas-x' AND subject = 'tank/raidz2-0/ata-EXAMPLE-DISK-0000000002'",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).unwrap();
+        assert_eq!(state, "FAULTED");
+        assert_eq!(ck_err, 47);
+        assert_eq!(is_replacing, 1);
+        assert_eq!(note, "too many errors");
+
+        // Scan observation preserved.
+        let (scan_type, scan_state, last_at): (String, String, String) = db.conn.query_row(
+            "SELECT scan_type, scan_state, last_completed_at
+             FROM zfs_scans_current WHERE host = 'lil-nas-x' AND pool = 'tank'",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!(scan_type, "scrub");
+        assert_eq!(scan_state, "completed");
+        assert!(last_at.starts_with("2026-04-12"));
+
+        // Both spares stored with their declared state + activation flag.
+        let mut spares = db.conn.prepare(
+            "SELECT spare_name, state, is_active FROM zfs_spares_current
+             WHERE host = 'lil-nas-x' ORDER BY spare_name"
+        ).unwrap();
+        let spare_rows: Vec<(String, String, i64)> = spares.query_map(
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap().filter_map(Result::ok).collect();
+        assert_eq!(spare_rows.len(), 2);
+        assert_eq!(spare_rows[0].1, "INUSE");
+        assert_eq!(spare_rows[0].2, 1);
+        assert_eq!(spare_rows[1].1, "AVAIL");
+        assert_eq!(spare_rows[1].2, 0);
+    }
+
+    #[test]
+    fn zfs_witness_coverage_preserves_can_testify_and_cannot_testify() {
+        let mut db = test_db();
+        let batch = witness_batch("lil-nas-x", WITNESS_FIXTURE);
+        publish_batch(&mut db, &batch).unwrap();
+
+        // The gating query Phase B detectors will use: is tag X in can_testify?
+        // pool_state is declared → yes.
+        let can: i64 = db.conn.query_row(
+            "SELECT can_testify FROM zfs_witness_coverage_current
+             WHERE host = 'lil-nas-x' AND tag = 'pool_state'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(can, 1);
+
+        // smart_drive_health is explicitly cannot_testify.
+        let cannot: i64 = db.conn.query_row(
+            "SELECT can_testify FROM zfs_witness_coverage_current
+             WHERE host = 'lil-nas-x' AND tag = 'smart_drive_health'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(cannot, 0);
+
+        // All 7 required profile tags should be testifiable.
+        let testifiable: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM zfs_witness_coverage_current
+             WHERE host = 'lil-nas-x' AND can_testify = 1",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(testifiable, 7,
+            "fixture declares 7 can_testify tags; any drift is a silent coverage loss");
+
+        // And all 4 honest-gap tags should be in cannot_testify.
+        let not_testifiable: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM zfs_witness_coverage_current
+             WHERE host = 'lil-nas-x' AND can_testify = 0",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(not_testifiable, 4);
+    }
+
+    #[test]
+    fn zfs_witness_partial_status_demotes_coverage_honestly() {
+        // Craft a partial report: the witness couldn't run `zpool status`
+        // this cycle, so vdev/scan/spare tags are demoted to cannot_testify
+        // while pool_state (from `zpool list`) is still authoritative.
+        let mut db = test_db();
+        let partial = WITNESS_FIXTURE
+            .replace("\"status\": \"ok\"", "\"status\": \"partial\"")
+            .replace(
+                "\"can_testify\": [\"pool_state\",\"pool_capacity\",\"vdev_state\",\"vdev_error_counters\",\"scrub_state\",\"scrub_completion\",\"spare_state\"]",
+                "\"can_testify\": [\"pool_state\",\"pool_capacity\"]",
+            )
+            .replace(
+                "\"cannot_testify\": [\"smart_drive_health\",\"enclosure_slot_mapping\",\"dataset_capacity\",\"dataset_properties\"]",
+                "\"cannot_testify\": [\"vdev_state\",\"vdev_error_counters\",\"scrub_state\",\"scrub_completion\",\"spare_state\",\"smart_drive_health\",\"enclosure_slot_mapping\",\"dataset_capacity\",\"dataset_properties\"]",
+            );
+
+        let batch = witness_batch("lil-nas-x", &partial);
+        publish_batch(&mut db, &batch).unwrap();
+
+        // witness_status must reflect the demotion.
+        let status: String = db.conn.query_row(
+            "SELECT witness_status FROM zfs_witness_current WHERE host = 'lil-nas-x'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(status, "partial");
+
+        // vdev_state must appear in cannot_testify, not can_testify.
+        let (can_testify, count): (Option<i64>, i64) = db.conn.query_row(
+            "SELECT can_testify, COUNT(*) FROM zfs_witness_coverage_current
+             WHERE host = 'lil-nas-x' AND tag = 'vdev_state'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(can_testify, Some(0),
+            "partial collection must demote vdev_state to cannot_testify");
+    }
+
+    #[test]
+    fn zfs_witness_second_publish_replaces_prior_state() {
+        let mut db = test_db();
+
+        // Publish the chronic-degraded fixture.
+        publish_batch(&mut db, &witness_batch("lil-nas-x", WITNESS_FIXTURE)).unwrap();
+        let before: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM zfs_vdevs_current WHERE host = 'lil-nas-x'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(before, 3);
+
+        // Publish a minimal report with the same host: only pool + one scan.
+        // Any vdev / spare rows from the prior cycle must be gone — set
+        // semantics per host, not merge.
+        let minimal = r#"{
+          "schema": "nq.witness.v0",
+          "witness": {
+            "id": "zfs.local.lil-nas-x", "type": "zfs", "host": "lil-nas-x",
+            "profile_version": "nq.witness.zfs.v0",
+            "collection_mode": "subprocess", "privilege_model": "unprivileged",
+            "collected_at": "2026-04-20T20:00:00Z", "duration_ms": 5,
+            "status": "ok"
+          },
+          "coverage": { "can_testify": ["pool_state"], "cannot_testify": [] },
+          "standing": { "authoritative_for": ["current_pool_state"], "advisory_for": [], "inadmissible_for": [] },
+          "observations": [
+            {"kind":"zfs_pool","subject":"tank","state":"ONLINE","health_numeric":0,"size_bytes":1,"alloc_bytes":0,"free_bytes":1,"readonly":false,"fragmentation_ratio":0.0}
+          ],
+          "errors": []
+        }"#;
+        publish_batch(&mut db, &witness_batch("lil-nas-x", minimal)).unwrap();
+
+        let after_vdev: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM zfs_vdevs_current WHERE host = 'lil-nas-x'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(after_vdev, 0, "prior-cycle vdevs must be cleared");
+
+        let after_spare: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM zfs_spares_current WHERE host = 'lil-nas-x'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(after_spare, 0, "prior-cycle spares must be cleared");
+
+        // Pool state must reflect the new (ONLINE) cycle.
+        let pool_state: String = db.conn.query_row(
+            "SELECT state FROM zfs_pools_current WHERE host = 'lil-nas-x' AND pool = 'tank'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(pool_state, "ONLINE");
     }
 }

@@ -59,6 +59,7 @@ pub enum CollectorKind {
     SqliteHealth,
     Prometheus,
     Logs,
+    ZfsWitness,
 }
 
 impl CollectorKind {
@@ -69,6 +70,7 @@ impl CollectorKind {
             Self::SqliteHealth => "sqlite_health",
             Self::Prometheus => "prometheus",
             Self::Logs => "logs",
+            Self::ZfsWitness => "zfs_witness",
         }
     }
 }

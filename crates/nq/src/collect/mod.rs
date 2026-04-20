@@ -3,6 +3,7 @@ pub mod logs;
 pub mod prometheus;
 pub mod services;
 pub mod sqlite_health;
+pub mod zfs;
 
 use nq_core::wire::{Collectors, PublisherState};
 use nq_core::PublisherConfig;
@@ -22,6 +23,7 @@ pub fn collect_state(config: &PublisherConfig) -> PublisherState {
             sqlite_health: Some(sqlite_health::collect(config)),
             prometheus: Some(prometheus::collect(config)),
             logs: Some(logs::collect(config)),
+            zfs_witness: Some(zfs::collect(config)),
         },
     }
 }

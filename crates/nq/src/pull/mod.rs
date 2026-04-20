@@ -4,7 +4,7 @@
 use nq_core::batch::*;
 use nq_core::status::*;
 use nq_core::wire::PublisherState;
-use nq_core::{Config, SourceConfig};
+use nq_core::{Config, SourceConfig, ZfsWitnessRow};
 use time::OffsetDateTime;
 use tracing::warn;
 
@@ -24,6 +24,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
     let mut sqlite_db_sets = Vec::new();
     let mut metric_sets = Vec::new();
     let mut log_sets = Vec::new();
+    let mut zfs_witness_rows = Vec::new();
 
     for handle in handles {
         let result = handle.await?;
@@ -36,6 +37,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
                 sqlite_db_set,
                 metric_set,
                 log_set,
+                zfs_witness_row,
             } => {
                 source_runs.push(source_run);
                 collector_runs.extend(coll_runs);
@@ -53,6 +55,9 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
                 }
                 if let Some(ls) = log_set {
                     log_sets.push(ls);
+                }
+                if let Some(zw) = zfs_witness_row {
+                    zfs_witness_rows.push(zw);
                 }
             }
             PullResult::Failed(source_run) => {
@@ -74,6 +79,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
         sqlite_db_sets,
         metric_sets,
         log_sets,
+        zfs_witness_rows,
     })
 }
 
@@ -86,6 +92,7 @@ enum PullResult {
         sqlite_db_set: Option<SqliteDbSet>,
         metric_set: Option<MetricSet>,
         log_set: Option<LogObsSet>,
+        zfs_witness_row: Option<ZfsWitnessRow>,
     },
     Failed(SourceRun),
 }
@@ -164,6 +171,7 @@ async fn pull_one(source: SourceConfig) -> PullResult {
     let mut sqlite_db_set = None;
     let mut metric_set = None;
     let mut log_set = None;
+    let mut zfs_witness_row = None;
 
     // Host collector
     if let Some(ref payload) = state.collectors.host {
@@ -349,6 +357,29 @@ async fn pull_one(source: SourceConfig) -> PullResult {
         }
     }
 
+    // ZFS witness collector
+    if let Some(ref payload) = state.collectors.zfs_witness {
+        let entity_count = payload.data.as_ref().map(|r| r.observations.len() as u32);
+        coll_runs.push(CollectorRun {
+            source: canonical_host.clone(),
+            collector: CollectorKind::ZfsWitness,
+            status: payload.status,
+            collected_at: payload.collected_at,
+            entity_count,
+            error_message: payload.error_message.clone(),
+        });
+        if payload.status == CollectorStatus::Ok {
+            if let Some(ref report) = payload.data {
+                let collected_at = payload.collected_at.unwrap_or(state.collected_at);
+                zfs_witness_row = Some(ZfsWitnessRow {
+                    host: canonical_host.clone(),
+                    collected_at,
+                    report: report.clone(),
+                });
+            }
+        }
+    }
+
     PullResult::Ok {
         source_run,
         coll_runs,
@@ -357,5 +388,6 @@ async fn pull_one(source: SourceConfig) -> PullResult {
         sqlite_db_set,
         metric_set,
         log_set,
+        zfs_witness_row,
     }
 }
