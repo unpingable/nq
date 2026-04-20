@@ -264,6 +264,13 @@ impl From<&nq_core::config::DetectorThresholds> for DetectorConfig {
     }
 }
 
+/// Witness-silent threshold: a conforming ZFS witness must report again
+/// within this window or the silence is itself a finding. Matches the
+/// ZFS profile's `profiles/zfs.md` §Freshness defaults recommendation
+/// (stale threshold 5 minutes). Hardcoded in Phase B; moves to
+/// `DetectorThresholds` if a deployment needs a different cadence.
+const ZFS_WITNESS_STALE_SECONDS: i64 = 300;
+
 /// Run all detectors against current state. Returns all active findings.
 pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<Finding>> {
     let mut findings = Vec::new();
@@ -285,6 +292,9 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     // Log detectors
     detect_log_silence(db, &mut findings)?;
     detect_error_shift(db, &mut findings)?;
+    // ZFS witness detectors — gated on declared coverage, not inferred.
+    detect_zfs_pool_degraded(db, &mut findings)?;
+    detect_zfs_witness_silent(db, &mut findings)?;
     // Saved query checks
     run_saved_checks(db, &mut findings)?;
     Ok(findings)
@@ -1451,4 +1461,175 @@ fn check_threshold_exceeded(rows: &[Vec<String>], column: &str, threshold: f64) 
             .map(|v| v > threshold)
             .unwrap_or(false)
     })
+}
+
+// ---------------------------------------------------------------------------
+// ZFS witness detectors — Phase B.
+//
+// Both gate strictly on `zfs_witness_coverage_current.can_testify`. A
+// detector whose required tag is absent or demoted stays silent. The
+// whole point of the nq-witness contract is that consumers never infer
+// around declared coverage.
+//
+// `zfs_witness_silent` is coverage-independent: it fires on witness
+// metadata (status, freshness) alone, because the failure mode it catches
+// is the witness not reporting at all. A coverage-gated witness-silent
+// detector would be a category error — there's nothing for the witness
+// to declare coverage about when it hasn't shown up.
+// ---------------------------------------------------------------------------
+
+/// Δh: ZFS pool in state DEGRADED. Gated on `pool_state` coverage.
+///
+/// Severity stays `warning` while the regime is stable; stability-axis
+/// machinery (REGIME_FEATURES) escalates to critical on worsening
+/// signals from sibling detectors added in Phase C+. A detector alone
+/// cannot tell chronic-stable from degrading; it just reports the
+/// current pool state.
+fn detect_zfs_pool_degraded(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    // Gating: inner join on coverage = 1 for `pool_state`. Pools whose
+    // witness didn't testify to pool_state this cycle don't appear in
+    // the result set — detector stays silent for them, per SPEC.
+    let mut stmt = db.prepare(
+        "SELECT p.host, p.pool, p.state, p.health_numeric, w.witness_status
+         FROM zfs_pools_current p
+         INNER JOIN zfs_witness_coverage_current c
+            ON c.host = p.host AND c.tag = 'pool_state' AND c.can_testify = 1
+         LEFT JOIN zfs_witness_current w ON w.host = p.host
+         WHERE p.state = 'DEGRADED'",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<i64>>(3)?,
+            row.get::<_, Option<String>>(4)?,
+        ))
+    })?;
+    for row in rows {
+        let (host, pool, state, health_numeric, witness_status) = row?;
+        let msg = match witness_status.as_deref() {
+            Some("partial") => format!(
+                "pool {pool} reports {state} (witness partial this cycle)"
+            ),
+            _ => format!("pool {pool} reports {state}"),
+        };
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "zfs_pool_degraded".into(),
+            subject: pool.clone(),
+            message: msg,
+            value: health_numeric.map(|n| n as f64),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Availability,
+                service_impact: ServiceImpact::Degraded,
+                action_bias: ActionBias::InvestigateBusinessHours,
+                synopsis: format!(
+                    "ZFS pool {pool} is in state {state}. Redundancy is compromised; \
+                     pool is still serving data."
+                ),
+                why_care: "A drive or vdev is faulted. Data remains accessible but \
+                           durability has narrowed. If a second failure lands before \
+                           repair, the pool may enter a state that blocks writes or \
+                           loses data.".into(),
+            }),
+        });
+    }
+    Ok(())
+}
+
+/// Δo: ZFS witness silent — the witness itself has gone dark or reports
+/// its own failure. Coverage-independent. Counterpart to `stale_host`
+/// scoped specifically to the ZFS witness evidence seam.
+///
+/// Fires when:
+///   - `witness_status = 'failed'` (witness is running but can't collect), or
+///   - `received_age_s > ZFS_WITNESS_STALE_SECONDS` (witness hasn't
+///     reported since the stale threshold).
+///
+/// The "configured but never reported" case (config says witness is on
+/// but no row has ever existed) is a Phase C addition once witness
+/// expectation is tracked server-side.
+fn detect_zfs_witness_silent(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "SELECT host, witness_id, witness_status, witness_collected_at,
+                received_age_s, witness_age_s
+         FROM v_zfs_witness
+         WHERE witness_status = 'failed' OR received_age_s > ?1",
+    )?;
+    let rows = stmt.query_map([ZFS_WITNESS_STALE_SECONDS], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<i64>>(4)?,
+            row.get::<_, Option<i64>>(5)?,
+        ))
+    })?;
+    for row in rows {
+        let (host, witness_id, witness_status, _witness_collected_at, received_age_s, _witness_age_s) =
+            row?;
+        let received_age = received_age_s.unwrap_or(0);
+
+        let (synopsis, why_care, bias) = if witness_status == "failed" {
+            (
+                format!(
+                    "ZFS witness {witness_id} on {host} reports status=failed this cycle."
+                ),
+                "The witness ran but could not collect evidence. ZFS-domain detectors \
+                 stay silent until it recovers — the pool may be fine, or may be \
+                 degrading unobserved.".to_string(),
+                ActionBias::InvestigateNow,
+            )
+        } else {
+            (
+                format!(
+                    "ZFS witness {witness_id} on {host} has not reported for {} (threshold {}).",
+                    humanize_duration_s(received_age),
+                    humanize_duration_s(ZFS_WITNESS_STALE_SECONDS),
+                ),
+                "The witness seam has gone quiet. Detectors gated on its coverage \
+                 cannot fire. A silent witness cannot confirm a healthy pool.".to_string(),
+                ActionBias::InvestigateNow,
+            )
+        };
+
+        let message = if witness_status == "failed" {
+            format!("witness {witness_id} status=failed")
+        } else {
+            format!(
+                "witness {witness_id} silent for {}",
+                humanize_duration_s(received_age)
+            )
+        };
+
+        out.push(Finding {
+            host,
+            domain: "Δo".into(),
+            kind: "zfs_witness_silent".into(),
+            subject: witness_id,
+            message,
+            value: Some(received_age as f64),
+            finding_class: "meta".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Silence,
+                service_impact: ServiceImpact::NoneCurrent,
+                action_bias: bias,
+                synopsis,
+                why_care,
+            }),
+        });
+    }
+    Ok(())
 }

@@ -195,6 +195,38 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
             next_checks: &["restart count and timing", "crash logs", "resource exhaustion at restart"],
         },
 
+        // ── ZFS witness (gated by coverage.can_testify) ──────────
+        "zfs_pool_degraded" => FindingMeta {
+            plain_label: "ZFS pool redundancy degraded",
+            operator_label: "ZFS Degraded",
+            gloss: "A ZFS pool is in state DEGRADED. A drive or vdev is faulted; \
+                    the pool still serves data but redundancy is narrower than configured. \
+                    Regime features distinguish chronic-stable from actively worsening.",
+            contradiction: "The pool is mounted and responding. Reads and writes complete. \
+                            That's exactly what makes this dangerous — a second failure \
+                            before repair can cross the line to unavailable or lossy.",
+            next_checks: &[
+                "which vdev is faulted, how long, error counters trajectory",
+                "spare assignment and activation status",
+                "last scrub completion and whether it found errors",
+            ],
+        },
+        "zfs_witness_silent" => FindingMeta {
+            plain_label: "ZFS witness stopped reporting",
+            operator_label: "ZFS Witness Silent",
+            gloss: "The nq-witness that provides ZFS evidence has gone quiet or reports \
+                    status=failed. All ZFS-domain detectors gate on its declared coverage, \
+                    so silence means pool health is currently unobserved.",
+            contradiction: "A silent witness is not the same as a healthy pool. The \
+                            absence of degraded-pool findings right now tells us \
+                            nothing — the evidence is missing, not clean.",
+            next_checks: &[
+                "witness helper process status on the publisher",
+                "sudoers / privilege grant still intact (if sudo_helper mode)",
+                "last successful witness collection and its error_message",
+            ],
+        },
+
         // ── meta ─────────────────────────────────────────────────
         "check_failed" => FindingMeta {
             plain_label: "Check condition detected",

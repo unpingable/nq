@@ -5,6 +5,7 @@
 
 use nq_core::batch::*;
 use nq_core::status::*;
+use nq_core::ZfsWitnessRow;
 use nq_db::{migrate, open_rw, publish_batch, update_warning_state};
 use nq_db::detect::{DetectorConfig, run_all};
 use nq_db::publish::EscalationConfig;
@@ -624,6 +625,240 @@ fn service_status_down_emits_immediate_risk() {
     assert_eq!(d.failure_class, nq_db::FailureClass::Availability);
     assert_eq!(d.service_impact, nq_db::ServiceImpact::ImmediateRisk);
     assert_eq!(d.action_bias, nq_db::ActionBias::InterveneNow);
+}
+
+// ================================================================
+// ZFS witness (Phase B) — coverage-gated detectors
+// ================================================================
+
+/// Build a witness batch for a pool in the given state.
+/// `can_testify` lets the test control which coverage tags are declared.
+fn zfs_witness_batch(
+    host: &str,
+    pool: &str,
+    pool_state: &str,
+    witness_status: &str,
+    can_testify: &[&str],
+    received_at: OffsetDateTime,
+) -> Batch {
+    use nq_core::wire::{
+        ZfsObservation, ZfsPoolObservation, ZfsWitnessCoverage, ZfsWitnessHeader,
+        ZfsWitnessReport, ZfsWitnessStanding,
+    };
+    let report = ZfsWitnessReport {
+        schema: "nq.witness.v0".into(),
+        witness: ZfsWitnessHeader {
+            id: format!("zfs.local.{host}"),
+            witness_type: "zfs".into(),
+            host: host.into(),
+            profile_version: "nq.witness.zfs.v0".into(),
+            collection_mode: "subprocess".into(),
+            privilege_model: "unprivileged".into(),
+            collected_at: received_at,
+            duration_ms: Some(5),
+            status: witness_status.into(),
+            observed_subject: None,
+        },
+        coverage: ZfsWitnessCoverage {
+            can_testify: can_testify.iter().map(|s| s.to_string()).collect(),
+            cannot_testify: vec![],
+        },
+        standing: ZfsWitnessStanding {
+            authoritative_for: vec![],
+            advisory_for: vec![],
+            inadmissible_for: vec![],
+        },
+        observations: vec![ZfsObservation::Pool(ZfsPoolObservation {
+            subject: pool.into(),
+            state: Some(pool_state.into()),
+            health_numeric: Some(match pool_state {
+                "ONLINE" => 0,
+                "DEGRADED" => 3,
+                "FAULTED" => 6,
+                _ => -1,
+            }),
+            size_bytes: Some(1_000_000_000_000),
+            alloc_bytes: Some(100_000_000_000),
+            free_bytes: Some(900_000_000_000),
+            readonly: Some(false),
+            fragmentation_ratio: Some(0.0),
+        })],
+        errors: vec![],
+    };
+    Batch {
+        cycle_started_at: received_at,
+        cycle_completed_at: received_at,
+        sources_expected: 1,
+        source_runs: vec![SourceRun {
+            source: host.into(),
+            status: SourceStatus::Ok,
+            received_at,
+            collected_at: Some(received_at),
+            duration_ms: Some(5),
+            error_message: None,
+        }],
+        collector_runs: vec![CollectorRun {
+            source: host.into(),
+            collector: CollectorKind::ZfsWitness,
+            status: CollectorStatus::Ok,
+            collected_at: Some(received_at),
+            entity_count: Some(1),
+            error_message: None,
+        }],
+        host_rows: vec![],
+        service_sets: vec![],
+        sqlite_db_sets: vec![],
+        metric_sets: vec![],
+        log_sets: vec![],
+        zfs_witness_rows: vec![ZfsWitnessRow {
+            host: host.into(),
+            collected_at: received_at,
+            report,
+        }],
+    }
+}
+
+#[test]
+fn zfs_pool_degraded_fires_when_pool_state_is_testified() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let b = zfs_witness_batch("lil-nas-x", "tank", "DEGRADED", "ok",
+        &["pool_state"], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_pool_degraded");
+    assert_eq!(d.len(), 1, "exactly one pool_degraded finding for tank");
+    assert_eq!(d[0].domain, "Δh");
+    assert_eq!(d[0].subject, "tank");
+    assert_eq!(d[0].host, "lil-nas-x");
+
+    let dx = d[0].diagnosis.as_ref().unwrap();
+    assert_eq!(dx.failure_class, nq_db::FailureClass::Availability);
+    assert_eq!(dx.service_impact, nq_db::ServiceImpact::Degraded);
+}
+
+#[test]
+fn zfs_pool_degraded_stays_silent_without_coverage() {
+    // The witness reports pool DEGRADED but does NOT testify about
+    // pool_state (it's in cannot_testify via absence). Detector must
+    // not fire — the whole point of coverage gating is that we don't
+    // manufacture confidence the witness never declared.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let b = zfs_witness_batch("lil-nas-x", "tank", "DEGRADED", "ok",
+        &[/* pool_state deliberately absent */], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_pool_degraded");
+    assert!(d.is_empty(),
+        "pool_degraded MUST NOT fire when pool_state is not in can_testify");
+}
+
+#[test]
+fn zfs_pool_degraded_stays_silent_on_online_pool() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let b = zfs_witness_batch("lil-nas-x", "tank", "ONLINE", "ok",
+        &["pool_state"], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_pool_degraded");
+    assert!(d.is_empty(), "ONLINE pool should not fire degraded detector");
+}
+
+#[test]
+fn zfs_witness_silent_fires_on_failed_status() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let b = zfs_witness_batch("lil-nas-x", "tank", "ONLINE", "failed",
+        &[], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_witness_silent");
+    assert_eq!(d.len(), 1);
+    assert_eq!(d[0].domain, "Δo");
+    assert_eq!(d[0].finding_class, "meta");
+    assert_eq!(d[0].subject, "zfs.local.lil-nas-x");
+    assert!(d[0].message.contains("failed"));
+}
+
+#[test]
+fn zfs_witness_silent_fires_on_stale_received_at() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // Publish, then backdate the row to simulate staleness.
+    let b = zfs_witness_batch("lil-nas-x", "tank", "ONLINE", "ok",
+        &["pool_state"], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    db.conn().execute(
+        "UPDATE zfs_witness_current
+         SET received_at = datetime('now', '-10 minutes')
+         WHERE host = 'lil-nas-x'",
+        [],
+    ).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_witness_silent");
+    assert_eq!(d.len(), 1, "stale witness must produce a silent finding");
+    assert!(d[0].message.contains("silent for"));
+}
+
+#[test]
+fn zfs_witness_silent_stays_silent_when_fresh_and_ok() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let b = zfs_witness_batch("lil-nas-x", "tank", "ONLINE", "ok",
+        &["pool_state"], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_witness_silent");
+    assert!(d.is_empty(), "fresh ok witness must not fire silent detector");
+}
+
+#[test]
+fn zfs_pool_degraded_gated_off_partial_coverage_demotion() {
+    // Simulate the §Partial collection case: witness ran, zpool_list
+    // succeeded so pool_state is testified, but a subsequent second
+    // publish represents the witness losing coverage (partial status,
+    // pool_state demoted). Detector that previously fired must now
+    // stay silent for this cycle.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // Cycle 1: pool_state testified, DEGRADED — detector fires.
+    let b1 = zfs_witness_batch("lil-nas-x", "tank", "DEGRADED", "ok",
+        &["pool_state"], t);
+    publish_batch(&mut db, &b1).unwrap();
+    let f1 = run_all(db.conn(), &config).unwrap();
+    assert_eq!(find_by_kind(&f1, "zfs_pool_degraded").len(), 1);
+
+    // Cycle 2: partial report — pool_state demoted, DEGRADED still
+    // reported but now unsupported by coverage. Detector stays silent.
+    let b2 = zfs_witness_batch("lil-nas-x", "tank", "DEGRADED", "partial",
+        &[/* pool_state demoted */], t);
+    publish_batch(&mut db, &b2).unwrap();
+    let f2 = run_all(db.conn(), &config).unwrap();
+    assert!(find_by_kind(&f2, "zfs_pool_degraded").is_empty(),
+        "partial coverage must demote the detector for this cycle");
 }
 
 #[test]
