@@ -914,15 +914,42 @@ fn zfs_witness_batch_with_vdevs(
             duration_ms: Some(5),
             error_message: None,
         }],
-        collector_runs: vec![CollectorRun {
-            source: host.into(),
-            collector: CollectorKind::ZfsWitness,
-            status: CollectorStatus::Ok,
-            collected_at: Some(received_at),
-            entity_count: Some((1 + vdevs.len()) as u32),
-            error_message: None,
+        collector_runs: vec![
+            CollectorRun {
+                source: host.into(),
+                collector: CollectorKind::Host,
+                status: CollectorStatus::Ok,
+                collected_at: Some(received_at),
+                entity_count: Some(1),
+                error_message: None,
+            },
+            CollectorRun {
+                source: host.into(),
+                collector: CollectorKind::ZfsWitness,
+                status: CollectorStatus::Ok,
+                collected_at: Some(received_at),
+                entity_count: Some((1 + vdevs.len()) as u32),
+                error_message: None,
+            },
+        ],
+        // Real publishers always emit the host collector alongside any
+        // domain-specific witness. Including it here prevents entity-GC
+        // from deleting ZFS findings during multi-cycle regime tests.
+        host_rows: vec![HostRow {
+            host: host.into(),
+            cpu_load_1m: Some(0.1),
+            cpu_load_5m: None,
+            mem_total_mb: Some(16384),
+            mem_available_mb: Some(14000),
+            mem_pressure_pct: Some(15.0),
+            disk_total_mb: Some(500_000),
+            disk_avail_mb: Some(400_000),
+            disk_used_pct: Some(20.0),
+            uptime_seconds: Some(86400),
+            kernel_version: Some("6.8.0".into()),
+            boot_id: Some("testboot".into()),
+            collected_at: received_at,
         }],
-        host_rows: vec![],
         service_sets: vec![],
         sqlite_db_sets: vec![],
         metric_sets: vec![],
@@ -1242,6 +1269,156 @@ fn zfs_error_count_increased_silent_without_error_counter_coverage() {
     let findings = run_all(db.conn(), &config).unwrap();
     assert!(find_by_kind(&findings, "zfs_error_count_increased").is_empty(),
         "counters missing from coverage means detector cannot fire");
+}
+
+// ================================================================
+// Regime integration for ZFS detectors (Phase C)
+//
+// The forcing scenario the whole ZFS arc was designed around:
+// lil-nas-x's chronic-degraded pool should classify as Persistent
+// (ideally Entrenched) with flat error counters, NOT renew every
+// cycle. Counter rises should co-occur with pool_degraded to
+// produce a DurabilityDegrading regime hint.
+// ================================================================
+
+#[test]
+fn zfs_pool_degraded_classifies_as_persistent_after_enough_cycles() {
+    // Simulates N cycles of the lil-nas-x chronic-degraded pool.
+    // After enough history, persistence_class must be at least Persistent
+    // (Entrenched is the ideal endstate, but classification depends on
+    // the window thresholds — asserting "not Transient" catches the
+    // forcing-case bug where the pool screams new every cycle).
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+    let esc = EscalationConfig::default();
+
+    for _ in 0..30 {
+        let b = zfs_witness_batch_with_vdevs(
+            "lil-nas-x", "tank", "DEGRADED",
+            &[("tank/raidz2-0/disk-b", "FAULTED", 3, 0, 47, false)],
+            &["pool_state", "vdev_state", "vdev_error_counters"],
+            t,
+        );
+        let r = publish_batch(&mut db, &b).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        update_warning_state(&mut db, r.generation_id, &findings, &esc).unwrap();
+        nq_db::compute_features(&mut db, r.generation_id).unwrap();
+    }
+
+    let finding_key =
+        nq_db::publish::compute_finding_key("local", "lil-nas-x", "zfs_pool_degraded", "tank");
+
+    // Query the persistence feature directly. Payload JSON carries
+    // persistence_class + present_ratio_window + streak_length_generations.
+    let (persistence_class, ratio, streak): (String, f64, i64) = db.conn().query_row(
+        "SELECT json_extract(payload_json, '$.persistence_class'),
+                json_extract(payload_json, '$.present_ratio_window'),
+                json_extract(payload_json, '$.streak_length_generations')
+         FROM regime_features
+         WHERE subject_kind = 'finding'
+           AND subject_id = ?1
+           AND feature_type = 'persistence'
+         ORDER BY generation_id DESC
+         LIMIT 1",
+        rusqlite::params![&finding_key],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).expect("persistence feature must exist for zfs_pool_degraded after 30 cycles");
+
+    assert_ne!(persistence_class, "transient",
+        "chronic-degraded pool with 30 cycles of uninterrupted presence must not read as transient. ratio={ratio} streak={streak}");
+    assert!(ratio > 0.9,
+        "present_ratio should be near 1.0 for uninterrupted streak, got {ratio}");
+    assert!(streak >= 30, "streak should match cycle count, got {streak}");
+}
+
+#[test]
+fn zfs_error_count_increased_and_pool_degraded_compose_into_durability_degrading() {
+    // Baseline: pool has been chronic-degraded with flat counters.
+    // Trigger: counters start rising. Both detectors now fire together.
+    // Expected: the co-occurrence feature should carry the
+    // DurabilityDegrading regime hint — the worsening narrative the
+    // gap doc promised.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+    let esc = EscalationConfig::default();
+
+    // Establish baseline: 6 cycles with flat counters at 47 checksum errors.
+    for _ in 0..6 {
+        let b = zfs_witness_batch_with_vdevs(
+            "lil-nas-x", "tank", "DEGRADED",
+            &[("tank/raidz2-0/disk-b", "FAULTED", 3, 0, 47, false)],
+            &["pool_state", "vdev_state", "vdev_error_counters"],
+            t,
+        );
+        let r = publish_batch(&mut db, &b).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        update_warning_state(&mut db, r.generation_id, &findings, &esc).unwrap();
+        nq_db::compute_features(&mut db, r.generation_id).unwrap();
+    }
+
+    // Now 6 cycles where checksum errors rise each cycle.
+    for i in 1..=6 {
+        let b = zfs_witness_batch_with_vdevs(
+            "lil-nas-x", "tank", "DEGRADED",
+            &[("tank/raidz2-0/disk-b", "FAULTED", 3, 0, 47 + i * 10, false)],
+            &["pool_state", "vdev_state", "vdev_error_counters"],
+            t,
+        );
+        let r = publish_batch(&mut db, &b).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        update_warning_state(&mut db, r.generation_id, &findings, &esc).unwrap();
+        nq_db::compute_features(&mut db, r.generation_id).unwrap();
+    }
+
+    let hint_count: i64 = db.conn().query_row(
+        "SELECT COUNT(*) FROM regime_features
+         WHERE feature_type = 'co_occurrence'
+           AND json_extract(payload_json, '$.regime_hint') = 'durability_degrading'",
+        [],
+        |row| row.get(0),
+    ).unwrap();
+
+    assert!(hint_count >= 1,
+        "zfs_pool_degraded + zfs_error_count_increased co-occurring for 5+ cycles must produce a durability_degrading regime hint");
+}
+
+#[test]
+fn zfs_pool_degraded_chronic_stable_does_not_produce_worsening_hint() {
+    // Contrast with the prior test: if counters are FLAT, pool_degraded
+    // alone should not produce a durability_degrading hint. This is the
+    // "stable chronic" vs "actively worsening" distinction.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+    let esc = EscalationConfig::default();
+
+    for _ in 0..12 {
+        let b = zfs_witness_batch_with_vdevs(
+            "lil-nas-x", "tank", "DEGRADED",
+            &[("tank/raidz2-0/disk-b", "FAULTED", 3, 0, 47, false)],
+            &["pool_state", "vdev_state", "vdev_error_counters"],
+            t,
+        );
+        let r = publish_batch(&mut db, &b).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        update_warning_state(&mut db, r.generation_id, &findings, &esc).unwrap();
+        nq_db::compute_features(&mut db, r.generation_id).unwrap();
+    }
+
+    let hint_count: i64 = db.conn().query_row(
+        "SELECT COUNT(*) FROM regime_features
+         WHERE subject_kind = 'host'
+           AND subject_id = 'lil-nas-x'
+           AND feature_type = 'co_occurrence'
+           AND json_extract(payload_json, '$.regime_hint') = 'durability_degrading'",
+        [],
+        |row| row.get(0),
+    ).unwrap();
+
+    assert_eq!(hint_count, 0,
+        "chronic-stable pool with flat error counts must not produce a worsening regime hint — that would be the greenwashing-twin panic theater the gap doc warns against");
 }
 
 #[test]

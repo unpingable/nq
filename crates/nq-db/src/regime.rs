@@ -143,6 +143,14 @@ pub enum RegimeHint {
     /// Service-level instability composing with infra signals
     /// (e.g. service_flap + check_failed).
     Entrenchment,
+    /// Durability substrate actively degrading — structural finding
+    /// composing with a rise-over-time signal on the same subject.
+    /// E.g. `zfs_pool_degraded` + `zfs_error_count_increased`: the
+    /// pool's already-narrow redundancy is thinning further.
+    /// Distinct from Accumulation (which is about resource volume,
+    /// not data durability) and Pressure (resource headroom, not
+    /// device-level failure).
+    DurabilityDegrading,
 }
 
 impl RegimeHint {
@@ -152,6 +160,7 @@ impl RegimeHint {
             Self::Pressure => "pressure",
             Self::ObservabilityFailure => "observability_failure",
             Self::Entrenchment => "entrenchment",
+            Self::DurabilityDegrading => "durability_degrading",
         }
     }
 }
@@ -1001,6 +1010,12 @@ const CO_OCCURRENCE_SIGNATURES: &[Signature] = &[
     // Entrenchment — service-level instability composing with infra signals.
     Signature { a: "check_failed", b: "service_flap", hint: RegimeHint::Entrenchment },
     Signature { a: "service_flap", b: "stale_service", hint: RegimeHint::Entrenchment },
+    // DurabilityDegrading — structural ZFS failure composing with an
+    // active rise signal. The pool being degraded alone is chronic;
+    // the rise is the worsening. Both together is the regime the
+    // ZFS gap doc names `zfs_degraded_worsening`.
+    Signature { a: "zfs_error_count_increased", b: "zfs_pool_degraded", hint: RegimeHint::DurabilityDegrading },
+    Signature { a: "zfs_error_count_increased", b: "zfs_vdev_faulted", hint: RegimeHint::DurabilityDegrading },
 ];
 
 /// Look up a regime hint for an unordered pair of finding kinds. Returns
@@ -1130,15 +1145,25 @@ fn compute_finding_co_occurrence(
                 };
                 let hint = lookup_regime_hint(&lo, &hi);
                 let candidate = (depth, (lo, hi), hint);
-                // Prefer greater depth; on tie prefer signatured pairs;
-                // final tiebreak is lexicographic to keep results stable.
+                // Preference order:
+                //   1. signatured (named-regime) pairs over unsignatured,
+                //      once both are past CO_OCCURRENCE_MIN_DEPTH. A named
+                //      regime is the story of the cycle; a longer-running
+                //      unsignatured co-occurrence is background. Without
+                //      this, a structurally-linked chronic pair (e.g.
+                //      zfs_pool_degraded + zfs_vdev_faulted, which coexist
+                //      by definition) drowns out the actively-worsening
+                //      signal (e.g. + zfs_error_count_increased) that the
+                //      operator actually needs to see.
+                //   2. greater depth.
+                //   3. lexicographic pair name (stable tiebreak).
                 let take = match &best {
                     None => true,
                     Some((bd, bp, bh)) => {
-                        if depth != *bd {
-                            depth > *bd
-                        } else if hint.is_some() != bh.is_some() {
+                        if hint.is_some() != bh.is_some() {
                             hint.is_some()
+                        } else if depth != *bd {
+                            depth > *bd
                         } else {
                             candidate.1 < *bp
                         }
