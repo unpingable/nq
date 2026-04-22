@@ -235,7 +235,7 @@ async fn send_alert(client: &reqwest::Client, channels: &[NotificationChannel], 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nq_db::{write_liveness, LIVENESS_FORMAT_VERSION};
+    use nq_db::{write_liveness, CURRENT_SCHEMA_VERSION, LIVENESS_FORMAT_VERSION};
     use tempfile::tempdir;
 
     fn art(gen: i64, generated_at: &str) -> LivenessArtifact {
@@ -244,7 +244,7 @@ mod tests {
             instance_id: Some("test".into()),
             generated_at: generated_at.into(),
             generation_id: gen,
-            schema_version: 29,
+            schema_version: CURRENT_SCHEMA_VERSION,
             findings_observed: 0,
             findings_suppressed: 0,
             detectors_run: 0,

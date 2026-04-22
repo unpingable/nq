@@ -3,7 +3,7 @@ use crate::http;
 use crate::pull;
 use nq_core::config::NotificationChannel;
 use nq_core::Config;
-use nq_db::{migrate, open_ro, open_rw, publish_batch, update_warning_state};
+use nq_db::{migrate, open_ro, open_rw, publish_batch, update_warning_state, CURRENT_SCHEMA_VERSION};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
@@ -124,7 +124,7 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                                     instance_id: pull_config.liveness.instance_id.clone(),
                                     generated_at: now,
                                     generation_id: result.generation_id,
-                                    schema_version: 29,
+                                    schema_version: CURRENT_SCHEMA_VERSION,
                                     findings_observed,
                                     findings_suppressed,
                                     detectors_run,
