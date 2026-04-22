@@ -224,6 +224,16 @@ pub struct Finding {
     /// Typed diagnosis. None for detectors not yet migrated; the renderer
     /// falls back to finding_meta.rs static lookup when absent.
     pub diagnosis: Option<FindingDiagnosis>,
+    /// Identifier of the source whose evidence produced this finding. When
+    /// Some, the finding lands with basis_state = 'live'. When None, the
+    /// finding lands with basis_state = 'unknown' — Invariant 7 of
+    /// EVIDENCE_RETIREMENT_GAP (default to non-current, never silently live).
+    pub basis_source_id: Option<String>,
+    /// Witness identifier when the source is a witness. Often equal to
+    /// basis_source_id for witness-backed detectors; distinct for future
+    /// detectors that read evidence produced by one source but authored
+    /// by another witness.
+    pub basis_witness_id: Option<String>,
 }
 
 /// Configurable thresholds for built-in detectors.
@@ -347,6 +357,8 @@ fn detect_wal_bloat(
                     synopsis: format!("WAL is {:.1} MB ({:.1}% of database size).", wal_size_mb, pct),
                     why_care: "WAL growing faster than checkpoints can retire it. If unaddressed, this contributes to disk pressure.".into(),
                 }),
+                basis_source_id: None,
+                basis_witness_id: None,
             });
         }
     }
@@ -394,6 +406,8 @@ fn detect_freelist_bloat(
                     synopsis: format!("Freelist has {:.1} MB reclaimable ({:.1}% of database).", reclaimable_mb, pct),
                     why_care: "Dead pages accumulating faster than VACUUM can reclaim. Disk usage grows without corresponding data growth.".into(),
                 }),
+                basis_source_id: None,
+                basis_witness_id: None,
             });
         }
     }
@@ -466,6 +480,8 @@ fn detect_stale_hosts(
                 synopsis,
                 why_care,
             }),
+            basis_source_id: None,
+            basis_witness_id: None,
         });
     }
     Ok(())
@@ -513,6 +529,8 @@ fn detect_stale_services(
                 synopsis: format!("Service '{}' has not reported in {} generations.", service, gens_behind),
                 why_care: "Service telemetry is stale. Current status unknown.".into(),
             }),
+            basis_source_id: None,
+            basis_witness_id: None,
         });
     }
     Ok(())
@@ -564,6 +582,8 @@ fn detect_service_status(
                     _ => format!("Service has unexpected status '{}'.", status),
                 },
             }),
+            basis_source_id: None,
+            basis_witness_id: None,
         });
     }
     Ok(())
@@ -602,6 +622,8 @@ fn detect_source_errors(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
                 synopsis: format!("Source '{}' is returning errors.", source),
                 why_care: "Collection is failing for this source. Downstream findings may be stale or missing.".into(),
             }),
+            basis_source_id: None,
+            basis_witness_id: None,
         });
     }
     Ok(())
@@ -645,6 +667,8 @@ fn detect_metric_nan(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<
                 synopsis: format!("Metric '{}' is reporting {}.", name, kind),
                 why_care: "A metric reporting NaN or Inf usually means the underlying measurement is broken.".into(),
             }),
+            basis_source_id: None,
+            basis_witness_id: None,
         });
     }
     Ok(())
@@ -699,6 +723,8 @@ fn detect_disk_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
                     "Disk usage is elevated. Monitor for continued growth.".into()
                 },
             }),
+            basis_source_id: None,
+            basis_witness_id: None,
         });
     }
     Ok(())
@@ -735,6 +761,8 @@ fn detect_memory_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Re
                 synopsis: format!("Memory is {:.1}% used on {} ({} MB free).", pct, host, avail_mb),
                 why_care: "Memory pressure is elevated. OOM kills become more likely as free memory shrinks.".into(),
             }),
+            basis_source_id: None,
+            basis_witness_id: None,
         });
     }
     Ok(())
@@ -824,6 +852,8 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                         synopsis: format!("Disk usage on {} is trending upward (+{:.1}pp above trailing average).", host, now - avg),
                         why_care: "Sustained upward drift in disk usage. Not urgent yet but worth watching.".into(),
                     }),
+                    basis_source_id: None,
+                    basis_witness_id: None,
                 });
             }
         }
@@ -850,6 +880,8 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                         synopsis: format!("Memory usage on {} is trending upward (+{:.1}pp above trailing average).", host, now - avg),
                         why_care: "Sustained upward drift in memory usage. Not urgent yet but worth watching.".into(),
                     }),
+                    basis_source_id: None,
+                    basis_witness_id: None,
                 });
             }
         }
@@ -876,6 +908,8 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                         synopsis: format!("CPU load on {} is {:.1}x the trailing average.", host, now / avg),
                         why_care: "Sustained upward drift in CPU load. Not urgent yet but worth watching.".into(),
                     }),
+                    basis_source_id: None,
+                    basis_witness_id: None,
                 });
             }
         }
@@ -945,6 +979,8 @@ fn detect_service_flap(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resul
                 synopsis: format!("Service '{}' has changed state {} times in 12 generations.", service, transitions),
                 why_care: "Rapid state oscillation means 'current status' is misleading. The regime itself is unstable.".into(),
             }),
+            basis_source_id: None,
+            basis_witness_id: None,
         });
     }
     Ok(())
@@ -1003,6 +1039,8 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                 synopsis: format!("Service '{}' was recently present but has vanished.", service),
                 why_care: "A previously visible service has stopped reporting. May indicate removal, rename, or collection failure.".into(),
             }),
+            basis_source_id: None,
+            basis_witness_id: None,
         });
     }
 
@@ -1052,6 +1090,8 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                 synopsis: format!("Metric '{}' was recently present but has vanished.", metric_name),
                 why_care: "A previously visible metric series has stopped reporting. May indicate exporter change or collection failure.".into(),
             }),
+            basis_source_id: None,
+            basis_witness_id: None,
         });
     }
 
@@ -1126,6 +1166,8 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                     synopsis: format!("{} new metric series appeared this generation ({} total).", new_count, total),
                     why_care: "Large burst of new series suggests exporter reconfiguration or label explosion.".into(),
                 }),
+                basis_source_id: None,
+                basis_witness_id: None,
             });
         }
 
@@ -1150,6 +1192,8 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                     synopsis: format!("{} metric series vanished in the last 2 generations ({} still active).", vanished, total),
                     why_care: "Large fraction of series disappeared. Possible exporter failure or target loss.".into(),
                 }),
+                basis_source_id: None,
+                basis_witness_id: None,
             });
         }
     }
@@ -1218,6 +1262,8 @@ fn detect_log_silence(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
                 synopsis: format!("Log source '{}' has gone silent (baseline was {:.0} lines/gen).", source_id, avg),
                 why_care: "A log source that normally emits output has gone quiet. May hide errors or indicate a process failure.".into(),
             }),
+            basis_source_id: None,
+            basis_witness_id: None,
         });
     }
 
@@ -1302,6 +1348,8 @@ fn detect_error_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
                 ),
                 why_care: "Error rate is significantly above baseline. Something is producing more errors than usual.".into(),
             }),
+            basis_source_id: None,
+            basis_witness_id: None,
         });
     }
 
@@ -1355,6 +1403,8 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                         synopsis: format!("Saved check '{}' failed to execute.", name),
                         why_care: "A user-defined check could not run. The check query may have a syntax error or reference missing tables.".into(),
                     }),
+                    basis_source_id: None,
+                    basis_witness_id: None,
                 });
             }
             Ok((row_count, rows)) => {
@@ -1400,6 +1450,8 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                             synopsis: format!("Saved check '{}' triggered.", name),
                             why_care: "A user-defined check condition was met. Review the check definition for intended response.".into(),
                         }),
+                        basis_source_id: None,
+                        basis_witness_id: None,
                     });
                 }
             }
@@ -1495,7 +1547,7 @@ fn detect_zfs_pool_degraded(
     // witness didn't testify to pool_state this cycle don't appear in
     // the result set — detector stays silent for them, per SPEC.
     let mut stmt = db.prepare(
-        "SELECT p.host, p.pool, p.state, p.health_numeric, w.witness_status
+        "SELECT p.host, p.pool, p.state, p.health_numeric, w.witness_status, w.witness_id
          FROM zfs_pools_current p
          INNER JOIN zfs_witness_coverage_current c
             ON c.host = p.host AND c.tag = 'pool_state' AND c.can_testify = 1
@@ -1509,10 +1561,11 @@ fn detect_zfs_pool_degraded(
             row.get::<_, String>(2)?,
             row.get::<_, Option<i64>>(3)?,
             row.get::<_, Option<String>>(4)?,
+            row.get::<_, Option<String>>(5)?,
         ))
     })?;
     for row in rows {
-        let (host, pool, state, health_numeric, witness_status) = row?;
+        let (host, pool, state, health_numeric, witness_status, witness_id) = row?;
         let msg = match witness_status.as_deref() {
             Some("partial") => format!(
                 "pool {pool} reports {state} (witness partial this cycle)"
@@ -1541,6 +1594,8 @@ fn detect_zfs_pool_degraded(
                            repair, the pool may enter a state that blocks writes or \
                            loses data.".into(),
             }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
         });
     }
     Ok(())
@@ -1566,10 +1621,11 @@ fn detect_zfs_vdev_faulted(
     let mut stmt = db.prepare(
         "SELECT v.host, v.subject, v.pool, v.state, v.read_errors,
                 v.write_errors, v.checksum_errors, v.status_note,
-                v.is_replacing
+                v.is_replacing, w.witness_id
          FROM zfs_vdevs_current v
          INNER JOIN zfs_witness_coverage_current c
             ON c.host = v.host AND c.tag = 'vdev_state' AND c.can_testify = 1
+         LEFT JOIN zfs_witness_current w ON w.host = v.host
          WHERE v.state IN ('FAULTED', 'UNAVAIL')",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -1583,6 +1639,7 @@ fn detect_zfs_vdev_faulted(
             row.get::<_, Option<i64>>(6)?,
             row.get::<_, Option<String>>(7)?,
             row.get::<_, i64>(8)?,
+            row.get::<_, Option<String>>(9)?,
         ))
     })?;
 
@@ -1590,7 +1647,7 @@ fn detect_zfs_vdev_faulted(
     // be diagnosed as Degraded and any additional ones as ImmediateRisk.
     // The count comes from the same query result set; we materialise and
     // then classify.
-    let mut hits: Vec<(String, String, String, String, Option<i64>, Option<i64>, Option<i64>, Option<String>, i64)> =
+    let mut hits: Vec<(String, String, String, String, Option<i64>, Option<i64>, Option<i64>, Option<String>, i64, Option<String>)> =
         Vec::new();
     for r in rows {
         hits.push(r?);
@@ -1601,7 +1658,7 @@ fn detect_zfs_vdev_faulted(
         *fault_count_per_pool.entry((h.0.clone(), h.2.clone())).or_insert(0) += 1;
     }
 
-    for (host, subject, pool, state, read_err, write_err, cksum_err, status_note, is_replacing)
+    for (host, subject, pool, state, read_err, write_err, cksum_err, status_note, is_replacing, witness_id)
         in hits
     {
         let pool_fault_count = *fault_count_per_pool
@@ -1675,6 +1732,8 @@ fn detect_zfs_vdev_faulted(
                 synopsis,
                 why_care,
             }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
         });
     }
     Ok(())
@@ -1728,10 +1787,12 @@ fn detect_zfs_error_count_increased(
                 latest.vdev_state,
                 latest.read_errors,  prior.read_errors,
                 latest.write_errors, prior.write_errors,
-                latest.checksum_errors, prior.checksum_errors
+                latest.checksum_errors, prior.checksum_errors,
+                w.witness_id
          FROM latest
          INNER JOIN prior
-            ON prior.host = latest.host AND prior.subject = latest.subject",
+            ON prior.host = latest.host AND prior.subject = latest.subject
+         LEFT JOIN zfs_witness_current w ON w.host = latest.host",
     )?;
 
     let rows = stmt.query_map([], |row| {
@@ -1746,6 +1807,7 @@ fn detect_zfs_error_count_increased(
             row.get::<_, Option<i64>>(7)?,
             row.get::<_, Option<i64>>(8)?,
             row.get::<_, Option<i64>>(9)?,
+            row.get::<_, Option<String>>(10)?,
         ))
     })?;
 
@@ -1755,6 +1817,7 @@ fn detect_zfs_error_count_increased(
             cur_r, prev_r,
             cur_w, prev_w,
             cur_c, prev_c,
+            witness_id,
         ) = row?;
 
         let dr = signed_delta(cur_r, prev_r);
@@ -1814,6 +1877,8 @@ fn detect_zfs_error_count_increased(
                 synopsis,
                 why_care,
             }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
         });
         let _ = pool; // retained in SQL for clarity; message already references it
     }
@@ -1896,11 +1961,18 @@ fn detect_zfs_witness_silent(
             )
         };
 
+        // basis_source_id = witness_id here is a deliberate special case.
+        // The witness is the very thing whose silence is being reported,
+        // so the finding's basis IS the silent witness. This is the "live
+        // on the fact of silence" pattern: the detector has direct evidence
+        // (witness-current row's timestamp) even though that witness is
+        // not currently producing fresh ZFS observations. basis_state = 'live'
+        // for this finding is correct — the silence measurement is live.
         out.push(Finding {
             host,
             domain: "Δo".into(),
             kind: "zfs_witness_silent".into(),
-            subject: witness_id,
+            subject: witness_id.clone(),
             message,
             value: Some(received_age as f64),
             finding_class: "meta".into(),
@@ -1912,6 +1984,8 @@ fn detect_zfs_witness_silent(
                 synopsis,
                 why_care,
             }),
+            basis_source_id: Some(witness_id.clone()),
+            basis_witness_id: Some(witness_id),
         });
     }
     Ok(())

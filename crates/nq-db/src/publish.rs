@@ -670,8 +670,8 @@ fn update_warning_state_inner(
     let recovery_window: i64 = 3; // require 3 clean gens before clearing
 
     let mut upsert = tx.prepare_cached(
-        "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, peak_value, finding_class, rule_hash, absent_gens, failure_class, service_impact, action_bias, synopsis, why_care)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9, ?10, ?11, 0, ?12, ?13, ?14, ?15, ?16)
+        "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, peak_value, finding_class, rule_hash, absent_gens, failure_class, service_impact, action_bias, synopsis, why_care, basis_state, basis_source_id, basis_witness_id, last_basis_generation, basis_state_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9, ?10, ?11, 0, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
          ON CONFLICT(host, kind, subject) DO UPDATE SET
              domain = ?4,
              message = ?5,
@@ -700,16 +700,26 @@ fn update_warning_state_inner(
              service_impact = ?13,
              action_bias = ?14,
              synopsis = ?15,
-             why_care = ?16",
+             why_care = ?16,
+             -- Basis lifecycle (EVIDENCE_RETIREMENT_GAP V1): detectors with
+             -- known provenance overwrite basis_* every cycle they re-fire.
+             -- Detectors without provenance pass NULL for ?18/?19 and 'unknown'
+             -- for ?17, with NULL ?20/?21 — Invariant 7 (no fabricated timestamps).
+             basis_state = ?17,
+             basis_source_id = ?18,
+             basis_witness_id = ?19,
+             last_basis_generation = ?20,
+             basis_state_at = ?21",
     )?;
 
     let mut insert_obs = tx.prepare_cached(
         "INSERT INTO finding_observations
          (generation_id, finding_key, scope, detector_id, host, subject,
           domain, severity, value, message, finding_class, rule_hash, observed_at,
-          failure_class, service_impact, action_bias, synopsis, why_care)
+          failure_class, service_impact, action_bias, synopsis, why_care,
+          basis_source_id, basis_witness_id)
          VALUES (?1, ?2, 'local', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                 ?13, ?14, ?15, ?16, ?17)"
+                 ?13, ?14, ?15, ?16, ?17, ?18, ?19)"
     )?;
 
     for f in findings {
@@ -756,6 +766,18 @@ fn update_warning_state_inner(
         let d_synopsis = f.diagnosis.as_ref().map(|d| d.synopsis.as_str());
         let d_why_care = f.diagnosis.as_ref().map(|d| d.why_care.as_str());
 
+        // Basis lifecycle (EVIDENCE_RETIREMENT_GAP V1):
+        //   basis_source_id present → basis_state = 'live', last_basis_generation
+        //                              and basis_state_at carry real values.
+        //   basis_source_id absent   → basis_state = 'unknown', both stamps NULL.
+        // No inference. Invariant 7: default to non-current, never silently live.
+        let (basis_state, last_basis_generation, basis_state_at): (&str, Option<i64>, Option<&str>) =
+            if f.basis_source_id.is_some() {
+                ("live", Some(generation_id), Some(now.as_str()))
+            } else {
+                ("unknown", None, None)
+            };
+
         insert_obs.execute(rusqlite::params![
             generation_id,
             &finding_key,
@@ -774,6 +796,8 @@ fn update_warning_state_inner(
             d_action_bias,
             d_synopsis,
             d_why_care,
+            &f.basis_source_id,
+            &f.basis_witness_id,
         ])?;
 
         upsert.execute(rusqlite::params![
@@ -793,6 +817,11 @@ fn update_warning_state_inner(
             d_action_bias,
             d_synopsis,
             d_why_care,
+            basis_state,
+            &f.basis_source_id,
+            &f.basis_witness_id,
+            last_basis_generation,
+            basis_state_at,
         ])?;
     }
     drop(upsert);
@@ -1374,6 +1403,8 @@ mod tests {
             finding_class: "signal".into(),
             rule_hash: None,
             diagnosis: None,
+            basis_source_id: None,
+            basis_witness_id: None,
         }
     }
 
@@ -2159,6 +2190,8 @@ mod tests {
             finding_class: "signal".into(),
             rule_hash: None,
             diagnosis: Some(diagnosis),
+            basis_source_id: None,
+            basis_witness_id: None,
         }
     }
 
@@ -2360,6 +2393,8 @@ mod tests {
                 synopsis: "Service svc-1 is down.".into(),
                 why_care: "Service is not running.".into(),
             }),
+            basis_source_id: None,
+            basis_witness_id: None,
         });
 
         update_warning_state(&mut db, 1, &findings, &esc).unwrap();

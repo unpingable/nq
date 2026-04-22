@@ -53,7 +53,7 @@ pub const CONTRACT_VERSION: u32 = 1;
 /// `warning_state.failure_class` etc. (027), `warning_state.stability`
 /// (028), and `regime_features` (030). The most recent of those is
 /// 30; exporter requires `>= 30`.
-pub const MIN_SCHEMA_FOR_EXPORT: u32 = 30;
+pub const MIN_SCHEMA_FOR_EXPORT: u32 = 33;
 
 // ---------------------------------------------------------------------------
 // Filter — what export_findings accepts.
@@ -96,6 +96,9 @@ pub struct FindingSnapshot {
     pub observations: ObservationsSummary,
     pub generation: GenerationContext,
     pub export: ExportMetadata,
+    /// EVIDENCE_RETIREMENT_GAP V1: basis lifecycle state. Always present.
+    /// `basis_state = 'unknown'` is a truthful value, not missing data.
+    pub basis: FindingBasis,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -177,6 +180,22 @@ pub struct ExportMetadata {
     pub changed_since: Option<i64>,
     pub source: &'static str,
     pub contract_version: u32,
+}
+
+/// Basis lifecycle DTO. Every FindingSnapshot carries one.
+///
+/// `state` is authoritative: consumers filter or render on it.
+/// When `state = "unknown"`, the ID and generation fields are null —
+/// we do not fabricate provenance or timestamps for findings whose
+/// basis could not be proven. See EVIDENCE_RETIREMENT_GAP invariants
+/// 1, 5, 7.
+#[derive(Debug, Clone, Serialize)]
+pub struct FindingBasis {
+    pub state: String,
+    pub source_id: Option<String>,
+    pub witness_id: Option<String>,
+    pub last_basis_generation: Option<i64>,
+    pub state_at: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +330,9 @@ pub fn export_findings_from_conn(
                 first_seen_gen, first_seen_at, last_seen_gen, last_seen_at,
                 consecutive_gens, absent_gens, peak_value,
                 visibility_state, finding_class, rule_hash, stability,
-                failure_class, service_impact, action_bias, synopsis, why_care
+                failure_class, service_impact, action_bias, synopsis, why_care,
+                basis_state, basis_source_id, basis_witness_id,
+                last_basis_generation, basis_state_at
          FROM warning_state{} ORDER BY host, kind, subject",
         where_clause
     );
@@ -343,6 +364,11 @@ pub fn export_findings_from_conn(
             action_bias: row.get(19)?,
             synopsis: row.get(20)?,
             why_care: row.get(21)?,
+            basis_state: row.get(22)?,
+            basis_source_id: row.get(23)?,
+            basis_witness_id: row.get(24)?,
+            last_basis_generation: row.get(25)?,
+            basis_state_at: row.get(26)?,
         })
     })?;
 
@@ -417,6 +443,13 @@ pub fn export_findings_from_conn(
                 source: "nq",
                 contract_version: CONTRACT_VERSION,
             },
+            basis: FindingBasis {
+                state: r.basis_state,
+                source_id: r.basis_source_id,
+                witness_id: r.basis_witness_id,
+                last_basis_generation: r.last_basis_generation,
+                state_at: r.basis_state_at,
+            },
         });
     }
 
@@ -447,6 +480,11 @@ struct WarningStateRow {
     action_bias: Option<String>,
     synopsis: Option<String>,
     why_care: Option<String>,
+    basis_state: String,
+    basis_source_id: Option<String>,
+    basis_witness_id: Option<String>,
+    last_basis_generation: Option<i64>,
+    basis_state_at: Option<String>,
 }
 
 fn parse_finding_key(key: &str) -> anyhow::Result<(String, String, String, String)> {
