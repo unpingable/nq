@@ -1470,3 +1470,188 @@ fn check_non_empty_passes_when_no_rows() {
     let checks = find_by_kind(&findings, "check_failed");
     assert!(checks.is_empty(), "check should pass when disk < 95%");
 }
+
+// ================================================================
+// zfs_scrub_overdue — Δh
+// ================================================================
+
+/// Build a ZFS witness batch with a single scan observation, used for
+/// scrub_overdue tests. The scan observation carries last_completed_at
+/// and scan_state. Coverage tags are whatever the test hands in.
+fn zfs_scan_batch(
+    host: &str,
+    pool: &str,
+    last_completed_at: Option<OffsetDateTime>,
+    scan_state: Option<&str>,
+    can_testify: &[&str],
+    received_at: OffsetDateTime,
+) -> Batch {
+    use nq_core::wire::{
+        ZfsObservation, ZfsScanObservation, ZfsWitnessCoverage, ZfsWitnessHeader,
+        ZfsWitnessReport, ZfsWitnessStanding,
+    };
+    let report = ZfsWitnessReport {
+        schema: "nq.witness.v0".into(),
+        witness: ZfsWitnessHeader {
+            id: format!("zfs.local.{host}"),
+            witness_type: "zfs".into(),
+            host: host.into(),
+            profile_version: "nq.witness.zfs.v0".into(),
+            collection_mode: "subprocess".into(),
+            privilege_model: "unprivileged".into(),
+            collected_at: received_at,
+            duration_ms: Some(5),
+            status: "ok".into(),
+            observed_subject: None,
+        },
+        coverage: ZfsWitnessCoverage {
+            can_testify: can_testify.iter().map(|s| s.to_string()).collect(),
+            cannot_testify: vec![],
+        },
+        standing: ZfsWitnessStanding {
+            authoritative_for: vec![],
+            advisory_for: vec![],
+            inadmissible_for: vec![],
+        },
+        observations: vec![ZfsObservation::Scan(ZfsScanObservation {
+            subject: format!("{pool}/scan"),
+            pool: pool.into(),
+            scan_type: Some("scrub".into()),
+            scan_state: scan_state.map(String::from),
+            last_completed_at,
+            errors_found: Some(0),
+        })],
+        errors: vec![],
+    };
+    Batch {
+        cycle_started_at: received_at,
+        cycle_completed_at: received_at,
+        sources_expected: 1,
+        source_runs: vec![SourceRun {
+            source: host.into(),
+            status: SourceStatus::Ok,
+            received_at,
+            collected_at: Some(received_at),
+            duration_ms: Some(5),
+            error_message: None,
+        }],
+        collector_runs: vec![CollectorRun {
+            source: host.into(),
+            collector: CollectorKind::ZfsWitness,
+            status: CollectorStatus::Ok,
+            collected_at: Some(received_at),
+            entity_count: Some(1),
+            error_message: None,
+        }],
+        host_rows: vec![],
+        service_sets: vec![],
+        sqlite_db_sets: vec![],
+        metric_sets: vec![],
+        log_sets: vec![],
+        zfs_witness_rows: vec![ZfsWitnessRow {
+            host: host.into(),
+            collected_at: received_at,
+            report,
+        }],
+    }
+}
+
+#[test]
+fn zfs_scrub_overdue_fires_when_last_completion_too_old() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // Last scrub 100 days ago: above the 90-day threshold.
+    let last = t - time::Duration::days(100);
+    let b = zfs_scan_batch("lil-nas-x", "tank", Some(last), Some("finished"),
+        &["scrub_completion"], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_scrub_overdue");
+    assert_eq!(d.len(), 1, "expected one overdue finding for tank");
+    assert_eq!(d[0].domain, "Δh");
+    assert_eq!(d[0].subject, "tank");
+    assert_eq!(d[0].host, "lil-nas-x");
+    // Basis wired from day one per EVIDENCE_RETIREMENT_GAP V1 convention
+    // for new detectors — new detectors do not ship with basis=unknown.
+    assert_eq!(d[0].basis_witness_id.as_deref(), Some("zfs.local.lil-nas-x"));
+    assert_eq!(d[0].basis_source_id.as_deref(), Some("zfs.local.lil-nas-x"));
+}
+
+#[test]
+fn zfs_scrub_overdue_stays_silent_on_fresh_completion() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // Last scrub 30 days ago: well within the 90-day threshold.
+    let last = t - time::Duration::days(30);
+    let b = zfs_scan_batch("lil-nas-x", "tank", Some(last), Some("finished"),
+        &["scrub_completion"], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_scrub_overdue");
+    assert!(d.is_empty(), "fresh scrub should not be overdue");
+}
+
+#[test]
+fn zfs_scrub_overdue_stays_silent_without_coverage() {
+    // Witness has data but does not declare scrub_completion in
+    // can_testify. Per coverage gating, the detector must not fire —
+    // we are not entitled to treat "old completion" as a fact the
+    // witness never stood behind.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let last = t - time::Duration::days(200);
+    let b = zfs_scan_batch("lil-nas-x", "tank", Some(last), Some("finished"),
+        &[/* scrub_completion deliberately absent */], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_scrub_overdue");
+    assert!(d.is_empty(),
+        "scrub_overdue MUST NOT fire when scrub_completion is not in can_testify");
+}
+
+#[test]
+fn zfs_scrub_overdue_stays_silent_on_null_completion() {
+    // last_completed_at is NULL — the detector deliberately does not
+    // fire in this case. NULL could mean "pool newly imported," "witness
+    // can't read history," or "scrub genuinely never completed"; V1
+    // refuses to pick a semantics for all three. A separate
+    // zfs_scrub_never_completed detector handles this if needed.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let b = zfs_scan_batch("lil-nas-x", "tank", None, Some("canceled"),
+        &["scrub_completion"], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_scrub_overdue");
+    assert!(d.is_empty(), "null last_completed_at should not fire overdue");
+}
+
+#[test]
+fn zfs_scrub_overdue_stays_silent_while_scrub_is_running() {
+    // Scrub is actively running right now. A mid-scrub pool is not
+    // overdue by definition, even if the prior completion was long ago.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let last = t - time::Duration::days(200);
+    let b = zfs_scan_batch("lil-nas-x", "tank", Some(last), Some("scanning"),
+        &["scrub_completion"], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_scrub_overdue");
+    assert!(d.is_empty(), "actively running scrub is not overdue");
+}

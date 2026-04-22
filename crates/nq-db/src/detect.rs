@@ -306,6 +306,7 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     detect_zfs_pool_degraded(db, &mut findings)?;
     detect_zfs_vdev_faulted(db, &mut findings)?;
     detect_zfs_error_count_increased(db, &mut findings)?;
+    detect_zfs_scrub_overdue(db, &mut findings)?;
     detect_zfs_witness_silent(db, &mut findings)?;
     // Saved query checks
     run_saved_checks(db, &mut findings)?;
@@ -1890,6 +1891,97 @@ fn detect_zfs_error_count_increased(
 /// Returns the signed delta `current - prior`.
 fn signed_delta(current: Option<i64>, prior: Option<i64>) -> i64 {
     current.unwrap_or(0) - prior.unwrap_or(0)
+}
+
+/// Scrub overdue threshold: seconds since the last completed scrub.
+///
+/// 90 days is a conservative "shouldn't exceed this" cadence for consumer
+/// and small-fleet ZFS — quarterly scrubs catch bit rot before redundancy
+/// has to do the catching. Hardcoded in V1; moves to `DetectorThresholds`
+/// if a deployment has different cadence requirements.
+///
+/// The detector fires `info` at the threshold; escalation to warning/critical
+/// happens via warning_state's consecutive_gens logic, not via an additional
+/// time threshold here. One threshold keeps the detector honest; severity
+/// progression is the lifecycle layer's job.
+const ZFS_SCRUB_OVERDUE_SECONDS: i64 = 90 * 86_400;
+
+/// Δh: ZFS pool scrub has not completed within the configured window.
+///
+/// Gated on `scrub_completion` coverage: pools whose witness cannot testify
+/// to scrub completion this cycle are not evaluated. Explicitly quiet on
+/// `last_completed_at IS NULL` — we do not know if that means "never
+/// scrubbed" or "never reported a completion through this witness," and the
+/// two deserve different semantics. A separate `zfs_scrub_never_completed`
+/// detector can handle the NULL case once there is a clear operational need.
+///
+/// Silent when the scrub is currently running (`scan_state = 'scanning'`) —
+/// mid-scrub is not overdue by definition.
+fn detect_zfs_scrub_overdue(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "SELECT s.host, s.pool, s.last_completed_at, s.scan_state,
+                CAST((julianday('now') - julianday(s.last_completed_at)) * 86400 AS INTEGER)
+                    AS age_seconds,
+                w.witness_id
+         FROM zfs_scans_current s
+         INNER JOIN zfs_witness_coverage_current c
+            ON c.host = s.host AND c.tag = 'scrub_completion' AND c.can_testify = 1
+         LEFT JOIN zfs_witness_current w ON w.host = s.host
+         WHERE s.last_completed_at IS NOT NULL
+           AND (s.scan_state IS NULL OR s.scan_state != 'scanning')
+           AND CAST((julianday('now') - julianday(s.last_completed_at)) * 86400 AS INTEGER) > ?1",
+    )?;
+    let rows = stmt.query_map([ZFS_SCRUB_OVERDUE_SECONDS], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, i64>(4)?,
+            row.get::<_, Option<String>>(5)?,
+        ))
+    })?;
+    for row in rows {
+        let (host, pool, last_completed_at, _scan_state, age_seconds, witness_id) = row?;
+        let message = format!(
+            "pool {pool} last completed scrub {} ago (threshold {})",
+            humanize_duration_s(age_seconds),
+            humanize_duration_s(ZFS_SCRUB_OVERDUE_SECONDS),
+        );
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "zfs_scrub_overdue".into(),
+            subject: pool.clone(),
+            message,
+            value: Some(age_seconds as f64),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Drift,
+                service_impact: ServiceImpact::NoneCurrent,
+                action_bias: ActionBias::InvestigateBusinessHours,
+                synopsis: format!(
+                    "ZFS pool {pool} has not completed a scrub since {last_completed_at} \
+                     ({} ago). Scrubs verify stored data against checksums and are the \
+                     primary defense against silent bit rot.",
+                    humanize_duration_s(age_seconds),
+                ),
+                why_care: "Without periodic scrubs, checksum errors accumulate \
+                           unrepaired. By the time a drive fails and resilver begins, \
+                           corruption on a second drive that a scrub would have caught \
+                           can cause data loss. Scrub cadence is storage hygiene — \
+                           not urgent, but not optional.".into(),
+            }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
+        });
+        let _ = last_completed_at;
+    }
+    Ok(())
 }
 
 /// Δo: ZFS witness silent — the witness itself has gone dark or reports
