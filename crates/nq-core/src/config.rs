@@ -166,6 +166,8 @@ pub struct PublisherConfig {
     pub log_sources: Vec<LogSourceConfig>,
     #[serde(default)]
     pub zfs_witness: Option<ZfsWitnessConfig>,
+    #[serde(default)]
+    pub smart_witness: Option<SmartWitnessConfig>,
 }
 
 /// Invokes a conforming `nq-witness` ZFS reference implementation as a
@@ -192,6 +194,41 @@ fn default_zfs_witness_helper_path() -> String {
 
 fn default_zfs_witness_timeout_ms() -> u64 {
     5_000
+}
+
+/// Invokes a conforming `nq-smart-witness` reference implementation as a
+/// subprocess. Same subprocess shape as ZfsWitnessConfig — the witness
+/// emits the canonical JSON report on stdout; the collector parses it,
+/// validates schema/profile_version, and stores the result.
+///
+/// Privilege model is per-deployment. The witness itself degrades
+/// per-device to `collection_outcome: permission_denied` when smartctl
+/// cannot open a device, so running without privilege is supported but
+/// yields partial coverage, not silent success.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmartWitnessConfig {
+    #[serde(default = "default_smart_witness_helper_path")]
+    pub helper_path: String,
+    /// Wrapper command that invokes `helper_path`. Typical values:
+    ///   []             — run helper_path directly (subprocess mode)
+    ///   ["sudo","-n"]  — invoke via passwordless sudo (sudo_helper mode)
+    /// The helper must accept no arguments in any mode.
+    #[serde(default)]
+    pub wrapper: Vec<String>,
+    #[serde(default = "default_smart_witness_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+fn default_smart_witness_helper_path() -> String {
+    "/usr/local/libexec/nq-smart-witness".to_string()
+}
+
+fn default_smart_witness_timeout_ms() -> u64 {
+    // SMART is slower than ZFS — per-device smartctl invocations can
+    // wake spinning drives and a full scan on an 8-drive host takes
+    // seconds, not milliseconds. 15s is a conservative default; the
+    // deployment can tighten it when they know their fleet.
+    15_000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

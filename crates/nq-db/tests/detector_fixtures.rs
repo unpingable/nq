@@ -43,6 +43,7 @@ fn empty_batch(t: OffsetDateTime) -> Batch {
         metric_sets: vec![],
             log_sets: vec![],
             zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
     }
 }
 
@@ -715,6 +716,7 @@ fn zfs_witness_batch(
             collected_at: received_at,
             report,
         }],
+        smart_witness_rows: vec![],
     }
 }
 
@@ -959,6 +961,7 @@ fn zfs_witness_batch_with_vdevs(
             collected_at: received_at,
             report,
         }],
+        smart_witness_rows: vec![],
     }
 }
 
@@ -1553,6 +1556,7 @@ fn zfs_scan_batch(
             collected_at: received_at,
             report,
         }],
+        smart_witness_rows: vec![],
     }
 }
 

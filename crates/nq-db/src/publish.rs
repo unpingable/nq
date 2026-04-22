@@ -335,6 +335,9 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
     // 9. Delete+replace zfs_witness_* tables for successful witness collections.
     publish_zfs_witness(&tx, generation_id, batch)?;
 
+    // 10. Same pattern for SMART witness reports.
+    publish_smart_witness(&tx, generation_id, batch)?;
+
     tx.commit()?;
 
     Ok(PublishResult {
@@ -548,6 +551,203 @@ fn publish_zfs_witness(
         for (ordinal, err) in report.errors.iter().enumerate() {
             tx.execute(
                 "INSERT INTO zfs_witness_errors_current
+                    (host, ordinal, kind, detail, observed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    &row.host,
+                    ordinal as i64,
+                    &err.kind,
+                    &err.detail,
+                    fmt_ts(&err.observed_at),
+                ],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Publish a SMART witness report: replace prior per-host rows wholesale.
+///
+/// Set semantics per host, parallel to the ZFS witness ingestion path:
+/// the witness's current cycle is the truth. A device present last cycle
+/// but absent this cycle is gone (USB unplugged, drive failed completely).
+/// Detectors query the current tables; Phase 1 retains no history.
+fn publish_smart_witness(
+    tx: &rusqlite::Transaction<'_>,
+    generation_id: i64,
+    batch: &nq_core::Batch,
+) -> anyhow::Result<()> {
+    use nq_core::wire::SmartObservation;
+    for row in &batch.smart_witness_rows {
+        let report = &row.report;
+
+        // Witness metadata.
+        tx.execute("DELETE FROM smart_witness_current WHERE host = ?1", [&row.host])?;
+        tx.execute(
+            "INSERT INTO smart_witness_current
+                (host, witness_id, witness_type, witness_host, observed_subject,
+                 profile_version, collection_mode, privilege_model, witness_status,
+                 witness_collected_at, duration_ms, as_of_generation, received_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            rusqlite::params![
+                &row.host,
+                &report.witness.id,
+                &report.witness.witness_type,
+                &report.witness.host,
+                &report.witness.observed_subject,
+                &report.witness.profile_version,
+                &report.witness.collection_mode,
+                &report.witness.privilege_model,
+                &report.witness.status,
+                fmt_ts(&report.witness.collected_at),
+                report.witness.duration_ms,
+                generation_id,
+                fmt_ts(&row.collected_at),
+            ],
+        )?;
+
+        // Witness-level coverage.
+        tx.execute(
+            "DELETE FROM smart_witness_coverage_current WHERE host = ?1",
+            [&row.host],
+        )?;
+        {
+            let mut ins = tx.prepare_cached(
+                "INSERT OR REPLACE INTO smart_witness_coverage_current (host, tag, can_testify)
+                 VALUES (?1, ?2, ?3)",
+            )?;
+            for tag in &report.coverage.can_testify {
+                ins.execute(rusqlite::params![&row.host, tag, 1])?;
+            }
+            for tag in &report.coverage.cannot_testify {
+                ins.execute(rusqlite::params![&row.host, tag, 0])?;
+            }
+        }
+
+        // Standing.
+        tx.execute(
+            "DELETE FROM smart_witness_standing_current WHERE host = ?1",
+            [&row.host],
+        )?;
+        {
+            let mut ins = tx.prepare_cached(
+                "INSERT OR REPLACE INTO smart_witness_standing_current (host, fact, standing)
+                 VALUES (?1, ?2, ?3)",
+            )?;
+            for fact in &report.standing.authoritative_for {
+                ins.execute(rusqlite::params![&row.host, fact, "authoritative"])?;
+            }
+            for fact in &report.standing.advisory_for {
+                ins.execute(rusqlite::params![&row.host, fact, "advisory"])?;
+            }
+            for fact in &report.standing.inadmissible_for {
+                ins.execute(rusqlite::params![&row.host, fact, "inadmissible"])?;
+            }
+        }
+
+        // Observations + per-device coverage. Wipe both per-host, then insert.
+        tx.execute(
+            "DELETE FROM smart_devices_current WHERE host = ?1",
+            [&row.host],
+        )?;
+        tx.execute(
+            "DELETE FROM smart_device_coverage_current WHERE host = ?1",
+            [&row.host],
+        )?;
+        tx.execute(
+            "DELETE FROM smart_witness_errors_current WHERE host = ?1",
+            [&row.host],
+        )?;
+
+        let collected_at = fmt_ts(&row.collected_at);
+        for obs in &report.observations {
+            match obs {
+                SmartObservation::Device(d) => {
+                    // Serialize raw JSON to TEXT for storage (if present).
+                    let raw_json: Option<String> = d
+                        .raw
+                        .as_ref()
+                        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "null".into()));
+
+                    tx.execute(
+                        "INSERT INTO smart_devices_current
+                            (host, subject, device_path, device_class, protocol, collection_outcome,
+                             model, serial_number, firmware_version, capacity_bytes, logical_block_size,
+                             smart_available, smart_enabled, smart_overall_passed,
+                             temperature_c, power_on_hours,
+                             uncorrected_read_errors, uncorrected_write_errors, uncorrected_verify_errors,
+                             media_errors, nvme_percentage_used, nvme_available_spare_pct,
+                             nvme_critical_warning, nvme_unsafe_shutdowns,
+                             raw_json, raw_truncated, raw_original_bytes, raw_truncated_bytes,
+                             as_of_generation, collected_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6,
+                                 ?7, ?8, ?9, ?10, ?11,
+                                 ?12, ?13, ?14,
+                                 ?15, ?16,
+                                 ?17, ?18, ?19,
+                                 ?20, ?21, ?22,
+                                 ?23, ?24,
+                                 ?25, ?26, ?27, ?28,
+                                 ?29, ?30)",
+                        rusqlite::params![
+                            &row.host,
+                            &d.subject,
+                            &d.device_path,
+                            &d.device_class,
+                            &d.protocol,
+                            &d.collection_outcome,
+                            &d.model,
+                            &d.serial_number,
+                            &d.firmware_version,
+                            d.capacity_bytes,
+                            d.logical_block_size,
+                            d.smart_available.map(|b| b as i64),
+                            d.smart_enabled.map(|b| b as i64),
+                            d.smart_overall_passed.map(|b| b as i64),
+                            d.temperature_c,
+                            d.power_on_hours,
+                            d.uncorrected_read_errors,
+                            d.uncorrected_write_errors,
+                            d.uncorrected_verify_errors,
+                            d.media_errors,
+                            d.nvme_percentage_used,
+                            d.nvme_available_spare_pct,
+                            d.nvme_critical_warning,
+                            d.nvme_unsafe_shutdowns,
+                            &raw_json,
+                            d.raw_truncated.map(|b| b as i64),
+                            d.raw_original_bytes,
+                            d.raw_truncated_bytes,
+                            generation_id,
+                            &collected_at,
+                        ],
+                    )?;
+
+                    // Per-device coverage.
+                    let mut ins = tx.prepare_cached(
+                        "INSERT OR REPLACE INTO smart_device_coverage_current
+                            (host, subject, tag, can_testify)
+                         VALUES (?1, ?2, ?3, ?4)",
+                    )?;
+                    for tag in &d.coverage.can_testify {
+                        ins.execute(rusqlite::params![&row.host, &d.subject, tag, 1])?;
+                    }
+                    for tag in &d.coverage.cannot_testify {
+                        ins.execute(rusqlite::params![&row.host, &d.subject, tag, 0])?;
+                    }
+                }
+                SmartObservation::Other => {
+                    // Unknown observation kind. Coverage-gating discipline
+                    // means detectors will never fire on unknown shapes;
+                    // dropping on the floor matches the ZFS path's choice.
+                }
+            }
+        }
+
+        // Witness-reported collection errors.
+        for (ordinal, err) in report.errors.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO smart_witness_errors_current
                     (host, ordinal, kind, detail, observed_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 rusqlite::params![
@@ -1099,6 +1299,7 @@ mod tests {
             metric_sets: vec![],
             log_sets: vec![],
             zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
         };
         let result = publish_batch(&mut db, &batch).unwrap();
         assert_eq!(result.sources_ok, 0);
@@ -1149,6 +1350,7 @@ mod tests {
             metric_sets: vec![],
             log_sets: vec![],
             zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
         };
         let result = publish_batch(&mut db, &batch).unwrap();
         assert_eq!(result.sources_ok, 1);
@@ -1227,6 +1429,7 @@ mod tests {
             metric_sets: vec![],
             log_sets: vec![],
             zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
         };
         publish_batch(&mut db, &batch1).unwrap();
 
@@ -1282,6 +1485,7 @@ mod tests {
             metric_sets: vec![],
             log_sets: vec![],
             zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
         };
         publish_batch(&mut db, &batch2).unwrap();
 
@@ -1343,6 +1547,7 @@ mod tests {
             metric_sets: vec![],
             log_sets: vec![],
             zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
         };
         let r1 = publish_batch(&mut db, &batch1).unwrap();
 
@@ -1366,6 +1571,7 @@ mod tests {
             metric_sets: vec![],
             log_sets: vec![],
             zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
         };
         let r2 = publish_batch(&mut db, &batch2).unwrap();
         assert!(r2.generation_id > r1.generation_id);
@@ -2689,6 +2895,7 @@ mod tests {
                 collected_at: t,
                 report,
             }],
+            smart_witness_rows: vec![],
         }
     }
 

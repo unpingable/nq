@@ -60,6 +60,7 @@ fn batch_with_services(host: &str, services: &[&str]) -> Batch {
             metric_sets: vec![],
             log_sets: vec![],
             zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
     }
 }
 
@@ -106,6 +107,7 @@ fn batch_with_host(host: &str, cpu_load: f64) -> Batch {
             metric_sets: vec![],
             log_sets: vec![],
             zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
     }
 }
 

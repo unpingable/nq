@@ -1,5 +1,5 @@
 use crate::status::{CollectorKind, CollectorStatus, GenerationStatus, ServiceStatus, SourceStatus};
-use crate::wire::ZfsWitnessReport;
+use crate::wire::{SmartWitnessReport, ZfsWitnessReport};
 use time::OffsetDateTime;
 
 /// A fully collected batch ready for atomic publish.
@@ -18,6 +18,7 @@ pub struct Batch {
     pub metric_sets: Vec<MetricSet>,
     pub log_sets: Vec<LogObsSet>,
     pub zfs_witness_rows: Vec<ZfsWitnessRow>,
+    pub smart_witness_rows: Vec<SmartWitnessRow>,
 }
 
 /// A single conforming witness report keyed to its publisher host.
@@ -26,6 +27,14 @@ pub struct ZfsWitnessRow {
     pub host: String,
     pub collected_at: OffsetDateTime,
     pub report: ZfsWitnessReport,
+}
+
+/// A single conforming SMART witness report keyed to its publisher host.
+#[derive(Debug, Clone)]
+pub struct SmartWitnessRow {
+    pub host: String,
+    pub collected_at: OffsetDateTime,
+    pub report: SmartWitnessReport,
 }
 
 impl Batch {

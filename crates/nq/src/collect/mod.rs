@@ -2,6 +2,7 @@ pub mod host;
 pub mod logs;
 pub mod prometheus;
 pub mod services;
+pub mod smart;
 pub mod sqlite_health;
 pub mod zfs;
 
@@ -24,6 +25,7 @@ pub fn collect_state(config: &PublisherConfig) -> PublisherState {
             prometheus: Some(prometheus::collect(config)),
             logs: Some(logs::collect(config)),
             zfs_witness: Some(zfs::collect(config)),
+            smart_witness: Some(smart::collect(config)),
         },
     }
 }

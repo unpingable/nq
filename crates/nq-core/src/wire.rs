@@ -29,6 +29,8 @@ pub struct Collectors {
     pub logs: Option<CollectorPayload<Vec<LogObservation>>>,
     #[serde(default)]
     pub zfs_witness: Option<CollectorPayload<ZfsWitnessReport>>,
+    #[serde(default)]
+    pub smart_witness: Option<CollectorPayload<SmartWitnessReport>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,6 +274,157 @@ pub struct ZfsSpareObservation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZfsWitnessError {
+    pub kind: String,
+    pub detail: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub observed_at: OffsetDateTime,
+}
+
+// ---------------------------------------------------------------------------
+// SMART witness report — canonical shape consumed by the SMART collector.
+// Mirrors nq.witness.v0 / nq.witness.smart.v0. See ~/git/nq-witness/profiles/smart.md.
+//
+// Phase 1 raw evidence only. No detector wiring, no verdict synthesis.
+// The types duplicate the ZFS witness envelope (Header/Coverage/Standing/Error)
+// intentionally — each profile owns its own wire surface; a shared envelope
+// invites coupling where the only thing actually shared is structural shape.
+// Dedupe can happen later if a third witness shows the duplication is real.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmartWitnessReport {
+    pub schema: String,
+    pub witness: SmartWitnessHeader,
+    pub coverage: SmartWitnessCoverage,
+    pub standing: SmartWitnessStanding,
+    #[serde(default)]
+    pub observations: Vec<SmartObservation>,
+    #[serde(default)]
+    pub errors: Vec<SmartWitnessError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmartWitnessHeader {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub witness_type: String,
+    pub host: String,
+    pub profile_version: String,
+    pub collection_mode: String,
+    pub privilege_model: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub collected_at: OffsetDateTime,
+    pub duration_ms: Option<i64>,
+    pub status: String,
+    #[serde(default)]
+    pub observed_subject: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmartWitnessCoverage {
+    #[serde(default)]
+    pub can_testify: Vec<String>,
+    #[serde(default)]
+    pub cannot_testify: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmartWitnessStanding {
+    #[serde(default)]
+    pub authoritative_for: Vec<String>,
+    #[serde(default)]
+    pub advisory_for: Vec<String>,
+    #[serde(default)]
+    pub inadmissible_for: Vec<String>,
+}
+
+/// SMART observation. Only one variant in Phase 1 (`smart_device`).
+/// Unknown kinds deserialize into `Other` so forward-compat profile
+/// growth does not break NQ.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum SmartObservation {
+    #[serde(rename = "smart_device")]
+    Device(SmartDeviceObservation),
+    #[serde(other)]
+    Other,
+}
+
+/// One row of raw device-reported SMART evidence. Phase 1 refuses to
+/// reconcile `smart_overall_passed` against the uncorrected-error counters;
+/// both surface as independent fields so detector work in a later phase
+/// has the full evidence set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmartDeviceObservation {
+    pub subject: String,
+    pub device_path: String,
+    pub device_class: String,
+    pub protocol: String,
+
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub serial_number: Option<String>,
+    #[serde(default)]
+    pub firmware_version: Option<String>,
+    #[serde(default)]
+    pub capacity_bytes: Option<i64>,
+    #[serde(default)]
+    pub logical_block_size: Option<i64>,
+
+    #[serde(default)]
+    pub smart_available: Option<bool>,
+    #[serde(default)]
+    pub smart_enabled: Option<bool>,
+    #[serde(default)]
+    pub smart_overall_passed: Option<bool>,
+
+    #[serde(default)]
+    pub temperature_c: Option<i64>,
+    #[serde(default)]
+    pub power_on_hours: Option<i64>,
+
+    #[serde(default)]
+    pub uncorrected_read_errors: Option<i64>,
+    #[serde(default)]
+    pub uncorrected_write_errors: Option<i64>,
+    #[serde(default)]
+    pub uncorrected_verify_errors: Option<i64>,
+    #[serde(default)]
+    pub media_errors: Option<i64>,
+
+    #[serde(default)]
+    pub nvme_percentage_used: Option<i64>,
+    #[serde(default)]
+    pub nvme_available_spare_pct: Option<i64>,
+    #[serde(default)]
+    pub nvme_critical_warning: Option<i64>,
+    #[serde(default)]
+    pub nvme_unsafe_shutdowns: Option<i64>,
+
+    pub coverage: SmartDeviceCoverage,
+    pub collection_outcome: String,
+
+    #[serde(default)]
+    pub raw: Option<serde_json::Value>,
+    #[serde(default)]
+    pub raw_truncated: Option<bool>,
+    #[serde(default)]
+    pub raw_original_bytes: Option<i64>,
+    #[serde(default)]
+    pub raw_truncated_bytes: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmartDeviceCoverage {
+    #[serde(default)]
+    pub can_testify: Vec<String>,
+    #[serde(default)]
+    pub cannot_testify: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmartWitnessError {
     pub kind: String,
     pub detail: String,
     #[serde(with = "time::serde::rfc3339")]

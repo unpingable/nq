@@ -4,7 +4,7 @@
 use nq_core::batch::*;
 use nq_core::status::*;
 use nq_core::wire::PublisherState;
-use nq_core::{Config, SourceConfig, ZfsWitnessRow};
+use nq_core::{Config, SmartWitnessRow, SourceConfig, ZfsWitnessRow};
 use time::OffsetDateTime;
 use tracing::warn;
 
@@ -25,6 +25,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
     let mut metric_sets = Vec::new();
     let mut log_sets = Vec::new();
     let mut zfs_witness_rows = Vec::new();
+    let mut smart_witness_rows = Vec::new();
 
     for handle in handles {
         let result = handle.await?;
@@ -38,6 +39,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
                 metric_set,
                 log_set,
                 zfs_witness_row,
+                smart_witness_row,
             } => {
                 source_runs.push(source_run);
                 collector_runs.extend(coll_runs);
@@ -58,6 +60,9 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
                 }
                 if let Some(zw) = zfs_witness_row {
                     zfs_witness_rows.push(zw);
+                }
+                if let Some(sw) = smart_witness_row {
+                    smart_witness_rows.push(sw);
                 }
             }
             PullResult::Failed(source_run) => {
@@ -80,6 +85,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
         metric_sets,
         log_sets,
         zfs_witness_rows,
+        smart_witness_rows,
     })
 }
 
@@ -93,6 +99,7 @@ enum PullResult {
         metric_set: Option<MetricSet>,
         log_set: Option<LogObsSet>,
         zfs_witness_row: Option<ZfsWitnessRow>,
+        smart_witness_row: Option<SmartWitnessRow>,
     },
     Failed(SourceRun),
 }
@@ -172,6 +179,7 @@ async fn pull_one(source: SourceConfig) -> PullResult {
     let mut metric_set = None;
     let mut log_set = None;
     let mut zfs_witness_row = None;
+    let mut smart_witness_row = None;
 
     // Host collector
     if let Some(ref payload) = state.collectors.host {
@@ -380,6 +388,29 @@ async fn pull_one(source: SourceConfig) -> PullResult {
         }
     }
 
+    // SMART witness collector
+    if let Some(ref payload) = state.collectors.smart_witness {
+        let entity_count = payload.data.as_ref().map(|r| r.observations.len() as u32);
+        coll_runs.push(CollectorRun {
+            source: canonical_host.clone(),
+            collector: CollectorKind::SmartWitness,
+            status: payload.status,
+            collected_at: payload.collected_at,
+            entity_count,
+            error_message: payload.error_message.clone(),
+        });
+        if payload.status == CollectorStatus::Ok {
+            if let Some(ref report) = payload.data {
+                let collected_at = payload.collected_at.unwrap_or(state.collected_at);
+                smart_witness_row = Some(SmartWitnessRow {
+                    host: canonical_host.clone(),
+                    collected_at,
+                    report: report.clone(),
+                });
+            }
+        }
+    }
+
     PullResult::Ok {
         source_run,
         coll_runs,
@@ -389,5 +420,6 @@ async fn pull_one(source: SourceConfig) -> PullResult {
         metric_set,
         log_set,
         zfs_witness_row,
+        smart_witness_row,
     }
 }
