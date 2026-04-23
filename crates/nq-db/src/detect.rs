@@ -188,6 +188,69 @@ impl Stability {
     }
 }
 
+/// Categorical axis distinguishing what *kind* of thing a finding is.
+///
+/// Orthogonal to severity (ordinal, within kind) and ServiceImpact (current
+/// observable consequence). A high-severity maintenance finding is still
+/// maintenance; it does not become a low-severity incident.
+///
+/// Declaration rule: every emitter declares this at construction time. It
+/// is **not** inferred from ServiceImpact, ActionBias, rendered copy, or
+/// notification routing. See docs/gaps/ALERT_INTERPRETATION_GAP.md §"State
+/// kind as a first-class axis".
+///
+/// `LegacyUnclassified` exists as the migration contract: pre-migration
+/// findings carry it so they age out via retention without being silently
+/// reclassified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateKind {
+    /// Actively breaking service or user-visible behavior.
+    Incident,
+    /// Trending toward pain, bounded intervention soon.
+    Degradation,
+    /// Accumulative, slow-moving, planned-work-worthy. Not pager material.
+    Maintenance,
+    /// Worth observing, not action-demanding.
+    Informational,
+    /// Pre-migration findings. Never heuristically backfilled.
+    LegacyUnclassified,
+}
+
+impl StateKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Incident => "incident",
+            Self::Degradation => "degradation",
+            Self::Maintenance => "maintenance",
+            Self::Informational => "informational",
+            Self::LegacyUnclassified => "legacy_unclassified",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "incident" => Some(Self::Incident),
+            "degradation" => Some(Self::Degradation),
+            "maintenance" => Some(Self::Maintenance),
+            "informational" => Some(Self::Informational),
+            "legacy_unclassified" => Some(Self::LegacyUnclassified),
+            _ => None,
+        }
+    }
+
+    /// Lane order for rollup rendering. Defined in code, not derived from
+    /// enum ordinal: 0 (incident) wins, 4 (legacy) de-emphasized.
+    pub fn lane_order(self) -> u8 {
+        match self {
+            Self::Incident => 0,
+            Self::Degradation => 1,
+            Self::Maintenance => 2,
+            Self::Informational => 3,
+            Self::LegacyUnclassified => 4,
+        }
+    }
+}
+
 /// Typed diagnosis attached to a finding at emission time.
 ///
 /// The contract: detectors populate this deliberately. Renderers consume
@@ -221,6 +284,8 @@ pub struct Finding {
     /// Semantic hash of the rule that produced this finding. If the rule
     /// changes (thresholds, query text), state resets.
     pub rule_hash: Option<String>,
+    /// Categorical kind. Declared at emission; never inferred downstream.
+    pub state_kind: StateKind,
     /// Typed diagnosis. None for detectors not yet migrated; the renderer
     /// falls back to finding_meta.rs static lookup when absent.
     pub diagnosis: Option<FindingDiagnosis>,
@@ -351,6 +416,7 @@ fn detect_wal_bloat(
                 value: Some(wal_size_mb),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                state_kind: StateKind::Maintenance,
                 diagnosis: Some(FindingDiagnosis {
                     failure_class: FailureClass::Accumulation,
                     service_impact: ServiceImpact::NoneCurrent,
@@ -400,6 +466,7 @@ fn detect_freelist_bloat(
                 value: Some(reclaimable_mb),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                state_kind: StateKind::Maintenance,
                 diagnosis: Some(FindingDiagnosis {
                     failure_class: FailureClass::Accumulation,
                     service_impact: ServiceImpact::NoneCurrent,
@@ -439,12 +506,12 @@ fn detect_stale_hosts(
         //   ≤5 gens behind: NoneCurrent / InvestigateBusinessHours
         //   6-20 gens behind: Degraded / InvestigateNow
         //   >20 gens behind: ImmediateRisk / InterveneNow
-        let (impact, bias) = if gens_behind > 20 {
-            (ServiceImpact::ImmediateRisk, ActionBias::InterveneNow)
+        let (impact, bias, state_kind) = if gens_behind > 20 {
+            (ServiceImpact::ImmediateRisk, ActionBias::InterveneNow, StateKind::Incident)
         } else if gens_behind > 5 {
-            (ServiceImpact::Degraded, ActionBias::InvestigateNow)
+            (ServiceImpact::Degraded, ActionBias::InvestigateNow, StateKind::Degradation)
         } else {
-            (ServiceImpact::NoneCurrent, ActionBias::InvestigateBusinessHours)
+            (ServiceImpact::NoneCurrent, ActionBias::InvestigateBusinessHours, StateKind::Informational)
         };
 
         let synopsis = format!(
@@ -474,6 +541,7 @@ fn detect_stale_hosts(
             value: Some(age_s as f64),
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Silence,
                 service_impact: impact,
@@ -508,10 +576,10 @@ fn detect_stale_services(
         let (host, service, age_s, gens_behind) = row?;
 
         // Value-dependent: NoneCurrent if ≤10 gens, Degraded otherwise
-        let (impact, bias) = if gens_behind > 10 {
-            (ServiceImpact::Degraded, ActionBias::InvestigateNow)
+        let (impact, bias, state_kind) = if gens_behind > 10 {
+            (ServiceImpact::Degraded, ActionBias::InvestigateNow, StateKind::Degradation)
         } else {
-            (ServiceImpact::NoneCurrent, ActionBias::InvestigateBusinessHours)
+            (ServiceImpact::NoneCurrent, ActionBias::InvestigateBusinessHours, StateKind::Informational)
         };
 
         out.push(Finding {
@@ -523,6 +591,7 @@ fn detect_stale_services(
             value: Some(age_s as f64),
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Silence,
                 service_impact: impact,
@@ -557,10 +626,10 @@ fn detect_service_status(
         let domain = "Δg"; // present-but-bad, not missing
 
         // Value-dependent: up→NoneCurrent, degraded→Degraded, down→ImmediateRisk
-        let (impact, bias) = match status.as_str() {
-            "down" | "failed" | "dead" => (ServiceImpact::ImmediateRisk, ActionBias::InterveneNow),
-            "degraded" | "activating" | "deactivating" => (ServiceImpact::Degraded, ActionBias::InvestigateNow),
-            _ => (ServiceImpact::NoneCurrent, ActionBias::Watch),
+        let (impact, bias, state_kind) = match status.as_str() {
+            "down" | "failed" | "dead" => (ServiceImpact::ImmediateRisk, ActionBias::InterveneNow, StateKind::Incident),
+            "degraded" | "activating" | "deactivating" => (ServiceImpact::Degraded, ActionBias::InvestigateNow, StateKind::Degradation),
+            _ => (ServiceImpact::NoneCurrent, ActionBias::Watch, StateKind::Informational),
         };
 
         out.push(Finding {
@@ -572,6 +641,7 @@ fn detect_service_status(
             value: None,
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Availability,
                 service_impact: impact,
@@ -616,6 +686,7 @@ fn detect_source_errors(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
             value: None,
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: StateKind::Degradation,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Silence,
                 service_impact: ServiceImpact::NoneCurrent,
@@ -661,6 +732,7 @@ fn detect_metric_nan(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<
             value: None,
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: StateKind::Informational,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Drift,
                 service_impact: ServiceImpact::NoneCurrent,
@@ -694,12 +766,12 @@ fn detect_disk_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
 
         // Value-dependent: ≤90% → NoneCurrent/InvestigateBH,
         // 90-95% → Degraded/InvestigateNow, >95% → ImmediateRisk/InterveneNow
-        let (impact, bias) = if pct > 95.0 {
-            (ServiceImpact::ImmediateRisk, ActionBias::InterveneNow)
+        let (impact, bias, state_kind) = if pct > 95.0 {
+            (ServiceImpact::ImmediateRisk, ActionBias::InterveneNow, StateKind::Incident)
         } else if pct > 90.0 {
-            (ServiceImpact::Degraded, ActionBias::InvestigateNow)
+            (ServiceImpact::Degraded, ActionBias::InvestigateNow, StateKind::Degradation)
         } else {
-            (ServiceImpact::NoneCurrent, ActionBias::InvestigateBusinessHours)
+            (ServiceImpact::NoneCurrent, ActionBias::InvestigateBusinessHours, StateKind::Degradation)
         };
 
         out.push(Finding {
@@ -711,6 +783,7 @@ fn detect_disk_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
             value: Some(pct),
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Pressure,
                 service_impact: impact,
@@ -755,6 +828,7 @@ fn detect_memory_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Re
             value: Some(pct),
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: StateKind::Degradation,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Pressure,
                 service_impact: ServiceImpact::NoneCurrent,
@@ -846,6 +920,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     value: Some(now),
                     finding_class: "signal".into(),
                     rule_hash: None,
+                    state_kind: StateKind::Informational,
                     diagnosis: Some(FindingDiagnosis {
                         failure_class: FailureClass::Pressure,
                         service_impact: ServiceImpact::NoneCurrent,
@@ -874,6 +949,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     value: Some(now),
                     finding_class: "signal".into(),
                     rule_hash: None,
+                    state_kind: StateKind::Informational,
                     diagnosis: Some(FindingDiagnosis {
                         failure_class: FailureClass::Pressure,
                         service_impact: ServiceImpact::NoneCurrent,
@@ -902,6 +978,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     value: Some(now),
                     finding_class: "signal".into(),
                     rule_hash: None,
+                    state_kind: StateKind::Informational,
                     diagnosis: Some(FindingDiagnosis {
                         failure_class: FailureClass::Pressure,
                         service_impact: ServiceImpact::NoneCurrent,
@@ -973,6 +1050,7 @@ fn detect_service_flap(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resul
             value: Some(transitions as f64),
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: StateKind::Degradation,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Flapping,
                 service_impact: ServiceImpact::Degraded,
@@ -1033,6 +1111,7 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             value: None,
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: StateKind::Degradation,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Silence,
                 service_impact: ServiceImpact::NoneCurrent,
@@ -1084,6 +1163,7 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             value: None,
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: StateKind::Informational,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Silence,
                 service_impact: ServiceImpact::NoneCurrent,
@@ -1160,6 +1240,7 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                 value: Some(new_count as f64),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                state_kind: StateKind::Informational,
                 diagnosis: Some(FindingDiagnosis {
                     failure_class: FailureClass::Flapping,
                     service_impact: ServiceImpact::NoneCurrent,
@@ -1186,6 +1267,7 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                 value: Some(vanished as f64),
                 finding_class: "signal".into(),
                 rule_hash: None,
+                state_kind: StateKind::Informational,
                 diagnosis: Some(FindingDiagnosis {
                     failure_class: FailureClass::Silence,
                     service_impact: ServiceImpact::NoneCurrent,
@@ -1256,6 +1338,7 @@ fn detect_log_silence(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
             value: Some(0.0),
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: StateKind::Degradation,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Silence,
                 service_impact: ServiceImpact::NoneCurrent,
@@ -1339,6 +1422,7 @@ fn detect_error_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
             value: Some(ratio),
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: StateKind::Degradation,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Drift,
                 service_impact: ServiceImpact::Degraded,
@@ -1397,6 +1481,7 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                     value: None,
                     finding_class: "meta".into(),
                     rule_hash: Some(hash),
+                    state_kind: StateKind::Informational,
                     diagnosis: Some(FindingDiagnosis {
                         failure_class: FailureClass::Unspecified,
                         service_impact: ServiceImpact::NoneCurrent,
@@ -1444,6 +1529,7 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                         value: Some(row_count as f64),
                         finding_class: "meta".into(),
                         rule_hash: Some(hash),
+                        state_kind: StateKind::Informational,
                         diagnosis: Some(FindingDiagnosis {
                             failure_class: FailureClass::Unspecified,
                             service_impact: ServiceImpact::NoneCurrent,
@@ -1582,6 +1668,7 @@ fn detect_zfs_pool_degraded(
             value: health_numeric.map(|n| n as f64),
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: StateKind::Degradation,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Availability,
                 service_impact: ServiceImpact::Degraded,
@@ -1666,15 +1753,15 @@ fn detect_zfs_vdev_faulted(
             .get(&(host.clone(), pool.clone()))
             .unwrap_or(&1);
 
-        let (impact, bias) = if pool_fault_count >= 2 {
+        let (impact, bias, state_kind) = if pool_fault_count >= 2 {
             // Two or more faulted vdevs in the same pool: redundancy
             // consumed, one more failure before data loss. Escalate.
-            (ServiceImpact::ImmediateRisk, ActionBias::InterveneNow)
+            (ServiceImpact::ImmediateRisk, ActionBias::InterveneNow, StateKind::Incident)
         } else {
             // Single faulted vdev, pool likely still serving with narrower
             // redundancy. Regime features may escalate later based on
             // error-count trajectory.
-            (ServiceImpact::Degraded, ActionBias::InvestigateNow)
+            (ServiceImpact::Degraded, ActionBias::InvestigateNow, StateKind::Degradation)
         };
 
         let errs_summary = format!(
@@ -1726,6 +1813,7 @@ fn detect_zfs_vdev_faulted(
             value: cksum_err.map(|c| c as f64),
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Availability,
                 service_impact: impact,
@@ -1871,6 +1959,7 @@ fn detect_zfs_error_count_increased(
             value: Some(total_delta as f64),
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: StateKind::Degradation,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Drift,
                 service_impact: ServiceImpact::Degraded,
@@ -1960,6 +2049,7 @@ fn detect_zfs_scrub_overdue(
             value: Some(age_seconds as f64),
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: StateKind::Maintenance,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Drift,
                 service_impact: ServiceImpact::NoneCurrent,
@@ -2069,6 +2159,7 @@ fn detect_zfs_witness_silent(
             value: Some(received_age as f64),
             finding_class: "meta".into(),
             rule_hash: None,
+            state_kind: StateKind::Degradation,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Silence,
                 service_impact: ServiceImpact::NoneCurrent,

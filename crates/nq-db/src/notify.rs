@@ -7,6 +7,7 @@
 //! Notification history persists across warning_state row deletion so that
 //! cyclical conditions are labeled (recurring) rather than (new).
 
+use crate::detect::StateKind;
 use crate::WriteDb;
 
 /// How a notification relates to prior notifications for the same identity.
@@ -38,6 +39,98 @@ pub struct PendingNotification {
     /// strong enough to report — payload builders emit nothing for
     /// this case rather than a literal "none" token.
     pub regime: Option<(crate::regime::RegimeBadge, String)>,
+    /// Categorical kind declared by the emitting detector. Read from
+    /// warning_state.state_kind. Pre-migration rows read as
+    /// `LegacyUnclassified`. Drives lane-ordered rollup rendering.
+    pub state_kind: StateKind,
+}
+
+/// A group of findings that render as one operator-facing card.
+///
+/// Grouping key: `(host, state_kind, detector_family)`. Lane ordering
+/// privileges `state_kind` first (incident > degradation > maintenance >
+/// informational > legacy_unclassified); severity sorts within a lane.
+///
+/// Legacy-unclassified findings get their own rollup per finding — they
+/// are not mixed into "clean" rollups. See ALERT_INTERPRETATION_GAP
+/// §"State kind as a first-class axis" §"Migration contract".
+#[derive(Debug, Clone)]
+pub struct NotificationRollup {
+    pub host: String,
+    pub state_kind: StateKind,
+    pub detector_family: String,
+    /// Findings inside this rollup, sorted by severity (critical first)
+    /// then by stable tiebreak (kind, subject).
+    pub findings: Vec<PendingNotification>,
+}
+
+/// Detector family grouping used for rollup aggregation. Derived from
+/// `kind` at rollup time. Deliberately coarse — the family is a rendering
+/// grouping, not semantics. If a family designation gets contentious,
+/// split the detector, don't split the family.
+pub fn detector_family(kind: &str) -> &'static str {
+    match kind {
+        "wal_bloat" | "freelist_bloat" => "sqlite",
+        k if k.starts_with("zfs_") => "zfs",
+        "disk_pressure" | "mem_pressure" | "resource_drift" | "stale_host" => "host",
+        "stale_service" | "service_status" | "service_flap" | "signal_dropout" => "service",
+        "log_silence" | "error_shift" => "logs",
+        "metric_signal" | "scrape_regime_shift" => "metric",
+        "check_failed" | "check_error" => "saved_check",
+        "source_error" => "source",
+        _ => "other",
+    }
+}
+
+/// Group pending notifications into rollups keyed by
+/// `(host, state_kind, detector_family)`. `legacy_unclassified` findings
+/// get their own per-finding rollup — they are not merged with kind-clean
+/// groups.
+///
+/// Output ordering: lane order first (incident → legacy), then within-lane
+/// by host / detector_family for stable rendering.
+pub fn rollup_pending(pending: Vec<PendingNotification>) -> Vec<NotificationRollup> {
+    use std::collections::BTreeMap;
+
+    // Key includes an ordinal for stable lane-first ordering. For
+    // legacy_unclassified we append the finding identity so each stays its
+    // own rollup rather than merging with siblings — the migration contract
+    // forbids clean aggregation of legacy rows.
+    let mut buckets: BTreeMap<(u8, String, String, String, String), Vec<PendingNotification>> = BTreeMap::new();
+
+    for n in pending {
+        let family = detector_family(&n.kind).to_string();
+        let lane = n.state_kind.lane_order();
+        let kind_key = n.state_kind.as_str().to_string();
+        let dedup = match n.state_kind {
+            StateKind::LegacyUnclassified => format!("{}:{}:{}", n.kind, n.subject, n.host),
+            _ => String::new(),
+        };
+        let key = (lane, kind_key, n.host.clone(), family, dedup);
+        buckets.entry(key).or_default().push(n);
+    }
+
+    let mut rollups = Vec::with_capacity(buckets.len());
+    for ((_lane, _kind_key, host, family, _dedup), mut findings) in buckets {
+        // Severity within lane: critical first. Stable tiebreak on kind/subject.
+        findings.sort_by(|a, b| {
+            severity_rank(&b.severity)
+                .cmp(&severity_rank(&a.severity))
+                .then_with(|| a.kind.cmp(&b.kind))
+                .then_with(|| a.subject.cmp(&b.subject))
+        });
+        let state_kind = findings
+            .first()
+            .map(|f| f.state_kind)
+            .unwrap_or(StateKind::LegacyUnclassified);
+        rollups.push(NotificationRollup {
+            host,
+            state_kind,
+            detector_family: family,
+            findings,
+        });
+    }
+    rollups
 }
 
 // Cooldown: don't re-announce same identity as (new) within this window.
@@ -51,7 +144,8 @@ pub fn find_pending(db: &WriteDb, min_severity: &str) -> anyhow::Result<Vec<Pend
     let mut stmt = db.conn.prepare(
         "SELECT ws.host, ws.domain, ws.kind, ws.subject, ws.message, ws.severity,
                 ws.notified_severity, ws.consecutive_gens, ws.first_seen_at, ws.peak_value,
-                nh.last_notified_at, nh.last_notified_severity, nh.notification_count
+                nh.last_notified_at, nh.last_notified_severity, nh.notification_count,
+                ws.state_kind
          FROM warning_state ws
          LEFT JOIN notification_history nh
            ON ws.host = nh.host AND ws.kind = nh.kind AND ws.subject = nh.subject
@@ -77,6 +171,7 @@ pub fn find_pending(db: &WriteDb, min_severity: &str) -> anyhow::Result<Vec<Pend
             row.get::<_, Option<String>>(10)?, // nh.last_notified_at
             row.get::<_, Option<String>>(11)?, // nh.last_notified_severity
             row.get::<_, Option<i64>>(12)?,    // nh.notification_count
+            row.get::<_, String>(13)?,         // ws.state_kind
         ))
     })?;
 
@@ -84,7 +179,9 @@ pub fn find_pending(db: &WriteDb, min_severity: &str) -> anyhow::Result<Vec<Pend
     for row in rows {
         let (host, domain, kind, subject, message, severity,
              _notified_sev, gens, first_seen, peak,
-             hist_last_at, hist_last_sev, _hist_count) = row?;
+             hist_last_at, hist_last_sev, _hist_count, state_kind_str) = row?;
+        let state_kind = StateKind::from_str(&state_kind_str)
+            .unwrap_or(StateKind::LegacyUnclassified);
 
         let current_rank = severity_rank(&severity);
 
@@ -134,6 +231,7 @@ pub fn find_pending(db: &WriteDb, min_severity: &str) -> anyhow::Result<Vec<Pend
                 first_seen_at: first_seen,
                 peak_value: peak,
                 regime,
+                state_kind,
             });
         }
     }
@@ -398,6 +496,228 @@ pub fn build_discord_payload(n: &PendingNotification, generation_id: i64, base_u
     serde_json::json!({ "content": content })
 }
 
+/// Render a rollup as a Slack payload.
+///
+/// Single-finding rollups delegate to `build_slack_payload` so the common
+/// case is unchanged. Multi-finding rollups render one enumerated card
+/// with a lane-aware headline. Maintenance lane uses backlog phrasing;
+/// legacy lane carries a `[legacy]` marker.
+pub fn build_rollup_slack_payload(
+    r: &NotificationRollup,
+    generation_id: i64,
+    base_url: &str,
+) -> serde_json::Value {
+    if r.findings.len() == 1 {
+        let mut payload = build_slack_payload(&r.findings[0], generation_id, base_url);
+        if matches!(r.state_kind, StateKind::LegacyUnclassified) {
+            if let Some(obj) = payload.as_object_mut() {
+                if let Some(text) = obj.get_mut("text").and_then(|v| v.as_str()).map(str::to_string) {
+                    obj.insert("text".into(), serde_json::Value::String(format!("{text}\n_[legacy: state_kind unclassified]_")));
+                }
+            }
+        }
+        return payload;
+    }
+
+    let now = time::OffsetDateTime::now_utc();
+    let scope = scope_label(&r.host);
+    let family = &r.detector_family;
+    let count = r.findings.len();
+
+    let (emoji, headline_verb) = rollup_headline_parts_slack(r.state_kind);
+    let headline = match r.state_kind {
+        StateKind::Maintenance => format!(
+            "{} *{} {} backlog on {}* — {} finding{}",
+            emoji,
+            family.to_uppercase(),
+            headline_verb,
+            scope,
+            count,
+            if count == 1 { "" } else { "s" },
+        ),
+        StateKind::Informational => format!(
+            "{} *{} {} on {}* — {} finding{}",
+            emoji,
+            family.to_uppercase(),
+            headline_verb,
+            scope,
+            count,
+            if count == 1 { "" } else { "s" },
+        ),
+        _ => format!(
+            "{} *{} on {}* ({}) — {} finding{}",
+            emoji,
+            headline_verb,
+            scope,
+            family,
+            count,
+            if count == 1 { "" } else { "s" },
+        ),
+    };
+
+    let mut bullets = String::new();
+    for f in &r.findings {
+        bullets.push_str(&format!("{}\n", format_finding_line(&f.kind, &f.subject)));
+    }
+
+    // Metadata and since: use the oldest finding as the anchor. Escalation
+    // information collapses to "see below" when rollups mix notification
+    // kinds; for v1 we render the single-case metadata if all findings
+    // share it, otherwise a plain gen marker.
+    let anchor = r.findings.iter()
+        .min_by(|a, b| a.first_seen_at.cmp(&b.first_seen_at))
+        .expect("rollup has at least one finding");
+    let metadata = format_metadata_line(&anchor.notification_kind, generation_id, anchor.consecutive_gens);
+    let since_line = format_since(&anchor.first_seen_at, now);
+
+    let regime_line = format_regime_line(anchor);
+
+    let text = format!(
+        "{}\n{}_{}_\n_Since {}_{}",
+        headline,
+        bullets,
+        metadata,
+        since_line,
+        regime_line,
+    );
+
+    serde_json::json!({ "text": text })
+}
+
+/// Render a rollup as a Discord payload. Mirrors the Slack shape.
+pub fn build_rollup_discord_payload(
+    r: &NotificationRollup,
+    generation_id: i64,
+    base_url: &str,
+) -> serde_json::Value {
+    if r.findings.len() == 1 {
+        let mut payload = build_discord_payload(&r.findings[0], generation_id, base_url);
+        if matches!(r.state_kind, StateKind::LegacyUnclassified) {
+            if let Some(obj) = payload.as_object_mut() {
+                if let Some(content) = obj.get_mut("content").and_then(|v| v.as_str()).map(str::to_string) {
+                    obj.insert("content".into(), serde_json::Value::String(format!("{content}\n-# [legacy: state_kind unclassified]")));
+                }
+            }
+        }
+        return payload;
+    }
+
+    let now = time::OffsetDateTime::now_utc();
+    let scope = scope_label(&r.host);
+    let family = &r.detector_family;
+    let count = r.findings.len();
+
+    let (emoji, headline_verb) = rollup_headline_parts_discord(r.state_kind);
+    let headline = match r.state_kind {
+        StateKind::Maintenance => format!(
+            "{} **{} {} backlog on {}** — {} finding{}",
+            emoji, family.to_uppercase(), headline_verb, scope, count,
+            if count == 1 { "" } else { "s" },
+        ),
+        StateKind::Informational => format!(
+            "{} **{} {} on {}** — {} finding{}",
+            emoji, family.to_uppercase(), headline_verb, scope, count,
+            if count == 1 { "" } else { "s" },
+        ),
+        _ => format!(
+            "{} **{} on {}** ({}) — {} finding{}",
+            emoji, headline_verb, scope, family, count,
+            if count == 1 { "" } else { "s" },
+        ),
+    };
+
+    let mut bullets = String::new();
+    for f in &r.findings {
+        bullets.push_str(&format!("{}\n", format_finding_line(&f.kind, &f.subject)));
+    }
+
+    let anchor = r.findings.iter()
+        .min_by(|a, b| a.first_seen_at.cmp(&b.first_seen_at))
+        .expect("rollup has at least one finding");
+    let metadata = format_metadata_line(&anchor.notification_kind, generation_id, anchor.consecutive_gens);
+    let since_line = format_since(&anchor.first_seen_at, now);
+
+    let regime_line = match &anchor.regime {
+        Some((badge, sentence)) => format!("\n-# Regime: {} — {}", badge.as_str(), sentence),
+        None => String::new(),
+    };
+
+    let content = format!(
+        "{}\n{}-# {}\n-# Since {}{}",
+        headline, bullets, metadata, since_line, regime_line,
+    );
+
+    serde_json::json!({ "content": content })
+}
+
+/// Render a rollup as a JSON webhook payload.
+pub fn build_rollup_webhook_payload(
+    r: &NotificationRollup,
+    generation_id: i64,
+    base_url: &str,
+) -> serde_json::Value {
+    let findings: Vec<_> = r.findings.iter().map(|f| {
+        let (previous_severity, is_recurring) = match &f.notification_kind {
+            NotificationKind::New => (None, false),
+            NotificationKind::Recurring { last_severity } => (Some(last_severity.as_str()), true),
+            NotificationKind::Escalated { from_severity } => (Some(from_severity.as_str()), false),
+        };
+        let (regime_badge, regime_explanation) = match &f.regime {
+            Some((b, s)) => (Some(b.as_str()), Some(s.as_str())),
+            None => (None, None),
+        };
+        serde_json::json!({
+            "host": f.host,
+            "domain": f.domain,
+            "kind": f.kind,
+            "subject": f.subject,
+            "message": f.message,
+            "severity": f.severity,
+            "previous_severity": previous_severity,
+            "is_recurring": is_recurring,
+            "consecutive_gens": f.consecutive_gens,
+            "first_seen_at": f.first_seen_at,
+            "peak_value": f.peak_value,
+            "regime_badge": regime_badge,
+            "regime_explanation": regime_explanation,
+            "url": finding_url(base_url, f),
+        })
+    }).collect();
+
+    serde_json::json!({
+        "version": "nq/v2",
+        "rollup": true,
+        "generation_id": generation_id,
+        "host": r.host,
+        "state_kind": r.state_kind.as_str(),
+        "detector_family": r.detector_family,
+        "finding_count": r.findings.len(),
+        "findings": findings,
+    })
+}
+
+/// Rollup emoji + verb by state_kind for Slack surfaces. Kind-first:
+/// severity ranking inside a lane is preserved in `findings[0].severity`.
+fn rollup_headline_parts_slack(state_kind: StateKind) -> (&'static str, &'static str) {
+    match state_kind {
+        StateKind::Incident => (":red_circle:", "INCIDENT"),
+        StateKind::Degradation => (":large_orange_circle:", "DEGRADATION"),
+        StateKind::Maintenance => (":wrench:", "maintenance"),
+        StateKind::Informational => (":information_source:", "informational"),
+        StateKind::LegacyUnclassified => (":grey_question:", "legacy findings"),
+    }
+}
+
+fn rollup_headline_parts_discord(state_kind: StateKind) -> (&'static str, &'static str) {
+    match state_kind {
+        StateKind::Incident => ("\u{1F534}", "INCIDENT"),
+        StateKind::Degradation => ("\u{1F7E0}", "DEGRADATION"),
+        StateKind::Maintenance => ("\u{1F527}", "maintenance"),       // wrench
+        StateKind::Informational => ("\u{2139}", "informational"),    // info source
+        StateKind::LegacyUnclassified => ("\u{2754}", "legacy findings"),
+    }
+}
+
 fn severity_rank(s: &str) -> u8 {
     match s {
         "info" => 1,
@@ -623,6 +943,7 @@ mod tests {
             first_seen_at: first_seen_at.into(),
             peak_value: None,
             regime: None,
+            state_kind: StateKind::LegacyUnclassified,
         }
     }
 

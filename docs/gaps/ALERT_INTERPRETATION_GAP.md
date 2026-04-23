@@ -4,7 +4,7 @@
 **Depends on:** findings model, severity/escalation state, stability/persistence metadata (REGIME_FEATURES_GAP), existing notification send path
 **Related:** `NOTIFICATION_ROUTING_GAP` (stub), `NOTIFICATION_INHIBITION_GAP` (stub), `REGIME_FEATURES_GAP`, `ACTION_OVERLAY_GAP` (stub — machine-action), `HUMAN_PROCEDURE_OVERLAY_GAP` (stub)
 **Blocks:** operator-legible Slack/email alerts, finding-first notification rendering
-**Last updated:** 2026-04-14
+**Last updated:** 2026-04-22
 
 ## The Problem
 
@@ -52,6 +52,82 @@ The operator-facing alert must say what the returned rows *mean*, not merely tha
 Rendered alert text is a projection of structured state. It must not be alert identity, system-of-record, or a machine interface. Identity, dedupe, grouping, inhibition, and retrigger behavior come from the structured finding/check state, never from the rendered text. Changes to human-facing copy must not alter alert identity or regrouping behavior.
 
 This is the invariant that keeps future "let me parse the alert body" features from ever getting a foothold.
+
+## State kind as a first-class axis
+
+The current alert model still collapses several distinct things into one channel called "alert":
+
+- observed substrate condition
+- urgency
+- presentation prominence
+- operator priority
+
+That collapse turns maintenance debt and informational telemetry into faux incidents. A detector can be factually correct while its rendered posture is semantically wrong.
+
+This gap therefore adds a first-class categorical axis: `state_kind`.
+
+### State kind
+
+Every finding that can participate in notification rendering or rollup must declare exactly one `state_kind`:
+
+- `incident`
+- `degradation`
+- `maintenance`
+- `informational`
+- `legacy_unclassified`
+
+`state_kind` is **categorical, not ordinal**. Severity remains ordinal **within** kind. A high-severity maintenance finding is still maintenance; it does not become a low-severity incident.
+
+### Interpretation invariants
+
+**Observation must not collapse into urgency.**
+A detected condition is not, by itself, a demand for immediate response.
+
+**Urgency must not collapse into prominence.**
+What needs attention during business hours must not render like a pager event.
+
+**Prominence must not collapse into priority.**
+A large or persistent maintenance backlog may deserve planning and still not be the top operator concern in the current moment.
+
+### Declaration rule
+
+`state_kind` is declared by the emitting detector or finding-construction path. It is **not** inferred from `ServiceImpact`, `ActionBias`, rendered copy, or notification routing.
+
+This is a constitutional rule on operator semantics: the emitter names what kind of thing the finding is. Downstream layers may sort or group by kind, but must not silently re-classify it.
+
+`ServiceImpact` and `ActionBias` may coexist with `state_kind` during migration, but they must not become a secret temporary source of truth. `state_kind` is the explicit semantic field the notifier trusts.
+
+### Migration contract
+
+Pre-migration findings are assigned `legacy_unclassified`.
+
+No heuristic backfill is permitted. Existing `ServiceImpact` / `ActionBias` values are not a clean enough semantic source to reconstruct kind without reintroducing the same category collapse this section is intended to stop.
+
+`legacy_unclassified` findings:
+
+- remain valid evidence
+- are rendered honestly as legacy/unclassified where relevant
+- are de-emphasized in operator-facing rollups
+- are excluded from any rollup that claims kind-clean aggregation
+- age out via normal retention
+
+### Rollup lane order
+
+Rollups and rendering privilege kind first, then severity within kind. Lane order is defined in code, not derived from enum ordinal:
+
+1. `incident`
+2. `degradation`
+3. `maintenance`
+4. `informational`
+5. `legacy_unclassified`
+
+Within a lane, existing severity / dominance / temporal-class ordering rules apply.
+
+### Scope boundary
+
+This slice adds `state_kind` only.
+
+It does **not** introduce `workflow_state` or `response_policy`. Those remain part of the broader operator-intent model and require their own design pass. This gap closes the immediate semantic failure where maintenance and informational findings masquerade as incidents; it does not attempt to solve operator workflow in full.
 
 ## Required metadata — "things to keep"
 
@@ -248,6 +324,7 @@ Required v1 outcomes:
 10. Un-interpretable alerts fall back to raw rendering, explicitly labeled.
 11. No machine-action or human-procedure overlays appear anywhere.
 12. An explicit allowlist (or equivalent predicate) identifying which check classes are finding-backed (interpreted) vs. raw-fallback exists **in code**, not in a developer's head. "v1 raw classes" must be a reviewable artifact, not implicit knowledge — otherwise it drifts the day after merge.
+13. Finding-backed alerts and rollups carry a declared `state_kind`; pre-migration findings are `legacy_unclassified`.
 
 That is enough to fix predicate leakage without smuggling in two other systems.
 
@@ -336,6 +413,7 @@ The fallback looks different enough from interpreted alerts (explicit `[raw: ...
 - alert taxonomy ownership
 - incident timeline features
 - UI-heavy alert surfaces
+- full operator workflow-state / response-policy model
 
 This is interpretation/rendering for notifications, not an alert empire.
 
@@ -363,6 +441,7 @@ This gap is closed when:
 8. Un-interpretable alerts fall back to raw rendering with an explicit `[raw: ...]` marker.
 9. No machine-action or human-procedure overlays appear in rendered output.
 10. The four canonical test fixtures above render as specified.
+11. Notification rendering and rollup distinguish `incident`, `degradation`, `maintenance`, `informational`, and `legacy_unclassified` without heuristic reconstruction from legacy posture fields.
 
 ## Short version
 

@@ -870,8 +870,8 @@ fn update_warning_state_inner(
     let recovery_window: i64 = 3; // require 3 clean gens before clearing
 
     let mut upsert = tx.prepare_cached(
-        "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, peak_value, finding_class, rule_hash, absent_gens, failure_class, service_impact, action_bias, synopsis, why_care, basis_state, basis_source_id, basis_witness_id, last_basis_generation, basis_state_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9, ?10, ?11, 0, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+        "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, peak_value, finding_class, rule_hash, absent_gens, failure_class, service_impact, action_bias, synopsis, why_care, basis_state, basis_source_id, basis_witness_id, last_basis_generation, basis_state_at, state_kind)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9, ?10, ?11, 0, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
          ON CONFLICT(host, kind, subject) DO UPDATE SET
              domain = ?4,
              message = ?5,
@@ -909,7 +909,10 @@ fn update_warning_state_inner(
              basis_source_id = ?18,
              basis_witness_id = ?19,
              last_basis_generation = ?20,
-             basis_state_at = ?21",
+             basis_state_at = ?21,
+             -- state_kind: declared by detector, never inferred. See
+             -- ALERT_INTERPRETATION_GAP §\"State kind as a first-class axis\".
+             state_kind = ?22",
     )?;
 
     let mut insert_obs = tx.prepare_cached(
@@ -917,9 +920,9 @@ fn update_warning_state_inner(
          (generation_id, finding_key, scope, detector_id, host, subject,
           domain, severity, value, message, finding_class, rule_hash, observed_at,
           failure_class, service_impact, action_bias, synopsis, why_care,
-          basis_source_id, basis_witness_id)
+          basis_source_id, basis_witness_id, state_kind)
          VALUES (?1, ?2, 'local', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                 ?13, ?14, ?15, ?16, ?17, ?18, ?19)"
+                 ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)"
     )?;
 
     for f in findings {
@@ -998,6 +1001,7 @@ fn update_warning_state_inner(
             d_why_care,
             &f.basis_source_id,
             &f.basis_witness_id,
+            f.state_kind.as_str(),
         ])?;
 
         upsert.execute(rusqlite::params![
@@ -1022,6 +1026,7 @@ fn update_warning_state_inner(
             &f.basis_witness_id,
             last_basis_generation,
             basis_state_at,
+            f.state_kind.as_str(),
         ])?;
     }
     drop(upsert);
@@ -1608,6 +1613,7 @@ mod tests {
             value: None,
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: crate::detect::StateKind::LegacyUnclassified,
             diagnosis: None,
             basis_source_id: None,
             basis_witness_id: None,
@@ -2395,6 +2401,7 @@ mod tests {
             value: None,
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: crate::detect::StateKind::LegacyUnclassified,
             diagnosis: Some(diagnosis),
             basis_source_id: None,
             basis_witness_id: None,
@@ -2592,6 +2599,7 @@ mod tests {
             value: None,
             finding_class: "signal".into(),
             rule_hash: None,
+            state_kind: crate::detect::StateKind::Incident,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Availability,
                 service_impact: ServiceImpact::ImmediateRisk,

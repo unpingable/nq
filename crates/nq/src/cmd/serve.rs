@@ -186,14 +186,27 @@ async fn send_notifications(
         return;
     }
 
-    info!(count = pending.len(), "sending notifications");
+    // Group by (host, state_kind, detector_family) before rendering. Lane
+    // order (incident → legacy) privileges kind first; severity sorts within
+    // a lane. See docs/gaps/ALERT_INTERPRETATION_GAP.md §"State kind as a
+    // first-class axis".
+    let rollups = nq_db::notify::rollup_pending(pending);
+    if rollups.is_empty() {
+        return;
+    }
 
-    for n in &pending {
+    info!(
+        count = rollups.len(),
+        finding_count = rollups.iter().map(|r| r.findings.len()).sum::<usize>(),
+        "sending notifications"
+    );
+
+    for r in &rollups {
         let base_url = config.external_url.as_deref().unwrap_or("http://localhost:9848");
         for channel in &config.channels {
             let result = match channel {
                 NotificationChannel::Webhook { url, headers } => {
-                    let payload = nq_db::notify::build_webhook_payload(n, generation_id, base_url);
+                    let payload = nq_db::notify::build_rollup_webhook_payload(r, generation_id, base_url);
                     let mut req = client.post(url).json(&payload);
                     for (k, v) in headers {
                         req = req.header(k, v);
@@ -201,11 +214,11 @@ async fn send_notifications(
                     req.send().await
                 }
                 NotificationChannel::Slack { webhook_url } => {
-                    let payload = nq_db::notify::build_slack_payload(n, generation_id, base_url);
+                    let payload = nq_db::notify::build_rollup_slack_payload(r, generation_id, base_url);
                     client.post(webhook_url).json(&payload).send().await
                 }
                 NotificationChannel::Discord { webhook_url } => {
-                    let payload = nq_db::notify::build_discord_payload(n, generation_id, base_url);
+                    let payload = nq_db::notify::build_rollup_discord_payload(r, generation_id, base_url);
                     client.post(webhook_url).json(&payload).send().await
                 }
             };
@@ -213,32 +226,39 @@ async fn send_notifications(
             match result {
                 Ok(resp) if resp.status().is_success() => {
                     info!(
-                        kind = %n.kind,
-                        host = %n.host,
-                        severity = %n.severity,
-                        "notification sent"
+                        host = %r.host,
+                        state_kind = %r.state_kind.as_str(),
+                        detector_family = %r.detector_family,
+                        findings = r.findings.len(),
+                        "rollup sent"
                     );
                 }
                 Ok(resp) => {
                     warn!(
-                        kind = %n.kind,
+                        host = %r.host,
+                        state_kind = %r.state_kind.as_str(),
                         status = %resp.status(),
-                        "notification failed"
+                        "rollup failed"
                     );
                 }
                 Err(e) => {
                     warn!(
-                        kind = %n.kind,
+                        host = %r.host,
+                        state_kind = %r.state_kind.as_str(),
                         err = %e,
-                        "notification send error"
+                        "rollup send error"
                     );
                 }
             }
         }
 
-        // Mark as notified regardless of send success (avoid spam on transient failures)
-        if let Err(e) = nq_db::notify::mark_notified(db, &n.host, &n.kind, &n.subject, &n.severity) {
-            error!(err = %e, "failed to mark notification sent");
+        // Mark every finding in the rollup as notified regardless of send
+        // success (avoid spam on transient failures). mark_notified is
+        // per-(host, kind, subject, severity), not per-rollup.
+        for f in &r.findings {
+            if let Err(e) = nq_db::notify::mark_notified(db, &f.host, &f.kind, &f.subject, &f.severity) {
+                error!(err = %e, "failed to mark notification sent");
+            }
         }
     }
 }
