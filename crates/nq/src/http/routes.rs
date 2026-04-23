@@ -673,7 +673,7 @@ async function runQuery(e) {{
         related_section = if related_rows.is_empty() {
             String::new()
         } else {
-            format!("<h2>Related findings on this host</h2><table><tr><th>Sev</th><th>Diagnosis</th><th>Kind</th><th>Message</th><th>Age · Gens</th></tr>{}</table>", related_rows)
+            format!("<h2>Related findings on this host</h2><table><tr><th>Sev</th><th>Diagnosis</th><th>Kind</th><th>Message</th><th class=\"gens\">Age · Gens</th></tr>{}</table>", related_rows)
         },
     )
 }
@@ -1025,7 +1025,7 @@ tr.sev-warn .sev-dot {{ color: #d29922; }}
 tr.sev-warn .sev-dot::after {{ content: '●'; }}
 tr.sev-info .sev-dot {{ color: #484f58; }}
 tr.sev-info .sev-dot::after {{ content: '●'; }}
-.gens {{ color: #484f58; font-size: 11px; }}
+.gens {{ color: #484f58; font-size: 11px; white-space: nowrap; }}
 .kind-sub {{ color: #484f58; font-size: 11px; }}
 .suppressed-badge {{ display: inline-block; background: #21262d; border: 1px solid #30363d; color: #8b949e; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 6px; }}
 .diag-badge {{ display: inline-block; background: #21262d; border: 1px solid #30363d; color: #8b949e; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }}
@@ -1065,7 +1065,7 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 
 <h2>Findings ({signal_count})</h2>
 <table id="findings-table">
-<tr><th></th><th>Diagnosis</th><th>Host</th><th>Message</th><th>Age · Gens</th></tr>
+<tr><th></th><th>Diagnosis</th><th>Host</th><th>Message</th><th class="gens">Age · Gens</th></tr>
 {findings_rows}
 </table>
 {no_findings}
@@ -1279,7 +1279,7 @@ loadSaved();
                     escape_html(&cell),
                 )
             }).collect();
-            format!("<details style=\"margin:12px 0;\"><summary style=\"color:#484f58;font-size:12px;cursor:pointer;\">Observatory health ({} meta)</summary><table style=\"font-size:12px;\"><tr><th>Kind</th><th>Message</th><th>Age · Gens</th></tr>{}</table></details>", meta_warnings.len(), meta_rows)
+            format!("<details style=\"margin:12px 0;\"><summary style=\"color:#484f58;font-size:12px;cursor:pointer;\">Observatory health ({} meta)</summary><table style=\"font-size:12px;\"><tr><th>Kind</th><th>Message</th><th class=\"gens\">Age · Gens</th></tr>{}</table></details>", meta_warnings.len(), meta_rows)
         },
     )
 }
