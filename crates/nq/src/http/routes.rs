@@ -30,6 +30,51 @@ fn escape_html(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
+/// Parse an RFC3339 timestamp; None on parse failure.
+fn parse_rfc3339(s: &str) -> Option<time::OffsetDateTime> {
+    time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
+}
+
+/// Render a finding's age + persistence count as one operator-legible cell.
+///
+/// Per `docs/ARCHITECTURE_NOTES.md` §"Operator surfaces render human time by
+/// default": wallclock first for operator intuition, gens second for machine
+/// cadence. Returns `(cell_text, optional_tooltip)` — tooltip carries the
+/// absolute first_seen_at so hover gives the authoritative timestamp while
+/// the cell stays compact.
+///
+/// Shapes:
+/// - both present → `~30m · 35 gens`
+/// - only gens   → `35 gens · wallclock unknown`
+/// - only timestamp → `~30m`
+/// - neither → empty
+fn format_age_gens(first_seen_at: Option<&str>, gens: Option<i64>) -> (String, Option<String>) {
+    let now = time::OffsetDateTime::now_utc();
+    let relative = first_seen_at.and_then(parse_rfc3339).map(|then| {
+        if then > now {
+            return "just now".to_string();
+        }
+        let secs = (now - then).whole_seconds();
+        if secs < 60 {
+            "just now".to_string()
+        } else if secs < 3600 {
+            format!("~{}m", secs / 60)
+        } else if secs < 86400 {
+            format!("~{}h", secs / 3600)
+        } else {
+            format!("~{}d", secs / 86400)
+        }
+    });
+    let tooltip = first_seen_at.map(|s| format!("since {s}"));
+    let cell = match (relative, gens) {
+        (Some(r), Some(g)) => format!("{r} · {g} gens"),
+        (Some(r), None) => r,
+        (None, Some(g)) => format!("{g} gens · wallclock unknown"),
+        (None, None) => String::new(),
+    };
+    (cell, tooltip)
+}
+
 pub fn router(db: Db) -> Router {
     Router::new()
         .route("/", get(index))
@@ -163,7 +208,7 @@ async fn finding_detail_inner(db: Db, kind: &str, host: &str, subject: &str) -> 
     let related = query_read_only(
         &db,
         &format!(
-            "SELECT severity, domain, kind, subject, message, consecutive_gens
+            "SELECT severity, domain, kind, subject, message, consecutive_gens, first_seen_at
              FROM warning_state
              WHERE host = '{}' AND NOT (kind = '{}' AND subject = '{}')
              ORDER BY consecutive_gens DESC",
@@ -327,14 +372,20 @@ fn render_finding_detail(
         r.rows.iter().map(|row| {
             let rk = row.get(2).map(|s| s.as_str()).unwrap_or("");
             let rmeta = nq_db::finding_meta::finding_meta(rk);
-            format!("<tr><td>{}</td><td>{}</td><td><a href=\"/finding/{}/{}\">{}</a></td><td>{}</td><td>{}</td></tr>",
+            let gens_raw = row.get(5).map(|s| s.as_str()).unwrap_or("");
+            let gens_i = gens_raw.parse::<i64>().ok();
+            let first_seen = row.get(6).map(|s| s.as_str()).filter(|s| !s.is_empty());
+            let (cell, tooltip) = format_age_gens(first_seen, gens_i);
+            let title_attr = tooltip.map(|t| format!(" title=\"{}\"", escape_html(&t))).unwrap_or_default();
+            format!("<tr><td>{}</td><td>{}</td><td><a href=\"/finding/{}/{}\">{}</a></td><td>{}</td><td{}>{}</td></tr>",
                 escape_html(row.get(0).map(|s| s.as_str()).unwrap_or("")),
                 escape_html(rmeta.plain_label),
                 urlencod(rk),
                 urlencod(&escape_html(row.get(3).map(|s| s.as_str()).unwrap_or(""))),
                 escape_html(rk),
                 escape_html(row.get(4).map(|s| s.as_str()).unwrap_or("")),
-                escape_html(row.get(5).map(|s| s.as_str()).unwrap_or("")),
+                title_attr,
+                escape_html(&cell),
             )
         }).collect()
     } else { String::new() };
@@ -622,7 +673,7 @@ async function runQuery(e) {{
         related_section = if related_rows.is_empty() {
             String::new()
         } else {
-            format!("<h2>Related findings on this host</h2><table><tr><th>Sev</th><th>Diagnosis</th><th>Kind</th><th>Message</th><th>Gens</th></tr>{}</table>", related_rows)
+            format!("<h2>Related findings on this host</h2><table><tr><th>Sev</th><th>Diagnosis</th><th>Kind</th><th>Message</th><th>Age · Gens</th></tr>{}</table>", related_rows)
         },
     )
 }
@@ -806,7 +857,10 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
             };
             let domain = w.domain.as_deref().unwrap_or("?");
             let fmeta = nq_db::finding_meta::finding_meta(&w.category);
-            let gens = w.consecutive_gens.map(|g| format!("{g}")).unwrap_or_default();
+            let (gens_cell, gens_tooltip) = format_age_gens(w.first_seen_at.as_deref(), w.consecutive_gens);
+            let gens_title_attr = gens_tooltip
+                .map(|t| format!(" title=\"{}\"", escape_html(&t)))
+                .unwrap_or_default();
             let subject_path = if w.subject.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
                 String::new()
             } else {
@@ -859,7 +913,7 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
                     <td><a href=\"{detail_url}\">{label}</a>{suppressed_badge}{diag_badges}{stability_badge}<br><span class=\"kind-sub\">{kind} · {domain}</span></td>
                     <td>{host}</td>
                     <td>{message}</td>
-                    <td class=\"gens\">{gens}</td>
+                    <td class=\"gens\"{gens_title_attr}>{gens_cell}</td>
                 </tr>",
                 detail_url = escape_html(&detail_url),
                 label = escape_html(label),
@@ -867,7 +921,8 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
                 domain = escape_html(domain),
                 host = escape_html(&w.host),
                 message = escape_html(&w.message),
-                gens = escape_html(&gens),
+                gens_cell = escape_html(&gens_cell),
+                gens_title_attr = gens_title_attr,
             )
         })
         .collect();
@@ -1010,7 +1065,7 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 
 <h2>Findings ({signal_count})</h2>
 <table id="findings-table">
-<tr><th></th><th>Diagnosis</th><th>Host</th><th>Message</th><th>Gens</th></tr>
+<tr><th></th><th>Diagnosis</th><th>Host</th><th>Message</th><th>Age · Gens</th></tr>
 {findings_rows}
 </table>
 {no_findings}
@@ -1215,13 +1270,16 @@ loadSaved();
         no_findings = if signal_warnings.is_empty() { "<p style=\"color:#484f58;font-size:13px;\">No active findings.</p>" } else { "" },
         meta_section = if meta_warnings.is_empty() { String::new() } else {
             let meta_rows: String = meta_warnings.iter().map(|w| {
-                format!("<tr style=\"color:#484f58;\"><td>{}</td><td>{}</td><td>{}</td></tr>",
+                let (cell, tooltip) = format_age_gens(w.first_seen_at.as_deref(), w.consecutive_gens);
+                let title_attr = tooltip.map(|t| format!(" title=\"{}\"", escape_html(&t))).unwrap_or_default();
+                format!("<tr style=\"color:#484f58;\"><td>{}</td><td>{}</td><td{}>{}</td></tr>",
                     escape_html(&w.category),
                     escape_html(&w.message),
-                    w.consecutive_gens.map(|g| g.to_string()).unwrap_or_default(),
+                    title_attr,
+                    escape_html(&cell),
                 )
             }).collect();
-            format!("<details style=\"margin:12px 0;\"><summary style=\"color:#484f58;font-size:12px;cursor:pointer;\">Observatory health ({} meta)</summary><table style=\"font-size:12px;\"><tr><th>Kind</th><th>Message</th><th>Gens</th></tr>{}</table></details>", meta_warnings.len(), meta_rows)
+            format!("<details style=\"margin:12px 0;\"><summary style=\"color:#484f58;font-size:12px;cursor:pointer;\">Observatory health ({} meta)</summary><table style=\"font-size:12px;\"><tr><th>Kind</th><th>Message</th><th>Age · Gens</th></tr>{}</table></details>", meta_warnings.len(), meta_rows)
         },
     )
 }
