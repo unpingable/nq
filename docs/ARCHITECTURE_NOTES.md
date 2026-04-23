@@ -107,11 +107,20 @@ Full starters, just awaiting forcing pain.
 ### REGISTRY_PROJECTION_GAP
 
 **Status:** queued
-**Activation trigger:** silence finding fires on a decommissioned host and no one notices the haunt; nightshift integration needs a declared live-set to branch policy against; discovery feature lands and discovered-vs-blessed needs enforcement from day one; federation requires per-site declared liveness.
+**Activation trigger:**
+- silence finding fires on a decommissioned host and no one notices the haunt
+- **a host known-of but not-monitored fails silently and no one notices** (inverse pattern)
+- nightshift integration needs a declared live-set to branch policy against
+- discovery feature lands and discovered-vs-blessed needs enforcement from day one
+- federation requires per-site declared liveness
+
 **Why it matters:** discovery cannot be allowed to bless objects into the intended live set (see Design laws §Discovery proposes / certified config confers liveness). Operational shape: semi-generated (NetBox / Ansible inventory / local YAML or SQLite as source of truth) + human-certified. Projection, not platform — same contract across backends.
 **Likely successor artifact:** `docs/gaps/REGISTRY_PROJECTION_GAP.md`. Full starter drafted in conversation 2026-04-23: core invariants, lifecycle enum (`active | draining | maintenance | retired | decommissioned | observed_only`), silence-policy enum (`incident | maintenance | ignore`), retirement-policy enum (`historical_only | gc_after_window | retain_until_manual_clear`), worked YAML schema. Recoverable from the thesis + enums even if the conversation is lost.
 **Dependencies:** composes with EVIDENCE_RETIREMENT_GAP, COMPLETENESS_PROPAGATION_GAP.
 **Source:** Claude memory `project_registry_projection`.
+
+**Observed instances (evidence for activation):**
+- **2026-04-23 — driftwatch on labelwatch.neutral.zone.** NQ shows `driftwatch` as `unknown` in the services list but produces no host-state alert. Discovered during routine SQLite VACUUM maintenance. Service is semi-visible (shows up because of a freelist finding on its DB) but has no direct health contract — no HTTP probe, no container liveness check, no silence baseline. NQ "knows of" driftwatch but does not "know about" its expected liveness, so absence falls back to `unknown` rather than `down`. This is the inverse-trigger pattern: an intended-live service without explicit monitoring contract. The quick fix is a direct service-health probe (tier-1, per-service); the structural fix is the registry projection (tier-3, makes the pattern impossible to recur silently). Both layers are legitimate; the quick fix does not close the gap.
 
 ---
 
