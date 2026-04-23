@@ -95,12 +95,11 @@ Coherent pressure, resolution still open.
 
 ### GENS_WITHOUT_WALLCLOCK
 
-**Status:** tripwire
-**Activation trigger:** next pass over web UI rendering; any new operator surface that displays gens; any report of "user confused by gens number on dashboard."
-**Why it matters:** the dashboard at nq.neutral.zone currently displays raw gen counts (`consecutive_gens`, age-in-gens) without wallclock co-rendering. A lay reader sees "35 gens" and has no intuition for whether that's seconds or days. `ALERT_INTERPRETATION_GAP` handles this for notification bodies but explicitly scopes itself to notifications (§Plane placement); the dashboard is a separate operator surface with the same invariant unapplied. Caught live 2026-04-23 when web-Claude asked "is 35 gens elevated?" while debugging driftwatch — a question trivially answerable with wallclock context.
-**Likely successor artifact:** stays a tripwire. The Design law captures the rule; the fix is concrete UI work in web templates. If the UI churn grows large, promote to a DASHBOARD_RENDERING gap.
-**Dependencies:** none. Cadence is derivable from `generations.started_at` / `generations.completed_at` timestamps already in the DB. When cadence is irregular or unknown, render honestly (`since 4:30pm` when wallclock timestamp is stronger than cadence math).
-**Source:** Claude memory `project_operator_intent_model` §Human time rendering (already names this: "anywhere NQ currently prints seconds/minutes/hours as raw numbers in a user-facing surface, it's a bug").
+**Status:** mostly addressed
+**Resolved:** main operator tables (dashboard findings, meta findings, related findings on detail page) co-render wallclock + gens with tooltip-carried absolute timestamps. Commit 199831d, 2026-04-23.
+**Still watch for:** any new operator-facing surface rendering machine cadence without human-time context. Pivot query results (raw SQL tables) and CSV export were intentionally left gens-only as machine-facing; promote them if operator reports confusion.
+**Law:** see Design laws §"Operator surfaces render human time by default."
+**Source:** Claude memory `project_operator_intent_model` §Human time rendering.
 
 ### FLAP_LAYER_SPLIT violations
 
