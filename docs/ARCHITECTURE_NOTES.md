@@ -59,6 +59,14 @@ Layering principle for the constellation: NQ owns truth/basis/directness, nights
 
 Stability (flickering/recovering) describes observation pattern — belongs in NQ. Suppressing notifications because of flicker describes routing policy — belongs downstream. See Tripwires §FLAP_LAYER_SPLIT for violation warning signs.
 
+### Visual boundaries should map to semantic boundaries.
+
+Visual language is doing ontology work whether you admit it or not. In operator surfaces, that work is load-bearing: direct-fact vs derived-story, current vs historical, active vs retired, maintenance vs incident, evidence vs control, object vs rollup. A good visual language reinforces these distinctions; a bad one collapses them and the operator does semantic archaeology with their eyeballs. This is why you can't polish the UI before the ontology is stable — you end up drawing crisp visual boundaries around mushy categories and locking in the smear. See Latent notes §VISUAL_DIRECTION for when this gets built.
+
+### For multi-alert surfaces, comparability outranks charisma.
+
+Tabular clarity is the native visual language of multi-alert triage. Strong columns, stable field positions, repeatable row structure, dense comparability, minimal ornamental interference — these optimize for the operator's actual work (parallel scanning, "which column is this?", fast comparison across rows) instead of telling one story at a time. "Looks like Excel" is often an insult from people who don't have to live in the thing. This does not forbid later visual language from being more structured than a bare table, but anything fancier must preserve the same affordances. If it can't do strong columns + repeatable rows + no-ambiguity-about-which-value-belongs-to-which-field, it is worse regardless of how polished it looks.
+
 ### Operator surfaces render human time by default, machine cadence as supporting evidence.
 
 "How long has this been true?" is the operator question; gens / observation counts are debugging-and-observability evidence. Render both when both matter (`stale for 1h 29m · 89 gens`), never gens alone on operator surfaces. Estimate wallclock from observed cadence (`generations.started_at`), not hardcoded `interval_s`. Partially codified in `docs/gaps/ALERT_INTERPRETATION_GAP.md` §Required metadata (notification body); violated in the web UI dashboard today — see Tripwires §GENS_WITHOUT_WALLCLOCK.
@@ -68,6 +76,15 @@ Stability (flickering/recovering) describes observation pattern — belongs in N
 ## Latent notes
 
 Coherent pressure, resolution still open.
+
+### VISUAL_DIRECTION
+
+**Status:** latent
+**Activation trigger:** current-state semantics (state_kind lanes, directness axis, retirement/basis-state, registry projection) stable and load-bearing with no open gaps on those axes.
+**Why it matters:** the instinct hiding under "make the dashboard look coherent" is actually **strong containment** — visual language doing ontology work. Good visual language reinforces direct-fact vs derived-story, current vs historical, active vs retired, maintenance vs incident, evidence vs control, object vs rollup. Bad visual language quietly collapses those and the operator does semantic archaeology with their eyeballs. The risk of polishing early isn't chrome-as-nostalgia; it's giving the UI a uniform before the org chart exists — making unresolved state look more settled than it is. Test for any visual change: *makes a semantic boundary legible* → ship (wallclock-beside-gens was this); *mainly improves vibe* → queue; *makes `unknown` / `stale` / `legacy_unclassified` look more settled than they are* → reject.
+**Likely successor artifact:** a small visual-grammar stub scoped post-activation — bounded regions, consistent lane semantics, obvious "you are here" context, strong separation between status / evidence / control. Not a full design system.
+**Dependencies:** state_kind stable; ALERT_DIRECTNESS_GAP landed; EVIDENCE_RETIREMENT_GAP current-state rendering solid; REGISTRY_PROJECTION in place so the known-live set is declared rather than inferred. Can't draw clean visual boundaries around mushy categories.
+**Source:** user self-note 2026-04-23 ("resist my temptation to polish this into something nicer than what it is until we've earned it"), refined same day — the instinct is *visual jurisdiction*, not costume. Short forms: **earn the chrome.** *Don't let the dashboard get a uniform before the org chart exists.* *Visual language is doing ontology work whether you admit it or not.*
 
 ### SILENCE_UNIFICATION
 
