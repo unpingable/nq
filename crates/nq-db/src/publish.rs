@@ -955,7 +955,7 @@ fn update_warning_state_inner(
             if was_last_gen { prev_gens + 1 } else { 1 }
         };
 
-        let severity = compute_severity(&f.kind, new_gens, escalation);
+        let severity = compute_severity(&f.kind, f.state_kind, new_gens, escalation);
 
         // Append the evidence row first. If this fails (e.g. UNIQUE
         // constraint collision), the transaction rolls back the upsert too.
@@ -1251,20 +1251,38 @@ impl From<&nq_core::config::EscalationThresholds> for EscalationConfig {
     }
 }
 
-fn compute_severity(kind: &str, consecutive_gens: i64, esc: &EscalationConfig) -> &'static str {
-    // Service down is always critical regardless of age
-    if kind == "service_status" {
-        // The finding message contains the actual status; service_status findings
-        // for "down" services get domain "Δo", others get "Δg".
-        // We'll rely on consecutive_gens for non-down degraded services.
-    }
-    if consecutive_gens > esc.critical_after_gens {
+fn compute_severity(
+    kind: &str,
+    state_kind: crate::detect::StateKind,
+    consecutive_gens: i64,
+    esc: &EscalationConfig,
+) -> &'static str {
+    let base = if consecutive_gens > esc.critical_after_gens {
         "critical"
     } else if consecutive_gens > esc.warn_after_gens {
         "warning"
     } else {
         "info"
+    };
+
+    // A directly-observed service in down/failed/dead state is a fact now,
+    // not an escalation story. Floor it at warning immediately; the
+    // consecutive-gens path still escalates to critical.
+    //
+    // Scope is narrow on purpose: service_status × state_kind=Incident only.
+    // A degraded/activating service lands as state_kind=Degradation and
+    // takes the regular info→warning→critical path. Other incident-lane
+    // kinds (disk_pressure>95%, zfs_vdev_faulted≥2) stay on the regular
+    // path too; extending the floor to more kinds is a question for
+    // ALERT_DIRECTNESS_GAP, not this fix.
+    if base == "info"
+        && kind == "service_status"
+        && state_kind == crate::detect::StateKind::Incident
+    {
+        return "warning";
     }
+
+    base
 }
 
 fn fmt_ts(ts: &OffsetDateTime) -> String {
@@ -3110,5 +3128,76 @@ mod tests {
             [], |r| r.get(0),
         ).unwrap();
         assert_eq!(pool_state, "ONLINE");
+    }
+
+    // -----------------------------------------------------------------------
+    // compute_severity regression tests
+    //
+    // Directly-observed service-down findings must floor at warning on first
+    // observation, not take the 30-gen path to info→warning. The floor is
+    // narrowly scoped to service_status × state_kind=Incident; extending it
+    // to other incident-lane kinds is a question for ALERT_DIRECTNESS_GAP.
+    // -----------------------------------------------------------------------
+
+    use crate::detect::StateKind;
+
+    #[test]
+    fn direct_service_down_floors_at_warning() {
+        let esc = EscalationConfig::default();
+        // Fresh observation (consecutive_gens=1) of a service in down state:
+        // detector emits state_kind=Incident. Severity must be warning, not
+        // info — facts do not audition for reality.
+        assert_eq!(
+            compute_severity("service_status", StateKind::Incident, 1, &esc),
+            "warning",
+            "service_status × Incident must floor at warning from gen 1",
+        );
+    }
+
+    #[test]
+    fn direct_service_down_still_escalates_to_critical() {
+        let esc = EscalationConfig::default();
+        // The floor does not cap: once gens exceed critical_after_gens, the
+        // severity still rises to critical.
+        assert_eq!(
+            compute_severity(
+                "service_status",
+                StateKind::Incident,
+                esc.critical_after_gens + 1,
+                &esc,
+            ),
+            "critical",
+            "floor must not prevent escalation to critical",
+        );
+    }
+
+    #[test]
+    fn degraded_service_does_not_get_floor() {
+        let esc = EscalationConfig::default();
+        // A service in degraded/activating state lands as state_kind=Degradation,
+        // which takes the regular info→warning→critical path with no floor.
+        assert_eq!(
+            compute_severity("service_status", StateKind::Degradation, 1, &esc),
+            "info",
+            "state_kind=Degradation must not share the direct-failure floor",
+        );
+    }
+
+    #[test]
+    fn other_incident_kinds_do_not_get_floor() {
+        let esc = EscalationConfig::default();
+        // Other incident-lane findings (disk_pressure >95%, zfs_vdev_faulted ≥2,
+        // stale_host >20gens) stay on the regular path. Expanding the floor to
+        // them is a directness-gap question, not this fix.
+        assert_eq!(
+            compute_severity("disk_pressure", StateKind::Incident, 1, &esc),
+            "info",
+            "disk_pressure must not inherit the service_status floor",
+        );
+        assert_eq!(
+            compute_severity("stale_host", StateKind::Incident, 1, &esc),
+            "info",
+            "stale_host must not inherit the service_status floor",
+        );
     }
 }
