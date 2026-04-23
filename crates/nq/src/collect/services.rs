@@ -106,7 +106,22 @@ fn check_docker(container: &str) -> (ServiceStatus, Option<u32>) {
             let pid = parts.get(1).and_then(|s| s.parse::<u32>().ok()).filter(|p| *p > 0);
             (state, pid)
         }
-        _ => return (ServiceStatus::Unknown, None),
+        Ok(out) => {
+            // Inspect ran but returned non-zero. Distinguish two cases on stderr:
+            //   - "No such object"/"No such container" → container absent.
+            //     The operator declared this container in publisher config; its
+            //     absence is a direct failure, not ambiguity. Return Down so
+            //     detect_service_status can fire.
+            //   - anything else (daemon unreachable, permission denied, etc.) →
+            //     probe failed. Return Unknown so we don't false-page on every
+            //     configured docker service when the daemon itself is broken.
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if stderr.contains("No such object") || stderr.contains("No such container") {
+                return (ServiceStatus::Down, None);
+            }
+            return (ServiceStatus::Unknown, None);
+        }
+        Err(_) => return (ServiceStatus::Unknown, None),
     };
 
     // Then try to get health status (only exists if container has HEALTHCHECK)
