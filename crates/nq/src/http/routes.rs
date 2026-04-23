@@ -984,6 +984,13 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
 <meta charset="utf-8">
 <title>nq</title>
 <meta http-equiv="refresh" content="30">
+<script>
+// Read sidebar state before render to avoid a flash. Applied to <html>
+// so CSS can gate grid-template-columns without layout jump.
+if (localStorage.getItem('nq-sidebar-collapsed') === 'true') {{
+  document.documentElement.classList.add('sidebar-collapsed');
+}}
+</script>
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 body {{ font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9; }}
@@ -993,9 +1000,17 @@ body {{ font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; backgro
 .header .gen {{ color: #8b949e; font-size: 13px; }}
 
 .layout {{ display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 48px); }}
+html.sidebar-collapsed .layout {{ grid-template-columns: 36px 1fr; }}
 
 .sidebar {{ background: #0d1117; border-right: 1px solid #21262d; padding: 16px; }}
 .sidebar h2 {{ font-size: 11px; text-transform: uppercase; color: #8b949e; letter-spacing: 1px; margin-bottom: 12px; }}
+html.sidebar-collapsed .sidebar {{ padding: 16px 6px; }}
+html.sidebar-collapsed .sidebar > h2,
+html.sidebar-collapsed .sidebar > .domain-card {{ display: none; }}
+
+.sidebar-toggle {{ background: transparent; color: #8b949e; border: 1px solid #21262d; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-family: inherit; font-size: 11px; margin-bottom: 12px; width: 100%; }}
+.sidebar-toggle:hover {{ background: #161b22; color: #c9d1d9; border-color: #30363d; }}
+html.sidebar-collapsed .sidebar-toggle {{ padding: 4px 0; }}
 
 .domain-card {{ padding: 10px 12px; border-radius: 6px; margin-bottom: 8px; cursor: pointer; border: 1px solid transparent; }}
 .domain-card:hover {{ background: #161b22; }}
@@ -1055,6 +1070,7 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 
 <div class="layout">
 <div class="sidebar">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Toggle sidebar"><span id="sidebar-toggle-icon">◀</span></button>
     <h2>Failure Domains</h2>
     {domain_nav}
 </div>
@@ -1111,6 +1127,26 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 </div>
 
 <script>
+// Sidebar toggle — collapses the Failure Domains sidebar to a 36px strip.
+// State persists in localStorage; the head script reads it pre-render to
+// avoid a layout-jump flash. Called from the toggle button's onclick.
+function toggleSidebar() {{
+  const collapsed = document.documentElement.classList.toggle('sidebar-collapsed');
+  localStorage.setItem('nq-sidebar-collapsed', collapsed);
+  const btn = document.querySelector('.sidebar-toggle');
+  const icon = document.getElementById('sidebar-toggle-icon');
+  if (btn) btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  if (icon) icon.textContent = collapsed ? '▶' : '◀';
+}}
+// Sync icon + title to the state applied by the head script.
+(function() {{
+  const collapsed = document.documentElement.classList.contains('sidebar-collapsed');
+  const btn = document.querySelector('.sidebar-toggle');
+  const icon = document.getElementById('sidebar-toggle-icon');
+  if (btn) btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  if (icon) icon.textContent = collapsed ? '▶' : '◀';
+}})();
+
 // Domain filter
 document.querySelectorAll('.domain-card').forEach(card => {{
   card.addEventListener('click', () => {{
