@@ -311,6 +311,8 @@ pub struct DetectorConfig {
     pub freelist_pct_threshold: f64,
     pub freelist_abs_floor_mb: f64,
     pub stale_generations: i64,
+    pub pinned_wal_floor_mb: f64,
+    pub pinned_wal_stall_seconds: i64,
 }
 
 impl Default for DetectorConfig {
@@ -322,6 +324,8 @@ impl Default for DetectorConfig {
             freelist_pct_threshold: 20.0,
             freelist_abs_floor_mb: 1024.0,
             stale_generations: 2,
+            pinned_wal_floor_mb: 256.0,
+            pinned_wal_stall_seconds: 21600,
         }
     }
 }
@@ -335,6 +339,8 @@ impl From<&nq_core::config::DetectorThresholds> for DetectorConfig {
             freelist_pct_threshold: t.freelist_pct_threshold,
             freelist_abs_floor_mb: t.freelist_abs_floor_mb,
             stale_generations: t.stale_generations,
+            pinned_wal_floor_mb: t.pinned_wal_floor_mb,
+            pinned_wal_stall_seconds: t.pinned_wal_stall_seconds,
         }
     }
 }
@@ -350,6 +356,7 @@ const ZFS_WITNESS_STALE_SECONDS: i64 = 300;
 pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<Finding>> {
     let mut findings = Vec::new();
     detect_wal_bloat(db, config, &mut findings)?;
+    detect_pinned_wal(db, config, &mut findings)?;
     detect_freelist_bloat(db, config, &mut findings)?;
     detect_stale_hosts(db, config, &mut findings)?;
     detect_stale_services(db, config, &mut findings)?;
@@ -428,6 +435,101 @@ fn detect_wal_bloat(
                 basis_witness_id: None,
             });
         }
+    }
+    Ok(())
+}
+
+/// Δg: SQLite WAL is large AND main DB has stopped incorporating.
+///
+/// Compound predicate distinguishing the labelwatch-shaped pathology
+/// (WAL grows, checkpoints don't truncate it) from a healthy write
+/// burst (WAL grows briefly, gets retired). Sibling to `wal_bloat` —
+/// that one fires on size+ratio alone; this one needs the *shape*:
+///
+///   - WAL above the floor
+///   - both file mtimes available (witness-shaped: no fake conclusions
+///     when the collector couldn't read mtimes)
+///   - main DB mtime older than the stall threshold
+///   - WAL mtime fresher than DB mtime — writes are happening, but
+///     not landing in the main file
+///
+/// Persistence is handled by warning_state lifecycle, not by reading
+/// history inside the detector. One threshold, one truth; severity
+/// escalation is the lifecycle's job.
+fn detect_pinned_wal(
+    db: &Connection,
+    config: &DetectorConfig,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "SELECT host, db_path, wal_size_mb,
+                db_mtime, wal_mtime,
+                CAST((julianday('now') - julianday(db_mtime)) * 86400 AS INTEGER)
+                    AS db_age_seconds,
+                CAST((julianday(wal_mtime) - julianday(db_mtime)) * 86400 AS INTEGER)
+                    AS gap_seconds
+         FROM monitored_dbs_current
+         WHERE wal_size_mb IS NOT NULL
+           AND wal_size_mb > ?1
+           AND db_mtime IS NOT NULL
+           AND wal_mtime IS NOT NULL
+           AND CAST((julianday('now') - julianday(db_mtime)) * 86400 AS INTEGER) > ?2
+           AND julianday(wal_mtime) > julianday(db_mtime)",
+    )?;
+    let rows = stmt.query_map(
+        rusqlite::params![config.pinned_wal_floor_mb, config.pinned_wal_stall_seconds],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        },
+    )?;
+    for row in rows {
+        let (host, db_path, wal_size_mb, _db_mtime, _wal_mtime, db_age_seconds, gap_seconds) =
+            row?;
+        let message = format!(
+            "WAL {:.1} MB; main DB untouched for {}, WAL written {} more recently",
+            wal_size_mb,
+            humanize_duration_s(db_age_seconds),
+            humanize_duration_s(gap_seconds),
+        );
+        out.push(Finding {
+            host: host.clone(),
+            domain: "Δg".into(),
+            kind: "pinned_wal".into(),
+            subject: db_path.clone(),
+            message,
+            value: Some(wal_size_mb),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: StateKind::Maintenance,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Accumulation,
+                service_impact: ServiceImpact::NoneCurrent,
+                action_bias: ActionBias::InvestigateBusinessHours,
+                synopsis: format!(
+                    "WAL is {:.1} MB and growing while main DB has not been written for {}. \
+                     Checkpoints are not retiring WAL pages — usually a long-lived reader \
+                     pinning the wal-index, or a misconfigured passive-only checkpoint cron.",
+                    wal_size_mb,
+                    humanize_duration_s(db_age_seconds),
+                ),
+                why_care: "Pinned WAL grows without bound until the pinning reader releases \
+                           or the service restarts. By the time disk pressure surfaces, the \
+                           WAL is much larger than a routine VACUUM can fix and recovery \
+                           may require service downtime.".into(),
+            }),
+            // sqlite_health is publisher-internal — the publisher (host) is
+            // the source. No separate witness layer.
+            basis_source_id: Some(host),
+            basis_witness_id: None,
+        });
     }
     Ok(())
 }

@@ -95,6 +95,14 @@ pub struct DetectorThresholds {
     /// Staleness: generations behind before flagging. Default 2.
     #[serde(default = "default_stale_gens")]
     pub stale_generations: i64,
+    /// pinned_wal: WAL size floor below which the compound predicate
+    /// stays silent regardless of mtime gap (MB). Default 256.
+    #[serde(default = "default_pinned_wal_floor")]
+    pub pinned_wal_floor_mb: f64,
+    /// pinned_wal: seconds since main DB mtime before WAL gap counts
+    /// as stalled incorporation. Default 21600 (6 hours).
+    #[serde(default = "default_pinned_wal_stall")]
+    pub pinned_wal_stall_seconds: i64,
 }
 
 fn default_wal_pct() -> f64 { 5.0 }
@@ -103,6 +111,8 @@ fn default_wal_small() -> f64 { 5120.0 }
 fn default_freelist_pct() -> f64 { 20.0 }
 fn default_freelist_abs() -> f64 { 1024.0 }
 fn default_stale_gens() -> i64 { 2 }
+fn default_pinned_wal_floor() -> f64 { 256.0 }
+fn default_pinned_wal_stall() -> i64 { 21600 }
 
 impl Default for DetectorThresholds {
     fn default() -> Self {
@@ -113,6 +123,8 @@ impl Default for DetectorThresholds {
             freelist_pct_threshold: default_freelist_pct(),
             freelist_abs_floor_mb: default_freelist_abs(),
             stale_generations: default_stale_gens(),
+            pinned_wal_floor_mb: default_pinned_wal_floor(),
+            pinned_wal_stall_seconds: default_pinned_wal_stall(),
         }
     }
 }

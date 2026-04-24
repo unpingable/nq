@@ -1659,3 +1659,205 @@ fn zfs_scrub_overdue_stays_silent_while_scrub_is_running() {
     let d = find_by_kind(&findings, "zfs_scrub_overdue");
     assert!(d.is_empty(), "actively running scrub is not overdue");
 }
+
+// ================================================================
+// pinned_wal — Δg
+// ================================================================
+
+/// Build a sqlite_health batch carrying one DB row. Mtimes are the
+/// thing under test, so the helper takes them explicitly.
+fn sqlite_db_batch(
+    host: &str,
+    db_path: &str,
+    wal_size_mb: Option<f64>,
+    db_mtime: Option<OffsetDateTime>,
+    wal_mtime: Option<OffsetDateTime>,
+    received_at: OffsetDateTime,
+) -> Batch {
+    Batch {
+        cycle_started_at: received_at,
+        cycle_completed_at: received_at,
+        sources_expected: 1,
+        source_runs: vec![SourceRun {
+            source: host.into(),
+            status: SourceStatus::Ok,
+            received_at,
+            collected_at: Some(received_at),
+            duration_ms: Some(5),
+            error_message: None,
+        }],
+        collector_runs: vec![CollectorRun {
+            source: host.into(),
+            collector: CollectorKind::SqliteHealth,
+            status: CollectorStatus::Ok,
+            collected_at: Some(received_at),
+            entity_count: Some(1),
+            error_message: None,
+        }],
+        host_rows: vec![],
+        service_sets: vec![],
+        sqlite_db_sets: vec![SqliteDbSet {
+            host: host.into(),
+            collected_at: received_at,
+            rows: vec![SqliteDbRow {
+                db_path: db_path.into(),
+                db_size_mb: Some(1024.0),
+                wal_size_mb,
+                page_size: Some(4096),
+                page_count: Some(262144),
+                freelist_count: Some(0),
+                journal_mode: if wal_size_mb.is_some() { Some("wal".into()) } else { None },
+                auto_vacuum: Some("none".into()),
+                last_checkpoint: None,
+                checkpoint_lag_s: None,
+                last_quick_check: None,
+                last_integrity_check: None,
+                last_integrity_at: None,
+                db_mtime,
+                wal_mtime,
+            }],
+        }],
+        metric_sets: vec![],
+        log_sets: vec![],
+        zfs_witness_rows: vec![],
+        smart_witness_rows: vec![],
+    }
+}
+
+#[test]
+fn pinned_wal_fires_on_large_wal_with_stale_main_db() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // Main DB untouched for 12h; WAL written 11h ago (so wal_mtime is
+    // newer than db_mtime by ~1h, and db_mtime is 12h stale > 6h floor).
+    let db_mtime = t - time::Duration::hours(12);
+    let wal_mtime = t - time::Duration::hours(11);
+    let b = sqlite_db_batch(
+        "labeler",
+        "/var/lib/labeler/labeler.sqlite",
+        Some(8192.0), // 8 GB WAL — well above 256 MB floor
+        Some(db_mtime),
+        Some(wal_mtime),
+        t,
+    );
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "pinned_wal");
+    assert_eq!(d.len(), 1, "expected one pinned_wal finding");
+    assert_eq!(d[0].domain, "Δg");
+    assert_eq!(d[0].host, "labeler");
+    assert_eq!(d[0].subject, "/var/lib/labeler/labeler.sqlite");
+    // EVIDENCE_RETIREMENT_GAP V1: new detectors must wire basis. The
+    // sqlite_health collector is publisher-internal, so the publisher
+    // host is the source and there is no separate witness layer.
+    assert_eq!(d[0].basis_source_id.as_deref(), Some("labeler"));
+    assert!(d[0].basis_witness_id.is_none(),
+        "sqlite_health has no witness layer; basis_witness_id must be None");
+}
+
+#[test]
+fn pinned_wal_silent_on_large_wal_with_fresh_main_db() {
+    // Big WAL, but the main DB was just written. This is a normal
+    // write burst, not a pinned shape — the next checkpoint will
+    // retire the WAL pages. Must not fire.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let db_mtime = t - time::Duration::minutes(2);
+    let wal_mtime = t - time::Duration::seconds(30);
+    let b = sqlite_db_batch(
+        "labeler",
+        "/var/lib/labeler/labeler.sqlite",
+        Some(4096.0), // 4 GB WAL — large but the shape is benign
+        Some(db_mtime),
+        Some(wal_mtime),
+        t,
+    );
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "pinned_wal");
+    assert!(d.is_empty(), "fresh main DB → not pinned");
+}
+
+#[test]
+fn pinned_wal_silent_when_no_wal_sidecar() {
+    // No -wal sidecar (rollback-mode DB or post-truncate idle WAL
+    // that SQLite removed). wal_size_mb None → predicate fails on the
+    // WAL > floor check before any mtime reasoning.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let db_mtime = t - time::Duration::hours(12);
+    let b = sqlite_db_batch(
+        "labeler",
+        "/var/lib/labeler/labeler.sqlite",
+        None,           // no WAL
+        Some(db_mtime),
+        None,           // no WAL → no wal_mtime
+        t,
+    );
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "pinned_wal");
+    assert!(d.is_empty(), "no WAL sidecar → no pinned_wal finding");
+}
+
+#[test]
+fn pinned_wal_silent_when_mtimes_are_null() {
+    // The shape would be suspicious, but the collector couldn't read
+    // mtimes (older publisher, exotic filesystem, stat() race). We do
+    // NOT fall back to size-only — that's wal_bloat's job. pinned_wal
+    // requires the mtime evidence to fire.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let b = sqlite_db_batch(
+        "labeler",
+        "/var/lib/labeler/labeler.sqlite",
+        Some(8192.0),
+        None,           // db_mtime missing
+        None,           // wal_mtime missing
+        t,
+    );
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "pinned_wal");
+    assert!(d.is_empty(),
+        "null mtimes → cannot testify; pinned_wal must not fake the conclusion");
+}
+
+#[test]
+fn pinned_wal_silent_on_small_wal_even_when_stale() {
+    // Stale main DB but the WAL is tiny — below the floor. The shape
+    // could be true (a truly idle DB with a 4 KB WAL stub) but it has
+    // no operational consequence yet. Floor exists so we don't fire on
+    // every quiescent DB on the box.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let db_mtime = t - time::Duration::hours(12);
+    let wal_mtime = t - time::Duration::hours(11);
+    let b = sqlite_db_batch(
+        "labeler",
+        "/var/lib/labeler/labeler.sqlite",
+        Some(4.0), // 4 MB — well below 256 MB floor
+        Some(db_mtime),
+        Some(wal_mtime),
+        t,
+    );
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "pinned_wal");
+    assert!(d.is_empty(), "WAL below floor → not pinned regardless of mtime gap");
+}
