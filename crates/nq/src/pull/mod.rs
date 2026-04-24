@@ -282,6 +282,8 @@ async fn pull_one(source: SourceConfig) -> PullResult {
                             last_quick_check: d.last_quick_check.clone(),
                             last_integrity_check: d.last_integrity_check.clone(),
                             last_integrity_at: d.last_integrity_at,
+                            db_mtime: d.db_mtime,
+                            wal_mtime: d.wal_mtime,
                         })
                         .collect(),
                 });

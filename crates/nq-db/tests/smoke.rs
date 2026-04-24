@@ -151,6 +151,8 @@ fn sqlite_db_row(path: &str) -> SqliteDbRow {
         last_quick_check: Some("ok".into()),
         last_integrity_check: None,
         last_integrity_at: None,
+        db_mtime: None,
+        wal_mtime: None,
     }
 }
 

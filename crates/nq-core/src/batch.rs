@@ -151,6 +151,8 @@ pub struct SqliteDbRow {
     pub last_quick_check: Option<String>,
     pub last_integrity_check: Option<String>,
     pub last_integrity_at: Option<OffsetDateTime>,
+    pub db_mtime: Option<OffsetDateTime>,
+    pub wal_mtime: Option<OffsetDateTime>,
 }
 
 /// Log observations for one host from one generation window.

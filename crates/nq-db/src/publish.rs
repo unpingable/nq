@@ -187,8 +187,8 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
     {
         let mut del = tx.prepare_cached("DELETE FROM monitored_dbs_current WHERE host = ?1")?;
         let mut ins = tx.prepare_cached(
-            "INSERT INTO monitored_dbs_current (host, db_path, db_size_mb, wal_size_mb, page_size, page_count, freelist_count, journal_mode, auto_vacuum, last_checkpoint, checkpoint_lag_s, last_quick_check, last_integrity_check, last_integrity_at, as_of_generation, collected_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            "INSERT INTO monitored_dbs_current (host, db_path, db_size_mb, wal_size_mb, page_size, page_count, freelist_count, journal_mode, auto_vacuum, last_checkpoint, checkpoint_lag_s, last_quick_check, last_integrity_check, last_integrity_at, db_mtime, wal_mtime, as_of_generation, collected_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         )?;
         for ds in &batch.sqlite_db_sets {
             del.execute(rusqlite::params![&ds.host])?;
@@ -208,6 +208,8 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
                     &row.last_quick_check,
                     &row.last_integrity_check,
                     row.last_integrity_at.as_ref().map(fmt_ts),
+                    row.db_mtime.as_ref().map(fmt_ts),
+                    row.wal_mtime.as_ref().map(fmt_ts),
                     generation_id,
                     fmt_ts(&ds.collected_at),
                 ])?;

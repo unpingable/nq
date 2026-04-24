@@ -78,7 +78,9 @@ fn full_payload() -> String {
                         "checkpoint_lag_s": 300,
                         "last_quick_check": "ok",
                         "last_integrity_check": "ok",
-                        "last_integrity_at": "2025-06-15T06:00:00Z"
+                        "last_integrity_at": "2025-06-15T06:00:00Z",
+                        "db_mtime": "2025-06-15T11:55:00Z",
+                        "wal_mtime": "2025-06-15T11:59:30Z"
                     }
                 ]
             }

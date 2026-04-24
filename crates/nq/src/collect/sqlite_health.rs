@@ -70,12 +70,20 @@ fn collect_one(db_path: &str) -> anyhow::Result<SqliteDbData> {
     let metadata = std::fs::metadata(db_path)?;
     let db_size_bytes = metadata.len();
     let db_size_mb = db_size_bytes as f64 / (1024.0 * 1024.0);
+    // mtime stays None on platforms / filesystems that don't expose it
+    // rather than synthesizing a value — explicit-null discipline.
+    let db_mtime = metadata.modified().ok().map(OffsetDateTime::from);
 
     let wal_path = format!("{db_path}-wal");
     let wal_exists = std::path::Path::new(&wal_path).exists();
-    let wal_size_mb = std::fs::metadata(&wal_path)
-        .map(|m| m.len() as f64 / (1024.0 * 1024.0))
-        .ok();
+    let wal_metadata = std::fs::metadata(&wal_path).ok();
+    let wal_size_mb = wal_metadata
+        .as_ref()
+        .map(|m| m.len() as f64 / (1024.0 * 1024.0));
+    let wal_mtime = wal_metadata
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .map(OffsetDateTime::from);
 
     // Parse the first 100 bytes of the DB file. If the file is too short
     // or doesn't look like a SQLite DB we still return the file-size info.
@@ -114,6 +122,8 @@ fn collect_one(db_path: &str) -> anyhow::Result<SqliteDbData> {
         last_quick_check: None,
         last_integrity_check: None,
         last_integrity_at: None,
+        db_mtime,
+        wal_mtime,
     })
 }
 
@@ -274,6 +284,45 @@ mod tests {
     /// show that collect_one returns sane metadata — and the fact that
     /// this module no longer imports `rusqlite::Connection` is the
     /// structural guarantee.
+    #[test]
+    fn collect_one_populates_db_and_wal_mtimes_when_wal_present() {
+        // WAL-mode DB with a -wal sidecar: both mtimes must be populated
+        // and recent. We don't assert ordering between the two — passive
+        // checkpoints can update either one first depending on traffic.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("with_wal.sqlite");
+        let _conn = Connection::open(&path).unwrap();
+        _conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        _conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", []).unwrap();
+        _conn.execute("INSERT INTO t (id) VALUES (1)", []).unwrap();
+
+        let before = OffsetDateTime::now_utc();
+        let data = collect_one(path.to_str().unwrap()).unwrap();
+        let after = OffsetDateTime::now_utc();
+
+        let db_mtime = data.db_mtime.expect("db_mtime must be populated");
+        let wal_mtime = data.wal_mtime.expect("wal_mtime must be populated when sidecar exists");
+        // Allow a 5-second slack for clock skew between fs and process.
+        let slack = time::Duration::seconds(5);
+        assert!(db_mtime <= after + slack && db_mtime >= before - time::Duration::hours(1));
+        assert!(wal_mtime <= after + slack && wal_mtime >= before - time::Duration::hours(1));
+    }
+
+    #[test]
+    fn collect_one_leaves_wal_mtime_none_without_sidecar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("rollback.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.pragma_update(None, "journal_mode", "DELETE").unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", []).unwrap();
+        }
+
+        let data = collect_one(path.to_str().unwrap()).unwrap();
+        assert!(data.db_mtime.is_some(), "main DB mtime always available");
+        assert!(data.wal_mtime.is_none(), "no -wal sidecar → wal_mtime None");
+    }
+
     #[test]
     fn collect_one_returns_expected_fields_for_real_db() {
         let tmp = tempfile::tempdir().unwrap();

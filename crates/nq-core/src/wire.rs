@@ -89,6 +89,15 @@ pub struct SqliteDbData {
     pub last_integrity_check: Option<String>,
     #[serde(default, with = "time::serde::rfc3339::option")]
     pub last_integrity_at: Option<OffsetDateTime>,
+    /// Main DB file mtime (raw stat). Distinct from `last_checkpoint`:
+    /// stalls when the WAL grows but writes never land in the main file.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub db_mtime: Option<OffsetDateTime>,
+    /// WAL file mtime (raw stat). Distinct from `wal_size_mb`: lets a
+    /// detector tell "WAL large and growing" from "WAL large but quiescent."
+    /// None when the -wal sidecar is absent.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub wal_mtime: Option<OffsetDateTime>,
 }
 
 /// Reduced log observation for a bounded window. Not raw logs —
