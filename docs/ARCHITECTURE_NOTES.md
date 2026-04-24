@@ -71,6 +71,10 @@ Tabular clarity is the native visual language of multi-alert triage. Strong colu
 
 "How long has this been true?" is the operator question; gens / observation counts are debugging-and-observability evidence. Render both when both matter (`stale for 1h 29m · 89 gens`), never gens alone on operator surfaces. Estimate wallclock from observed cadence (`generations.started_at`), not hardcoded `interval_s`. Partially codified in `docs/gaps/ALERT_INTERPRETATION_GAP.md` §Required metadata (notification body); violated in the web UI dashboard today — see Tripwires §GENS_WITHOUT_WALLCLOCK.
 
+### Maintenance suppresses interruption, not reality.
+
+A declared maintenance window changes how expected disturbance is interpreted and routed. It does not erase the underlying finding, rewrite health, or grant blanket amnesty to unrelated failures. Findings stay visible under `covered` / `overrun` / `out_of_envelope` / `late` annotation; the silence, restart, or stale event is real evidence either way. Expected disturbance is not the same as health — and when the window ends, persistence becomes a new fact. See `docs/gaps/MAINTENANCE_DECLARATION_GAP.md`.
+
 ---
 
 ## Latent notes
@@ -127,6 +131,15 @@ Coherent pressure, resolution still open.
 **Dependencies:** none. `crates/nq-db/src/publish.rs` stability computation is on the right side today.
 **Source:** Claude memory `project_flap_layer_split`.
 
+### MAINTENANCE_AS_GAG_RULE
+
+**Status:** tripwire
+**Activation trigger:** any proposal that lets an expected maintenance action silence a finding without recording the expectation; any feature that treats "page on it" and "suppress it into nothing" as the only two choices; any auto-extend / auto-ack scheme during maintenance windows.
+**Why it matters:** "known in advance" is not the same as "not real." Maintenance needs declared expected effects, bounded scope, and window-end semantics. A finding that persists after maintenance ends is a new fact, not continued suppression. Reject on review: "add a flag that suppresses `log_silence` for these sources during cron windows" (gag rule masquerading as policy); "auto-extend maintenance until things look normal again" (drift-as-policy); "ack the finding when maintenance starts" (truth-erasure).
+**Likely successor artifact:** `docs/gaps/MAINTENANCE_DECLARATION_GAP.md` (filed; status `proposed`).
+**Dependencies:** none. Tripwire stands until the gap implementation lands.
+**Source:** Claude memory `project_maintenance_declaration_gap`. Forcing case: labelwatch-claude vacuum → expected `log_silence` on labelwatch source, 2026-04-24.
+
 ---
 
 ## Queued gaps
@@ -150,6 +163,19 @@ Full starters, just awaiting forcing pain.
 
 **Observed instances (evidence for activation):**
 - **2026-04-23 — driftwatch on labelwatch.neutral.zone.** NQ shows `driftwatch` as `unknown` in the services list but produces no host-state alert. Discovered during routine SQLite VACUUM maintenance. Service is semi-visible (shows up because of a freelist finding on its DB) but has no direct health contract — no HTTP probe, no container liveness check, no silence baseline. NQ "knows of" driftwatch but does not "know about" its expected liveness, so absence falls back to `unknown` rather than `down`. This is the inverse-trigger pattern: an intended-live service without explicit monitoring contract. The quick fix is a direct service-health probe (tier-1, per-service); the structural fix is the registry projection (tier-3, makes the pattern impossible to recur silently). Both layers are legitimate; the quick fix does not close the gap.
+
+### MAINTENANCE_DECLARATION_GAP
+
+**Status:** queued (spec filed, implementation pending)
+**Activation trigger:**
+- second real case where expected disturbance needs to remain visible but non-pageworthy
+- first need for overrun detection after planned maintenance
+- first agent-driven workflow that should self-declare expected disturbance
+
+**Why it matters:** structural need is clear; live forcing case exists (labelwatch-claude vacuum → expected `log_silence` on labelwatch source, 2026-04-24); shape is coherent. Implementation should follow current active slices rather than jumping the queue. The compact laws (expected disturbance is not health; maintenance suppresses interruption, not reality; when the window ends, persistence becomes a new fact) hold even before V1 lands.
+**Likely successor artifact:** `docs/gaps/MAINTENANCE_DECLARATION_GAP.md` (filed; status `proposed`). Carries V1 slice and bounded effect-class vocabulary.
+**Dependencies:** none on the spec; V1 implementation may want EVIDENCE_RETIREMENT_GAP basis-state to compose cleanly. Distinct from RETIREMENT_INTENT (sibling tripwire) — retirement is end-of-life, maintenance is bounded-disturbance-with-return.
+**Source:** Claude memory `project_maintenance_declaration_gap`.
 
 ---
 

@@ -35,6 +35,7 @@ Specs carry one of these statuses in their header. The index below groups accord
 - [`OBSERVER_DISTORTION_GAP`](OBSERVER_DISTORTION_GAP.md) — `proposed`. Δq detector domain: observers are members of the fault domain. Self-audit first (v1); host-wide deferred.
 - [`PORTABILITY_GAP`](PORTABILITY_GAP.md) — `proposed`. Platform capability honesty — Linux first-class, BSD/macOS degraded-mode with explicit capability declaration. Sibling of Δq (observer incapacity vs observer interference). No silent platform-dependent failures.
 - [`COMPLETENESS_PROPAGATION_GAP`](COMPLETENESS_PROPAGATION_GAP.md) — `proposed`. Partiality must survive contact with the pipeline. Three axes (collection / history / decision), not one score. Promotes existing per-witness/per-classifier primitives from metadata to governance.
+- [`MAINTENANCE_DECLARATION_GAP`](MAINTENANCE_DECLARATION_GAP.md) — `proposed`. Maintenance is declared expectation, not a mute button. Findings stay visible under `covered`/`overrun`/`out_of_envelope`/`late` annotation. Forcing case: labelwatch-claude vacuuming → expected `log_silence` that should not page but should not vanish.
 
 ### Consumer contract
 - [`FINDING_EXPORT_GAP`](FINDING_EXPORT_GAP.md) — `proposed`. Canonical `FindingSnapshot` DTO + `nq findings export` CLI. Identity + lifecycle + diagnosis + regime + observations + generation-context as one versioned object. Findings are evidence, not commands. Forced by Night Shift as first programmatic consumer.
