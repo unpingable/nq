@@ -555,7 +555,13 @@ fn detect_freelist_bloat(
     for row in rows {
         let (host, db_path, reclaimable_mb, freelist_pct) = row?;
         let pct = freelist_pct.unwrap_or(0.0);
-        if pct > config.freelist_pct_threshold || reclaimable_mb > config.freelist_abs_floor_mb {
+        // Magnitude gate: both percent AND absolute reclaimable must clear
+        // their thresholds. Percent alone fires on a tiny DB at high pct
+        // (e.g. receipts.sqlite at 36.7 MB / 44.3% — the canonical
+        // "percent without magnitude is dumb" case). Absolute alone fires
+        // on a giant DB with a routine freelist (e.g. 30 GB DB at 5% /
+        // 1.5 GB reclaim — normal idle space). Real adverse needs both.
+        if pct > config.freelist_pct_threshold && reclaimable_mb > config.freelist_abs_floor_mb {
             out.push(Finding {
                 host,
                 domain: "Δg".into(),
@@ -573,8 +579,15 @@ fn detect_freelist_bloat(
                     failure_class: FailureClass::Accumulation,
                     service_impact: ServiceImpact::NoneCurrent,
                     action_bias: ActionBias::InvestigateBusinessHours,
-                    synopsis: format!("Freelist has {:.1} MB reclaimable ({:.1}% of database).", reclaimable_mb, pct),
-                    why_care: "Dead pages accumulating faster than VACUUM can reclaim. Disk usage grows without corresponding data growth.".into(),
+                    synopsis: format!(
+                        "Freelist has {:.1} MB reclaimable ({:.1}% of database) — \
+                         clears both the percent and absolute floors.",
+                        reclaimable_mb, pct,
+                    ),
+                    why_care: "Dead pages accumulating faster than VACUUM can reclaim, \
+                               and the absolute size is large enough that VACUUM is worth \
+                               scheduling. Either axis alone is operationally normal; the \
+                               combination is the pathology.".into(),
                 }),
                 basis_source_id: None,
                 basis_witness_id: None,

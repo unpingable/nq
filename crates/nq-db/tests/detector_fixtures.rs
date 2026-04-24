@@ -1835,6 +1835,173 @@ fn pinned_wal_silent_when_mtimes_are_null() {
         "null mtimes → cannot testify; pinned_wal must not fake the conclusion");
 }
 
+// ================================================================
+// freelist_bloat — Δg (magnitude gate: percent AND absolute)
+// ================================================================
+
+/// Build a sqlite_health batch that exercises the freelist detector.
+/// Caller picks db_size_mb and freelist_count; the helper computes the
+/// derived view fields (freelist_reclaimable_mb, freelist_pct) the way
+/// v_sqlite_dbs does, so the same arithmetic the detector consumes.
+fn freelist_db_batch(
+    host: &str,
+    db_path: &str,
+    db_size_mb: f64,
+    freelist_count: u64,
+    received_at: OffsetDateTime,
+) -> Batch {
+    Batch {
+        cycle_started_at: received_at,
+        cycle_completed_at: received_at,
+        sources_expected: 1,
+        source_runs: vec![SourceRun {
+            source: host.into(),
+            status: SourceStatus::Ok,
+            received_at,
+            collected_at: Some(received_at),
+            duration_ms: Some(5),
+            error_message: None,
+        }],
+        collector_runs: vec![CollectorRun {
+            source: host.into(),
+            collector: CollectorKind::SqliteHealth,
+            status: CollectorStatus::Ok,
+            collected_at: Some(received_at),
+            entity_count: Some(1),
+            error_message: None,
+        }],
+        host_rows: vec![],
+        service_sets: vec![],
+        sqlite_db_sets: vec![SqliteDbSet {
+            host: host.into(),
+            collected_at: received_at,
+            rows: vec![SqliteDbRow {
+                db_path: db_path.into(),
+                db_size_mb: Some(db_size_mb),
+                wal_size_mb: None,
+                page_size: Some(4096),
+                page_count: Some((db_size_mb * 1024.0 * 1024.0 / 4096.0) as u64),
+                freelist_count: Some(freelist_count),
+                journal_mode: None,
+                auto_vacuum: Some("none".into()),
+                last_checkpoint: None,
+                checkpoint_lag_s: None,
+                last_quick_check: None,
+                last_integrity_check: None,
+                last_integrity_at: None,
+                db_mtime: Some(received_at),
+                wal_mtime: None,
+            }],
+        }],
+        metric_sets: vec![],
+        log_sets: vec![],
+        zfs_witness_rows: vec![],
+        smart_witness_rows: vec![],
+    }
+}
+
+#[test]
+fn freelist_bloat_fires_when_both_pct_and_reclaim_clear_floors() {
+    // 8 GB DB at 30% freelist → 2.4 GB reclaimable. Clears both
+    // defaults (20% pct, 1024 MB floor). This is the kind of case
+    // VACUUM is genuinely worth scheduling for.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // 30% of 8192 MB = 2457.6 MB reclaimable; freelist_count = 2457.6 MB / 4 KB pages
+    let freelist_pages = (8192.0 * 1024.0 * 1024.0 * 0.30 / 4096.0) as u64;
+    let b = freelist_db_batch("labeler", "/var/lib/labeler/labeler.sqlite",
+        8192.0, freelist_pages, t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "freelist_bloat");
+    assert_eq!(d.len(), 1, "30% pct AND 2.4 GB reclaim should fire");
+    assert_eq!(d[0].domain, "Δg");
+}
+
+#[test]
+fn freelist_bloat_silent_on_high_pct_low_reclaim() {
+    // The receipts.sqlite shape: 82 MB DB at 44% → 36 MB reclaimable.
+    // Pct clears 20% floor but reclaimable is far below 1024 MB. Was
+    // firing on the OR-semantics; the magnitude gate must silence it.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let freelist_pages = (82.0 * 1024.0 * 1024.0 * 0.44 / 4096.0) as u64;
+    let b = freelist_db_batch("labelwatch", "/opt/receipts-feed/data/receipts.sqlite",
+        82.0, freelist_pages, t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "freelist_bloat");
+    assert!(d.is_empty(),
+        "tiny DB at high pct → magnitude gate must silence (the receipts.sqlite shape)");
+}
+
+#[test]
+fn freelist_bloat_silent_on_low_pct_high_reclaim() {
+    // Giant DB with a routine freelist: 30 GB at 5% → 1.5 GB
+    // reclaimable. Reclaimable clears the absolute floor but pct is
+    // operationally normal for a busy database. AND-semantics keeps
+    // this silent (was firing under OR — that was the noise we lose).
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let freelist_pages = (30720.0 * 1024.0 * 1024.0 * 0.05 / 4096.0) as u64;
+    let b = freelist_db_batch("labeler", "/var/lib/labeler/big.sqlite",
+        30720.0, freelist_pages, t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "freelist_bloat");
+    assert!(d.is_empty(),
+        "5% on a 30 GB DB is normal idle space; magnitude alone shouldn't fire");
+}
+
+#[test]
+fn freelist_bloat_silent_when_both_below_floors() {
+    // Small DB, modest freelist. No alarm needed.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // 100 MB DB at 5% → 5 MB reclaimable. Both far below.
+    let freelist_pages = (100.0 * 1024.0 * 1024.0 * 0.05 / 4096.0) as u64;
+    let b = freelist_db_batch("labeler", "/var/lib/labeler/small.sqlite",
+        100.0, freelist_pages, t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "freelist_bloat");
+    assert!(d.is_empty(), "both below floors → silent");
+}
+
+#[test]
+fn freelist_bloat_silent_when_no_freelist_data() {
+    // Header parse failed (collector returned a row with file sizes
+    // only). Predicate sees freelist_reclaimable_mb IS NULL and skips
+    // the row before the AND test runs.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // freelist_count = 0 → reclaimable_mb = 0 (not NULL, since
+    // page_size is set) → both branches fail. NULL-input case is
+    // tested implicitly by the WHERE clause; here we cover the
+    // zero-freelist case which is functionally equivalent.
+    let b = freelist_db_batch("labeler", "/var/lib/labeler/empty.sqlite",
+        500.0, 0, t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "freelist_bloat");
+    assert!(d.is_empty(), "zero freelist → silent");
+}
+
 #[test]
 fn pinned_wal_silent_on_small_wal_even_when_stale() {
     // Stale main DB but the WAL is tiny — below the floor. The shape
