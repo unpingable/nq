@@ -2160,11 +2160,12 @@ fn scsi_device(
     }
 }
 
-fn nvme_device(
+fn nvme_device_with_wear(
     subject: &str,
     serial: &str,
     smart_passed: Option<bool>,
     media_errors: Option<i64>,
+    pct_used: Option<i64>,
     can_testify: &[&str],
 ) -> nq_core::wire::SmartDeviceObservation {
     use nq_core::wire::{SmartDeviceCoverage, SmartDeviceObservation};
@@ -2187,7 +2188,7 @@ fn nvme_device(
         uncorrected_write_errors: None,
         uncorrected_verify_errors: None,
         media_errors,
-        nvme_percentage_used: Some(2),
+        nvme_percentage_used: pct_used,
         nvme_available_spare_pct: Some(100),
         nvme_critical_warning: Some(0),
         nvme_unsafe_shutdowns: Some(5),
@@ -2201,6 +2202,16 @@ fn nvme_device(
         raw_original_bytes: None,
         raw_truncated_bytes: None,
     }
+}
+
+fn nvme_device(
+    subject: &str,
+    serial: &str,
+    smart_passed: Option<bool>,
+    media_errors: Option<i64>,
+    can_testify: &[&str],
+) -> nq_core::wire::SmartDeviceObservation {
+    nvme_device_with_wear(subject, serial, smart_passed, media_errors, Some(2), can_testify)
 }
 
 #[test]
@@ -2634,4 +2645,163 @@ fn smart_witness_silent_subject_is_witness_id() {
     assert_eq!(d.len(), 1);
     assert_eq!(d[0].subject, "smart.local.lil-nas-x",
         "subject is the witness id");
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// SMART witness — smart_nvme_percentage_used
+//
+// NVMe wear preventive-replacement detector. Threshold is 80% by default.
+// Fires level-triggered on percentage_used >= threshold; gated on
+// nvme_health_log per-device coverage.
+// ───────────────────────────────────────────────────────────────────────
+
+#[test]
+fn smart_nvme_percentage_used_fires_at_threshold() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_with_wear(
+        "serial:WORN_NVME",
+        "WORN_NVME",
+        Some(true),
+        Some(0),
+        Some(80),
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_percentage_used");
+    assert_eq!(d.len(), 1);
+    assert_eq!(d[0].domain, "Δh");
+    assert_eq!(d[0].value, Some(80.0));
+    assert!(d[0].message.contains("80%"));
+
+    let dx = d[0].diagnosis.as_ref().unwrap();
+    assert_eq!(dx.failure_class, nq_db::FailureClass::Drift);
+    assert_eq!(dx.service_impact, nq_db::ServiceImpact::NoneCurrent);
+    assert_eq!(dx.action_bias, nq_db::ActionBias::InvestigateBusinessHours);
+}
+
+#[test]
+fn smart_nvme_percentage_used_fires_above_threshold() {
+    // Past 100 is permitted by spec — the drive doesn't stop, the
+    // vendor stops promising. Detector must still fire.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_with_wear(
+        "serial:OVERWORN",
+        "OVERWORN",
+        Some(true),
+        Some(0),
+        Some(112),
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_percentage_used");
+    assert_eq!(d.len(), 1);
+    assert_eq!(d[0].value, Some(112.0));
+}
+
+#[test]
+fn smart_nvme_percentage_used_silent_below_threshold() {
+    // Sushi-k's TEAM at 2% is the live shape — well below threshold.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_with_wear(
+        "serial:NEW_NVME",
+        "NEW_NVME",
+        Some(true),
+        Some(0),
+        Some(2),
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_percentage_used");
+    assert!(d.is_empty(), "2% wear is well below 80% — silent");
+}
+
+#[test]
+fn smart_nvme_percentage_used_silent_just_under_threshold() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_with_wear(
+        "serial:AGING",
+        "AGING",
+        Some(true),
+        Some(0),
+        Some(79),
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_percentage_used");
+    assert!(d.is_empty(), "79% is below the 80% threshold — silent");
+}
+
+#[test]
+fn smart_nvme_percentage_used_silent_when_value_null() {
+    // SCSI device — percentage_used is NULL by schema. Even if a
+    // misconfigured witness somehow declared nvme_health_log coverage,
+    // a NULL value should not produce a finding.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000ccascsi",
+        "SCSI_DRV",
+        Some(true),
+        Some(0),
+        Some(0),
+        // nvme_health_log declared even though this is SCSI — defensive test.
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_percentage_used");
+    assert!(d.is_empty(), "NULL percentage_used → silent regardless of coverage");
+}
+
+#[test]
+fn smart_nvme_percentage_used_silent_without_nvme_coverage() {
+    // High wear but no nvme_health_log coverage — gating discipline,
+    // detector cannot read what it has no standing for.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_with_wear(
+        "serial:WORN_NVME",
+        "WORN_NVME",
+        Some(true),
+        Some(0),
+        Some(85),
+        // nvme_health_log deliberately absent
+        &["smart_overall_status", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_percentage_used");
+    assert!(d.is_empty(), "no nvme_health_log coverage → silent");
 }

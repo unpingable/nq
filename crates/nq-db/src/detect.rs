@@ -352,6 +352,13 @@ impl From<&nq_core::config::DetectorThresholds> for DetectorConfig {
 /// `DetectorThresholds` if a deployment needs a different cadence.
 const ZFS_WITNESS_STALE_SECONDS: i64 = 300;
 
+/// NVMe wear threshold. SMART NVMe drives self-report a percentage used
+/// estimate (0 = new, 100 = at projected end-of-life). Vendors publish
+/// warranties typically in the 60-80% range; past 80% the drive is in
+/// preventive-replacement territory. Hardcoded in Phase 2; moves to
+/// DetectorThresholds when a deployment needs different urgency.
+const SMART_NVME_PCT_USED_THRESHOLD: i64 = 80;
+
 /// Stale threshold for the SMART witness. Matches ZFS_WITNESS_STALE_SECONDS
 /// for now. SMART profile (~/git/nq-witness/profiles/smart.md) recommends
 /// 5-minute cadence as the default; this gives one cadence's grace before
@@ -391,6 +398,7 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     detect_smart_status_lies(db, &mut findings)?;
     detect_smart_uncorrected_errors_nonzero(db, &mut findings)?;
     detect_smart_witness_silent(db, &mut findings)?;
+    detect_smart_nvme_percentage_used(db, &mut findings)?;
     // Saved query checks
     run_saved_checks(db, &mut findings)?;
     Ok(findings)
@@ -2676,6 +2684,113 @@ fn detect_smart_witness_silent(
             }),
             basis_source_id: Some(witness_id.clone()),
             basis_witness_id: Some(witness_id),
+        });
+    }
+    Ok(())
+}
+
+/// Δh: NVMe percentage_used wear approaching projected end-of-life.
+/// Level-triggered, gated on `nvme_health_log` per-device coverage.
+///
+/// NVMe drives self-report a 0-100 wear percentage (SPEC-defined: 0 =
+/// new, 100 = at projected end-of-life based on vendor's program/erase
+/// cycle model). The number can exceed 100 — the drive doesn't stop
+/// working at 100, but the vendor stops promising endurance. This
+/// detector fires preventively at 80% so an operator can plan
+/// replacement before the warranty crosses.
+///
+/// Diagnosis posture matches `zfs_scrub_overdue` — preventive
+/// maintenance hygiene, not active incident:
+///   - service_impact: NoneCurrent (drive is still serving I/O)
+///   - action_bias: InvestigateBusinessHours (slow burn)
+///   - state_kind: Maintenance (this is replacement scheduling, not
+///     ongoing failure)
+///
+/// Sibling detectors deferred:
+///   - smart_nvme_available_spare_low — when `available_spare_pct`
+///     drops below the vendor's threshold (often 10%). Different axis,
+///     different field.
+///   - smart_nvme_critical_warning_set — when the device sets any
+///     critical-warning flag. Bit-field interpretation needed.
+fn detect_smart_nvme_percentage_used(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "SELECT d.host, d.subject, d.serial_number, d.model,
+                d.nvme_percentage_used, d.power_on_hours,
+                w.witness_id
+         FROM smart_devices_current d
+         INNER JOIN smart_device_coverage_current cnvme
+            ON cnvme.host = d.host AND cnvme.subject = d.subject
+            AND cnvme.tag = 'nvme_health_log' AND cnvme.can_testify = 1
+         LEFT JOIN smart_witness_current w ON w.host = d.host
+         WHERE d.nvme_percentage_used IS NOT NULL
+           AND d.nvme_percentage_used >= ?1",
+    )?;
+    let rows = stmt.query_map([SMART_NVME_PCT_USED_THRESHOLD], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, i64>(4)?,
+            row.get::<_, Option<i64>>(5)?,
+            row.get::<_, Option<String>>(6)?,
+        ))
+    })?;
+    for row in rows {
+        let (host, subject, serial, model, pct_used, power_on_hours, witness_id) = row?;
+
+        let identity = match (model.as_deref(), serial.as_deref()) {
+            (Some(m), Some(s)) => format!("{m} ({s})"),
+            (Some(m), None)    => m.to_string(),
+            (None,    Some(s)) => format!("serial {s}"),
+            (None,    None)    => subject.clone(),
+        };
+
+        let hours_tail = power_on_hours
+            .map(|h| format!(" after {h} hours"))
+            .unwrap_or_default();
+
+        let message = format!(
+            "NVMe {identity}: percentage_used={pct_used}%{hours_tail}"
+        );
+
+        let synopsis = format!(
+            "NVMe drive {identity} reports {pct_used}% of its projected endurance \
+             consumed (vendor's program/erase model). Threshold for preventive \
+             replacement is {}%.",
+            SMART_NVME_PCT_USED_THRESHOLD,
+        );
+
+        let why_care: String = "NVMe percentage_used is the vendor's own estimate of how \
+                                much endurance the drive has spent. Crossing the warranty \
+                                threshold doesn't mean the drive will fail tomorrow — but \
+                                past this point the vendor stops promising endurance, and \
+                                writes get more expensive in terms of remaining life. \
+                                Plan replacement during normal maintenance windows rather \
+                                than after the drive surprises you.".into();
+
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "smart_nvme_percentage_used".into(),
+            subject,
+            message,
+            value: Some(pct_used as f64),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: StateKind::Maintenance,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Drift,
+                service_impact: ServiceImpact::NoneCurrent,
+                action_bias: ActionBias::InvestigateBusinessHours,
+                synopsis,
+                why_care,
+            }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
         });
     }
     Ok(())

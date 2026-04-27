@@ -322,6 +322,25 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
             ],
         },
 
+        "smart_nvme_percentage_used" => FindingMeta {
+            plain_label: "NVMe wear approaching projected end-of-life",
+            operator_label: "NVMe Wear",
+            gloss: "NVMe drive's self-reported percentage_used is at or above \
+                    the preventive-replacement threshold (default 80%). The \
+                    vendor estimates the drive has consumed this fraction of \
+                    its projected program/erase endurance.",
+            contradiction: "The drive is still serving I/O. percentage_used is \
+                            an endurance estimate, not an immediate failure \
+                            signal. The drive may continue working past 100%, \
+                            but the vendor stops promising endurance.",
+            next_checks: &[
+                "drive's nvme_available_spare_pct (separate axis; low spare = remap exhaustion)",
+                "nvme_critical_warning bit-field (any flag set is more urgent)",
+                "warranty status / replacement parts availability",
+                "workload trajectory: writes/day rate vs remaining endurance budget",
+            ],
+        },
+
         // ── meta ─────────────────────────────────────────────────
         "check_failed" => FindingMeta {
             plain_label: "Check condition detected",
