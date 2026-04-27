@@ -3355,3 +3355,241 @@ fn smart_reallocated_rising_silent_when_prior_null() {
     // require both Some. See doc comment above.
     assert_eq!(d.len(), 1, "current: NULL prior coerces to 0; documented limitation");
 }
+
+// ───────────────────────────────────────────────────────────────────────
+// SMART witness — smart_temperature_high
+//
+// Per-class thresholds: NVMe 70°C, SCSI 55°C, ATA 50°C. Other classes
+// (usb_bridge, unknown) skip the detector. Coverage gate: `temperature`.
+// ───────────────────────────────────────────────────────────────────────
+
+#[test]
+fn smart_temperature_high_fires_on_hot_nvme() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let mut dev = nvme_device_full(
+        "serial:HOT_NVME",
+        "HOT_NVME",
+        Some(true),
+        Some(0),
+        Some(2),
+        Some(100),
+        Some(0),
+        &["temperature", "device_identity"],
+    );
+    dev.temperature_c = Some(75);
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_temperature_high");
+    assert_eq!(d.len(), 1);
+    assert_eq!(d[0].domain, "Δh");
+    assert_eq!(d[0].value, Some(75.0));
+    assert!(d[0].message.contains("NVMe"));
+    assert!(d[0].message.contains("75°C"));
+    assert!(d[0].message.contains("threshold 70°C"));
+
+    let dx = d[0].diagnosis.as_ref().unwrap();
+    assert_eq!(dx.failure_class, nq_db::FailureClass::Drift);
+    assert_eq!(dx.action_bias, nq_db::ActionBias::InvestigateBusinessHours);
+}
+
+#[test]
+fn smart_temperature_high_fires_at_class_threshold() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let mut dev = nvme_device_full(
+        "serial:EDGE",
+        "EDGE",
+        Some(true),
+        Some(0),
+        Some(2),
+        Some(100),
+        Some(0),
+        &["temperature", "device_identity"],
+    );
+    dev.temperature_c = Some(70);   // exactly at NVMe threshold
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_temperature_high");
+    assert_eq!(d.len(), 1, "predicate is >= threshold");
+}
+
+#[test]
+fn smart_temperature_high_silent_on_normal_nvme() {
+    // sushi-k TEAM live shape: 47°C is normal NVMe operating temp.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_full(
+        "serial:NORMAL_NVME",
+        "NORMAL_NVME",
+        Some(true),
+        Some(0),
+        Some(2),
+        Some(100),
+        Some(0),
+        &["temperature", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_temperature_high");
+    assert!(d.is_empty(), "47°C is normal NVMe — silent");
+}
+
+#[test]
+fn smart_temperature_high_fires_on_hot_scsi() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let mut dev = scsi_device(
+        "wwn:0x5000ccaHOT",
+        "HOT_SAS",
+        Some(true),
+        Some(0),
+        Some(0),
+        &["temperature", "device_identity"],
+    );
+    dev.temperature_c = Some(60);   // SCSI threshold 55
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_temperature_high");
+    assert_eq!(d.len(), 1);
+    assert!(d[0].message.contains("SCSI/SAS"));
+    assert!(d[0].message.contains("threshold 55°C"));
+}
+
+#[test]
+fn smart_temperature_high_silent_on_normal_scsi() {
+    // lil-nas-x HGST SAS live shape: 24°C is normal-cool for enterprise SAS.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000ccaCOLD",
+        "COLD_SAS",
+        Some(true),
+        Some(0),
+        Some(0),
+        &["temperature", "device_identity"],
+    );
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_temperature_high");
+    assert!(d.is_empty(), "24°C is normal SAS — silent");
+}
+
+#[test]
+fn smart_temperature_high_fires_on_hot_ata() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let mut dev = ata_device(
+        "wwn:0x5000ataHOT",
+        "HOT_ATA",
+        Some(true),
+        Some(0),
+        &["temperature", "device_identity"],
+    );
+    dev.temperature_c = Some(52);   // ATA threshold 50
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_temperature_high");
+    assert_eq!(d.len(), 1);
+    assert!(d[0].message.contains("ATA"));
+    assert!(d[0].message.contains("threshold 50°C"));
+}
+
+#[test]
+fn smart_temperature_high_silent_on_unsupported_class() {
+    // usb_bridge thermal reporting is unreliable; detector skips
+    // entirely regardless of the reported number.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let mut dev = scsi_device(
+        "path:/dev/usb_bridge",
+        "USB_BRIDGE",
+        Some(true),
+        Some(0),
+        Some(0),
+        &["temperature", "device_identity"],
+    );
+    dev.device_class = "usb_bridge".into();
+    dev.temperature_c = Some(80);   // would fire on any other class
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_temperature_high");
+    assert!(d.is_empty(), "usb_bridge skipped regardless of temperature");
+}
+
+#[test]
+fn smart_temperature_high_silent_when_temp_null() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let mut dev = scsi_device(
+        "wwn:0x5000ccaSILENT",
+        "SILENT",
+        Some(true),
+        Some(0),
+        Some(0),
+        &["temperature", "device_identity"],
+    );
+    dev.temperature_c = None;
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_temperature_high");
+    assert!(d.is_empty(), "NULL temperature → silent");
+}
+
+#[test]
+fn smart_temperature_high_silent_without_temperature_coverage() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let mut dev = nvme_device_full(
+        "serial:HOT_NVME",
+        "HOT_NVME",
+        Some(true),
+        Some(0),
+        Some(2),
+        Some(100),
+        Some(0),
+        // temperature deliberately absent
+        &["nvme_health_log", "device_identity"],
+    );
+    dev.temperature_c = Some(75);
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_temperature_high");
+    assert!(d.is_empty(), "no temperature coverage → silent");
+}

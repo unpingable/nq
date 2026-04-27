@@ -359,6 +359,29 @@ const ZFS_WITNESS_STALE_SECONDS: i64 = 300;
 /// DetectorThresholds when a deployment needs different urgency.
 const SMART_NVME_PCT_USED_THRESHOLD: i64 = 80;
 
+/// Per-class temperature thresholds (°C). SMART normalized
+/// `temperature_c` reads vary in operating range by device class:
+///
+///   - NVMe runs hottest. Typical 30-50°C idle, 60-70°C under load,
+///     thermal throttle around 70-80°C. Vendor "critical composite
+///     temperature" is usually 80-85°C. We warn at 70 — drive is
+///     near throttle territory, not yet damaged.
+///
+///   - Enterprise SCSI/SAS spinning runs cool. Typical 20-40°C; 50°C
+///     is uncomfortable; vendor warranty caps often 55-60°C. Warn at
+///     55 — clear margin from warranty edge.
+///
+///   - ATA (consumer spinning rust). Backblaze fleet data shows
+///     reliability is roughly flat 20-50°C and degrades sharply
+///     above 50°C. Warn at 50 to match that field-data threshold.
+///
+/// usb_bridge and `unknown` device_class skip the detector entirely —
+/// thermal reporting through USB bridges is famously unreliable, and
+/// "unknown" means we can't pick a class-appropriate threshold.
+const SMART_TEMP_NVME_C: i64 = 70;
+const SMART_TEMP_SCSI_C: i64 = 55;
+const SMART_TEMP_ATA_C:  i64 = 50;
+
 /// NVMe available_spare_pct floor. NVMe drives reserve a pool of spare
 /// blocks for remapping bad media. As remap activity consumes the pool,
 /// available_spare_pct decreases from 100 toward 0. The NVMe spec also
@@ -411,6 +434,7 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     detect_smart_nvme_available_spare_low(db, &mut findings)?;
     detect_smart_nvme_critical_warning_set(db, &mut findings)?;
     detect_smart_reallocated_sectors_rising(db, &mut findings)?;
+    detect_smart_temperature_high(db, &mut findings)?;
     // Saved query checks
     run_saved_checks(db, &mut findings)?;
     Ok(findings)
@@ -3169,6 +3193,131 @@ fn detect_smart_reallocated_sectors_rising(
                 failure_class: FailureClass::Drift,
                 service_impact: ServiceImpact::Degraded,
                 action_bias: ActionBias::InvestigateNow,
+                synopsis,
+                why_care,
+            }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
+        });
+    }
+    Ok(())
+}
+
+/// Δh: Drive temperature crossed its class-appropriate warn threshold.
+/// Level-triggered, gated on `temperature` per-device coverage.
+///
+/// Per-class thresholds are required because operating ranges differ:
+///   - NVMe 70°C (near thermal throttle territory)
+///   - SCSI 55°C (clear of vendor warranty caps ~55-60°C)
+///   - ATA  50°C (matches Backblaze field-data inflection point)
+///   - usb_bridge / unknown: detector does not fire (thermal reporting
+///     through USB bridges is famously unreliable; unknown class can't
+///     pick a class-appropriate threshold)
+///
+/// Diagnosis posture: this is "fix the cooling" or "investigate why
+/// this drive is hot," not "drive is dying right now." Most temperature
+/// excursions are environmental (failed fan, dust buildup, ambient
+/// inlet temp risen). The drive may already be throttling under load
+/// even before damage occurs — failure_class Drift, service_impact
+/// Degraded, action_bias InvestigateBusinessHours.
+///
+/// Open: lower-bound check (drives below ~5°C operation can also fail).
+/// Skipped in V1 because it almost never matters in practice; all our
+/// fleet hosts are climate-controlled. Add if a deployment surfaces
+/// the case.
+fn detect_smart_temperature_high(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "SELECT d.host, d.subject, d.serial_number, d.model, d.device_class,
+                d.temperature_c,
+                CASE d.device_class
+                    WHEN 'nvme' THEN ?1
+                    WHEN 'scsi' THEN ?2
+                    WHEN 'ata'  THEN ?3
+                    ELSE NULL
+                END AS threshold_c,
+                w.witness_id
+         FROM smart_devices_current d
+         INNER JOIN smart_device_coverage_current ctemp
+            ON ctemp.host = d.host AND ctemp.subject = d.subject
+            AND ctemp.tag = 'temperature' AND ctemp.can_testify = 1
+         LEFT JOIN smart_witness_current w ON w.host = d.host
+         WHERE d.temperature_c IS NOT NULL
+           AND d.device_class IN ('nvme', 'scsi', 'ata')
+           AND d.temperature_c >= CASE d.device_class
+                WHEN 'nvme' THEN ?1
+                WHEN 'scsi' THEN ?2
+                WHEN 'ata'  THEN ?3
+                ELSE 9999
+              END",
+    )?;
+    let rows = stmt.query_map(
+        [SMART_TEMP_NVME_C, SMART_TEMP_SCSI_C, SMART_TEMP_ATA_C],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, Option<i64>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+            ))
+        },
+    )?;
+    for row in rows {
+        let (host, subject, serial, model, device_class, temp_c, threshold_c, witness_id) = row?;
+        let threshold_v = threshold_c.unwrap_or(0);
+
+        let identity = match (model.as_deref(), serial.as_deref()) {
+            (Some(m), Some(s)) => format!("{m} ({s})"),
+            (Some(m), None)    => m.to_string(),
+            (None,    Some(s)) => format!("serial {s}"),
+            (None,    None)    => subject.clone(),
+        };
+
+        let class_label = match device_class.as_str() {
+            "nvme" => "NVMe",
+            "scsi" => "SCSI/SAS",
+            "ata"  => "ATA",
+            other  => other,
+        };
+
+        let message = format!(
+            "{class_label} {identity} temperature={temp_c}°C (threshold {threshold_v}°C)"
+        );
+
+        let synopsis = format!(
+            "{class_label} drive {identity} reports temperature {temp_c}°C, at or above the \
+             class-appropriate warn threshold of {threshold_v}°C. The drive may be throttling \
+             under load; sustained operation here shortens lifetime."
+        );
+
+        let why_care: String = "Most drive temperature excursions are environmental, not the \
+                                drive itself: a failed fan, dust buildup, ambient inlet \
+                                temperature risen above design, or chassis airflow disrupted. \
+                                The drive responds by throttling reads/writes (visible as I/O \
+                                latency rising) and, if sustained at higher temps, by losing \
+                                lifetime. Investigate the cooling first; replace the drive only \
+                                if temps stay high after airflow is restored.".into();
+
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "smart_temperature_high".into(),
+            subject,
+            message,
+            value: Some(temp_c as f64),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: StateKind::Degradation,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Drift,
+                service_impact: ServiceImpact::Degraded,
+                action_bias: ActionBias::InvestigateBusinessHours,
                 synopsis,
                 why_care,
             }),

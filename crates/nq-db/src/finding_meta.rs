@@ -402,6 +402,27 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
             ],
         },
 
+        "smart_temperature_high" => FindingMeta {
+            plain_label: "Drive running hot",
+            operator_label: "SMART Temperature High",
+            gloss: "Drive's reported temperature_c is at or above its \
+                    class-appropriate warn threshold (NVMe 70°C, SCSI 55°C, \
+                    ATA 50°C). Different classes have different operating \
+                    ranges — a single threshold would mis-classify either \
+                    direction.",
+            contradiction: "The drive is still operating, may still report \
+                            SMART OVERALL=passed, may not have set its own \
+                            critical_warning bit yet. Sustained high temp \
+                            often shows up first as I/O latency rising \
+                            (drive is throttling), not as failures.",
+            next_checks: &[
+                "chassis airflow: failed fan, dust buildup, ambient inlet temp",
+                "co-firing smart_nvme_critical_warning_set bit 1 (drive's own thermal flag) — if set, drive's internal logic also agrees this is hot",
+                "I/O latency / queue depth metrics on the same device — throttling shows up before damage",
+                "firmware updates (NVMe vendors occasionally improve thermal management)",
+            ],
+        },
+
         // ── meta ─────────────────────────────────────────────────
         "check_failed" => FindingMeta {
             plain_label: "Check condition detected",
