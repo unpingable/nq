@@ -1,12 +1,36 @@
 {
+  "_comment": "Template for nq-publish.service. Each host customizes locally; live configs live outside the repo (gitignored). See README and AGENTS.md.",
+
   "bind_addr": "127.0.0.1:9847",
+
   "sqlite_paths": [
     "/var/lib/myapp/data.sqlite",
     "/var/lib/myapp/work.sqlite"
   ],
+
   "service_health_urls": [
     { "name": "myapp", "check_type": "systemd" },
     { "name": "worker", "check_type": "systemd" },
     { "name": "nginx", "check_type": "docker" }
-  ]
+  ],
+
+  "prometheus_targets": [
+    { "name": "node", "url": "http://127.0.0.1:9100/metrics" }
+  ],
+
+  "log_sources": [],
+
+  "_zfs_witness_comment": "Optional. Configure when this host has a ZFS witness helper installed. helper_path is the absolute path to the witness binary; wrapper is prepended to invocation (e.g. ['sudo','-n'] for sudo_helper privilege model, [] for unprivileged).",
+  "zfs_witness": {
+    "helper_path": "/path/to/nq-zfs-witness",
+    "wrapper": [],
+    "timeout_ms": 5000
+  },
+
+  "_smart_witness_comment": "Optional. Configure when this host has a SMART witness helper installed. SMART invariably needs sudo (smartctl requires root); wrapper should be ['sudo','-n'] with a NOPASSWD sudoers grant for helper_path.",
+  "smart_witness": {
+    "helper_path": "/path/to/nq-smart-witness",
+    "wrapper": ["sudo", "-n"],
+    "timeout_ms": 15000
+  }
 }

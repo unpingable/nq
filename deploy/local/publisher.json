@@ -1,7 +1,0 @@
-{
-  "bind_addr": "127.0.0.1:9847",
-  "sqlite_paths": [],
-  "service_health_urls": [
-    { "name": "docker", "check_type": "systemd", "unit": "snap.docker.dockerd" }
-  ]
-}

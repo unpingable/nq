@@ -1,6 +1,10 @@
 {
+  "_comment": "Template for nq-serve.service. Each host customizes locally; live configs live outside the repo (gitignored). See README and AGENTS.md.",
+
   "interval_s": 60,
   "db_path": "/opt/nq/nq.db",
+  "bind_addr": "127.0.0.1:9848",
+
   "sources": [
     {
       "name": "my-host",
@@ -8,12 +12,25 @@
       "timeout_ms": 10000
     }
   ],
+
   "retention": {
     "max_generations": 2880,
     "prune_every_n_cycles": 60
   },
+
   "disk_budget": {
-    "db_max_size_mb": 100,
+    "db_max_size_mb": 200,
     "warn_at_pct": 80
+  },
+
+  "_notifications_comment": "Optional. Channels: discord, slack, file. min_severity: info | warning | critical. Empty channels list disables outbound notifications without removing the block.",
+  "notifications": {
+    "channels": [],
+    "min_severity": "warning"
+  },
+
+  "_liveness_comment": "Optional. Path NQ writes its sentinel-readable liveness artifact to. Consumers (Night Shift, oncall sentinel) tail this file out-of-band.",
+  "liveness": {
+    "path": "/opt/nq/liveness.json"
   }
 }
