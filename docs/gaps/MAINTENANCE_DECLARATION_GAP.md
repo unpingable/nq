@@ -228,27 +228,121 @@ UI and notifications should distinguish:
 
 These are different operational truths.
 
-## V1 slice
+## V1 slice (frozen 2026-04-27)
 
-Smallest useful cash-out:
+V1 ships exactly the sub-slices below. Anything not listed here is V2+. The V1 scope was tightened from the original draft after a session-end spec-refine — the tighter version is meant to be fully implementable in one focused slice without ontology drift mid-build.
 
-1. **Declaration record**
-   - local store / file / small table
-   - no fancy lifecycle verbs yet
+### V1.0 — minimal state machine
 
-2. **Manual declaration path**
-   - simple JSON/YAML or CLI entry
-   - one object, one window, one or two effect classes is enough
+Three values only:
 
-3. **Finding annotation**
-   - if a finding matches declaration scope + window + effect class, mark `maintenance_state=covered`
+```text
+maintenance_state:
+  none       — no matching declaration covers this finding
+  covered    — a declaration covers this finding right now (in window, scope matches)
+  overrun    — a declaration covered this finding, the window has passed,
+               the finding is still active
+```
 
-4. **Overrun check**
-   - if the finding persists after `end_at`, mark `maintenance_state=overrun`
+`late` and `out_of_envelope` are explicitly **not** in V1. They are documented in the canonical model above for the eventual contract, but V1 emits only the three values. Adding them later does not break V1 consumers — they will just see additional values appear.
 
-5. **Render only**
-   - dashboard / export shows maintenance interpretation
-   - routing changes can wait one slice if needed
+### V1.1 — declaration storage
+
+A single SQLite table written by the CLI declare verb. Schema TBD in the implementation slice; expected shape:
+
+```text
+maintenance_declarations
+  maintenance_id      TEXT PRIMARY KEY
+  declared_at         TEXT NOT NULL  -- when the declaration row was written
+  declared_by         TEXT           -- agent or operator name (free text in V1)
+  start_at            TEXT NOT NULL
+  end_at              TEXT NOT NULL
+  host                TEXT NOT NULL  -- exact match
+  kind                TEXT NOT NULL  -- exact match
+  subject             TEXT           -- nullable: NULL means "any subject for that host+kind"
+  reason              TEXT           -- free text
+```
+
+Append-only in V1. No update/delete verb. If a declaration is wrong, write a new one — the old one expires when its `end_at` passes.
+
+### V1.2 — matching rule (simple, no taxonomy heroics)
+
+A finding `(host, kind, subject)` is **covered** at time `t` when there exists a declaration row where:
+
+- `t` is in `[start_at, end_at]`
+- `host` matches exactly
+- `kind` matches exactly
+- `subject` matches exactly OR the declaration's `subject` is NULL (host+kind wildcard)
+
+**No effect-class taxonomy in V1.** The bounded vocabulary in the canonical model (§Effect classes) is the V2+ version. V1 uses raw `kind` matching, which is good enough for the labelwatch-claude vacuum forcing case (declare `host=labelwatch-host kind=log_silence subject=labelwatch.log_source`).
+
+A finding is **overrun** when there is a declaration row that *was* covering it (matching scope) whose `end_at` has passed and the finding is still in `warning_state`. Multiple expired declarations on the same finding: most recent wins.
+
+### V1.3 — CLI contract
+
+Two verbs only:
+
+```text
+nq maintenance declare \
+  --host H --kind K [--subject S] \
+  --start <iso8601 | "now"> \
+  --end <iso8601 | "now+30m"> \
+  [--reason "..."] [--declared-by "..."]
+
+nq maintenance list [--active | --all]
+```
+
+**No `clear`, `cancel`, `extend`, or `update` verbs in V1.** A declaration with the wrong window is fixed by waiting for `end_at` to pass (or writing a new declaration that supersedes it semantically; storage stays append-only).
+
+`--start` is required and must be `>=` now (per the constitutional rule: declaration precedes effect). Past-dated `start_at` is rejected at CLI parse, not flipped to `late`.
+
+### V1.4 — annotation in lifecycle
+
+`update_warning_state` consults `maintenance_declarations` once per cycle and stamps each row with the appropriate `maintenance_state`. Two new columns on `warning_state`:
+
+```text
+maintenance_state  TEXT  -- 'none' | 'covered' | 'overrun'  (default 'none')
+maintenance_id     TEXT  -- nullable; references the declaration when state ≠ 'none'
+```
+
+### V1.5 — render
+
+`maintenance_state` and `maintenance_id` propagate to:
+
+- `nq findings export` JSON output (new fields, nullable for back-compat)
+- the existing dashboard finding cards (badge or label, no new layout)
+- `nq query` works against the new columns by default — no special flags
+
+Dashboard treatment is "earn-the-chrome": minimum viable distinct rendering, no new colors/icons until a real operator pull surfaces.
+
+### Explicitly out of V1
+
+| Thing | Why not V1 |
+|-------|------------|
+| `late` and `out_of_envelope` states | Need a real second forcing case before earning new vocabulary |
+| Effect-class taxonomy | V1's raw-kind match handles the labelwatch case; vocabulary belongs to V2 |
+| Overlapping / nested windows | One forcing case at a time |
+| Wildcards beyond `subject=NULL` | Glob support waits for real need |
+| `clear`/`cancel`/`extend` CLI verbs | Append-only storage is simpler; revisit when a declared window is wrong in flight |
+| Notification routing changes | This is annotation-only in V1; routing follows |
+| Maintenance inheritance across topology | Needs registry projection first |
+| Auto-declaration from change tickets / agents | Out of scope for the substrate slice |
+| Approval workflows | Not the V1 contract |
+
+### Frozen scope checklist
+
+Before implementation begins, V1 must answer all of these. Anything still open is the next round of spec-refine, not silently in scope.
+
+- [x] state machine values: `none` / `covered` / `overrun` only
+- [x] storage: single append-only table, schema sketched above
+- [x] matching: exact host + exact kind + (exact subject OR NULL wildcard)
+- [x] CLI verbs: `declare` + `list`; no clear/cancel/extend
+- [x] declaration must precede effect: enforced at CLI, not flipped to `late`
+- [x] annotation surface: two columns on `warning_state`
+- [x] render: export + dashboard badge, nothing fancier
+- [ ] schema migration number (TBD at implementation time)
+- [ ] which DB the declarations live in (publisher-local vs aggregator) — TBD
+- [ ] how the CLI reaches the right DB — likely same `--db` flag pattern as `nq query`
 
 ## Explicitly deferred
 
