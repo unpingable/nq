@@ -2962,3 +2962,173 @@ fn smart_nvme_spare_low_silent_without_nvme_coverage() {
     let d = find_by_kind(&findings, "smart_nvme_available_spare_low");
     assert!(d.is_empty(), "no nvme_health_log coverage → silent");
 }
+
+// ───────────────────────────────────────────────────────────────────────
+// SMART witness — smart_nvme_critical_warning_set
+//
+// The drive's own alarm. Any nonzero bit fires; bits decoded by name in
+// the message. Single tier in V1 — Availability / Degraded / InvestigateNow.
+// ───────────────────────────────────────────────────────────────────────
+
+#[test]
+fn smart_nvme_critical_warning_fires_on_spare_bit() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_full(
+        "serial:CW_SPARE",
+        "CW_SPARE",
+        Some(true),
+        Some(0),
+        Some(50),
+        Some(8),
+        Some(0x01),         // bit 0: spare below internal threshold
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_critical_warning_set");
+    assert_eq!(d.len(), 1);
+    assert_eq!(d[0].domain, "Δh");
+    assert_eq!(d[0].value, Some(1.0));
+    assert!(d[0].message.contains("0x01"));
+    assert!(d[0].message.contains("available_spare_below_threshold"));
+
+    let dx = d[0].diagnosis.as_ref().unwrap();
+    assert_eq!(dx.failure_class, nq_db::FailureClass::Availability);
+    assert_eq!(dx.service_impact, nq_db::ServiceImpact::Degraded);
+    assert_eq!(dx.action_bias, nq_db::ActionBias::InvestigateNow);
+}
+
+#[test]
+fn smart_nvme_critical_warning_fires_on_media_read_only_bit() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_full(
+        "serial:CW_RO",
+        "CW_RO",
+        Some(false),
+        Some(0),
+        Some(98),
+        Some(0),
+        Some(0x08),         // bit 3: media in read-only mode
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_critical_warning_set");
+    assert_eq!(d.len(), 1);
+    assert!(d[0].message.contains("media_read_only"));
+}
+
+#[test]
+fn smart_nvme_critical_warning_decodes_multiple_bits() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_full(
+        "serial:CW_MULTI",
+        "CW_MULTI",
+        Some(false),
+        Some(2),
+        Some(99),
+        Some(3),
+        Some(0x05),         // bits 0 and 2: spare low + reliability degraded
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_critical_warning_set");
+    assert_eq!(d.len(), 1);
+    assert!(d[0].message.contains("available_spare_below_threshold"));
+    assert!(d[0].message.contains("nvm_subsystem_reliability_degraded"));
+    assert_eq!(d[0].value, Some(5.0));
+}
+
+#[test]
+fn smart_nvme_critical_warning_surfaces_unknown_bits() {
+    // Forward-compat: if the device sets a bit outside our decode
+    // vocabulary, the detector still fires and surfaces the raw mask
+    // so the operator can look it up.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_full(
+        "serial:CW_FUTURE",
+        "CW_FUTURE",
+        Some(true),
+        Some(0),
+        Some(20),
+        Some(100),
+        Some(0x80),         // bit 7 — not in NVMe 1.4 standard
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_critical_warning_set");
+    assert_eq!(d.len(), 1);
+    assert!(d[0].message.contains("unknown_bits=0x80"));
+}
+
+#[test]
+fn smart_nvme_critical_warning_silent_when_zero() {
+    // Live shape on the fleet today: both NVMes have critical_warning=0.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_full(
+        "serial:HEALTHY",
+        "HEALTHY",
+        Some(true),
+        Some(0),
+        Some(2),
+        Some(100),
+        Some(0),
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_critical_warning_set");
+    assert!(d.is_empty(), "critical_warning=0 → silent");
+}
+
+#[test]
+fn smart_nvme_critical_warning_silent_without_nvme_coverage() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_full(
+        "serial:CW_SPARE",
+        "CW_SPARE",
+        Some(true),
+        Some(0),
+        Some(50),
+        Some(8),
+        Some(0x01),
+        // nvme_health_log deliberately absent
+        &["smart_overall_status", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_critical_warning_set");
+    assert!(d.is_empty(), "no nvme_health_log coverage → silent");
+}

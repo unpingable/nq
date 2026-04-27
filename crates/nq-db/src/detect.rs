@@ -409,6 +409,7 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     detect_smart_witness_silent(db, &mut findings)?;
     detect_smart_nvme_percentage_used(db, &mut findings)?;
     detect_smart_nvme_available_spare_low(db, &mut findings)?;
+    detect_smart_nvme_critical_warning_set(db, &mut findings)?;
     // Saved query checks
     run_saved_checks(db, &mut findings)?;
     Ok(findings)
@@ -2902,6 +2903,134 @@ fn detect_smart_nvme_available_spare_low(
                 failure_class: FailureClass::Drift,
                 service_impact: ServiceImpact::NoneCurrent,
                 action_bias: ActionBias::InvestigateBusinessHours,
+                synopsis,
+                why_care,
+            }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
+        });
+    }
+    Ok(())
+}
+
+/// Δh: NVMe Critical Warning bit-field has at least one bit set. This is
+/// the device's own active alarm — the drive setting any of these bits
+/// is closer to "active distress" than the slow-burn endurance/spare
+/// detectors. Level-triggered, gated on `nvme_health_log` per-device
+/// coverage.
+///
+/// NVMe spec defines six critical-warning bits (NVMe 1.4+):
+///   - 0x01 (bit 0): available spare below internal threshold
+///   - 0x02 (bit 1): composite temp above/below operating threshold
+///   - 0x04 (bit 2): NVM subsystem reliability degraded
+///   - 0x08 (bit 3): media in read-only mode
+///   - 0x10 (bit 4): volatile memory backup device failed
+///   - 0x20 (bit 5): persistent memory region read-only or unreliable
+///
+/// We surface every set bit by name in the message. Diagnosis keeps a
+/// single tier in V1 — Availability/Degraded/InvestigateNow — because
+/// every bit is the device explicitly declaring impairment. Tiered
+/// severity (read-only mode → ImmediateRisk, etc.) is a follow-up if
+/// real hits warrant it.
+///
+/// Note on overlap with siblings: bit 0 fires roughly when our
+/// smart_nvme_available_spare_low fires. They can co-fire; that's
+/// fine — they are different views (vendor's internal threshold vs
+/// our 10% floor). Bit 1 overlaps with a future temperature detector
+/// once per-class calibration lands.
+fn detect_smart_nvme_critical_warning_set(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "SELECT d.host, d.subject, d.serial_number, d.model,
+                d.nvme_critical_warning,
+                w.witness_id
+         FROM smart_devices_current d
+         INNER JOIN smart_device_coverage_current cnvme
+            ON cnvme.host = d.host AND cnvme.subject = d.subject
+            AND cnvme.tag = 'nvme_health_log' AND cnvme.can_testify = 1
+         LEFT JOIN smart_witness_current w ON w.host = d.host
+         WHERE d.nvme_critical_warning IS NOT NULL
+           AND d.nvme_critical_warning != 0",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, i64>(4)?,
+            row.get::<_, Option<String>>(5)?,
+        ))
+    })?;
+    for row in rows {
+        let (host, subject, serial, model, cw, witness_id) = row?;
+
+        let identity = match (model.as_deref(), serial.as_deref()) {
+            (Some(m), Some(s)) => format!("{m} ({s})"),
+            (Some(m), None)    => m.to_string(),
+            (None,    Some(s)) => format!("serial {s}"),
+            (None,    None)    => subject.clone(),
+        };
+
+        // Decode set bits into operator-legible names.
+        let mut flags: Vec<&'static str> = Vec::new();
+        if cw & 0x01 != 0 { flags.push("available_spare_below_threshold"); }
+        if cw & 0x02 != 0 { flags.push("temperature_threshold"); }
+        if cw & 0x04 != 0 { flags.push("nvm_subsystem_reliability_degraded"); }
+        if cw & 0x08 != 0 { flags.push("media_read_only"); }
+        if cw & 0x10 != 0 { flags.push("volatile_memory_backup_failed"); }
+        if cw & 0x20 != 0 { flags.push("persistent_memory_region_unreliable"); }
+        // Any remaining bits not in the standard vocabulary — surface raw.
+        let known_mask: i64 = 0x3F;
+        let unknown = cw & !known_mask;
+        let unknown_tail = if unknown != 0 {
+            format!(" unknown_bits=0x{unknown:x}")
+        } else {
+            String::new()
+        };
+
+        let flags_str = if flags.is_empty() {
+            // Should not happen given the WHERE clause, but defensive:
+            // a nonzero value entirely outside the known mask still fires.
+            "set".to_string()
+        } else {
+            flags.join(",")
+        };
+
+        let message = format!(
+            "NVMe {identity}: critical_warning=0x{cw:02x} [{flags_str}]{unknown_tail}"
+        );
+
+        let synopsis = format!(
+            "NVMe drive {identity} has set critical_warning bit-field to 0x{cw:02x} \
+             ({flags_str}). The device is actively declaring impairment — this is its \
+             own alarm, not our threshold."
+        );
+
+        let why_care: String = "The NVMe critical_warning byte is the drive's own self-reported \
+                                distress signal. Each bit names a specific failure mode (low \
+                                spare, temperature out of bounds, reliability degraded, media \
+                                read-only, etc.). Unlike percentage_used or available_spare_pct \
+                                — both of which we threshold ourselves — critical_warning is set \
+                                by the device's own internal logic. When the drive flags itself, \
+                                trust the drive.".into();
+
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "smart_nvme_critical_warning_set".into(),
+            subject,
+            message,
+            value: Some(cw as f64),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: StateKind::Degradation,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Availability,
+                service_impact: ServiceImpact::Degraded,
+                action_bias: ActionBias::InvestigateNow,
                 synopsis,
                 why_care,
             }),

@@ -361,6 +361,27 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
             ],
         },
 
+        "smart_nvme_critical_warning_set" => FindingMeta {
+            plain_label: "NVMe drive raised a critical warning",
+            operator_label: "NVMe Critical Warning",
+            gloss: "NVMe drive's critical_warning byte has at least one bit set. \
+                    This is the device's own active alarm: the drive's internal \
+                    logic decided something is wrong. Unlike our percentage_used \
+                    or available_spare_pct thresholds, this comes from the drive \
+                    itself.",
+            contradiction: "The drive may still serve I/O, may still report \
+                            smart_overall_passed=true (vendor self-assessment is \
+                            tuned conservatively), and may not have crossed our \
+                            own thresholds yet. The device disagrees with all of \
+                            those and is flagging itself.",
+            next_checks: &[
+                "decoded bits in the message: spare/temp/reliability/read_only/volatile_backup/persistent_memory each name a specific failure mode",
+                "media_read_only or nvm_subsystem_reliability_degraded are the most urgent — schedule replacement now, not later",
+                "co-firing siblings: smart_nvme_available_spare_low (bit 0 overlap), smart_nvme_percentage_used (different axis)",
+                "warranty / replacement parts availability",
+            ],
+        },
+
         // ── meta ─────────────────────────────────────────────────
         "check_failed" => FindingMeta {
             plain_label: "Check condition detected",
