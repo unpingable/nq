@@ -359,6 +359,15 @@ const ZFS_WITNESS_STALE_SECONDS: i64 = 300;
 /// DetectorThresholds when a deployment needs different urgency.
 const SMART_NVME_PCT_USED_THRESHOLD: i64 = 80;
 
+/// NVMe available_spare_pct floor. NVMe drives reserve a pool of spare
+/// blocks for remapping bad media. As remap activity consumes the pool,
+/// available_spare_pct decreases from 100 toward 0. The NVMe spec also
+/// defines a per-device "available spare threshold" the drive uses for
+/// its own SMART critical-warning bit; vendor practice is typically
+/// 10%. We fire at 10% to match that convention and give the operator
+/// time before the device's own critical_warning bit trips.
+const SMART_NVME_AVAILABLE_SPARE_FLOOR: i64 = 10;
+
 /// Stale threshold for the SMART witness. Matches ZFS_WITNESS_STALE_SECONDS
 /// for now. SMART profile (~/git/nq-witness/profiles/smart.md) recommends
 /// 5-minute cadence as the default; this gives one cadence's grace before
@@ -399,6 +408,7 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     detect_smart_uncorrected_errors_nonzero(db, &mut findings)?;
     detect_smart_witness_silent(db, &mut findings)?;
     detect_smart_nvme_percentage_used(db, &mut findings)?;
+    detect_smart_nvme_available_spare_low(db, &mut findings)?;
     // Saved query checks
     run_saved_checks(db, &mut findings)?;
     Ok(findings)
@@ -2779,6 +2789,112 @@ fn detect_smart_nvme_percentage_used(
             subject,
             message,
             value: Some(pct_used as f64),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: StateKind::Maintenance,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Drift,
+                service_impact: ServiceImpact::NoneCurrent,
+                action_bias: ActionBias::InvestigateBusinessHours,
+                synopsis,
+                why_care,
+            }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
+        });
+    }
+    Ok(())
+}
+
+/// Δh: NVMe available_spare_pct dropped at or below the device's own
+/// critical-warning floor (10%). Level-triggered, gated on
+/// `nvme_health_log` per-device coverage.
+///
+/// Sibling to `smart_nvme_percentage_used`. They are different axes:
+/// percentage_used is the vendor's endurance estimate (slow burn);
+/// available_spare_pct is remap-pool consumption (cliff edge — when it
+/// hits 0, the drive can no longer hide bad blocks and uncorrected
+/// errors start surfacing). A drive can have low wear and low spare
+/// (early-life manufacturing defects) or high wear and full spare
+/// (workload was uniformly cold).
+///
+/// Threshold matches the NVMe spec convention (most vendors set the
+/// internal Available Spare Threshold attribute to 10%). At this point
+/// the drive will set its own critical_warning bit 0 anyway; firing
+/// here gives the operator a moment of warning before that lands.
+///
+/// Diagnosis posture matches `smart_nvme_percentage_used`:
+///   - state_kind: Maintenance (replacement scheduling)
+///   - failure_class: Drift
+///   - service_impact: NoneCurrent (drive still serves I/O)
+///   - action_bias: InvestigateBusinessHours
+fn detect_smart_nvme_available_spare_low(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "SELECT d.host, d.subject, d.serial_number, d.model,
+                d.nvme_available_spare_pct, d.nvme_percentage_used,
+                w.witness_id
+         FROM smart_devices_current d
+         INNER JOIN smart_device_coverage_current cnvme
+            ON cnvme.host = d.host AND cnvme.subject = d.subject
+            AND cnvme.tag = 'nvme_health_log' AND cnvme.can_testify = 1
+         LEFT JOIN smart_witness_current w ON w.host = d.host
+         WHERE d.nvme_available_spare_pct IS NOT NULL
+           AND d.nvme_available_spare_pct <= ?1",
+    )?;
+    let rows = stmt.query_map([SMART_NVME_AVAILABLE_SPARE_FLOOR], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, i64>(4)?,
+            row.get::<_, Option<i64>>(5)?,
+            row.get::<_, Option<String>>(6)?,
+        ))
+    })?;
+    for row in rows {
+        let (host, subject, serial, model, spare_pct, pct_used, witness_id) = row?;
+
+        let identity = match (model.as_deref(), serial.as_deref()) {
+            (Some(m), Some(s)) => format!("{m} ({s})"),
+            (Some(m), None)    => m.to_string(),
+            (None,    Some(s)) => format!("serial {s}"),
+            (None,    None)    => subject.clone(),
+        };
+
+        let wear_tail = pct_used
+            .map(|w| format!(" (wear={w}%)"))
+            .unwrap_or_default();
+
+        let message = format!(
+            "NVMe {identity}: available_spare={spare_pct}%{wear_tail}"
+        );
+
+        let synopsis = format!(
+            "NVMe drive {identity} reports {spare_pct}% remap spare remaining \
+             (threshold {}%). When spare reaches zero, the drive can no longer \
+             remap bad blocks and uncorrected errors begin surfacing.",
+            SMART_NVME_AVAILABLE_SPARE_FLOOR,
+        );
+
+        let why_care: String = "Available spare is the drive's pool of replacement blocks for \
+                                remapping media defects. It is a different axis from \
+                                percentage_used: a drive can have low wear and still exhaust its \
+                                spare via early-life manufacturing defects, or have high wear \
+                                with full spare if the workload was uniformly cold. Either way, \
+                                low spare is a cliff: once exhausted, defects stop being hidden \
+                                and the drive begins to fail visibly.".into();
+
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "smart_nvme_available_spare_low".into(),
+            subject,
+            message,
+            value: Some(spare_pct as f64),
             finding_class: "signal".into(),
             rule_hash: None,
             state_kind: StateKind::Maintenance,

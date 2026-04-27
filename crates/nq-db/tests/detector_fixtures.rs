@@ -2160,12 +2160,14 @@ fn scsi_device(
     }
 }
 
-fn nvme_device_with_wear(
+fn nvme_device_full(
     subject: &str,
     serial: &str,
     smart_passed: Option<bool>,
     media_errors: Option<i64>,
     pct_used: Option<i64>,
+    available_spare_pct: Option<i64>,
+    critical_warning: Option<i64>,
     can_testify: &[&str],
 ) -> nq_core::wire::SmartDeviceObservation {
     use nq_core::wire::{SmartDeviceCoverage, SmartDeviceObservation};
@@ -2189,8 +2191,8 @@ fn nvme_device_with_wear(
         uncorrected_verify_errors: None,
         media_errors,
         nvme_percentage_used: pct_used,
-        nvme_available_spare_pct: Some(100),
-        nvme_critical_warning: Some(0),
+        nvme_available_spare_pct: available_spare_pct,
+        nvme_critical_warning: critical_warning,
         nvme_unsafe_shutdowns: Some(5),
         coverage: SmartDeviceCoverage {
             can_testify: can_testify.iter().map(|s| s.to_string()).collect(),
@@ -2202,6 +2204,21 @@ fn nvme_device_with_wear(
         raw_original_bytes: None,
         raw_truncated_bytes: None,
     }
+}
+
+fn nvme_device_with_wear(
+    subject: &str,
+    serial: &str,
+    smart_passed: Option<bool>,
+    media_errors: Option<i64>,
+    pct_used: Option<i64>,
+    can_testify: &[&str],
+) -> nq_core::wire::SmartDeviceObservation {
+    nvme_device_full(
+        subject, serial, smart_passed, media_errors,
+        pct_used, Some(100), Some(0),
+        can_testify,
+    )
 }
 
 fn nvme_device(
@@ -2803,5 +2820,145 @@ fn smart_nvme_percentage_used_silent_without_nvme_coverage() {
 
     let findings = run_all(db.conn(), &config).unwrap();
     let d = find_by_kind(&findings, "smart_nvme_percentage_used");
+    assert!(d.is_empty(), "no nvme_health_log coverage → silent");
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// SMART witness — smart_nvme_available_spare_low
+//
+// Sibling shape to smart_nvme_percentage_used. Different axis (remap
+// pool exhaustion vs endurance estimate). Threshold 10%, level-triggered.
+// ───────────────────────────────────────────────────────────────────────
+
+#[test]
+fn smart_nvme_spare_low_fires_at_threshold() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_full(
+        "serial:LOW_SPARE",
+        "LOW_SPARE",
+        Some(true),
+        Some(0),
+        Some(20),
+        Some(10),         // exactly at floor
+        Some(0),
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_available_spare_low");
+    assert_eq!(d.len(), 1);
+    assert_eq!(d[0].domain, "Δh");
+    assert_eq!(d[0].value, Some(10.0));
+    assert!(d[0].message.contains("available_spare=10%"));
+    // Wear value is included in the message tail when present.
+    assert!(d[0].message.contains("wear=20%"));
+}
+
+#[test]
+fn smart_nvme_spare_low_fires_well_below_threshold() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_full(
+        "serial:DYING",
+        "DYING",
+        Some(true),
+        Some(0),
+        Some(95),
+        Some(2),         // 2% spare — about to cliff
+        Some(0),
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_available_spare_low");
+    assert_eq!(d.len(), 1);
+    assert_eq!(d[0].value, Some(2.0));
+
+    // Co-fires with smart_nvme_percentage_used at 95% wear — both axes
+    // near limit is harder cliff than either alone.
+    let wear = find_by_kind(&findings, "smart_nvme_percentage_used");
+    assert_eq!(wear.len(), 1, "high wear and low spare both fire — different axes");
+}
+
+#[test]
+fn smart_nvme_spare_low_silent_at_full_spare() {
+    // Live shape: both NVMes in fleet at 100% spare → silent.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_full(
+        "serial:HEALTHY",
+        "HEALTHY",
+        Some(true),
+        Some(0),
+        Some(2),
+        Some(100),
+        Some(0),
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_available_spare_low");
+    assert!(d.is_empty(), "100% spare → silent");
+}
+
+#[test]
+fn smart_nvme_spare_low_silent_just_above_threshold() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_full(
+        "serial:JUST_OK",
+        "JUST_OK",
+        Some(true),
+        Some(0),
+        Some(50),
+        Some(11),         // just above floor
+        Some(0),
+        &["nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_available_spare_low");
+    assert!(d.is_empty(), "11% > 10% threshold → silent");
+}
+
+#[test]
+fn smart_nvme_spare_low_silent_without_nvme_coverage() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device_full(
+        "serial:LOW_SPARE",
+        "LOW_SPARE",
+        Some(true),
+        Some(0),
+        Some(20),
+        Some(5),
+        Some(0),
+        // nvme_health_log deliberately absent
+        &["smart_overall_status", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_nvme_available_spare_low");
     assert!(d.is_empty(), "no nvme_health_log coverage → silent");
 }

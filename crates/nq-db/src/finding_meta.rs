@@ -341,6 +341,26 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
             ],
         },
 
+        "smart_nvme_available_spare_low" => FindingMeta {
+            plain_label: "NVMe spare blocks running low",
+            operator_label: "NVMe Spare Low",
+            gloss: "NVMe drive's available_spare_pct has dropped to or below \
+                    the floor (default 10%, matching vendor convention). When \
+                    spare reaches zero the drive can no longer remap bad \
+                    blocks and uncorrected errors begin to surface.",
+            contradiction: "Different axis from percentage_used. A drive can \
+                            have low wear and still exhaust its spare via \
+                            early-life defects, or have high wear with full \
+                            spare. Both can fire together; both can fire \
+                            independently.",
+            next_checks: &[
+                "drive's nvme_critical_warning bit 0 (the device sets this when spare drops below its internal threshold; some drives set bit 0 before our 10% floor trips, some after)",
+                "trajectory: how fast is spare dropping cycle over cycle?",
+                "warranty / replacement parts availability",
+                "co-occurring smart_nvme_percentage_used (both axes near limit = harder cliff)",
+            ],
+        },
+
         // ── meta ─────────────────────────────────────────────────
         "check_failed" => FindingMeta {
             plain_label: "Check condition detected",
