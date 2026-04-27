@@ -92,12 +92,9 @@ Coherent pressure, resolution still open.
 
 ### SILENCE_UNIFICATION
 
-**Status:** latent
-**Activation trigger:** cross-contract bug between silence-flavored detectors; REGISTRY_PROJECTION landing and requiring silence × lifecycle semantics; COMPLETENESS_PROPAGATION work surfacing inconsistencies.
-**Why it matters:** `stale_host`, `stale_service`, `signal_dropout`, `log_silence`, `zfs_witness_silent` share shape but not contract. Each reinvents thresholds, failure_class, state_kind mapping. Unification would make silence legible as a class with shared invariants (silence_scope, silence_baseline, silence_duration, silence_expected).
-**Likely successor artifact:** either `docs/gaps/SILENCE_UNIFICATION_GAP.md` or a retrofit of existing gap docs with a shared silence-contract section.
-**Dependencies:** REGISTRY_PROJECTION (for silence × lifecycle); COMPLETENESS_PROPAGATION_GAP.
-**Source:** Claude memory `project_silence_unification_candidate`.
+**Status:** promoted to gap spec — see [`docs/gaps/SILENCE_UNIFICATION_GAP.md`](gaps/SILENCE_UNIFICATION_GAP.md) (proposed, not yet implemented).
+**Promoted:** 2026-04-27 after `smart_witness_silent` brought the silence-detector count to six and the three-mechanism-shape split (age-threshold / presence-delta / baseline-collapse) became legible.
+**Why kept here:** the spec records the contract; the implementation is still gated on REGISTRY_PROJECTION and MAINTENANCE_DECLARATION_GAP for `silence_expected` to be load-bearing. Until those land, every silence finding's `silence_expected` is `none`.
 
 ---
 

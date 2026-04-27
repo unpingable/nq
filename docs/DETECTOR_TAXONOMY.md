@@ -50,7 +50,7 @@ Typical shape: direct or thresholded-direct; noisy without duration/magnitude ga
 
 NQ today: `stale_host`, `stale_service`, `service_down`, `signal_dropout`, `log_silence`, `zfs_witness_silent`, `smart_witness_silent`.
 
-This is where **down is down**. Direct present-tense findings live here. Note: five of these (`stale_host`, `stale_service`, `signal_dropout`, `log_silence`, `*_witness_silent`) share the same compound-shape ("source last reported X seconds ago against threshold Y") and are candidates for unification — see SILENCE_UNIFICATION latent note in `ARCHITECTURE_NOTES.md`.
+This is where **down is down**. Direct present-tense findings live here. The six detectors collapse into three mechanism shapes (age-threshold, presence-delta, baseline-collapse) that share an operator-facing concept but not a SQL pattern — see [`gaps/SILENCE_UNIFICATION_GAP.md`](gaps/SILENCE_UNIFICATION_GAP.md) for the proposed contract.
 
 ### 3. Functional correctness
 
