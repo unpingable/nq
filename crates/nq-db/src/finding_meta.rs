@@ -302,6 +302,26 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
             ],
         },
 
+        "smart_witness_silent" => FindingMeta {
+            plain_label: "SMART witness stopped reporting",
+            operator_label: "SMART Witness Silent",
+            gloss: "The nq-witness that provides SMART evidence has gone quiet \
+                    or reports status=failed. All SMART-domain detectors gate on \
+                    its declared coverage, so silence means drive health is \
+                    currently unobserved — not confirmed healthy.",
+            contradiction: "A silent witness is not the same as a healthy fleet. \
+                            The absence of smart_status_lies / \
+                            smart_uncorrected_errors_nonzero findings right now \
+                            tells us nothing — the evidence is missing, not clean.",
+            next_checks: &[
+                "witness helper process status on the publisher",
+                "sudoers / privilege grant still intact (sudo_helper mode is the common case)",
+                "smartctl binary present on PATH for the witness user",
+                "last successful witness collection and its error_message",
+                "device tree changes (drives added/removed without witness restart)",
+            ],
+        },
+
         // ── meta ─────────────────────────────────────────────────
         "check_failed" => FindingMeta {
             plain_label: "Check condition detected",

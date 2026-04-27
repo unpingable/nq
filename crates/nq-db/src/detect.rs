@@ -352,6 +352,13 @@ impl From<&nq_core::config::DetectorThresholds> for DetectorConfig {
 /// `DetectorThresholds` if a deployment needs a different cadence.
 const ZFS_WITNESS_STALE_SECONDS: i64 = 300;
 
+/// Stale threshold for the SMART witness. Matches ZFS_WITNESS_STALE_SECONDS
+/// for now. SMART profile (~/git/nq-witness/profiles/smart.md) recommends
+/// 5-minute cadence as the default; this gives one cadence's grace before
+/// declaring silence. Hardcoded in Phase 2; moves to DetectorThresholds
+/// if a deployment needs a different cadence.
+const SMART_WITNESS_STALE_SECONDS: i64 = 300;
+
 /// Run all detectors against current state. Returns all active findings.
 pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<Finding>> {
     let mut findings = Vec::new();
@@ -383,6 +390,7 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     // SMART witness detectors — gated on declared per-device coverage.
     detect_smart_status_lies(db, &mut findings)?;
     detect_smart_uncorrected_errors_nonzero(db, &mut findings)?;
+    detect_smart_witness_silent(db, &mut findings)?;
     // Saved query checks
     run_saved_checks(db, &mut findings)?;
     Ok(findings)
@@ -2567,6 +2575,107 @@ fn detect_smart_uncorrected_errors_nonzero(
             }),
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
+        });
+    }
+    Ok(())
+}
+
+/// Δo: SMART witness silent — the witness itself has gone dark or reports
+/// its own failure. Coverage-independent. Counterpart to `stale_host`
+/// scoped specifically to the SMART evidence seam, and direct sibling to
+/// `zfs_witness_silent` (same shape, different evidence stream).
+///
+/// Fires when:
+///   - witness_status = 'failed' (witness is running but can't collect), or
+///   - received_age_s > SMART_WITNESS_STALE_SECONDS (witness hasn't
+///     reported since the stale threshold).
+///
+/// The "configured but never reported" case (publisher config says SMART
+/// witness is on but no row has ever existed) is deferred — needs
+/// server-side expectation tracking, parallel to the same gap in
+/// zfs_witness_silent.
+fn detect_smart_witness_silent(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "SELECT host, witness_id, witness_status, witness_collected_at,
+                received_age_s, witness_age_s
+         FROM v_smart_witness
+         WHERE witness_status = 'failed' OR received_age_s > ?1",
+    )?;
+    let rows = stmt.query_map([SMART_WITNESS_STALE_SECONDS], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<i64>>(4)?,
+            row.get::<_, Option<i64>>(5)?,
+        ))
+    })?;
+    for row in rows {
+        let (host, witness_id, witness_status, _witness_collected_at, received_age_s, _witness_age_s) =
+            row?;
+        let received_age = received_age_s.unwrap_or(0);
+
+        let (synopsis, why_care) = if witness_status == "failed" {
+            (
+                format!(
+                    "SMART witness {witness_id} on {host} reports status=failed this cycle."
+                ),
+                "The witness ran but could not collect evidence. SMART-domain detectors \
+                 stay silent until it recovers — drives may be fine, or may be \
+                 degrading unobserved. Common causes: smartctl missing, sudoers grant \
+                 revoked or expired, helper binary moved, device tree changed.".to_string(),
+            )
+        } else {
+            (
+                format!(
+                    "SMART witness {witness_id} on {host} has not reported for {} (threshold {}).",
+                    humanize_duration_s(received_age),
+                    humanize_duration_s(SMART_WITNESS_STALE_SECONDS),
+                ),
+                "The witness seam has gone quiet. Detectors gated on its coverage \
+                 cannot fire. A silent SMART witness cannot confirm a healthy drive — \
+                 absence is not evidence here.".to_string(),
+            )
+        };
+
+        let message = if witness_status == "failed" {
+            format!("witness {witness_id} status=failed")
+        } else {
+            format!(
+                "witness {witness_id} silent for {}",
+                humanize_duration_s(received_age)
+            )
+        };
+
+        // basis_source_id = witness_id is the same deliberate special case
+        // as zfs_witness_silent: the witness IS the subject of the silence
+        // finding. The silence measurement (witness-current row's
+        // timestamp) is itself live, so basis_state = 'live' is correct
+        // even though the witness is not currently producing fresh SMART
+        // observations.
+        out.push(Finding {
+            host,
+            domain: "Δo".into(),
+            kind: "smart_witness_silent".into(),
+            subject: witness_id.clone(),
+            message,
+            value: Some(received_age as f64),
+            finding_class: "meta".into(),
+            rule_hash: None,
+            state_kind: StateKind::Degradation,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Silence,
+                service_impact: ServiceImpact::NoneCurrent,
+                action_bias: ActionBias::InvestigateNow,
+                synopsis,
+                why_care,
+            }),
+            basis_source_id: Some(witness_id.clone()),
+            basis_witness_id: Some(witness_id),
         });
     }
     Ok(())

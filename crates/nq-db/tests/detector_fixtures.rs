@@ -2043,6 +2043,15 @@ fn smart_witness_batch(
     devices: Vec<nq_core::wire::SmartDeviceObservation>,
     received_at: OffsetDateTime,
 ) -> Batch {
+    smart_witness_batch_with_status(host, devices, received_at, "ok")
+}
+
+fn smart_witness_batch_with_status(
+    host: &str,
+    devices: Vec<nq_core::wire::SmartDeviceObservation>,
+    received_at: OffsetDateTime,
+    witness_status: &str,
+) -> Batch {
     use nq_core::wire::{
         SmartObservation, SmartWitnessCoverage, SmartWitnessHeader,
         SmartWitnessReport, SmartWitnessStanding,
@@ -2058,7 +2067,7 @@ fn smart_witness_batch(
             privilege_model: "sudo_helper".into(),
             collected_at: received_at,
             duration_ms: Some(50),
-            status: "ok".into(),
+            status: witness_status.into(),
             observed_subject: None,
         },
         coverage: SmartWitnessCoverage {
@@ -2513,4 +2522,116 @@ fn smart_uncorrected_errors_silent_for_nvme_with_only_scsi_coverage() {
     let findings = run_all(db.conn(), &config).unwrap();
     let d = find_by_kind(&findings, "smart_uncorrected_errors_nonzero");
     assert!(d.is_empty(), "NVMe media_errors without nvme_health_log coverage → silent");
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// SMART witness — smart_witness_silent
+//
+// Direct sibling of zfs_witness_silent. Coverage-independent: fires when
+// the witness itself is broken (status=failed) or has not reported within
+// the stale threshold (received_age_s > 300s).
+// ───────────────────────────────────────────────────────────────────────
+
+#[test]
+fn smart_witness_silent_fires_on_failed_status() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000ccahealthy",
+        "HEALTHY",
+        Some(true),
+        Some(0),
+        Some(0),
+        &["smart_overall_status", "scsi_error_counters"],
+    );
+    let b = smart_witness_batch_with_status("lil-nas-x", vec![dev], t, "failed");
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_witness_silent");
+    assert_eq!(d.len(), 1);
+    assert_eq!(d[0].domain, "Δo");
+    assert_eq!(d[0].host, "lil-nas-x");
+    assert!(d[0].message.contains("status=failed"));
+
+    let dx = d[0].diagnosis.as_ref().unwrap();
+    assert_eq!(dx.failure_class, nq_db::FailureClass::Silence);
+    assert_eq!(dx.service_impact, nq_db::ServiceImpact::NoneCurrent);
+}
+
+#[test]
+fn smart_witness_silent_fires_on_stale_received_age() {
+    // Witness reported but the data is older than the stale threshold
+    // (300s). received_at is set to >5 minutes ago.
+    let mut db = test_db();
+    let stale_t = now() - time::Duration::seconds(600);
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000ccahealthy",
+        "HEALTHY",
+        Some(true),
+        Some(0),
+        Some(0),
+        &["smart_overall_status", "scsi_error_counters"],
+    );
+    let b = smart_witness_batch("lil-nas-x", vec![dev], stale_t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_witness_silent");
+    assert_eq!(d.len(), 1, "stale witness fires");
+    assert!(d[0].message.contains("silent for"));
+    assert!(d[0].value.unwrap() >= 300.0);
+}
+
+#[test]
+fn smart_witness_silent_quiet_when_witness_fresh_and_ok() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000ccahealthy",
+        "HEALTHY",
+        Some(true),
+        Some(0),
+        Some(0),
+        &["smart_overall_status", "scsi_error_counters"],
+    );
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_witness_silent");
+    assert!(d.is_empty(), "fresh ok witness → silent detector");
+}
+
+#[test]
+fn smart_witness_silent_subject_is_witness_id() {
+    // Sanity: the finding's subject must be the witness id, not the
+    // host name. zfs_witness_silent has the same shape; consumers (Night
+    // Shift, dashboards) rely on witness-shaped subject for routing.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000ccahealthy",
+        "HEALTHY",
+        Some(true),
+        Some(0),
+        Some(0),
+        &["smart_overall_status", "scsi_error_counters"],
+    );
+    let b = smart_witness_batch_with_status("lil-nas-x", vec![dev], t, "failed");
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_witness_silent");
+    assert_eq!(d.len(), 1);
+    assert_eq!(d[0].subject, "smart.local.lil-nas-x",
+        "subject is the witness id");
 }
