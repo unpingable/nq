@@ -262,6 +262,25 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
             ],
         },
 
+        // ── SMART witness (gated by per-device coverage.can_testify) ──
+        "smart_status_lies" => FindingMeta {
+            plain_label: "SMART status contradicts error counters",
+            operator_label: "SMART Status Lies",
+            gloss: "Drive self-reports SMART OVERALL=passed while raw uncorrected \
+                    or media error counters are nonzero. SMART self-assessment is \
+                    vendor-tuned and stays 'passed' until a manufacturer threshold; \
+                    raw counters are the earlier signal. The two channels disagree.",
+            contradiction: "The drive says it's healthy. The drive's own raw \
+                            counters say it's already producing uncorrected errors. \
+                            Both readings came from the same device this cycle.",
+            next_checks: &[
+                "device path + serial (for replacement ordering)",
+                "ZFS / mdraid / filesystem state for the same device — error counters often surface there first",
+                "vendor SMART threshold documentation (when does this drive's self-report flip?)",
+                "smartctl -a out-of-band for the full attribute table",
+            ],
+        },
+
         // ── meta ─────────────────────────────────────────────────
         "check_failed" => FindingMeta {
             plain_label: "Check condition detected",

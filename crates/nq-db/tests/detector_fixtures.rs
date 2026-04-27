@@ -5,7 +5,7 @@
 
 use nq_core::batch::*;
 use nq_core::status::*;
-use nq_core::ZfsWitnessRow;
+use nq_core::{SmartWitnessRow, ZfsWitnessRow};
 use nq_db::{migrate, open_rw, publish_batch, update_warning_state};
 use nq_db::detect::{DetectorConfig, run_all};
 use nq_db::publish::EscalationConfig;
@@ -2027,4 +2027,325 @@ fn pinned_wal_silent_on_small_wal_even_when_stale() {
     let findings = run_all(db.conn(), &config).unwrap();
     let d = find_by_kind(&findings, "pinned_wal");
     assert!(d.is_empty(), "WAL below floor → not pinned regardless of mtime gap");
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// SMART witness — smart_status_lies
+//
+// Forcing case for the detector lives on lil-nas-x: HGST HUH721010AL42C0
+// serial 2TKYU2KD reports `smart_overall_passed=true` AND
+// `uncorrected_read_errors=88`. The same drive is FAULTED in the ZFS pool
+// with 795 read errors. The contradiction is the live exhibit.
+// ───────────────────────────────────────────────────────────────────────
+
+fn smart_witness_batch(
+    host: &str,
+    devices: Vec<nq_core::wire::SmartDeviceObservation>,
+    received_at: OffsetDateTime,
+) -> Batch {
+    use nq_core::wire::{
+        SmartObservation, SmartWitnessCoverage, SmartWitnessHeader,
+        SmartWitnessReport, SmartWitnessStanding,
+    };
+    let report = SmartWitnessReport {
+        schema: "nq.witness.smart.v0".into(),
+        witness: SmartWitnessHeader {
+            id: format!("smart.local.{host}"),
+            witness_type: "smart".into(),
+            host: host.into(),
+            profile_version: "nq.witness.smart.v0".into(),
+            collection_mode: "subprocess".into(),
+            privilege_model: "sudo_helper".into(),
+            collected_at: received_at,
+            duration_ms: Some(50),
+            status: "ok".into(),
+            observed_subject: None,
+        },
+        coverage: SmartWitnessCoverage {
+            can_testify: vec!["device_enumeration".into()],
+            cannot_testify: vec![],
+        },
+        standing: SmartWitnessStanding {
+            authoritative_for: vec![],
+            advisory_for: vec![],
+            inadmissible_for: vec![],
+        },
+        observations: devices.into_iter().map(SmartObservation::Device).collect(),
+        errors: vec![],
+    };
+    Batch {
+        cycle_started_at: received_at,
+        cycle_completed_at: received_at,
+        sources_expected: 1,
+        source_runs: vec![SourceRun {
+            source: host.into(),
+            status: SourceStatus::Ok,
+            received_at,
+            collected_at: Some(received_at),
+            duration_ms: Some(50),
+            error_message: None,
+        }],
+        collector_runs: vec![CollectorRun {
+            source: host.into(),
+            collector: CollectorKind::SmartWitness,
+            status: CollectorStatus::Ok,
+            collected_at: Some(received_at),
+            entity_count: Some(1),
+            error_message: None,
+        }],
+        host_rows: vec![],
+        service_sets: vec![],
+        sqlite_db_sets: vec![],
+        metric_sets: vec![],
+        log_sets: vec![],
+        zfs_witness_rows: vec![],
+        smart_witness_rows: vec![SmartWitnessRow {
+            host: host.into(),
+            collected_at: received_at,
+            report,
+        }],
+    }
+}
+
+fn scsi_device(
+    subject: &str,
+    serial: &str,
+    smart_passed: Option<bool>,
+    uncorr_read: Option<i64>,
+    uncorr_write: Option<i64>,
+    can_testify: &[&str],
+) -> nq_core::wire::SmartDeviceObservation {
+    use nq_core::wire::{SmartDeviceCoverage, SmartDeviceObservation};
+    SmartDeviceObservation {
+        subject: subject.into(),
+        device_path: "/dev/sda".into(),
+        device_class: "scsi".into(),
+        protocol: "SAS".into(),
+        model: Some("HUH721010AL42C0".into()),
+        serial_number: Some(serial.into()),
+        firmware_version: None,
+        capacity_bytes: Some(10_000_000_000_000),
+        logical_block_size: Some(4096),
+        smart_available: Some(true),
+        smart_enabled: Some(true),
+        smart_overall_passed: smart_passed,
+        temperature_c: Some(24),
+        power_on_hours: Some(50_000),
+        uncorrected_read_errors: uncorr_read,
+        uncorrected_write_errors: uncorr_write,
+        uncorrected_verify_errors: None,
+        media_errors: None,
+        nvme_percentage_used: None,
+        nvme_available_spare_pct: None,
+        nvme_critical_warning: None,
+        nvme_unsafe_shutdowns: None,
+        coverage: SmartDeviceCoverage {
+            can_testify: can_testify.iter().map(|s| s.to_string()).collect(),
+            cannot_testify: vec![],
+        },
+        collection_outcome: "ok".into(),
+        raw: None,
+        raw_truncated: None,
+        raw_original_bytes: None,
+        raw_truncated_bytes: None,
+    }
+}
+
+fn nvme_device(
+    subject: &str,
+    serial: &str,
+    smart_passed: Option<bool>,
+    media_errors: Option<i64>,
+    can_testify: &[&str],
+) -> nq_core::wire::SmartDeviceObservation {
+    use nq_core::wire::{SmartDeviceCoverage, SmartDeviceObservation};
+    SmartDeviceObservation {
+        subject: subject.into(),
+        device_path: "/dev/nvme0n1".into(),
+        device_class: "nvme".into(),
+        protocol: "NVMe".into(),
+        model: Some("TEAM TM8FP6001T".into()),
+        serial_number: Some(serial.into()),
+        firmware_version: None,
+        capacity_bytes: Some(1_000_000_000_000),
+        logical_block_size: Some(512),
+        smart_available: Some(true),
+        smart_enabled: Some(true),
+        smart_overall_passed: smart_passed,
+        temperature_c: Some(47),
+        power_on_hours: Some(22_016),
+        uncorrected_read_errors: None,
+        uncorrected_write_errors: None,
+        uncorrected_verify_errors: None,
+        media_errors,
+        nvme_percentage_used: Some(2),
+        nvme_available_spare_pct: Some(100),
+        nvme_critical_warning: Some(0),
+        nvme_unsafe_shutdowns: Some(5),
+        coverage: SmartDeviceCoverage {
+            can_testify: can_testify.iter().map(|s| s.to_string()).collect(),
+            cannot_testify: vec![],
+        },
+        collection_outcome: "ok".into(),
+        raw: None,
+        raw_truncated: None,
+        raw_original_bytes: None,
+        raw_truncated_bytes: None,
+    }
+}
+
+#[test]
+fn smart_status_lies_fires_on_scsi_with_uncorrected_reads() {
+    // The forcing case: passed=true + nonzero uncorrected_read_errors,
+    // both error counters AND smart_overall_status testifiable.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000cca26adf4db8",
+        "2TKYU2KD",
+        Some(true),
+        Some(88),
+        Some(0),
+        &["smart_overall_status", "scsi_error_counters", "device_identity"],
+    );
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_status_lies");
+    assert_eq!(d.len(), 1, "exactly one smart_status_lies finding");
+    assert_eq!(d[0].domain, "Δh");
+    assert_eq!(d[0].subject, "wwn:0x5000cca26adf4db8");
+    assert_eq!(d[0].host, "lil-nas-x");
+    assert_eq!(d[0].value, Some(88.0));
+    assert!(d[0].message.contains("read=88"));
+    assert!(d[0].message.contains("2TKYU2KD"));
+
+    let dx = d[0].diagnosis.as_ref().unwrap();
+    assert_eq!(dx.failure_class, nq_db::FailureClass::Drift);
+    assert_eq!(dx.service_impact, nq_db::ServiceImpact::Degraded);
+}
+
+#[test]
+fn smart_status_lies_fires_on_nvme_with_media_errors() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device(
+        "serial:TEAM_FAKE",
+        "TEAM_FAKE",
+        Some(true),
+        Some(3),
+        &["smart_overall_status", "nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_status_lies");
+    assert_eq!(d.len(), 1, "NVMe contradiction also fires");
+    assert_eq!(d[0].value, Some(3.0));
+    assert!(d[0].message.contains("media=3"));
+}
+
+#[test]
+fn smart_status_lies_silent_when_counters_are_zero() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000ccahealthy",
+        "HEALTHY",
+        Some(true),
+        Some(0),
+        Some(0),
+        &["smart_overall_status", "scsi_error_counters", "device_identity"],
+    );
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_status_lies");
+    assert!(d.is_empty(), "all-zero counters → no contradiction → silent");
+}
+
+#[test]
+fn smart_status_lies_silent_when_smart_overall_already_failed() {
+    // smart_overall_passed=false with errors is "drive failing honestly,"
+    // not a contradiction. A sibling detector (smart_uncorrected_errors_nonzero)
+    // owns that case; this one stays silent.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000ccafailing",
+        "FAILING",
+        Some(false),
+        Some(88),
+        Some(0),
+        &["smart_overall_status", "scsi_error_counters", "device_identity"],
+    );
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_status_lies");
+    assert!(d.is_empty(), "passed=false → no lie to detect");
+}
+
+#[test]
+fn smart_status_lies_silent_without_scsi_error_counter_coverage() {
+    // The witness testifies to smart_overall_status but did NOT testify
+    // to scsi_error_counters. Detector cannot rely on the counters; stays
+    // silent. The whole point of coverage gating.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000cca26adf4db8",
+        "2TKYU2KD",
+        Some(true),
+        Some(88),
+        Some(0),
+        // scsi_error_counters deliberately absent
+        &["smart_overall_status", "device_identity"],
+    );
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_status_lies");
+    assert!(d.is_empty(), "no scsi_error_counters coverage → silent");
+}
+
+#[test]
+fn smart_status_lies_silent_without_smart_overall_status_coverage() {
+    // The witness has scsi_error_counters but did NOT testify to
+    // smart_overall_status. We don't know if the device claimed health
+    // this cycle, so the contradiction can't be evaluated. Silent.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000cca26adf4db8",
+        "2TKYU2KD",
+        Some(true),
+        Some(88),
+        Some(0),
+        // smart_overall_status deliberately absent
+        &["scsi_error_counters", "device_identity"],
+    );
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_status_lies");
+    assert!(d.is_empty(), "no smart_overall_status coverage → silent");
 }

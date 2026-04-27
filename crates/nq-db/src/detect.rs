@@ -380,6 +380,8 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     detect_zfs_error_count_increased(db, &mut findings)?;
     detect_zfs_scrub_overdue(db, &mut findings)?;
     detect_zfs_witness_silent(db, &mut findings)?;
+    // SMART witness detectors — gated on declared per-device coverage.
+    detect_smart_status_lies(db, &mut findings)?;
     // Saved query checks
     run_saved_checks(db, &mut findings)?;
     Ok(findings)
@@ -2284,6 +2286,146 @@ fn detect_zfs_witness_silent(
             }),
             basis_source_id: Some(witness_id.clone()),
             basis_witness_id: Some(witness_id),
+        });
+    }
+    Ok(())
+}
+
+/// Δh: SMART overall_passed=true contradicted by nonzero raw error counters.
+///
+/// SMART Phase 1 ingestion intentionally refuses to reconcile
+/// `smart_overall_passed` against uncorrected/media error counters — both are
+/// surfaced raw. This detector lifts the contradiction into operator state
+/// so a drive that says "I'm fine" while emitting nonzero raw errors does
+/// not slide past the dashboard.
+///
+/// Gated on per-device coverage:
+///   - `smart_overall_status` must be testifiable (otherwise we don't know
+///     what the device said about itself this cycle); inner-joined.
+///   - For the error-counter side, at least one of `scsi_error_counters`
+///     (SAS/SCSI uncorrected_*) or `nvme_health_log` (NVMe media_errors)
+///     must be testifiable; the SQL's predicate only counts a counter
+///     class if its coverage tag is set.
+///
+/// Forcing case: lil-nas-x HGST HUH721010AL42C0 serial `2TKYU2KD` reports
+/// `smart_overall_passed=true` AND `uncorrected_read_errors=88`. The same
+/// drive is FAULTED in the ZFS pool with 795 read errors. The contradiction
+/// is the motivating exhibit for this detector.
+fn detect_smart_status_lies(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "SELECT
+            d.host, d.subject, d.serial_number, d.model,
+            d.uncorrected_read_errors, d.uncorrected_write_errors,
+            d.uncorrected_verify_errors, d.media_errors,
+            CASE WHEN cscsi.host IS NOT NULL THEN 1 ELSE 0 END AS scsi_covered,
+            CASE WHEN cnvme.host IS NOT NULL THEN 1 ELSE 0 END AS nvme_covered,
+            w.witness_id
+         FROM smart_devices_current d
+         INNER JOIN smart_device_coverage_current cstatus
+            ON cstatus.host = d.host AND cstatus.subject = d.subject
+            AND cstatus.tag = 'smart_overall_status' AND cstatus.can_testify = 1
+         LEFT JOIN smart_device_coverage_current cscsi
+            ON cscsi.host = d.host AND cscsi.subject = d.subject
+            AND cscsi.tag = 'scsi_error_counters' AND cscsi.can_testify = 1
+         LEFT JOIN smart_device_coverage_current cnvme
+            ON cnvme.host = d.host AND cnvme.subject = d.subject
+            AND cnvme.tag = 'nvme_health_log' AND cnvme.can_testify = 1
+         LEFT JOIN smart_witness_current w ON w.host = d.host
+         WHERE d.smart_overall_passed = 1
+           AND (
+             (cscsi.host IS NOT NULL AND (
+                COALESCE(d.uncorrected_read_errors, 0) > 0
+                OR COALESCE(d.uncorrected_write_errors, 0) > 0
+                OR COALESCE(d.uncorrected_verify_errors, 0) > 0
+             ))
+             OR
+             (cnvme.host IS NOT NULL AND COALESCE(d.media_errors, 0) > 0)
+           )",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,           // host
+            row.get::<_, String>(1)?,           // subject
+            row.get::<_, Option<String>>(2)?,   // serial_number
+            row.get::<_, Option<String>>(3)?,   // model
+            row.get::<_, Option<i64>>(4)?,      // uncorrected_read_errors
+            row.get::<_, Option<i64>>(5)?,      // uncorrected_write_errors
+            row.get::<_, Option<i64>>(6)?,      // uncorrected_verify_errors
+            row.get::<_, Option<i64>>(7)?,      // media_errors
+            row.get::<_, i64>(8)?,              // scsi_covered
+            row.get::<_, i64>(9)?,              // nvme_covered
+            row.get::<_, Option<String>>(10)?,  // witness_id
+        ))
+    })?;
+    for row in rows {
+        let (host, subject, serial, model,
+             ur, uw, uv, media, scsi_covered, nvme_covered, witness_id) = row?;
+
+        // Only count counter classes the witness actually testified about
+        // — same predicate the SQL used to admit the row.
+        let scsi_total = if scsi_covered == 1 {
+            ur.unwrap_or(0) + uw.unwrap_or(0) + uv.unwrap_or(0)
+        } else { 0 };
+        let nvme_total = if nvme_covered == 1 { media.unwrap_or(0) } else { 0 };
+        let total_errors = scsi_total + nvme_total;
+
+        let identity = match (model.as_deref(), serial.as_deref()) {
+            (Some(m), Some(s)) => format!("{m} ({s})"),
+            (Some(m), None)    => m.to_string(),
+            (None,    Some(s)) => format!("serial {s}"),
+            (None,    None)    => subject.clone(),
+        };
+
+        let mut parts: Vec<String> = Vec::new();
+        if scsi_covered == 1 {
+            if ur.unwrap_or(0) > 0 { parts.push(format!("read={}",   ur.unwrap())); }
+            if uw.unwrap_or(0) > 0 { parts.push(format!("write={}",  uw.unwrap())); }
+            if uv.unwrap_or(0) > 0 { parts.push(format!("verify={}", uv.unwrap())); }
+        }
+        if nvme_covered == 1 && media.unwrap_or(0) > 0 {
+            parts.push(format!("media={}", media.unwrap()));
+        }
+        let breakdown = parts.join(" ");
+
+        let message = format!(
+            "device {identity} reports smart_overall_passed=true but raw counters: {breakdown}"
+        );
+
+        let synopsis = format!(
+            "Drive {identity} self-reports SMART OVERALL=passed while raw error counters \
+             show {total_errors} uncorrected/media errors ({breakdown}). The two channels \
+             from the same device this cycle disagree."
+        );
+
+        let why_care: String = "Vendor SMART self-assessment can stay 'passed' until the drive \
+                                crosses a manufacturer-specific threshold, even after sustained \
+                                read or write damage. Raw error counters are the earlier signal. \
+                                When self-report and counters disagree, trust the counters: the \
+                                drive is already operating in degraded territory whether it \
+                                admits it or not.".into();
+
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "smart_status_lies".into(),
+            subject,
+            message,
+            value: Some(total_errors as f64),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: StateKind::Degradation,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Drift,
+                service_impact: ServiceImpact::Degraded,
+                action_bias: ActionBias::InvestigateNow,
+                synopsis,
+                why_care,
+            }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
         });
     }
     Ok(())
