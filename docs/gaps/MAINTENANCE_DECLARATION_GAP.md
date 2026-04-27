@@ -340,9 +340,9 @@ Before implementation begins, V1 must answer all of these. Anything still open i
 - [x] declaration must precede effect: enforced at CLI, not flipped to `late`
 - [x] annotation surface: two columns on `warning_state`
 - [x] render: export + dashboard badge, nothing fancier
-- [ ] schema migration number (TBD at implementation time)
-- [ ] which DB the declarations live in (publisher-local vs aggregator) — TBD
-- [ ] how the CLI reaches the right DB — likely same `--db` flag pattern as `nq query`
+- [x] schema migration number: whatever the next honest integer is (currently 038). No theology. Per `docs/MIGRATION_DISCIPLINE.md` and `project_versioning_three_clocks` memory: migration ledger is local bookkeeping, not a public coupling point. The work is to *not* let the integer be the public clock — adding the table is just local DDL, no contract bump.
+- [ ] which DB the declarations live in (publisher-local vs aggregator) — TBD. Lean: aggregator-side, since that's where finding state is computed and `update_warning_state` runs. Publisher-local would be source-local maintenance with later federation, which is a bigger shape than V1.
+- [ ] how the CLI reaches the right DB — likely the existing `--db` flag pattern from `nq query`. Confirm at implementation time.
 
 ## Explicitly deferred
 
