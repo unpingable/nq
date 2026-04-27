@@ -2349,3 +2349,168 @@ fn smart_status_lies_silent_without_smart_overall_status_coverage() {
     let d = find_by_kind(&findings, "smart_status_lies");
     assert!(d.is_empty(), "no smart_overall_status coverage → silent");
 }
+
+// ───────────────────────────────────────────────────────────────────────
+// SMART witness — smart_uncorrected_errors_nonzero
+//
+// Sibling to smart_status_lies. Level-triggered: fires whenever a raw
+// uncorrected/media counter is nonzero, regardless of smart_overall_passed.
+// Co-fires with smart_status_lies on the 2TKYU2KD shape (passed=true with
+// nonzero counters); fires alone when passed=false.
+// ───────────────────────────────────────────────────────────────────────
+
+#[test]
+fn smart_uncorrected_errors_fires_on_scsi_read_count() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000cca26adf4db8",
+        "2TKYU2KD",
+        Some(true),
+        Some(88),
+        Some(0),
+        &["smart_overall_status", "scsi_error_counters", "device_identity"],
+    );
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_uncorrected_errors_nonzero");
+    assert_eq!(d.len(), 1);
+    assert_eq!(d[0].domain, "Δh");
+    assert_eq!(d[0].subject, "wwn:0x5000cca26adf4db8");
+    assert_eq!(d[0].value, Some(88.0));
+    assert!(d[0].message.contains("read=88"));
+
+    // 2TKYU2KD shape co-fires both detectors: contradiction AND raw count.
+    let lies = find_by_kind(&findings, "smart_status_lies");
+    assert_eq!(lies.len(), 1, "smart_status_lies also fires on the same drive");
+}
+
+#[test]
+fn smart_uncorrected_errors_fires_on_nvme_media_errors() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device(
+        "serial:NVME_FAKE",
+        "NVME_FAKE",
+        Some(true),
+        Some(7),
+        &["smart_overall_status", "nvme_health_log", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_uncorrected_errors_nonzero");
+    assert_eq!(d.len(), 1);
+    assert_eq!(d[0].value, Some(7.0));
+    assert!(d[0].message.contains("media=7"));
+    assert!(d[0].message.contains("media errors"));
+}
+
+#[test]
+fn smart_uncorrected_errors_fires_when_passed_is_false() {
+    // The case smart_status_lies deliberately doesn't catch: drive is
+    // failing honestly (passed=false) with nonzero counters. This
+    // detector still fires because it's level-triggered on counters,
+    // not on the contradiction.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000ccafailing",
+        "FAILING",
+        Some(false),
+        Some(42),
+        Some(0),
+        &["smart_overall_status", "scsi_error_counters", "device_identity"],
+    );
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_uncorrected_errors_nonzero");
+    assert_eq!(d.len(), 1, "fires regardless of smart_overall_passed");
+
+    let lies = find_by_kind(&findings, "smart_status_lies");
+    assert!(lies.is_empty(), "smart_status_lies stays silent — no contradiction");
+}
+
+#[test]
+fn smart_uncorrected_errors_silent_when_all_zero() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000ccahealthy",
+        "HEALTHY",
+        Some(true),
+        Some(0),
+        Some(0),
+        &["smart_overall_status", "scsi_error_counters", "device_identity"],
+    );
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_uncorrected_errors_nonzero");
+    assert!(d.is_empty());
+}
+
+#[test]
+fn smart_uncorrected_errors_silent_without_counter_coverage() {
+    // Counters are nonzero but the witness did not testify to
+    // scsi_error_counters. Detector cannot read them; stays silent.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000cca26adf4db8",
+        "2TKYU2KD",
+        Some(true),
+        Some(88),
+        Some(0),
+        // scsi_error_counters deliberately absent
+        &["smart_overall_status", "device_identity"],
+    );
+    let b = smart_witness_batch("lil-nas-x", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_uncorrected_errors_nonzero");
+    assert!(d.is_empty(), "no scsi_error_counters coverage → silent");
+}
+
+#[test]
+fn smart_uncorrected_errors_silent_for_nvme_with_only_scsi_coverage() {
+    // Defensive: an NVMe device with media_errors=5 but only
+    // scsi_error_counters in coverage (a misconfigured witness) must
+    // not fire. The coverage tag is the gate; raw column values without
+    // the right tag are not testimony.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = nvme_device(
+        "serial:NVME_FAKE",
+        "NVME_FAKE",
+        Some(true),
+        Some(5),
+        // Wrong tag for an NVMe device — nvme_health_log absent.
+        &["smart_overall_status", "scsi_error_counters", "device_identity"],
+    );
+    let b = smart_witness_batch("sushi-k", vec![dev], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "smart_uncorrected_errors_nonzero");
+    assert!(d.is_empty(), "NVMe media_errors without nvme_health_log coverage → silent");
+}

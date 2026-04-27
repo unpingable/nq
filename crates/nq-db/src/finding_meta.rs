@@ -281,6 +281,27 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
             ],
         },
 
+        "smart_uncorrected_errors_nonzero" => FindingMeta {
+            plain_label: "Drive reports uncorrected errors",
+            operator_label: "SMART Uncorrected Errors",
+            gloss: "Raw SCSI uncorrected_read/write/verify counters or NVMe \
+                    media_errors are nonzero this cycle. Each entry is a read \
+                    or write the device could not deliver or verify reliably. \
+                    Level-triggered: fires whenever the count is > 0, not just \
+                    when it rises.",
+            contradiction: "The drive may still report SMART OVERALL=passed, \
+                            and the filesystem may still be serving I/O. \
+                            Uncorrected errors are not always immediately \
+                            user-visible; they often surface first as \
+                            checksum mismatches in ZFS or md scrub events.",
+            next_checks: &[
+                "ZFS / mdraid / filesystem state for the same device — corruption may already be leaking up",
+                "trajectory: are counters rising cycle over cycle, or static?",
+                "smart_status_lies: is this drive ALSO co-firing on the contradiction detector?",
+                "device path + serial (for replacement ordering)",
+            ],
+        },
+
         // ── meta ─────────────────────────────────────────────────
         "check_failed" => FindingMeta {
             plain_label: "Check condition detected",

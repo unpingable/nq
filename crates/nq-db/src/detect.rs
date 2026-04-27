@@ -382,6 +382,7 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     detect_zfs_witness_silent(db, &mut findings)?;
     // SMART witness detectors — gated on declared per-device coverage.
     detect_smart_status_lies(db, &mut findings)?;
+    detect_smart_uncorrected_errors_nonzero(db, &mut findings)?;
     // Saved query checks
     run_saved_checks(db, &mut findings)?;
     Ok(findings)
@@ -2411,6 +2412,146 @@ fn detect_smart_status_lies(
             host,
             domain: "Δh".into(),
             kind: "smart_status_lies".into(),
+            subject,
+            message,
+            value: Some(total_errors as f64),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: StateKind::Degradation,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Drift,
+                service_impact: ServiceImpact::Degraded,
+                action_bias: ActionBias::InvestigateNow,
+                synopsis,
+                why_care,
+            }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
+        });
+    }
+    Ok(())
+}
+
+/// Δh: SMART raw error counters are nonzero. Level-triggered.
+///
+/// Sibling to `smart_status_lies`. That one fires on the *contradiction*
+/// between `smart_overall_passed=true` and nonzero counters — the
+/// self-report-vs-reality story. This one fires on the simpler fact that
+/// any uncorrected/media error counter is nonzero, regardless of what
+/// SMART overall claims. The two can co-fire on the same drive: when
+/// they do, the operator sees both "errors exist" and "drive's
+/// self-report is unreliable."
+///
+/// Gated on per-device coverage. Unlike `smart_status_lies`, this
+/// detector does not require `smart_overall_status` standing — the
+/// counters speak for themselves. It does require the relevant counter
+/// family's coverage (`scsi_error_counters` or `nvme_health_log`).
+///
+/// Counter scope:
+///   - SCSI/SAS: uncorrected_read_errors, uncorrected_write_errors,
+///     uncorrected_verify_errors
+///   - NVMe: media_errors (the analogous "raw uncorrectable count")
+///
+/// Sibling detectors deferred from this slice:
+///   - smart_reallocated_sectors_rising — ATA-only, edge-triggered
+///   - smart_nvme_percentage_used — NVMe wear, vendor-thresholded
+fn detect_smart_uncorrected_errors_nonzero(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "SELECT
+            d.host, d.subject, d.serial_number, d.model, d.device_class,
+            d.uncorrected_read_errors, d.uncorrected_write_errors,
+            d.uncorrected_verify_errors, d.media_errors,
+            CASE WHEN cscsi.host IS NOT NULL THEN 1 ELSE 0 END AS scsi_covered,
+            CASE WHEN cnvme.host IS NOT NULL THEN 1 ELSE 0 END AS nvme_covered,
+            w.witness_id
+         FROM smart_devices_current d
+         LEFT JOIN smart_device_coverage_current cscsi
+            ON cscsi.host = d.host AND cscsi.subject = d.subject
+            AND cscsi.tag = 'scsi_error_counters' AND cscsi.can_testify = 1
+         LEFT JOIN smart_device_coverage_current cnvme
+            ON cnvme.host = d.host AND cnvme.subject = d.subject
+            AND cnvme.tag = 'nvme_health_log' AND cnvme.can_testify = 1
+         LEFT JOIN smart_witness_current w ON w.host = d.host
+         WHERE
+           (cscsi.host IS NOT NULL AND (
+              COALESCE(d.uncorrected_read_errors, 0) > 0
+              OR COALESCE(d.uncorrected_write_errors, 0) > 0
+              OR COALESCE(d.uncorrected_verify_errors, 0) > 0
+           ))
+           OR
+           (cnvme.host IS NOT NULL AND COALESCE(d.media_errors, 0) > 0)",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,           // host
+            row.get::<_, String>(1)?,           // subject
+            row.get::<_, Option<String>>(2)?,   // serial_number
+            row.get::<_, Option<String>>(3)?,   // model
+            row.get::<_, String>(4)?,           // device_class
+            row.get::<_, Option<i64>>(5)?,      // uncorrected_read_errors
+            row.get::<_, Option<i64>>(6)?,      // uncorrected_write_errors
+            row.get::<_, Option<i64>>(7)?,      // uncorrected_verify_errors
+            row.get::<_, Option<i64>>(8)?,      // media_errors
+            row.get::<_, i64>(9)?,              // scsi_covered
+            row.get::<_, i64>(10)?,             // nvme_covered
+            row.get::<_, Option<String>>(11)?,  // witness_id
+        ))
+    })?;
+    for row in rows {
+        let (host, subject, serial, model, device_class,
+             ur, uw, uv, media, scsi_covered, nvme_covered, witness_id) = row?;
+
+        let scsi_total = if scsi_covered == 1 {
+            ur.unwrap_or(0) + uw.unwrap_or(0) + uv.unwrap_or(0)
+        } else { 0 };
+        let nvme_total = if nvme_covered == 1 { media.unwrap_or(0) } else { 0 };
+        let total_errors = scsi_total + nvme_total;
+
+        let identity = match (model.as_deref(), serial.as_deref()) {
+            (Some(m), Some(s)) => format!("{m} ({s})"),
+            (Some(m), None)    => m.to_string(),
+            (None,    Some(s)) => format!("serial {s}"),
+            (None,    None)    => subject.clone(),
+        };
+
+        let mut parts: Vec<String> = Vec::new();
+        if scsi_covered == 1 {
+            if ur.unwrap_or(0) > 0 { parts.push(format!("read={}",   ur.unwrap())); }
+            if uw.unwrap_or(0) > 0 { parts.push(format!("write={}",  uw.unwrap())); }
+            if uv.unwrap_or(0) > 0 { parts.push(format!("verify={}", uv.unwrap())); }
+        }
+        if nvme_covered == 1 && media.unwrap_or(0) > 0 {
+            parts.push(format!("media={}", media.unwrap()));
+        }
+        let breakdown = parts.join(" ");
+
+        let counter_kind = if device_class == "nvme" { "media" } else { "uncorrected" };
+        let message = format!(
+            "device {identity} reports {total_errors} {counter_kind} errors ({breakdown})"
+        );
+
+        let synopsis = format!(
+            "Drive {identity} has {total_errors} raw uncorrected/media errors this cycle \
+             ({breakdown}). Each uncorrected counter records a read or write the device \
+             could not complete or verify."
+        );
+
+        let why_care: String = "Uncorrected errors are by definition data the drive could not \
+                                deliver or write reliably. They precede vendor SMART thresholds \
+                                tripping; they precede filesystem-level checksum failures. A \
+                                nonzero count is not normal idle wear, it is the drive telling \
+                                you it has already failed an operation. Cross-reference with \
+                                ZFS / mdraid / fs error counts for the same device — if those \
+                                are also nonzero, the corruption is leaking past the device \
+                                layer.".into();
+
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "smart_uncorrected_errors_nonzero".into(),
             subject,
             message,
             value: Some(total_errors as f64),
