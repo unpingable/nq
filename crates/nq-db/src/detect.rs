@@ -410,6 +410,7 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     detect_smart_nvme_percentage_used(db, &mut findings)?;
     detect_smart_nvme_available_spare_low(db, &mut findings)?;
     detect_smart_nvme_critical_warning_set(db, &mut findings)?;
+    detect_smart_reallocated_sectors_rising(db, &mut findings)?;
     // Saved query checks
     run_saved_checks(db, &mut findings)?;
     Ok(findings)
@@ -3029,6 +3030,143 @@ fn detect_smart_nvme_critical_warning_set(
             state_kind: StateKind::Degradation,
             diagnosis: Some(FindingDiagnosis {
                 failure_class: FailureClass::Availability,
+                service_impact: ServiceImpact::Degraded,
+                action_bias: ActionBias::InvestigateNow,
+                synopsis,
+                why_care,
+            }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
+        });
+    }
+    Ok(())
+}
+
+/// Δh: ATA reallocated_sector_count strictly rose between cycles.
+/// Edge-triggered. Sibling shape to `zfs_error_count_increased` —
+/// gated on `ata_smart_attributes` per-device coverage, classifies
+/// the cross-cycle delta in code (NOT in SQL) so resets and identity
+/// churn don't fire as "rises."
+///
+/// SMART attribute #5 (Reallocated_Sector_Ct) counts how many bad
+/// blocks the drive has remapped to its spare pool. Level-triggered
+/// would be useless: a drive can ship from the factory with a small
+/// nonzero count from manufacturing test. The interesting question
+/// is "did the count rise THIS cycle?" — that is the drive remapping
+/// new defects in the field.
+///
+/// Skip-conditions (no fire, no finding):
+///   - no prior row in history → first observation, no delta
+///   - prior > current → reset event (drive replaced, identity churn,
+///     witness restart with stale cache). Not a "rise."
+///   - prior == current → counter steady, no edge
+///   - coverage missing for `ata_smart_attributes`
+///
+/// Note on availability: as of the migration that added this detector,
+/// the `nq-smart-witness` reference impl does not yet emit
+/// reallocated_sector_count as a normalized field. The
+/// `ata_smart_attributes` coverage tag is set to can_testify=0 on
+/// every observed device. The detector stays correctly silent until
+/// witness work catches up — gating discipline holds.
+fn detect_smart_reallocated_sectors_rising(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    // Window-function pair: take the two most recent generations per
+    // (host, subject) where the device had `ata_smart_attributes`
+    // standing this cycle. Compare in code.
+    let mut stmt = db.prepare(
+        "WITH ranked AS (
+             SELECT h.host, h.subject,
+                    h.reallocated_sector_count,
+                    h.generation_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY h.host, h.subject
+                        ORDER BY h.generation_id DESC
+                    ) AS rn
+             FROM smart_reallocated_history h
+             INNER JOIN smart_device_coverage_current c
+                ON c.host = h.host AND c.subject = h.subject
+                AND c.tag = 'ata_smart_attributes' AND c.can_testify = 1
+         ),
+         latest AS (SELECT * FROM ranked WHERE rn = 1),
+         prior  AS (SELECT * FROM ranked WHERE rn = 2)
+         SELECT latest.host, latest.subject,
+                latest.reallocated_sector_count, prior.reallocated_sector_count,
+                d.serial_number, d.model,
+                w.witness_id
+         FROM latest
+         INNER JOIN prior
+            ON prior.host = latest.host AND prior.subject = latest.subject
+         LEFT JOIN smart_devices_current d
+            ON d.host = latest.host AND d.subject = latest.subject
+         LEFT JOIN smart_witness_current w ON w.host = latest.host",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,           // host
+            row.get::<_, String>(1)?,           // subject
+            row.get::<_, Option<i64>>(2)?,      // current reallocated
+            row.get::<_, Option<i64>>(3)?,      // prior reallocated
+            row.get::<_, Option<String>>(4)?,   // serial_number
+            row.get::<_, Option<String>>(5)?,   // model
+            row.get::<_, Option<String>>(6)?,   // witness_id
+        ))
+    })?;
+    for row in rows {
+        let (host, subject, cur, prev, serial, model, witness_id) = row?;
+
+        // Treat NULL on either side as 0 — missing values indicate
+        // incomplete observation, not negative delta.
+        let delta = signed_delta(cur, prev);
+
+        // Skip: counter strictly decreased. Reset, drive replaced,
+        // witness restart, identity churn — not a rise event.
+        if delta < 0 { continue; }
+        // Skip: counter steady. No edge.
+        if delta == 0 { continue; }
+
+        let cur_v = cur.unwrap_or(0);
+        let prev_v = prev.unwrap_or(0);
+
+        let identity = match (model.as_deref(), serial.as_deref()) {
+            (Some(m), Some(s)) => format!("{m} ({s})"),
+            (Some(m), None)    => m.to_string(),
+            (None,    Some(s)) => format!("serial {s}"),
+            (None,    None)    => subject.clone(),
+        };
+
+        let message = format!(
+            "ATA {identity} reallocated_sectors rose {prev_v} → {cur_v} (+{delta})"
+        );
+
+        let synopsis = format!(
+            "ATA drive {identity} reallocated {delta} new sector(s) since the previous \
+             cycle (was {prev_v}, now {cur_v}). Each entry is a bad block the drive remapped \
+             to its spare pool — active media defect emerging in the field, not factory \
+             baseline."
+        );
+
+        let why_care: String = "Reallocated sectors rising in the field is the canonical \
+                                ATA degradation signal. Unlike NVMe wear (slow burn) or \
+                                vendor SMART self-assessment (often lagging), this counter \
+                                only rises when the drive *just now* hid a defect that \
+                                surfaced during normal use. The rate of rise is the urgency: \
+                                a single increment is normal aging; a burst is a drive \
+                                heading toward replacement.".into();
+
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "smart_reallocated_sectors_rising".into(),
+            subject,
+            message,
+            value: Some(delta as f64),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: StateKind::Degradation,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Drift,
                 service_impact: ServiceImpact::Degraded,
                 action_bias: ActionBias::InvestigateNow,
                 synopsis,

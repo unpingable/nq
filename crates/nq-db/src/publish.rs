@@ -680,6 +680,7 @@ fn publish_smart_witness(
                              uncorrected_read_errors, uncorrected_write_errors, uncorrected_verify_errors,
                              media_errors, nvme_percentage_used, nvme_available_spare_pct,
                              nvme_critical_warning, nvme_unsafe_shutdowns,
+                             reallocated_sector_count,
                              raw_json, raw_truncated, raw_original_bytes, raw_truncated_bytes,
                              as_of_generation, collected_at)
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6,
@@ -689,8 +690,9 @@ fn publish_smart_witness(
                                  ?17, ?18, ?19,
                                  ?20, ?21, ?22,
                                  ?23, ?24,
-                                 ?25, ?26, ?27, ?28,
-                                 ?29, ?30)",
+                                 ?25,
+                                 ?26, ?27, ?28, ?29,
+                                 ?30, ?31)",
                         rusqlite::params![
                             &row.host,
                             &d.subject,
@@ -716,11 +718,31 @@ fn publish_smart_witness(
                             d.nvme_available_spare_pct,
                             d.nvme_critical_warning,
                             d.nvme_unsafe_shutdowns,
+                            d.reallocated_sector_count,
                             &raw_json,
                             d.raw_truncated.map(|b| b as i64),
                             d.raw_original_bytes,
                             d.raw_truncated_bytes,
                             generation_id,
+                            &collected_at,
+                        ],
+                    )?;
+
+                    // History projection for the reallocated counter (Phase 2,
+                    // edge-triggered detector). We write a row every cycle —
+                    // even when the value is NULL — so the detector can
+                    // distinguish "device exists but witness can't read this
+                    // attribute" from "device is gone" without inspecting
+                    // gaps in the generation sequence.
+                    tx.execute(
+                        "INSERT INTO smart_reallocated_history
+                            (generation_id, host, subject, reallocated_sector_count, collected_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                        rusqlite::params![
+                            generation_id,
+                            &row.host,
+                            &d.subject,
+                            d.reallocated_sector_count,
                             &collected_at,
                         ],
                     )?;

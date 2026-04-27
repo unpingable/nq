@@ -401,6 +401,11 @@ pub struct SmartDeviceObservation {
     pub uncorrected_verify_errors: Option<i64>,
     #[serde(default)]
     pub media_errors: Option<i64>,
+    /// ATA-only normalized field. SMART attribute #5
+    /// (Reallocated_Sector_Ct) — count of bad blocks the drive has
+    /// remapped to its spare pool. Null on NVMe and SCSI.
+    #[serde(default)]
+    pub reallocated_sector_count: Option<i64>,
 
     #[serde(default)]
     pub nvme_percentage_used: Option<i64>,

@@ -382,6 +382,26 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
             ],
         },
 
+        "smart_reallocated_sectors_rising" => FindingMeta {
+            plain_label: "ATA drive remapping new bad blocks",
+            operator_label: "ATA Reallocated Sectors Rising",
+            gloss: "ATA drive's reallocated_sector_count strictly increased \
+                    since the previous cycle. Edge-triggered: a single \
+                    nonzero count is normal factory-baseline; rising in the \
+                    field is active media defect emergence.",
+            contradiction: "The drive may still report SMART OVERALL=passed; \
+                            the filesystem may show no errors yet. Reallocated \
+                            sectors are sectors the drive ALREADY successfully \
+                            hid — the user-visible read still completed. The \
+                            cost is spare pool depletion.",
+            next_checks: &[
+                "rate of rise: a single increment is normal aging; a burst is the canonical 'replace soon' signal",
+                "current_pending_sector and offline_uncorrectable (sibling SMART attributes — pending sectors are the next defects, not yet remapped)",
+                "filesystem / md / lvm error counts for the same device — corruption may already be leaking past the device layer",
+                "drive's SMART self-assessment vs raw counters (smart_status_lies sibling pattern)",
+            ],
+        },
+
         // ── meta ─────────────────────────────────────────────────
         "check_failed" => FindingMeta {
             plain_label: "Check condition detected",
