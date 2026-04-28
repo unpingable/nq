@@ -129,13 +129,68 @@ For any NQ finding shape, ask:
 
 If not, NQ is doing Governor's job badly. Findings that imply "this is fine, ignore" or "this is urgent, act" have collapsed diagnosis into permission. The well-shaped version surfaces state, scope, freshness, witness position and observed deltas; the verdict is downstream's.
 
+## NQ / Night Shift contract
+
+Night Shift manages **admissibility across time** — it prevents old observations, stale plans, and deferred work from silently becoming current authority. NQ supplies the world-state movement that Night Shift schedules around. Two consumer-facing rules fall out (confirmed 2026-04-28 by Night Shift role-pinning):
+
+### Witness position is diagnostic metadata, not consumer interpretation burden
+
+Night Shift will not branch on `witness.position`. Therefore NQ must not rely on consumers reading raw position labels to infer scheduling or reconciliation behavior. If cross-position disagreement matters for downstream behavior, NQ encodes the disagreement as a **finding shape** — not as position metadata that consumers are expected to interpret.
+
+Bad (relies on consumer to interpret position metadata):
+
+```
+finding_kind: app_health_check
+witness_position: application_internal
+state: healthy
+
+finding_kind: app_health_check
+witness_position: application_external
+state: failing
+```
+
+Good (NQ has already recognized the disagreement as a finding):
+
+```
+finding_kind: cross_position_disagreement
+positions: [application_internal, application_external]
+summary: app reports healthy, external probe fails
+consumer_hint: revalidate_or_escalate_attention
+```
+
+Witness position supports NQ's diagnosis; the diagnosis, not the raw position label, is the consumer-facing contract. This prevents the bad future where every consumer grows its own little theology of `application_external`.
+
+### Staleness contract
+
+> Staleness may schedule re-observation. Staleness may not authorize execution.
+
+NQ's `cannot_testify` / `stale_basis` / `stale_observation` / `revalidation_required` finding shapes have a stable consumer-side contract: Night Shift will defer or revalidate, never act-on-stale. Governor likewise will refuse to admit stale evidence as authorization. NQ can therefore be brutally honest about staleness without worrying that downstream will misread `cannot_testify` as a weird degraded-action signal.
+
+## Three-way admissibility split
+
+The full constellation shape:
+
+| Consumer | Owns | Time axis |
+|---|---|---|
+| **NQ** | admissibility-relevant world state | "what changed" |
+| **Night Shift** | admissibility across time | "premise still holds, or expired?" |
+| **Governor** | admissibility at decision time | "is current authority still valid?" |
+
+Or compressed:
+
+> NQ says what changed.
+> Night Shift prevents old premises from becoming current authority.
+> Governor decides whether current authority is still valid.
+
+Each consumer reads NQ's finding shape on its own time axis. NQ's job is to produce the shape; the time-axis interpretation belongs to the consumer.
+
 ## Detector design implications
 
 Falls out of the model:
 
 1. **Detector authorship asks "what is the witness position?" first.** Not "what is the threshold?" The position determines what the finding can honestly claim.
 2. **A finding without a witness position is half-shaped.** Position is part of the contract, not annotation.
-3. **Cross-position findings are first-class.** When two positions disagree, the disagreement *is* the finding — emit it as such, not as two contradictory single-position findings that downstream must correlate.
+3. **Cross-position findings are first-class.** When two positions disagree, the disagreement *is* the finding — emit it as such, not as two contradictory single-position findings that downstream must correlate. This is consumer contract, not internal taste: Night Shift won't read `witness.position` to derive behavior. See §NQ / Night Shift contract.
 4. **Substrate findings should not opine on application consequence.** "Disk is 95% full" is substrate; "the app will fail in 4 hours" is interpretation that requires application-context evidence.
 5. **Application-internal findings should not pretend to be application-external observations.** "Health endpoint returns 200" is `application_internal`; it does not testify to `application_external` reachability.
 
@@ -161,6 +216,10 @@ These are **deferred, not abandoned**. NQ is aimed at real monitoring; these bec
 > NQ detects that the premise moved; Governor decides whether the authorization fell off.
 >
 > A finding is well-shaped when downstream Governor can deny, defer, revalidate or admit without NQ encoding the governance outcome.
+>
+> Positions locate testimony; findings carry consequence.
+>
+> Staleness may schedule re-observation; staleness may not authorize execution.
 
 ## References
 

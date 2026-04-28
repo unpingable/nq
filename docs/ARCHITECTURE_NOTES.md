@@ -91,6 +91,14 @@ Three semantic registers, not one. Substrate is the classical four (machine tell
 
 NQ owns ephemerality as observed system state (pod gone, WAL changed, DNS TTL expired, evidence stale). Governor owns ephemerality as authority/admissibility problem (does this approval still bind, does this agent still have standing, can this plan still execute). Inversion test for any NQ finding shape: *can downstream Governor correctly refuse to act on this finding?* If not, NQ is doing Governor's job badly — collapsing diagnosis into permission. See `docs/SCOPE_AND_WITNESS_MODEL.md` §NQ / Governor boundary.
 
+### Positions locate testimony; findings carry consequence.
+
+Witness position (`substrate` / `application_internal` / `application_external` / `platform_internal` / `platform_external`) is NQ's diagnostic metadata, not an interpretation burden for consumers. Downstream consumers (Night Shift, Governor) read finding *shape*, not raw position labels. If cross-position disagreement should change downstream behavior, NQ encodes it into the finding shape (`finding_kind = cross_position_disagreement`, populated `positions[]`, etc.) — not as a per-consumer theology of "app_external outranks app_internal." Confirmed 2026-04-28 by Night Shift role-pinning ("Don't branch NS behavior on NQ witness positions"). See `docs/SCOPE_AND_WITNESS_MODEL.md` §NQ / Night Shift contract.
+
+### Staleness may schedule re-observation; staleness may not authorize execution.
+
+NQ's `cannot_testify` / `stale_*` / staleness annotations have a stable downstream contract: they trigger re-observation or deferral, never action. Confirmed 2026-04-28 by Night Shift role-pinning ("Don't propose execution on stale evidence"). NQ can lean into producing honest staleness signals knowing consumers will defer/revalidate, not act-on-stale. Maps cleanly to Paper 24 freshness-discipline: an aged observation is informative about the past, not authoritative about the present.
+
 ---
 
 ## Latent notes
