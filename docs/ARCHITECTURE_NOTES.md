@@ -75,6 +75,22 @@ Tabular clarity is the native visual language of multi-alert triage. Strong colu
 
 A declared maintenance window changes how expected disturbance is interpreted and routed. It does not erase the underlying finding, rewrite health, or grant blanket amnesty to unrelated failures. Findings stay visible under `covered` / `overrun` / `out_of_envelope` / `late` annotation; the silence, restart, or stale event is real evidence either way. Expected disturbance is not the same as health — and when the window ends, persistence becomes a new fact. See `docs/gaps/MAINTENANCE_DECLARATION_GAP.md`.
 
+### Classical monitoring is in scope by default; build order is the question.
+
+CPU, memory, disk/storage and network are core NQ scope, not speculative expansion. Disk/storage arrived first through SQLite observatory, ZFS witness and SMART work because the forcing cases landed there first; the others are delayed inevitabilities, not category extensions. The right gate on a proposed detector family is cost / order / evidentiary shape — not "is this in NQ's scope?" See `docs/SCOPE_AND_WITNESS_MODEL.md`.
+
+### NQ observes substrate health, application testimony and platform-mediated reality.
+
+Three semantic registers, not one. Substrate is the classical four (machine telling on itself). Application testimony splits into internal (the app's claims about itself) and external (consumer-position observation). Platform-mediated reality splits into internal (control-plane claims) and external (advertised-surface usability). Each register has different witness reliability; collapsing them is how "service says healthy" coexists with "users can't log in." See `docs/SCOPE_AND_WITNESS_MODEL.md`.
+
+### Witness positions may disagree; disagreement is often the finding.
+
+`app_internal: healthy` + `app_external: failing` is not contradictory data needing reconciliation; it is a witness-position mismatch that is itself diagnostic. NQ's job is to make the disagreement legible — name the positions, render the deltas, surface the contradiction — not to vote on which witness wins. Operator (and downstream Governor) decide what the disagreement means. See `docs/SCOPE_AND_WITNESS_MODEL.md`.
+
+### NQ detects that the premise moved; Governor decides whether the authorization fell off.
+
+NQ owns ephemerality as observed system state (pod gone, WAL changed, DNS TTL expired, evidence stale). Governor owns ephemerality as authority/admissibility problem (does this approval still bind, does this agent still have standing, can this plan still execute). Inversion test for any NQ finding shape: *can downstream Governor correctly refuse to act on this finding?* If not, NQ is doing Governor's job badly — collapsing diagnosis into permission. See `docs/SCOPE_AND_WITNESS_MODEL.md` §NQ / Governor boundary.
+
 ---
 
 ## Latent notes
