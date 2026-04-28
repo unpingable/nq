@@ -106,6 +106,40 @@ pub struct FindingSnapshot {
     /// consumers ignore the field, newer ones can branch on its discriminator.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage: Option<CoverageEnvelopeExport>,
+    /// TESTIMONY_DEPENDENCY_GAP V1 admissibility surface. Always present:
+    /// every finding has an admissibility status. Mirrors `v_admissibility`
+    /// onto the wire so consumers don't have to query two surfaces.
+    /// Additive on the v1 contract.
+    pub admissibility: AdmissibilityExport,
+}
+
+/// TESTIMONY_DEPENDENCY_GAP V1 wire shape — answers "is this finding
+/// admissible right now, and if not, what's the cause?"
+///
+/// `state` is the leaf value the consumer reads. `reason` is the doctrine
+/// bucket — lets consumers branch by gap-doc without knowing every state.
+///
+/// V1 populates two states: `observable` and `suppressed_by_ancestor`.
+/// The remaining states (`suppressed_by_declaration`, `cannot_testify`,
+/// `stale`) are reserved — older consumers see only the V1 set, newer
+/// consumers can branch on additions without a contract bump.
+#[derive(Debug, Clone, Serialize)]
+pub struct AdmissibilityExport {
+    /// `observable` | `suppressed_by_ancestor` | `suppressed_by_declaration`
+    /// | `cannot_testify` | `stale`
+    pub state: String,
+    /// Doctrine bucket: `testimony_dependency` | `operational_declaration`
+    /// | `lifecycle` | `none`
+    pub reason: String,
+    /// Finding key of the ancestor whose loss caused suppression.
+    /// Populated for `state = suppressed_by_ancestor` when the ancestor can
+    /// be resolved (host-scoped masking parent in V1.0/V1.1); `None` otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ancestor_finding_key: Option<String>,
+    /// Declaration ID when suppression cause is operator declaration.
+    /// Reserved — populated when OPERATIONAL_INTENT_DECLARATION ships.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declaration_id: Option<String>,
 }
 
 /// COVERAGE_HONESTY_GAP V1 wire shape. Discriminated by `kind`:
@@ -386,7 +420,8 @@ pub fn export_findings_from_conn(
                 degradation_kind, degradation_metric, degradation_value, degradation_threshold,
                 recovery_state, recovery_metric, recovery_comparator, recovery_threshold,
                 recovery_sustained_for_s, recovery_evidence_since, recovery_satisfied_at,
-                coverage_degraded_ref
+                coverage_degraded_ref,
+                suppression_reason
          FROM warning_state{} ORDER BY host, kind, subject",
         where_clause
     );
@@ -435,6 +470,7 @@ pub fn export_findings_from_conn(
             recovery_evidence_since: row.get(36)?,
             recovery_satisfied_at: row.get(37)?,
             coverage_degraded_ref: row.get(38)?,
+            suppression_reason: row.get(39)?,
         })
     })?;
 
@@ -472,6 +508,11 @@ pub fn export_findings_from_conn(
         let condition_state =
             derive_condition_state(&r.visibility_state, r.consecutive_gens, r.absent_gens)
                 .to_string();
+
+        // TESTIMONY_DEPENDENCY V1 admissibility — derived from existing
+        // visibility_state + suppression_reason. ancestor_finding_key is
+        // resolved via host-scoped masking lookup (the V1.0/V1.1 model).
+        let admissibility = build_admissibility(conn, &r);
 
         // COVERAGE_HONESTY_GAP V1: project envelope columns onto wire shape.
         // Discriminator: `coverage_degraded_ref` populated → HealthClaimMisleading;
@@ -544,6 +585,7 @@ pub fn export_findings_from_conn(
                 state_at: r.basis_state_at,
             },
             coverage,
+            admissibility,
         });
     }
 
@@ -592,6 +634,90 @@ struct WarningStateRow {
     recovery_evidence_since: Option<String>,
     recovery_satisfied_at: Option<String>,
     coverage_degraded_ref: Option<String>,
+    // Suppression metadata (joins admissibility derivation with the row).
+    suppression_reason: Option<String>,
+}
+
+/// Build the AdmissibilityExport block from a warning_state row plus an
+/// ancestor lookup. Mirrors the v_admissibility view derivations and adds
+/// `ancestor_finding_key` resolution which the view cannot compute in
+/// pure SQL (needs URL-encoding).
+fn build_admissibility(conn: &rusqlite::Connection, r: &WarningStateRow) -> AdmissibilityExport {
+    if r.visibility_state == "suppressed" {
+        let reason = match r.suppression_reason.as_deref() {
+            Some("host_unreachable")
+            | Some("source_unreachable")
+            | Some("witness_unobservable") => "testimony_dependency",
+            // Forward-compat: any future suppression_reason that isn't a
+            // recognized testimony-dependency value lands as `lifecycle`
+            // until the gap defining it lands. Consumers branching on
+            // `reason` will see a stable bucket.
+            Some(_) => "lifecycle",
+            None => "lifecycle",
+        };
+        let ancestor = r
+            .suppression_reason
+            .as_deref()
+            .and_then(|sr| resolve_ancestor_finding_key(conn, &r.host, &r.kind, sr));
+        AdmissibilityExport {
+            state: "suppressed_by_ancestor".to_string(),
+            reason: reason.to_string(),
+            ancestor_finding_key: ancestor,
+            declaration_id: None,
+        }
+    } else {
+        AdmissibilityExport {
+            state: "observable".to_string(),
+            reason: "none".to_string(),
+            ancestor_finding_key: None,
+            declaration_id: None,
+        }
+    }
+}
+
+/// Resolve the finding_key of the masking parent for a suppressed child.
+///
+/// Mirrors the MASKING_RULES table in publish.rs (intentional duplication —
+/// the rules table is the lifecycle source of truth, this helper is the
+/// read-side projection that consumers see). Returns `None` if the parent
+/// cannot be resolved (parent recently cleared, multiple candidates, etc.) —
+/// the consumer wire shape stays honest about partial knowledge.
+fn resolve_ancestor_finding_key(
+    conn: &rusqlite::Connection,
+    host: &str,
+    child_kind: &str,
+    suppression_reason: &str,
+) -> Option<String> {
+    let parent_kind: &str = match suppression_reason {
+        "host_unreachable" => "stale_host",
+        "source_unreachable" => "source_error",
+        "witness_unobservable" => {
+            if child_kind.starts_with("smart_") {
+                "smart_witness_silent"
+            } else if child_kind.starts_with("zfs_") {
+                "zfs_witness_silent"
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    };
+
+    let subject: String = conn
+        .query_row(
+            "SELECT subject FROM warning_state
+             WHERE host = ?1 AND kind = ?2 AND visibility_state = 'observed'
+             LIMIT 1",
+            rusqlite::params![host, parent_kind],
+            |row| row.get(0),
+        )
+        .ok()?;
+    Some(crate::publish::compute_finding_key(
+        "local",
+        host,
+        parent_kind,
+        &subject,
+    ))
 }
 
 fn parse_finding_key(key: &str) -> anyhow::Result<(String, String, String, String)> {
@@ -1346,6 +1472,275 @@ mod tests {
             !json.contains("\"coverage\""),
             "coverage key must be absent on non-coverage findings; got: {json}"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // TESTIMONY_DEPENDENCY V1 — admissibility surface in JSON export
+    //
+    // Mirrors v_admissibility onto the wire. Every snapshot carries an
+    // admissibility block; consumers branch on `state` and `reason`
+    // without querying a second surface, and read `ancestor_finding_key`
+    // when an ancestor was lost.
+    // ------------------------------------------------------------------
+
+    /// Local Finding builder for export tests. Mirrors the helper in
+    /// publish::tests but lives here so we don't expose that private mod.
+    fn make_finding(host: &str, kind: &str, subject: &str, domain: &str) -> crate::detect::Finding {
+        crate::detect::Finding {
+            host: host.into(),
+            kind: kind.into(),
+            subject: subject.into(),
+            domain: domain.into(),
+            message: format!("{kind} on {host}"),
+            value: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: crate::detect::StateKind::LegacyUnclassified,
+            diagnosis: None,
+            basis_source_id: None,
+            basis_witness_id: None,
+            coverage_envelope: None,
+        }
+    }
+
+    #[test]
+    fn admissibility_observable_for_open_findings() {
+        let mut db = make_db();
+        ensure_generation(&db, 1);
+        let esc = crate::publish::EscalationConfig::default();
+
+        crate::publish::update_warning_state(
+            &mut db,
+            1,
+            &[make_finding("host-1", "disk_pressure", "", "Δg")],
+            &esc,
+        )
+        .unwrap();
+
+        let snaps = export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        assert_eq!(snaps.len(), 1);
+        assert_eq!(snaps[0].admissibility.state, "observable");
+        assert_eq!(snaps[0].admissibility.reason, "none");
+        assert!(snaps[0].admissibility.ancestor_finding_key.is_none());
+        assert!(snaps[0].admissibility.declaration_id.is_none());
+    }
+
+    #[test]
+    fn admissibility_suppressed_by_witness_silence_with_ancestor_key() {
+        let mut db = make_db();
+        for g in 1..=2 {
+            ensure_generation(&db, g);
+        }
+        let esc = crate::publish::EscalationConfig::default();
+
+        crate::publish::update_warning_state(
+            &mut db,
+            1,
+            &[make_finding(
+                "host-1",
+                "smart_uncorrected_errors_nonzero",
+                "/dev/sda",
+                "Δs",
+            )],
+            &esc,
+        )
+        .unwrap();
+
+        crate::publish::update_warning_state(
+            &mut db,
+            2,
+            &[make_finding(
+                "host-1",
+                "smart_witness_silent",
+                "smart-witness@host-1",
+                "Δo",
+            )],
+            &esc,
+        )
+        .unwrap();
+
+        let snaps = export_findings_from_conn(
+            &db.conn,
+            &ExportFilter {
+                include_suppressed: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let child = snaps
+            .iter()
+            .find(|s| s.identity.detector == "smart_uncorrected_errors_nonzero")
+            .expect("suppressed child must export");
+        assert_eq!(child.admissibility.state, "suppressed_by_ancestor");
+        assert_eq!(child.admissibility.reason, "testimony_dependency");
+        let expected_ancestor = crate::publish::compute_finding_key(
+            "local",
+            "host-1",
+            "smart_witness_silent",
+            "smart-witness@host-1",
+        );
+        assert_eq!(
+            child.admissibility.ancestor_finding_key.as_deref(),
+            Some(expected_ancestor.as_str())
+        );
+
+        let parent = snaps
+            .iter()
+            .find(|s| s.identity.detector == "smart_witness_silent")
+            .expect("parent finding must export");
+        assert_eq!(parent.admissibility.state, "observable");
+        assert_eq!(parent.admissibility.reason, "none");
+        assert!(parent.admissibility.ancestor_finding_key.is_none());
+    }
+
+    #[test]
+    fn admissibility_suppressed_by_stale_host_resolves_to_stale_host_key() {
+        let mut db = make_db();
+        for g in 1..=2 {
+            ensure_generation(&db, g);
+        }
+        let esc = crate::publish::EscalationConfig::default();
+
+        crate::publish::update_warning_state(
+            &mut db,
+            1,
+            &[make_finding("host-1", "disk_pressure", "", "Δg")],
+            &esc,
+        )
+        .unwrap();
+        crate::publish::update_warning_state(
+            &mut db,
+            2,
+            &[make_finding("host-1", "stale_host", "", "Δo")],
+            &esc,
+        )
+        .unwrap();
+
+        let snaps = export_findings_from_conn(
+            &db.conn,
+            &ExportFilter {
+                include_suppressed: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let child = snaps
+            .iter()
+            .find(|s| s.identity.detector == "disk_pressure")
+            .expect("suppressed disk_pressure must export");
+        assert_eq!(child.admissibility.state, "suppressed_by_ancestor");
+        assert_eq!(child.admissibility.reason, "testimony_dependency");
+        let expected = crate::publish::compute_finding_key("local", "host-1", "stale_host", "");
+        assert_eq!(
+            child.admissibility.ancestor_finding_key.as_deref(),
+            Some(expected.as_str())
+        );
+    }
+
+    #[test]
+    fn coverage_honesty_under_witness_silence_exports_suppressed_with_envelope_preserved() {
+        // Composes COVERAGE_HONESTY V1 (envelope) with TESTIMONY_DEPENDENCY V1
+        // (suppression). A coverage_degraded finding whose ancestor witness
+        // goes silent must export with both:
+        //   - coverage envelope intact (last-known degraded state preserved)
+        //   - admissibility = suppressed_by_ancestor
+        // This is the rot-pocket-fix proof — consumer sees the admissibility
+        // change without losing the diagnostic envelope.
+        use crate::detect::{
+            CoverageDegradedEnvelope, CoverageEnvelope, RecoveryComparator, RecoveryState,
+        };
+        let mut db = make_db();
+        for g in 1..=2 {
+            ensure_generation(&db, g);
+        }
+        let esc = crate::publish::EscalationConfig::default();
+
+        // Use kind prefix "smart_" so the witness-silence masking rule scopes it.
+        let cov = crate::detect::Finding {
+            host: "host-1".into(),
+            kind: "smart_coverage_degraded".into(),
+            subject: "host-1.smart_intake".into(),
+            domain: "Δs".into(),
+            message: "intake_loss".into(),
+            value: Some(0.32),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: crate::detect::StateKind::Degradation,
+            diagnosis: None,
+            basis_source_id: Some("smart-witness@host-1".into()),
+            basis_witness_id: Some("smart-witness@host-1".into()),
+            coverage_envelope: Some(CoverageEnvelope::Degraded(CoverageDegradedEnvelope {
+                degradation_kind: "intake_loss".into(),
+                degradation_metric: "drop_frac".into(),
+                degradation_value: Some(0.32),
+                degradation_threshold: Some(0.05),
+                recovery_state: RecoveryState::Active,
+                recovery_metric: "drop_frac".into(),
+                recovery_comparator: RecoveryComparator::Lt,
+                recovery_threshold: 0.05,
+                recovery_sustained_for_s: 86_400,
+                recovery_evidence_since: None,
+                recovery_satisfied_at: None,
+            })),
+        };
+        crate::publish::update_warning_state(&mut db, 1, &[cov], &esc).unwrap();
+
+        crate::publish::update_warning_state(
+            &mut db,
+            2,
+            &[make_finding(
+                "host-1",
+                "smart_witness_silent",
+                "smart-witness@host-1",
+                "Δo",
+            )],
+            &esc,
+        )
+        .unwrap();
+
+        let snaps = export_findings_from_conn(
+            &db.conn,
+            &ExportFilter {
+                include_suppressed: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let cov_snap = snaps
+            .iter()
+            .find(|s| s.identity.detector == "smart_coverage_degraded")
+            .expect("coverage finding must still export under suppression");
+
+        assert_eq!(cov_snap.admissibility.state, "suppressed_by_ancestor");
+        assert_eq!(cov_snap.admissibility.reason, "testimony_dependency");
+        assert!(cov_snap.coverage.is_some(), "coverage envelope must survive suppression");
+        match cov_snap.coverage.as_ref().unwrap() {
+            CoverageEnvelopeExport::Degraded { degradation, .. } => {
+                assert_eq!(degradation.kind, "intake_loss");
+                assert_eq!(degradation.current, Some(0.32));
+            }
+            _ => panic!("expected Degraded variant"),
+        }
+    }
+
+    #[test]
+    fn admissibility_block_is_present_in_json_for_every_finding() {
+        // Wire-level: admissibility is always serialized — consumers can
+        // rely on the field always being there.
+        let db = make_db();
+        ensure_generation(&db, 100);
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 10);
+
+        let snaps = export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        let json = serde_json::to_string(&snaps[0]).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            back.get("admissibility").is_some(),
+            "admissibility must always be present in JSON; got: {json}"
+        );
+        assert_eq!(back["admissibility"]["state"].as_str(), Some("observable"));
+        assert_eq!(back["admissibility"]["reason"].as_str(), Some("none"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Gap: Testimony Dependency and Observability Loss
 
-**Status:** `partial` — V1.0 + V1.1 admissibility view shipped 2026-04-28; producer_ref + paired `node_unobservable` kind still pending (see Shipped State)
+**Status:** `partial` — V1.0 + V1.1 (admissibility view + JSON wire surface) shipped 2026-04-28; producer_ref + paired `node_unobservable` kind still pending (see Shipped State)
 **Depends on:** none for spec; V1 implementation depends on existing silence-detector family (parent-state evidence) and on COVERAGE_HONESTY_GAP shape (first consumer)
 **Related:** COVERAGE_HONESTY_GAP (clearance contract — first consumer), SILENCE_UNIFICATION_GAP (silence detectors become parent-node evidence under this primitive, not peer findings), REGISTRY_PROJECTION_GAP (binds role-derived severity once declared roles exist), CANNOT_TESTIFY_STATUS (the leaf admissibility state this primitive promotes through the tree), EVIDENCE_RETIREMENT_GAP (sibling — passive basis decay), OPERATIONAL_INTENT_DECLARATION_GAP (orthogonal axis — declaration changes expectation, ancestry-loss changes standing; both can suppress, distinguished by `suppression_kind`), MAINTENANCE_DECLARATION_GAP (one profile of OPERATIONAL_INTENT_DECLARATION)
 **Blocks:** clean clearance for any producer-dependent finding (producer-silent path); honest subtree behavior when a witness, host, or transport drops; a path out of N independent silence-shaped alerts pretending to be peers
@@ -44,6 +44,32 @@ This closes the rot pocket for the witness-silent path of the COVERAGE_HONESTY c
   - `admissibility_view_filter_for_consumer_query` — exercises the gap's named query: `WHERE admissibility = 'suppressed_by_ancestor'`
 
 **Acceptance criterion #4 from V1 (admissibility view) is now satisfied.**
+
+### V1.1 — Admissibility surface in JSON export (2026-04-28)
+
+**Live:**
+
+- `FindingSnapshot` carries an always-present `admissibility: AdmissibilityExport` block. Every finding has admissibility status; consumers branch on `state` and `reason` without querying `v_admissibility` separately.
+- Wire shape:
+  ```text
+  admissibility: {
+    state: observable | suppressed_by_ancestor | suppressed_by_declaration | cannot_testify | stale
+    reason: testimony_dependency | operational_declaration | lifecycle | none
+    ancestor_finding_key: <finding_key> | omitted
+    declaration_id: <id> | omitted
+  }
+  ```
+- V1 populates two states (`observable`, `suppressed_by_ancestor`) and two reason buckets (`testimony_dependency`, `none`). The remaining states and `operational_declaration` reason are reserved — emitted when OPERATIONAL_INTENT_DECLARATION ships and when the producer-ref work generalizes ancestry beyond host-scoped masking.
+- `ancestor_finding_key` resolved server-side via host-scoped lookup (mirrors the MASKING_RULES table in publish.rs). Returns `None` honestly when the parent cannot be resolved (recently cleared, multiple candidates, etc.) — consumer wire shape stays honest about partial knowledge.
+- The `admissibility` field is always serialized (no `skip_serializing_if`); `ancestor_finding_key` and `declaration_id` are `skip_serializing_if = "Option::is_none"`.
+- Five new tests in `export::tests`:
+  - `admissibility_observable_for_open_findings`
+  - `admissibility_suppressed_by_witness_silence_with_ancestor_key`
+  - `admissibility_suppressed_by_stale_host_resolves_to_stale_host_key`
+  - `coverage_honesty_under_witness_silence_exports_suppressed_with_envelope_preserved` — composes COVERAGE_HONESTY V1 with TESTIMONY_DEPENDENCY V1; proves the rot-pocket-fix end-to-end (envelope intact, admissibility flipped, ancestor key resolved)
+  - `admissibility_block_is_present_in_json_for_every_finding`
+
+**Acceptance criteria from V1 §5 ("admissibility view exposes per-finding admissibility resolved through ancestry") and the consumer-contract goal are now satisfied end-to-end — DB view + JSON wire surface.**
 
 **Pending:**
 
