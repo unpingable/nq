@@ -99,6 +99,10 @@ Witness position (`substrate` / `application_internal` / `application_external` 
 
 NQ's `cannot_testify` / `stale_*` / staleness annotations have a stable downstream contract: they trigger re-observation or deferral, never action. Confirmed 2026-04-28 by Night Shift role-pinning ("Don't propose execution on stale evidence"). NQ can lean into producing honest staleness signals knowing consumers will defer/revalidate, not act-on-stale. Maps cleanly to Paper 24 freshness-discipline: an aged observation is informative about the past, not authoritative about the present.
 
+### Liveness, coverage, and truthfulness are three axes; green on one does not imply the others.
+
+A system can be reachable and running (liveness green), observing materially less than it claims (coverage degraded), and reporting healthy anyway (truthfulness compromised). Forcing case: driftwatch April 2026 self-shedding — `/health=ok` while ~30-40% of jetstream events were dropped at the internal asyncio queue for 4+ days. NQ must not let green liveness collapse into admissible evidence; if coverage is materially degraded, the finding shape carries that consequence rather than expecting downstream to infer it from absence-of-coverage-signal. This is the concrete P27 attack surface (controller-correct, operator-unsound). Codified in `docs/gaps/COVERAGE_HONESTY_GAP.md` (`coverage_degraded` as operational primitive, `health_claim_misleading` as derived).
+
 ---
 
 ## Latent notes
