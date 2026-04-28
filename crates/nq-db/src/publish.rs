@@ -3014,6 +3014,119 @@ mod tests {
         assert_eq!(ref_val.as_deref(), Some(parent_key.as_str()));
     }
 
+    // -----------------------------------------------------------------------
+    // v_admissibility (TESTIMONY_DEPENDENCY_GAP V1.1)
+    // -----------------------------------------------------------------------
+    //
+    // The admissibility view is a read-side translation of visibility_state
+    // and suppression_reason into the canonical admissibility vocabulary
+    // from the gap. Consumers ask one question and read one column.
+
+    fn admissibility_for(db: &WriteDb, host: &str, kind: &str) -> Option<(String, Option<String>)> {
+        db.conn.query_row(
+            "SELECT admissibility, ancestor_reason FROM v_admissibility
+             WHERE host = ?1 AND kind = ?2",
+            rusqlite::params![host, kind],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        ).ok()
+    }
+
+    #[test]
+    fn admissibility_view_reports_observable_for_open_findings() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        let (admis, reason) = admissibility_for(&db, "host-1", "disk_pressure").unwrap();
+        assert_eq!(admis, "observable");
+        assert_eq!(reason, None);
+    }
+
+    #[test]
+    fn admissibility_view_reports_suppressed_by_ancestor_with_witness_reason() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // SMART finding observed, then witness goes silent.
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "smart_uncorrected_errors_nonzero", "/dev/sda", "Δs"),
+        ], &esc).unwrap();
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "smart_witness_silent", "smart-witness@host-1", "Δo"),
+        ], &esc).unwrap();
+
+        let (admis, reason) = admissibility_for(
+            &db, "host-1", "smart_uncorrected_errors_nonzero",
+        ).unwrap();
+        assert_eq!(admis, "suppressed_by_ancestor");
+        assert_eq!(reason.as_deref(), Some("witness_unobservable"));
+
+        // The parent finding itself is observable (it is the ancestor).
+        let (admis, reason) = admissibility_for(&db, "host-1", "smart_witness_silent").unwrap();
+        assert_eq!(admis, "observable");
+        assert_eq!(reason, None);
+    }
+
+    #[test]
+    fn admissibility_view_reports_host_unreachable_under_stale_host() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "stale_host", "", "Δo"),
+        ], &esc).unwrap();
+
+        let (admis, reason) = admissibility_for(&db, "host-1", "disk_pressure").unwrap();
+        assert_eq!(admis, "suppressed_by_ancestor");
+        assert_eq!(reason.as_deref(), Some("host_unreachable"));
+    }
+
+    #[test]
+    fn admissibility_view_filter_for_consumer_query() {
+        // Operator/consumer surface: `WHERE admissibility = 'suppressed_by_ancestor'`
+        // returns exactly the findings whose stored state is preserved but
+        // not currently admissible. This is the V1 query the gap names.
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+        ensure_host_known(&db, "host-2");
+
+        // host-1: SMART finding suppressed by witness silence
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "smart_uncorrected_errors_nonzero", "/dev/sda", "Δs"),
+            finding("host-2", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "smart_witness_silent", "smart-witness@host-1", "Δo"),
+            finding("host-2", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        let suppressed: Vec<(String, String)> = {
+            let mut stmt = db.conn.prepare(
+                "SELECT host, kind FROM v_admissibility
+                 WHERE admissibility = 'suppressed_by_ancestor'
+                 ORDER BY host, kind",
+            ).unwrap();
+            stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        assert_eq!(
+            suppressed,
+            vec![("host-1".to_string(), "smart_uncorrected_errors_nonzero".to_string())]
+        );
+    }
+
     #[test]
     fn other_finding_kinds_have_null_coverage_columns() {
         // Any finding without a coverage_envelope must persist with NULL on

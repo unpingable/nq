@@ -1,6 +1,6 @@
 # Gap: Testimony Dependency and Observability Loss
 
-**Status:** `partial` — V1.0 sub-slice shipped 2026-04-28; V1.1+ pending (see Shipped State)
+**Status:** `partial` — V1.0 + V1.1 admissibility view shipped 2026-04-28; producer_ref + paired `node_unobservable` kind still pending (see Shipped State)
 **Depends on:** none for spec; V1 implementation depends on existing silence-detector family (parent-state evidence) and on COVERAGE_HONESTY_GAP shape (first consumer)
 **Related:** COVERAGE_HONESTY_GAP (clearance contract — first consumer), SILENCE_UNIFICATION_GAP (silence detectors become parent-node evidence under this primitive, not peer findings), REGISTRY_PROJECTION_GAP (binds role-derived severity once declared roles exist), CANNOT_TESTIFY_STATUS (the leaf admissibility state this primitive promotes through the tree), EVIDENCE_RETIREMENT_GAP (sibling — passive basis decay), MAINTENANCE_DECLARATION_GAP (declared standing change vs unobservability)
 **Blocks:** clean clearance for any producer-dependent finding (producer-silent path); honest subtree behavior when a witness, host, or transport drops; a path out of N independent silence-shaped alerts pretending to be peers
@@ -28,12 +28,28 @@ When a SMART or ZFS witness goes silent, the per-device findings it was producin
 
 This closes the rot pocket for the witness-silent path of the COVERAGE_HONESTY clearance contract: producer absence cannot manufacture recovery for findings produced by `*_witness_silent`-shaped producers.
 
-**Pending (V1.1+):**
+### V1.1 — Admissibility view (2026-04-28)
 
-- **Schema additions** — `producer_ref` column on `warning_state` and `finding_observations`. V1.0 uses host-scoped masking which is sufficient for the SMART/ZFS witness case but does not generalize to producers whose substrate is not a host (transports, aggregators, multi-host adapters).
-- **Paired `node_unobservable` finding kind** — V1.0 treats the silence detector itself as the parent. The canonical shape (with `node_type`, `cause_candidate`, `subject_role`, `responsibility_class`, `suppressed_descendant_count`) is not yet emitted.
-- **Admissibility view** (`v_admissibility`) — V1.0 exposes admissibility through existing `visibility_state` + `suppression_reason` columns. The dedicated view that resolves ancestry per-finding is not yet shipped.
-- **COVERAGE_HONESTY shape fields** — `degradation_kind` / `recovery_criteria` / etc. tracked separately under COVERAGE_HONESTY V1.
+**Live:**
+
+- Migration 039 creates `v_admissibility`, the canonical read-side surface from the gap. Maps the existing visibility/suppression machinery onto the admissibility vocabulary:
+  - `visibility_state = 'observed'`   → `admissibility = 'observable'`
+  - `visibility_state = 'suppressed'` → `admissibility = 'suppressed_by_ancestor'`
+- `ancestor_reason` mirrors `suppression_reason` so consumers branch on cause without parsing kind strings: `host_unreachable | source_unreachable | witness_unobservable`.
+- View also exposes `(host, kind, subject)` for identity (consumers compute `finding_key` application-side; SQLite has no URL-encoding builtin), plus `suppressed_since_gen`, `severity`, `finding_class`, and `last_seen_*` for query convenience.
+- Four new tests in `publish::tests`:
+  - `admissibility_view_reports_observable_for_open_findings`
+  - `admissibility_view_reports_suppressed_by_ancestor_with_witness_reason`
+  - `admissibility_view_reports_host_unreachable_under_stale_host`
+  - `admissibility_view_filter_for_consumer_query` — exercises the gap's named query: `WHERE admissibility = 'suppressed_by_ancestor'`
+
+**Acceptance criterion #4 from V1 (admissibility view) is now satisfied.**
+
+**Pending:**
+
+- **Schema additions** — `producer_ref` column on `warning_state` and `finding_observations`. V1.0+V1.1 use host-scoped masking which is sufficient for the SMART/ZFS witness case but does not generalize to producers whose substrate is not a host (transports, aggregators, multi-host adapters).
+- **Paired `node_unobservable` finding kind** — silence detectors are still the parent shape on the operator surface. The canonical wire shape (with `node_type`, `cause_candidate`, `subject_role`, `responsibility_class`, `suppressed_descendant_count`) is not yet emitted.
+- **Richer admissibility states** — V1.1 derives only `observable` and `suppressed_by_ancestor`. The other gap-doc states (`degraded`, `unobservable`, `cannot_testify`) are functions of finding kind, coverage envelope, and producer-side state; consumers needing those compose on top of v_admissibility today. Promoting them into the view is a future slice.
 - **Multi-level ancestry** — V1.0 is one level (silence detector → descendants on same host). Hosts → witnesses → findings remains deferred.
 - **Role-derived severity** — reserved field shape only; binding to declared roles waits for REGISTRY_PROJECTION.
 
