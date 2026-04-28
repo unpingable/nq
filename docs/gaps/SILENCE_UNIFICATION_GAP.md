@@ -1,10 +1,10 @@
 # Gap: SILENCE_UNIFICATION — silence is a finding class, not the absence of findings
 
-**Status:** `proposed` — promoted from `ARCHITECTURE_NOTES.md §SILENCE_UNIFICATION` latent note 2026-04-27 after `smart_witness_silent` landed and brought the silence-detector count to six.
-**Depends on:** none for spec; implementation depends on REGISTRY_PROJECTION (for `silence_expected × intended-liveness`) and on MAINTENANCE_DECLARATION_GAP (for `silence_expected × declared-window`).
-**Related:** EVIDENCE_RETIREMENT_GAP (silence after retirement is not a finding), COMPLETENESS_PROPAGATION_GAP (a partial collector is silent in a structurally different sense), MAINTENANCE_DECLARATION_GAP (declared expected silence)
+**Status:** `proposed` — promoted from `ARCHITECTURE_NOTES.md §SILENCE_UNIFICATION` latent note 2026-04-27 after `smart_witness_silent` landed and brought the silence-detector count to six. Re-scoped 2026-04-28 under TESTIMONY_DEPENDENCY_GAP: the `*_witness_silent` subset of these detectors is reframed as **parent-node evidence inputs**, not peer operator alerts.
+**Depends on:** none for spec; implementation depends on REGISTRY_PROJECTION (for `silence_expected × intended-liveness`) and on MAINTENANCE_DECLARATION_GAP (for `silence_expected × declared-window`). Composes with TESTIMONY_DEPENDENCY_GAP (witness-silence detectors become evidence for `node_unobservable` parent transitions, not independent operator-facing findings).
+**Related:** TESTIMONY_DEPENDENCY_GAP (witness-silence detectors are inputs to ancestor-suppression, not peers of the findings they shadow), EVIDENCE_RETIREMENT_GAP (silence after retirement is not a finding), COMPLETENESS_PROPAGATION_GAP (a partial collector is silent in a structurally different sense), MAINTENANCE_DECLARATION_GAP (declared expected silence)
 **Blocks:** consistent operator UX across silence-shaped findings; consistent routing/notification posture; future per-bucket render treatment in DETECTOR_TAXONOMY bucket 2.
-**Last updated:** 2026-04-27
+**Last updated:** 2026-04-28
 
 ## The Problem
 
@@ -55,6 +55,16 @@ A unification that flattens these three shapes into one is a category error. The
 Silence is a positive observation: NQ saw that something stopped reporting, and that absence is itself evidence. This is the load-bearing distinction from "we don't have data" — that one is a coverage gap, not a finding.
 
 The unification must preserve and strengthen this. Anything that turns silence into a NULL row in some other table is wrong.
+
+### Witness-silence detectors are parent-node evidence, not peer operator alerts
+
+A subset of the six — `zfs_witness_silent`, `smart_witness_silent`, plus any future `*_witness_silent` family member — has a different operator role than the others. They detect that **a producer of other findings has stopped testifying**. Under TESTIMONY_DEPENDENCY_GAP, that detection promotes to a `node_unobservable` parent finding which suppresses the descendant findings the witness produced.
+
+In that frame, the witness-silence detector is *evidence for an ancestor-state transition*, not a peer alert that fires beside the findings it shadows. Operator-facing alerting collapses to one parent ("smart witness on lil-nas-x is unobservable; 14 per-device findings suppressed"). The detector itself stays — kind string preserved, mechanism unchanged — but its role in the alerting surface changes.
+
+The other three (`stale_host`, `stale_service`, `signal_dropout`, `log_silence`) may or may not promote depending on whether their subject has tracked descendant findings. `stale_host` for a host that produces multiple per-service findings is a strong promotion candidate. `log_silence` for a single log source typically is not.
+
+This re-scoping does not change the silence contract this gap defines; it changes who consumes which silence findings. SILENCE_UNIFICATION still defines `silence_scope` / `silence_basis` / `silence_duration` / `silence_expected`. TESTIMONY_DEPENDENCY adds `producer_ref` and `admissibility` on top.
 
 ### Three mechanisms, one contract
 
@@ -139,3 +149,5 @@ Deferred out of V1:
 > **Three mechanism shapes (age-threshold, presence-delta, baseline-collapse) share an operator concept, not a SQL pattern.**
 > **`silence_expected` is the bridge to maintenance, retirement, and intended-liveness.**
 > **Spec the contract before refactoring; the existing detectors are working code, not technical debt.**
+>
+> **Witness-silence detectors are evidence inputs to ancestor-suppression, not peer alerts. The operator surface collapses to the parent finding under TESTIMONY_DEPENDENCY_GAP; the detectors themselves stay.**

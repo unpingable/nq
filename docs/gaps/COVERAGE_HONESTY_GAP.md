@@ -1,8 +1,8 @@
 # Gap: `coverage_honesty` — liveness, coverage, and truthfulness are three axes
 
 **Status:** `proposed` — drafted 2026-04-28
-**Depends on:** none; can land standalone
-**Related:** CANNOT_TESTIFY_STATUS (declared lack of standing — different failure mode), COMPLETENESS_PROPAGATION_GAP (how partial-state propagates downstream — composes), SCOPE_AND_WITNESS_MODEL.md §NQ / Night Shift contract (consumer-side discipline that requires this finding shape)
+**Depends on:** TESTIMONY_DEPENDENCY_GAP for clean producer-silent clearance semantics (a `coverage_degraded` finding whose producer goes silent must be suppressed by ancestor, not auto-cleared)
+**Related:** CANNOT_TESTIFY_STATUS (declared lack of standing — different failure mode), COMPLETENESS_PROPAGATION_GAP (how partial-state propagates downstream — composes), TESTIMONY_DEPENDENCY_GAP (clearance contract: explicit recovery testimony OR ancestor-suppression), SCOPE_AND_WITNESS_MODEL.md §NQ / Night Shift contract (consumer-side discipline that requires this finding shape)
 **Blocks:** Night Shift's ability to refuse acting on degraded-coverage evidence (NS-claude pinned 2026-04-28: will not anticipate a finding shape — consumes what NQ emits, P27 attack surface stays open until NQ surfaces this)
 **Last updated:** 2026-04-28
 
@@ -103,6 +103,12 @@ Boring detector names. `coverage_degraded` and `health_claim_misleading` are ope
 
 5. **Recovery requires sustained criteria with a horizon, not a snapshot.**
    `coverage_degraded` does not clear on a single clean cycle. Recovery contract example: `drop_frac < 0.05 sustained for 24h`. Architectural fixes that restore coverage are not the same as recovery proof; the degradation note stays until criteria are met.
+
+   **Clearance requires either:**
+   1. **Explicit recovery testimony** — the producer emits with sustained criteria satisfied; OR
+   2. **Supersession by an unobservable ancestor** — under TESTIMONY_DEPENDENCY_GAP, a `coverage_degraded` finding whose producer becomes `unobservable` transitions to `admissibility=suppressed_by_ancestor`. The finding is **not cleared**; its last-known degraded state is preserved with admissibility revoked.
+
+   Producer absence alone does not clear. *A source that stops accusing has not thereby testified that the world recovered.*
 
 6. **`health_claim_misleading` is derived; it does not stand alone.**
    It fires only when `coverage_degraded` is active *and* the witness's own self-reported health is green. The finding's whole job is to name the P27-shaped gap.
@@ -220,7 +226,7 @@ Deferred out of V1:
 - A detector or witness adapter can emit `coverage_degraded` with the canonical fields populated; the finding survives DB write, view query, and JSON export round-trip.
 - `degraded_since` is set on detection and not updated on subsequent cycles.
 - `recovery_criteria` is declared at detection time, in a structured form (metric + comparator + threshold + sustained_for).
-- `coverage_degraded` does not clear on a single clean cycle; clearing requires the declared sustained-criteria to be met.
+- `coverage_degraded` does not clear on a single clean cycle; clearing requires either declared sustained-criteria to be met by explicit recovery testimony, or supersession by an unobservable ancestor (per TESTIMONY_DEPENDENCY_GAP). Producer absence alone never clears.
 - `health_claim_misleading` requires a populated `coverage_degraded_ref`; it cannot stand alone.
 - Inversion test passes for both shapes: downstream Governor / Night Shift can deny, defer, revalidate, or admit without NQ encoding the governance outcome.
 - `nq query findings WHERE finding_kind='coverage_degraded'` returns the right rows; downstream consumers can identify the degradation window without parsing free text.
@@ -238,3 +244,5 @@ Deferred out of V1:
 > **`health_claim_misleading` is the P27-shaped finding: derived from `coverage_degraded` when the witness self-reports green.**
 >
 > **NQ must not let green liveness collapse into admissible evidence.**
+>
+> **Producer absence is observability loss, not recovery. Clearance requires explicit recovery testimony OR ancestor-suppression — never silence.**
