@@ -1,10 +1,10 @@
 # Gap: Maintenance Declaration — expected disturbance must not be suppressed into nothing
 
-**Status:** proposed
-**Depends on:** EVIDENCE_LAYER_GAP (built — transactional finding substrate), FINDING_DIAGNOSIS_GAP (state_kind axis already lands `maintenance` as a class)
-**Related:** EVIDENCE_RETIREMENT_GAP (sibling — retirement is permanent end-of-life; maintenance is bounded expected disturbance), COMPLETENESS_PROPAGATION_GAP (sibling — partiality and expectation as separate axes), ALERT_INTERPRETATION_GAP (consumer surface), NOTIFICATION_INHIBITION_GAP (downstream routing), Night Shift attention/escalation semantics
+**Status:** proposed — re-scoped 2026-04-28: maintenance becomes one **profile** of the broader OPERATIONAL_INTENT_DECLARATION primitive (`reason_class = maintenance`). This doc remains the user-facing maintenance policy gap; OPERATIONAL_INTENT_DECLARATION supplies the underlying shape.
+**Depends on:** OPERATIONAL_INTENT_DECLARATION_GAP (substrate primitive — declaration storage, suppression metadata, hygiene detectors), EVIDENCE_LAYER_GAP (built — transactional finding substrate), FINDING_DIAGNOSIS_GAP (state_kind axis already lands `maintenance` as a class)
+**Related:** OPERATIONAL_INTENT_DECLARATION_GAP (parent primitive — maintenance is one profile), EVIDENCE_RETIREMENT_GAP (sibling — retirement is permanent end-of-life; maintenance is bounded expected disturbance), COMPLETENESS_PROPAGATION_GAP (sibling — partiality and expectation as separate axes), ALERT_INTERPRETATION_GAP (consumer surface), NOTIFICATION_INHIBITION_GAP (downstream routing), Night Shift attention/escalation semantics
 **Blocks:** honest maintenance handling, expected-silence semantics, window-end overrun detection, agent-declared maintenance workflows
-**Last updated:** 2026-04-24
+**Last updated:** 2026-04-28
 
 ## The Problem
 

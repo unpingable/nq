@@ -2,7 +2,7 @@
 
 **Status:** `partial` — V1.0 + V1.1 admissibility view shipped 2026-04-28; producer_ref + paired `node_unobservable` kind still pending (see Shipped State)
 **Depends on:** none for spec; V1 implementation depends on existing silence-detector family (parent-state evidence) and on COVERAGE_HONESTY_GAP shape (first consumer)
-**Related:** COVERAGE_HONESTY_GAP (clearance contract — first consumer), SILENCE_UNIFICATION_GAP (silence detectors become parent-node evidence under this primitive, not peer findings), REGISTRY_PROJECTION_GAP (binds role-derived severity once declared roles exist), CANNOT_TESTIFY_STATUS (the leaf admissibility state this primitive promotes through the tree), EVIDENCE_RETIREMENT_GAP (sibling — passive basis decay), MAINTENANCE_DECLARATION_GAP (declared standing change vs unobservability)
+**Related:** COVERAGE_HONESTY_GAP (clearance contract — first consumer), SILENCE_UNIFICATION_GAP (silence detectors become parent-node evidence under this primitive, not peer findings), REGISTRY_PROJECTION_GAP (binds role-derived severity once declared roles exist), CANNOT_TESTIFY_STATUS (the leaf admissibility state this primitive promotes through the tree), EVIDENCE_RETIREMENT_GAP (sibling — passive basis decay), OPERATIONAL_INTENT_DECLARATION_GAP (orthogonal axis — declaration changes expectation, ancestry-loss changes standing; both can suppress, distinguished by `suppression_kind`), MAINTENANCE_DECLARATION_GAP (one profile of OPERATIONAL_INTENT_DECLARATION)
 **Blocks:** clean clearance for any producer-dependent finding (producer-silent path); honest subtree behavior when a witness, host, or transport drops; a path out of N independent silence-shaped alerts pretending to be peers
 **Last updated:** 2026-04-28
 
