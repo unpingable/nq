@@ -423,6 +423,51 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
             ],
         },
 
+        // ── Δs: coverage honesty (COVERAGE_HONESTY_GAP V1) ───────
+        "coverage_degraded" => FindingMeta {
+            plain_label: "Witness coverage materially degraded",
+            operator_label: "Coverage Degraded",
+            gloss: "The witness is operating and producing fresh evidence, but \
+                    the basis behind it is partial in ways its own health check \
+                    does not honor. Distinct from staleness (evidence too old) \
+                    and from cannot_testify (no standing to look at all): the \
+                    evidence is current, the basis is incomplete. Carries a \
+                    declared recovery contract — clearance requires sustained \
+                    criteria, not a single clean cycle.",
+            contradiction: "The producer reports status=ok and is delivering \
+                            artifacts on schedule, but a measurable fraction of \
+                            the world it claims to observe is being shed at an \
+                            internal seam. Operationally up; epistemically \
+                            degraded. Acting on the artifacts as full-coverage \
+                            evidence is unsound while this is open.",
+            next_checks: &[
+                "degradation_kind / degradation_metric / degradation_value vs threshold — what shape of partiality, by how much",
+                "downstream artifacts produced during this window — they inherit the degradation",
+                "recovery_state — active (still bad), candidate (criteria passing, timer running), satisfied (sustained, clearance admissible)",
+                "producer's own self-reported health — if green, health_claim_misleading should also be firing",
+            ],
+        },
+        "health_claim_misleading" => FindingMeta {
+            plain_label: "Producer health claim contradicts coverage reality",
+            operator_label: "Health Claim Misleading",
+            gloss: "Composes with a coverage_degraded finding: fires when the \
+                    producer self-reports green health while coverage_degraded \
+                    is active. Names the P27-shaped gap between the producer's \
+                    local correctness and the operator's epistemic standing. \
+                    Cannot stand alone — coverage_degraded_ref is required.",
+            contradiction: "The producer's /health endpoint is returning ok. \
+                            Its own coverage is materially incomplete. Both \
+                            statements are simultaneously true on the same \
+                            substrate, and the green health claim is not honest \
+                            relative to the loss the producer is sustaining.",
+            next_checks: &[
+                "coverage_degraded_ref — the parent finding carrying the degradation envelope",
+                "self_reported_health verbatim from the producer (in message)",
+                "whether the producer has a path to surface coverage degradation in its own health output (often: no)",
+                "downstream readers consuming the producer's artifacts — they may be silently working from degraded evidence",
+            ],
+        },
+
         // ── meta ─────────────────────────────────────────────────
         "check_failed" => FindingMeta {
             plain_label: "Check condition detected",

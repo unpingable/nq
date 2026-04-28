@@ -267,6 +267,98 @@ pub struct FindingDiagnosis {
     pub why_care: String,
 }
 
+/// COVERAGE_HONESTY_GAP V1 — recovery state machine on `coverage_degraded`.
+///
+/// `active`    — degradation criteria still met; recovery has not begun.
+/// `candidate` — recovery criteria currently passing, sustained-for timer
+///               running. `recovery_evidence_since` populated.
+/// `satisfied` — recovery criteria sustained for the declared horizon;
+///               clearance is now admissible. `recovery_satisfied_at` populated.
+///
+/// Producer drives transitions; NQ does not advance the machine on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryState {
+    Active,
+    Candidate,
+    Satisfied,
+}
+
+impl RecoveryState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Candidate => "candidate",
+            Self::Satisfied => "satisfied",
+        }
+    }
+}
+
+/// Comparator for recovery-criteria evaluation: `value <comparator> threshold`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryComparator {
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    Eq,
+}
+
+impl RecoveryComparator {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Lt => "lt",
+            Self::Gt => "gt",
+            Self::Le => "le",
+            Self::Ge => "ge",
+            Self::Eq => "eq",
+        }
+    }
+}
+
+/// COVERAGE_HONESTY_GAP V1 — admissible-lie shape for `coverage_degraded`.
+///
+/// Carries the degradation envelope (what is partial, by how much, against
+/// what threshold) and the recovery-criteria contract (declared at degradation
+/// time, not inferred at recovery time). Window start is the existing
+/// `first_seen_at` on warning_state — set-once-never-updated.
+#[derive(Debug, Clone)]
+pub struct CoverageDegradedEnvelope {
+    /// Small extensible vocabulary: `intake_loss`, `sampling_not_covering`,
+    /// `partial_collection_sustained`, etc. Add on real need.
+    pub degradation_kind: String,
+    pub degradation_metric: String,
+    pub degradation_value: Option<f64>,
+    pub degradation_threshold: Option<f64>,
+    pub recovery_state: RecoveryState,
+    pub recovery_metric: String,
+    pub recovery_comparator: RecoveryComparator,
+    pub recovery_threshold: f64,
+    pub recovery_sustained_for_s: i64,
+    /// When the producer first observed recovery criteria passing (RFC3339 UTC).
+    /// `None` while `recovery_state == Active`.
+    pub recovery_evidence_since: Option<String>,
+    /// When the sustained-for horizon was met (RFC3339 UTC).
+    /// `None` until `recovery_state == Satisfied`.
+    pub recovery_satisfied_at: Option<String>,
+}
+
+/// COVERAGE_HONESTY_GAP V1 — admissible-lie shape for `health_claim_misleading`.
+///
+/// Derived/explanatory finding. Composes with a `coverage_degraded` finding
+/// via `coverage_degraded_ref` (the parent's finding key); cannot stand alone.
+#[derive(Debug, Clone)]
+pub struct HealthClaimMisleadingEnvelope {
+    /// `finding_key` of the companion `coverage_degraded` finding. Required.
+    pub coverage_degraded_ref: String,
+}
+
+/// One of the two COVERAGE_HONESTY shapes. None on every other finding kind.
+#[derive(Debug, Clone)]
+pub enum CoverageEnvelope {
+    Degraded(CoverageDegradedEnvelope),
+    HealthClaimMisleading(HealthClaimMisleadingEnvelope),
+}
+
 /// A single detector output. Identity = (host, domain, kind, subject).
 #[derive(Debug, Clone)]
 pub struct Finding {
@@ -299,6 +391,10 @@ pub struct Finding {
     /// detectors that read evidence produced by one source but authored
     /// by another witness.
     pub basis_witness_id: Option<String>,
+    /// COVERAGE_HONESTY_GAP V1 admissible-lie envelope. Populated only on
+    /// `coverage_degraded` and `health_claim_misleading` findings; `None`
+    /// on every other kind.
+    pub coverage_envelope: Option<CoverageEnvelope>,
 }
 
 /// Configurable thresholds for built-in detectors.
@@ -488,6 +584,7 @@ fn detect_wal_bloat(
                 }),
                 basis_source_id: None,
                 basis_witness_id: None,
+                coverage_envelope: None,
             });
         }
     }
@@ -584,6 +681,7 @@ fn detect_pinned_wal(
             // the source. No separate witness layer.
             basis_source_id: Some(host),
             basis_witness_id: None,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -646,6 +744,7 @@ fn detect_freelist_bloat(
                 }),
                 basis_source_id: None,
                 basis_witness_id: None,
+                coverage_envelope: None,
             });
         }
     }
@@ -721,6 +820,7 @@ fn detect_stale_hosts(
             }),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -771,6 +871,7 @@ fn detect_stale_services(
             }),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -825,6 +926,7 @@ fn detect_service_status(
             }),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -866,6 +968,7 @@ fn detect_source_errors(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
             }),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -912,6 +1015,7 @@ fn detect_metric_nan(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<
             }),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -969,6 +1073,7 @@ fn detect_disk_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
             }),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -1008,6 +1113,7 @@ fn detect_memory_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Re
             }),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -1100,6 +1206,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     }),
                     basis_source_id: None,
                     basis_witness_id: None,
+                    coverage_envelope: None,
                 });
             }
         }
@@ -1129,6 +1236,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     }),
                     basis_source_id: None,
                     basis_witness_id: None,
+                    coverage_envelope: None,
                 });
             }
         }
@@ -1158,6 +1266,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     }),
                     basis_source_id: None,
                     basis_witness_id: None,
+                    coverage_envelope: None,
                 });
             }
         }
@@ -1230,6 +1339,7 @@ fn detect_service_flap(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resul
             }),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -1291,6 +1401,7 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             }),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         });
     }
 
@@ -1343,6 +1454,7 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             }),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         });
     }
 
@@ -1420,6 +1532,7 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                 }),
                 basis_source_id: None,
                 basis_witness_id: None,
+                coverage_envelope: None,
             });
         }
 
@@ -1447,6 +1560,7 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                 }),
                 basis_source_id: None,
                 basis_witness_id: None,
+                coverage_envelope: None,
             });
         }
     }
@@ -1518,6 +1632,7 @@ fn detect_log_silence(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
             }),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         });
     }
 
@@ -1605,6 +1720,7 @@ fn detect_error_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
             }),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         });
     }
 
@@ -1661,6 +1777,7 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                     }),
                     basis_source_id: None,
                     basis_witness_id: None,
+                    coverage_envelope: None,
                 });
             }
             Ok((row_count, rows)) => {
@@ -1709,6 +1826,7 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                         }),
                         basis_source_id: None,
                         basis_witness_id: None,
+                        coverage_envelope: None,
                     });
                 }
             }
@@ -1854,6 +1972,7 @@ fn detect_zfs_pool_degraded(
             }),
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -1993,6 +2112,7 @@ fn detect_zfs_vdev_faulted(
             }),
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -2139,6 +2259,7 @@ fn detect_zfs_error_count_increased(
             }),
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
+            coverage_envelope: None,
         });
         let _ = pool; // retained in SQL for clarity; message already references it
     }
@@ -2238,6 +2359,7 @@ fn detect_zfs_scrub_overdue(
             }),
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
+            coverage_envelope: None,
         });
         let _ = last_completed_at;
     }
@@ -2339,6 +2461,7 @@ fn detect_zfs_witness_silent(
             }),
             basis_source_id: Some(witness_id.clone()),
             basis_witness_id: Some(witness_id),
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -2479,6 +2602,7 @@ fn detect_smart_status_lies(
             }),
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -2619,6 +2743,7 @@ fn detect_smart_uncorrected_errors_nonzero(
             }),
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -2720,6 +2845,7 @@ fn detect_smart_witness_silent(
             }),
             basis_source_id: Some(witness_id.clone()),
             basis_witness_id: Some(witness_id),
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -2827,6 +2953,7 @@ fn detect_smart_nvme_percentage_used(
             }),
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -2933,6 +3060,7 @@ fn detect_smart_nvme_available_spare_low(
             }),
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -3061,6 +3189,7 @@ fn detect_smart_nvme_critical_warning_set(
             }),
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -3198,6 +3327,7 @@ fn detect_smart_reallocated_sectors_rising(
             }),
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
+            coverage_envelope: None,
         });
     }
     Ok(())
@@ -3323,6 +3453,7 @@ fn detect_smart_temperature_high(
             }),
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
+            coverage_envelope: None,
         });
     }
     Ok(())

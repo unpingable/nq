@@ -922,8 +922,13 @@ fn update_warning_state_inner(
     let recovery_window: i64 = 3; // require 3 clean gens before clearing
 
     let mut upsert = tx.prepare_cached(
-        "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, peak_value, finding_class, rule_hash, absent_gens, failure_class, service_impact, action_bias, synopsis, why_care, basis_state, basis_source_id, basis_witness_id, last_basis_generation, basis_state_at, state_kind)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9, ?10, ?11, 0, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+        "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, peak_value, finding_class, rule_hash, absent_gens, failure_class, service_impact, action_bias, synopsis, why_care, basis_state, basis_source_id, basis_witness_id, last_basis_generation, basis_state_at, state_kind,
+          degradation_kind, degradation_metric, degradation_value, degradation_threshold,
+          recovery_state, recovery_metric, recovery_comparator, recovery_threshold,
+          recovery_sustained_for_s, recovery_evidence_since, recovery_satisfied_at,
+          coverage_degraded_ref)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9, ?10, ?11, 0, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22,
+                 ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34)
          ON CONFLICT(host, kind, subject) DO UPDATE SET
              domain = ?4,
              message = ?5,
@@ -964,7 +969,22 @@ fn update_warning_state_inner(
              basis_state_at = ?21,
              -- state_kind: declared by detector, never inferred. See
              -- ALERT_INTERPRETATION_GAP §\"State kind as a first-class axis\".
-             state_kind = ?22",
+             state_kind = ?22,
+             -- COVERAGE_HONESTY_GAP V1: degradation envelope + recovery
+             -- machine. degraded_since maps to first_seen_at (set-once),
+             -- so no column for it here. Producer drives all transitions.
+             degradation_kind = ?23,
+             degradation_metric = ?24,
+             degradation_value = ?25,
+             degradation_threshold = ?26,
+             recovery_state = ?27,
+             recovery_metric = ?28,
+             recovery_comparator = ?29,
+             recovery_threshold = ?30,
+             recovery_sustained_for_s = ?31,
+             recovery_evidence_since = ?32,
+             recovery_satisfied_at = ?33,
+             coverage_degraded_ref = ?34",
     )?;
 
     let mut insert_obs = tx.prepare_cached(
@@ -972,9 +992,14 @@ fn update_warning_state_inner(
          (generation_id, finding_key, scope, detector_id, host, subject,
           domain, severity, value, message, finding_class, rule_hash, observed_at,
           failure_class, service_impact, action_bias, synopsis, why_care,
-          basis_source_id, basis_witness_id, state_kind)
+          basis_source_id, basis_witness_id, state_kind,
+          degradation_kind, degradation_metric, degradation_value, degradation_threshold,
+          recovery_state, recovery_metric, recovery_comparator, recovery_threshold,
+          recovery_sustained_for_s, recovery_evidence_since, recovery_satisfied_at,
+          coverage_degraded_ref)
          VALUES (?1, ?2, 'local', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                 ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)"
+                 ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
+                 ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32)"
     )?;
 
     for f in findings {
@@ -1021,6 +1046,52 @@ fn update_warning_state_inner(
         let d_synopsis = f.diagnosis.as_ref().map(|d| d.synopsis.as_str());
         let d_why_care = f.diagnosis.as_ref().map(|d| d.why_care.as_str());
 
+        // COVERAGE_HONESTY_GAP V1: project the optional envelope onto the
+        // 12 typed columns. None on every other finding kind → all NULL.
+        // Two shapes (Degraded / HealthClaimMisleading) populate disjoint
+        // subsets; the rest stay NULL.
+        use crate::detect::CoverageEnvelope;
+        let (
+            cov_degradation_kind,
+            cov_degradation_metric,
+            cov_degradation_value,
+            cov_degradation_threshold,
+            cov_recovery_state,
+            cov_recovery_metric,
+            cov_recovery_comparator,
+            cov_recovery_threshold,
+            cov_recovery_sustained_for_s,
+            cov_recovery_evidence_since,
+            cov_recovery_satisfied_at,
+            cov_coverage_degraded_ref,
+        ): (
+            Option<&str>, Option<&str>, Option<f64>, Option<f64>,
+            Option<&str>, Option<&str>, Option<&str>, Option<f64>,
+            Option<i64>, Option<&str>, Option<&str>, Option<&str>,
+        ) = match &f.coverage_envelope {
+            None => (None, None, None, None, None, None, None, None, None, None, None, None),
+            Some(CoverageEnvelope::Degraded(env)) => (
+                Some(env.degradation_kind.as_str()),
+                Some(env.degradation_metric.as_str()),
+                env.degradation_value,
+                env.degradation_threshold,
+                Some(env.recovery_state.as_str()),
+                Some(env.recovery_metric.as_str()),
+                Some(env.recovery_comparator.as_str()),
+                Some(env.recovery_threshold),
+                Some(env.recovery_sustained_for_s),
+                env.recovery_evidence_since.as_deref(),
+                env.recovery_satisfied_at.as_deref(),
+                None,
+            ),
+            Some(CoverageEnvelope::HealthClaimMisleading(env)) => (
+                None, None, None, None,
+                None, None, None, None,
+                None, None, None,
+                Some(env.coverage_degraded_ref.as_str()),
+            ),
+        };
+
         // Basis lifecycle (EVIDENCE_RETIREMENT_GAP V1):
         //   basis_source_id present → basis_state = 'live', last_basis_generation
         //                              and basis_state_at carry real values.
@@ -1054,6 +1125,18 @@ fn update_warning_state_inner(
             &f.basis_source_id,
             &f.basis_witness_id,
             f.state_kind.as_str(),
+            cov_degradation_kind,
+            cov_degradation_metric,
+            cov_degradation_value,
+            cov_degradation_threshold,
+            cov_recovery_state,
+            cov_recovery_metric,
+            cov_recovery_comparator,
+            cov_recovery_threshold,
+            cov_recovery_sustained_for_s,
+            cov_recovery_evidence_since,
+            cov_recovery_satisfied_at,
+            cov_coverage_degraded_ref,
         ])?;
 
         upsert.execute(rusqlite::params![
@@ -1079,6 +1162,18 @@ fn update_warning_state_inner(
             last_basis_generation,
             basis_state_at,
             f.state_kind.as_str(),
+            cov_degradation_kind,
+            cov_degradation_metric,
+            cov_degradation_value,
+            cov_degradation_threshold,
+            cov_recovery_state,
+            cov_recovery_metric,
+            cov_recovery_comparator,
+            cov_recovery_threshold,
+            cov_recovery_sustained_for_s,
+            cov_recovery_evidence_since,
+            cov_recovery_satisfied_at,
+            cov_coverage_degraded_ref,
         ])?;
     }
     drop(upsert);
@@ -1696,6 +1791,7 @@ mod tests {
             diagnosis: None,
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         }
     }
 
@@ -2679,6 +2775,269 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Coverage Honesty round-trip (COVERAGE_HONESTY_GAP V1)
+    // -----------------------------------------------------------------------
+    //
+    // V1 acceptance: a producer can emit `coverage_degraded` with the canonical
+    // envelope fields populated; the finding survives DB write and view query.
+    // `degraded_since` (= first_seen_at) is set once and not updated on
+    // subsequent cycles. `recovery_criteria` is declared at detection time in
+    // structured form. `health_claim_misleading` requires a populated
+    // `coverage_degraded_ref` and cannot stand alone.
+
+    use crate::detect::{
+        CoverageDegradedEnvelope, CoverageEnvelope, HealthClaimMisleadingEnvelope,
+        RecoveryComparator, RecoveryState,
+    };
+
+    fn coverage_degraded_finding(host: &str, subject: &str) -> Finding {
+        Finding {
+            host: host.into(),
+            kind: "coverage_degraded".into(),
+            subject: subject.into(),
+            domain: "Δs".into(),
+            message: format!("coverage_degraded on {host}/{subject}"),
+            value: Some(0.32),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: crate::detect::StateKind::Degradation,
+            diagnosis: None,
+            basis_source_id: Some(format!("witness@{host}")),
+            basis_witness_id: Some(format!("witness@{host}")),
+            coverage_envelope: Some(CoverageEnvelope::Degraded(CoverageDegradedEnvelope {
+                degradation_kind: "intake_loss".into(),
+                degradation_metric: "drop_frac".into(),
+                degradation_value: Some(0.32),
+                degradation_threshold: Some(0.05),
+                recovery_state: RecoveryState::Active,
+                recovery_metric: "drop_frac".into(),
+                recovery_comparator: RecoveryComparator::Lt,
+                recovery_threshold: 0.05,
+                recovery_sustained_for_s: 86_400,
+                recovery_evidence_since: None,
+                recovery_satisfied_at: None,
+            })),
+        }
+    }
+
+    #[test]
+    fn coverage_degraded_round_trip_persists_envelope() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            coverage_degraded_finding("host-1", "driftwatch.jetstream_ingest"),
+        ], &esc).unwrap();
+
+        // All 12 envelope columns must round-trip via warning_state.
+        let row: (
+            String, String, Option<f64>, Option<f64>,
+            String, String, String, f64,
+            i64, Option<String>, Option<String>, Option<String>,
+        ) = db.conn.query_row(
+            "SELECT degradation_kind, degradation_metric, degradation_value, degradation_threshold,
+                    recovery_state, recovery_metric, recovery_comparator, recovery_threshold,
+                    recovery_sustained_for_s, recovery_evidence_since, recovery_satisfied_at,
+                    coverage_degraded_ref
+             FROM warning_state
+             WHERE host = 'host-1' AND kind = 'coverage_degraded'",
+            [],
+            |r| Ok((
+                r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?,
+                r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?,
+                r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?,
+            )),
+        ).unwrap();
+
+        assert_eq!(row.0, "intake_loss");
+        assert_eq!(row.1, "drop_frac");
+        assert_eq!(row.2, Some(0.32));
+        assert_eq!(row.3, Some(0.05));
+        assert_eq!(row.4, "active");
+        assert_eq!(row.5, "drop_frac");
+        assert_eq!(row.6, "lt");
+        assert_eq!(row.7, 0.05);
+        assert_eq!(row.8, 86_400);
+        assert_eq!(row.9, None, "recovery_evidence_since must be NULL while active");
+        assert_eq!(row.10, None, "recovery_satisfied_at must be NULL while active");
+        assert_eq!(row.11, None, "coverage_degraded_ref is for health_claim_misleading only");
+
+        // Operator surface: kind-filter query returns the finding.
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM warning_state WHERE kind = 'coverage_degraded'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn coverage_degraded_window_is_set_once_not_updated() {
+        // Spec invariant: `degraded_since` (= first_seen_at) is set on
+        // detection and not updated on subsequent cycles. NQ already has
+        // this property on first_seen_at; this test pins it for the
+        // coverage envelope specifically.
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            coverage_degraded_finding("host-1", "driftwatch.jetstream_ingest"),
+        ], &esc).unwrap();
+
+        let first_seen_at_initial: String = db.conn.query_row(
+            "SELECT first_seen_at FROM warning_state WHERE kind = 'coverage_degraded'",
+            [], |r| r.get(0),
+        ).unwrap();
+
+        // Re-emit on later generations; first_seen_at must not move.
+        for g in 2..=5 {
+            update_warning_state(&mut db, g, &[
+                coverage_degraded_finding("host-1", "driftwatch.jetstream_ingest"),
+            ], &esc).unwrap();
+        }
+
+        let first_seen_at_final: String = db.conn.query_row(
+            "SELECT first_seen_at FROM warning_state WHERE kind = 'coverage_degraded'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(
+            first_seen_at_initial, first_seen_at_final,
+            "degraded_since must be set once, not updated on re-emission"
+        );
+
+        // last_seen_at and consecutive_gens advance normally.
+        let (last_gen, gens): (i64, i64) = db.conn.query_row(
+            "SELECT last_seen_gen, consecutive_gens FROM warning_state
+             WHERE kind = 'coverage_degraded'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(last_gen, 5);
+        assert_eq!(gens, 5);
+    }
+
+    #[test]
+    fn recovery_state_advances_through_producer_emissions() {
+        // Producer drives the state machine; NQ persists what it sees. This
+        // test exercises active → candidate → satisfied transitions across
+        // three emissions of the same finding.
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: producer reports degradation, recovery_state=active
+        update_warning_state(&mut db, 1, &[
+            coverage_degraded_finding("host-1", "driftwatch.jetstream_ingest"),
+        ], &esc).unwrap();
+        let state: String = db.conn.query_row(
+            "SELECT recovery_state FROM warning_state WHERE kind = 'coverage_degraded'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(state, "active");
+
+        // Gen 2: criteria start passing — producer reports candidate
+        let mut f = coverage_degraded_finding("host-1", "driftwatch.jetstream_ingest");
+        if let Some(CoverageEnvelope::Degraded(env)) = f.coverage_envelope.as_mut() {
+            env.recovery_state = RecoveryState::Candidate;
+            env.recovery_evidence_since = Some("2026-04-28T11:00:00Z".into());
+        }
+        update_warning_state(&mut db, 2, &[f], &esc).unwrap();
+        let (state, since): (String, Option<String>) = db.conn.query_row(
+            "SELECT recovery_state, recovery_evidence_since FROM warning_state
+             WHERE kind = 'coverage_degraded'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(state, "candidate");
+        assert_eq!(since.as_deref(), Some("2026-04-28T11:00:00Z"));
+
+        // Gen 3: sustained-for horizon met — producer declares satisfied
+        let mut f = coverage_degraded_finding("host-1", "driftwatch.jetstream_ingest");
+        if let Some(CoverageEnvelope::Degraded(env)) = f.coverage_envelope.as_mut() {
+            env.recovery_state = RecoveryState::Satisfied;
+            env.recovery_evidence_since = Some("2026-04-28T11:00:00Z".into());
+            env.recovery_satisfied_at = Some("2026-04-29T11:00:00Z".into());
+        }
+        update_warning_state(&mut db, 3, &[f], &esc).unwrap();
+        let (state, satisfied_at): (String, Option<String>) = db.conn.query_row(
+            "SELECT recovery_state, recovery_satisfied_at FROM warning_state
+             WHERE kind = 'coverage_degraded'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(state, "satisfied");
+        assert_eq!(satisfied_at.as_deref(), Some("2026-04-29T11:00:00Z"));
+    }
+
+    #[test]
+    fn health_claim_misleading_carries_ref_and_no_envelope() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Parent coverage_degraded finding lands first; we use its key.
+        let parent_key = compute_finding_key(
+            "local", "host-1", "coverage_degraded", "driftwatch.jetstream_ingest",
+        );
+        update_warning_state(&mut db, 1, &[
+            coverage_degraded_finding("host-1", "driftwatch.jetstream_ingest"),
+        ], &esc).unwrap();
+
+        // Companion health_claim_misleading composes via coverage_degraded_ref.
+        let derived = Finding {
+            host: "host-1".into(),
+            kind: "health_claim_misleading".into(),
+            subject: "driftwatch.jetstream_ingest".into(),
+            domain: "Δs".into(),
+            message: "witness reports status=ok while coverage_degraded is active".into(),
+            value: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: crate::detect::StateKind::Degradation,
+            diagnosis: None,
+            basis_source_id: Some("witness@host-1".into()),
+            basis_witness_id: Some("witness@host-1".into()),
+            coverage_envelope: Some(CoverageEnvelope::HealthClaimMisleading(
+                HealthClaimMisleadingEnvelope { coverage_degraded_ref: parent_key.clone() },
+            )),
+        };
+        update_warning_state(&mut db, 2, &[derived], &esc).unwrap();
+
+        let (degradation_kind, recovery_state, ref_val): (
+            Option<String>, Option<String>, Option<String>,
+        ) = db.conn.query_row(
+            "SELECT degradation_kind, recovery_state, coverage_degraded_ref
+             FROM warning_state
+             WHERE kind = 'health_claim_misleading'",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!(degradation_kind, None, "health_claim_misleading does not carry degradation envelope");
+        assert_eq!(recovery_state, None, "health_claim_misleading does not carry recovery state");
+        assert_eq!(ref_val.as_deref(), Some(parent_key.as_str()));
+    }
+
+    #[test]
+    fn other_finding_kinds_have_null_coverage_columns() {
+        // Any finding without a coverage_envelope must persist with NULL on
+        // every coverage column — the schema must not force coverage shape
+        // onto unrelated detectors.
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        let (dk, rs, cdr): (Option<String>, Option<String>, Option<String>) = db.conn.query_row(
+            "SELECT degradation_kind, recovery_state, coverage_degraded_ref
+             FROM warning_state WHERE kind = 'disk_pressure'",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!(dk, None);
+        assert_eq!(rs, None);
+        assert_eq!(cdr, None);
+    }
+
+    // -----------------------------------------------------------------------
     // Diagnosis tests (FINDING_DIAGNOSIS_GAP, commit 1)
     // -----------------------------------------------------------------------
 
@@ -2702,6 +3061,7 @@ mod tests {
             diagnosis: Some(diagnosis),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         }
     }
 
@@ -2906,6 +3266,7 @@ mod tests {
             }),
             basis_source_id: None,
             basis_witness_id: None,
+            coverage_envelope: None,
         });
 
         update_warning_state(&mut db, 1, &findings, &esc).unwrap();

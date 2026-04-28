@@ -1,10 +1,42 @@
 # Gap: `coverage_honesty` — liveness, coverage, and truthfulness are three axes
 
-**Status:** `proposed` — drafted 2026-04-28
+**Status:** `partial` — V1.0 sub-slice shipped 2026-04-28; JSON export wiring + composition logic pending (see Shipped State)
 **Depends on:** TESTIMONY_DEPENDENCY_GAP for clean producer-silent clearance semantics (a `coverage_degraded` finding whose producer goes silent must be suppressed by ancestor, not auto-cleared)
 **Related:** CANNOT_TESTIFY_STATUS (declared lack of standing — different failure mode), COMPLETENESS_PROPAGATION_GAP (how partial-state propagates downstream — composes), TESTIMONY_DEPENDENCY_GAP (clearance contract: explicit recovery testimony OR ancestor-suppression), SCOPE_AND_WITNESS_MODEL.md §NQ / Night Shift contract (consumer-side discipline that requires this finding shape)
 **Blocks:** Night Shift's ability to refuse acting on degraded-coverage evidence (NS-claude pinned 2026-04-28: will not anticipate a finding shape — consumes what NQ emits, P27 attack surface stays open until NQ surfaces this)
 **Last updated:** 2026-04-28
+
+## Shipped State
+
+### V1.0 — Schema + finding-kind vocabulary + DB round-trip (2026-04-28)
+
+**Live:**
+
+- Migration 038 adds the 12 typed envelope columns to both `warning_state` and `finding_observations`:
+  `degradation_kind`, `degradation_metric`, `degradation_value`, `degradation_threshold`,
+  `recovery_state` (CHECK: `active|candidate|satisfied`),
+  `recovery_metric`, `recovery_comparator` (CHECK: `lt|gt|le|ge|eq`),
+  `recovery_threshold`, `recovery_sustained_for_s`,
+  `recovery_evidence_since`, `recovery_satisfied_at`, `coverage_degraded_ref`.
+- `v_warnings` recreated to expose every envelope field.
+- Type machinery in `nq-db::detect`: `RecoveryState`, `RecoveryComparator`, `CoverageDegradedEnvelope`, `HealthClaimMisleadingEnvelope`, `CoverageEnvelope` enum, plus an `Option<CoverageEnvelope>` field on `Finding`.
+- Publish path persists the envelope on every emission; `degraded_since` maps to the existing `first_seen_at` column (set-once-never-updated, the spec invariant for window start).
+- `finding_meta.rs` entries for `coverage_degraded` and `health_claim_misleading` (plain label + operator label + gloss + contradiction template + next-checks).
+- Five tests in `publish::tests`:
+  - `coverage_degraded_round_trip_persists_envelope` — emit → write → query verifies all 12 columns
+  - `coverage_degraded_window_is_set_once_not_updated` — `first_seen_at` stays frozen across re-emission
+  - `recovery_state_advances_through_producer_emissions` — active → candidate → satisfied transitions persist
+  - `health_claim_misleading_carries_ref_and_no_envelope` — composition via `coverage_degraded_ref`, no degradation/recovery fields
+  - `other_finding_kinds_have_null_coverage_columns` — non-coverage findings persist with NULL on every coverage column
+
+**Clearance contract behavior today:** path 2 (supersession by an unobservable ancestor) is live via TESTIMONY_DEPENDENCY V1.0 — when a producer of `coverage_degraded` matches a witness-silence masking rule, the finding is suppressed under `witness_unobservable` rather than cleared. Path 1 (explicit recovery testimony) requires the producer to drive `recovery_state` through `candidate` and `satisfied`; NQ persists the transitions but does not enforce the sustained-criteria timer in V1.0 — that responsibility sits with the producer.
+
+**Pending:**
+
+- **JSON export round-trip.** `FindingSnapshot` (in `crates/nq-db/src/export.rs`) does not yet carry a `coverage` field. Adding `Option<CoverageEnvelopeExport>` is straightforward and preserves the existing `nq.finding_snapshot.v1` contract (additive). The accompanying round-trip test (the gap doc's V1 acceptance item 4) lands with that change.
+- **Composition logic for `health_claim_misleading`.** Today producers emit it with a `coverage_degraded_ref` and NQ persists; there is no NQ-side check that the ref actually points at an open `coverage_degraded` finding. Spec defers cross-finding composition to V1.1.
+- **One concrete real producer path.** Synthetic test producer is the V1 cash-out per spec; a driftwatch witness adapter (the live forcing case) is its own slice.
+- **Operator surface beyond `nq query`.** Dashboard rendering deferred per spec.
 
 ## The Problem
 
