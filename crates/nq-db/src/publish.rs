@@ -834,28 +834,56 @@ pub fn compute_finding_key(scope: &str, host: &str, detector_id: &str, subject: 
 }
 
 /// A rule for how a parent finding kind masks child findings.
+///
+/// Implements TESTIMONY_DEPENDENCY_GAP V1 §"Observability Loss Collapse":
+/// when a parent finding indicates an interior node has lost standing,
+/// descendants are suppressed (last-known state preserved, admissibility
+/// revoked), not aged out.
 struct MaskingRule {
     /// The kind of finding that acts as a parent (e.g. "stale_host").
     parent_kind: &'static str,
     /// What suppression_reason to write on masked children.
     suppression_reason: &'static str,
+    /// If `Some`, only mask child findings whose `kind` starts with this prefix.
+    /// `None` means mask everything on the host (whole-host loss).
+    /// Used for witness-scoped masking where only domain-adjacent findings
+    /// are downstream of the silent witness.
+    child_kind_prefix: Option<&'static str>,
 }
 
-/// Masking rules, evaluated in order. First matching rule wins for a given host.
-/// Adding a new parent kind is one entry here, not a code change in the masking loop.
+/// Masking rules, evaluated in order. First matching rule wins for a given
+/// (host, child kind). Adding a new parent kind is one entry here, not a
+/// code change in the masking loop.
 ///
 /// Valid suppression_reason values after this table:
-///   host_unreachable — masked by stale_host
-///   source_unreachable — masked by source_error
+///   host_unreachable     — masked by stale_host (whole host)
+///   source_unreachable   — masked by source_error (whole host)
+///   witness_unobservable — masked by *_witness_silent (domain-scoped)
 /// Reserved for future: agent_down, collector_partition, parent_mask, maintenance
 const MASKING_RULES: &[MaskingRule] = &[
     MaskingRule {
         parent_kind: "stale_host",
         suppression_reason: "host_unreachable",
+        child_kind_prefix: None,
     },
     MaskingRule {
         parent_kind: "source_error",
         suppression_reason: "source_unreachable",
+        child_kind_prefix: None,
+    },
+    // TESTIMONY_DEPENDENCY_GAP V1: witness-silence detectors are evidence
+    // that the producer of their domain has lost standing. Findings the
+    // witness was producing get suppressed under `witness_unobservable`,
+    // not aged out — silence at a parent is not health at a leaf.
+    MaskingRule {
+        parent_kind: "smart_witness_silent",
+        suppression_reason: "witness_unobservable",
+        child_kind_prefix: Some("smart_"),
+    },
+    MaskingRule {
+        parent_kind: "zfs_witness_silent",
+        suppression_reason: "witness_unobservable",
+        child_kind_prefix: Some("zfs_"),
     },
 ];
 
@@ -1096,12 +1124,15 @@ fn update_warning_state_inner(
         drop(set_stability);
     }
 
-    // Build masking map: host → suppression_reason, driven by MASKING_RULES.
-    // Each rule identifies a parent finding kind; if that parent is observed,
-    // all child findings on the same host are suppressed instead of aged out.
-    // First matching rule wins (rules evaluated in table order).
-    let masking: std::collections::HashMap<String, &'static str> = {
-        let mut map = std::collections::HashMap::new();
+    // Build masking map: host → list of active parent rules, driven by
+    // MASKING_RULES. Each rule identifies a parent finding kind; if that
+    // parent is observed, child findings on the same host whose kind
+    // matches the rule's `child_kind_prefix` (or any kind, if prefix is
+    // None) are suppressed instead of aged out. Rules retain MASKING_RULES
+    // order so first-matching-rule-wins semantics apply per child.
+    let masking: std::collections::HashMap<String, Vec<&'static MaskingRule>> = {
+        let mut map: std::collections::HashMap<String, Vec<&'static MaskingRule>> =
+            std::collections::HashMap::new();
         for rule in MASKING_RULES {
             let mut stmt = tx.prepare(
                 "SELECT host FROM warning_state WHERE kind = ?1 AND visibility_state = 'observed'"
@@ -1109,7 +1140,7 @@ fn update_warning_state_inner(
             let hosts: Vec<String> = stmt.query_map([rule.parent_kind], |row| row.get::<_, String>(0))?
                 .collect::<Result<_, _>>()?;
             for host in hosts {
-                map.entry(host).or_insert(rule.suppression_reason);
+                map.entry(host).or_default().push(rule);
             }
         }
         map
@@ -1154,11 +1185,17 @@ fn update_warning_state_inner(
             continue; // upsert handled it
         }
 
-        // Check if this finding's host is masked by any parent rule.
-        // A parent kind never masks itself (prevents self-suppression loops).
-        let masking_reason = if !host.is_empty() {
-            masking.get(host.as_str()).copied()
-                .filter(|_| !MASKING_RULES.iter().any(|r| r.parent_kind == kind))
+        // Check if this finding's host is masked by any parent rule whose
+        // child_kind_prefix matches this kind. A parent kind never masks
+        // itself (prevents self-suppression loops).
+        let is_parent_kind = MASKING_RULES.iter().any(|r| r.parent_kind == kind);
+        let masking_reason: Option<&'static str> = if !host.is_empty() && !is_parent_kind {
+            masking.get(host.as_str()).and_then(|rules| {
+                rules.iter().find(|r| match r.child_kind_prefix {
+                    None => true,
+                    Some(prefix) => kind.starts_with(prefix),
+                }).map(|r| r.suppression_reason)
+            })
         } else {
             None
         };
@@ -2421,6 +2458,224 @@ mod tests {
             finding("host-1", "disk_pressure", "", "Δg"),
         ], &esc).unwrap();
         assert_eq!(count_visibility(&db, "host-1", "disk_pressure").as_deref(), Some("observed"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Witness-silence masking (TESTIMONY_DEPENDENCY_GAP V1)
+    // -----------------------------------------------------------------------
+    //
+    // *_witness_silent findings act as observability-loss parents for findings
+    // in their domain — when the witness goes silent, the per-device findings
+    // it was producing are suppressed (last-known state preserved), not aged
+    // out. Domain scoping is via child_kind_prefix on MaskingRule.
+
+    #[test]
+    fn smart_witness_silent_masks_smart_findings() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: per-device SMART finding observed
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "smart_uncorrected_errors_nonzero", "/dev/sda", "Δs"),
+        ], &esc).unwrap();
+        assert_eq!(
+            count_visibility(&db, "host-1", "smart_uncorrected_errors_nonzero").as_deref(),
+            Some("observed")
+        );
+
+        // Gen 2: SMART witness goes silent; per-device finding no longer emitted
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "smart_witness_silent", "smart-witness@host-1", "Δo"),
+        ], &esc).unwrap();
+
+        // Per-device SMART finding suppressed under witness_unobservable —
+        // last-known degraded state preserved, not cleared.
+        assert_eq!(
+            count_visibility(&db, "host-1", "smart_uncorrected_errors_nonzero").as_deref(),
+            Some("suppressed")
+        );
+        assert_eq!(
+            get_suppression_reason(&db, "host-1", "smart_uncorrected_errors_nonzero").as_deref(),
+            Some("witness_unobservable")
+        );
+    }
+
+    #[test]
+    fn witness_silent_does_not_mask_other_domains() {
+        // Domain-scoped masking: SMART witness going silent must not suppress
+        // findings outside the SMART domain (e.g. disk_pressure on the same
+        // host). Only kinds matching child_kind_prefix="smart_" are affected.
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: a SMART finding and a non-SMART finding on the same host
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "smart_uncorrected_errors_nonzero", "/dev/sda", "Δs"),
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        // Gen 2: SMART witness silent; only smart_witness_silent emitted.
+        // Both prior findings are now missing.
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "smart_witness_silent", "smart-witness@host-1", "Δo"),
+        ], &esc).unwrap();
+
+        // smart_uncorrected_errors_nonzero: SUPPRESSED (witness lost standing
+        // for SMART claims).
+        assert_eq!(
+            count_visibility(&db, "host-1", "smart_uncorrected_errors_nonzero").as_deref(),
+            Some("suppressed")
+        );
+
+        // disk_pressure: NOT suppressed by smart_witness_silent — different
+        // domain, different testimony chain. Recovery hysteresis (absent_gens)
+        // should kick in normally.
+        let dp_visibility = count_visibility(&db, "host-1", "disk_pressure");
+        assert_eq!(
+            dp_visibility.as_deref(),
+            Some("observed"),
+            "disk_pressure must not be suppressed by smart_witness_silent (different domain)"
+        );
+    }
+
+    #[test]
+    fn zfs_witness_silent_masks_zfs_findings_only() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "zfs_pool_degraded", "tank", "Δg"),
+            finding("host-1", "smart_uncorrected_errors_nonzero", "/dev/sda", "Δs"),
+        ], &esc).unwrap();
+
+        // ZFS witness goes silent. SMART witness is still alive (no
+        // smart_witness_silent emitted). zfs_pool_degraded should be
+        // suppressed; smart_uncorrected_errors_nonzero should not be —
+        // its testimony chain is unaffected.
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "zfs_witness_silent", "zfs-witness@host-1", "Δo"),
+            finding("host-1", "smart_uncorrected_errors_nonzero", "/dev/sda", "Δs"),
+        ], &esc).unwrap();
+
+        assert_eq!(
+            count_visibility(&db, "host-1", "zfs_pool_degraded").as_deref(),
+            Some("suppressed")
+        );
+        assert_eq!(
+            get_suppression_reason(&db, "host-1", "zfs_pool_degraded").as_deref(),
+            Some("witness_unobservable")
+        );
+        assert_eq!(
+            count_visibility(&db, "host-1", "smart_uncorrected_errors_nonzero").as_deref(),
+            Some("observed")
+        );
+    }
+
+    #[test]
+    fn witness_silent_recovery_unsuppresses_descendants() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: per-device finding observed
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "smart_uncorrected_errors_nonzero", "/dev/sda", "Δs"),
+        ], &esc).unwrap();
+
+        // Gen 2: witness silent → per-device suppressed
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "smart_witness_silent", "smart-witness@host-1", "Δo"),
+        ], &esc).unwrap();
+        assert_eq!(
+            count_visibility(&db, "host-1", "smart_uncorrected_errors_nonzero").as_deref(),
+            Some("suppressed")
+        );
+
+        // Gens 3-5: witness still silent, descendant must not age out
+        for g in 3..=5 {
+            update_warning_state(&mut db, g, &[
+                finding("host-1", "smart_witness_silent", "smart-witness@host-1", "Δo"),
+            ], &esc).unwrap();
+        }
+        let absent: i64 = db.conn.query_row(
+            "SELECT absent_gens FROM warning_state
+             WHERE host = 'host-1' AND kind = 'smart_uncorrected_errors_nonzero'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(absent, 0, "suppressed finding must not increment absent_gens");
+
+        // Gen 6: witness recovers, per-device finding re-emitted —
+        // suppression clears, persistence preserved.
+        update_warning_state(&mut db, 6, &[
+            finding("host-1", "smart_uncorrected_errors_nonzero", "/dev/sda", "Δs"),
+        ], &esc).unwrap();
+        assert_eq!(
+            count_visibility(&db, "host-1", "smart_uncorrected_errors_nonzero").as_deref(),
+            Some("observed")
+        );
+        let gens: i64 = db.conn.query_row(
+            "SELECT consecutive_gens FROM warning_state
+             WHERE host = 'host-1' AND kind = 'smart_uncorrected_errors_nonzero'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert!(
+            gens >= 2,
+            "persistence must survive witness-silence round-trip, got {gens}"
+        );
+    }
+
+    #[test]
+    fn witness_silent_does_not_mask_itself() {
+        // smart_witness_silent is a parent kind — it must not self-suppress
+        // when it persists across cycles.
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "smart_witness_silent", "smart-witness@host-1", "Δo"),
+        ], &esc).unwrap();
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "smart_witness_silent", "smart-witness@host-1", "Δo"),
+        ], &esc).unwrap();
+
+        assert_eq!(
+            count_visibility(&db, "host-1", "smart_witness_silent").as_deref(),
+            Some("observed")
+        );
+    }
+
+    #[test]
+    fn stale_host_outranks_witness_silent_when_both_fire() {
+        // First-matching-rule-wins: stale_host appears before
+        // smart_witness_silent in MASKING_RULES, so the suppression_reason
+        // on a smart_* descendant is host_unreachable (not
+        // witness_unobservable) when both parents fire on the same host.
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "smart_uncorrected_errors_nonzero", "/dev/sda", "Δs"),
+        ], &esc).unwrap();
+
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "stale_host", "", "Δo"),
+            finding("host-1", "smart_witness_silent", "smart-witness@host-1", "Δo"),
+        ], &esc).unwrap();
+
+        assert_eq!(
+            count_visibility(&db, "host-1", "smart_uncorrected_errors_nonzero").as_deref(),
+            Some("suppressed")
+        );
+        assert_eq!(
+            get_suppression_reason(&db, "host-1", "smart_uncorrected_errors_nonzero").as_deref(),
+            Some("host_unreachable"),
+            "stale_host must outrank smart_witness_silent — whole-host loss is the broader claim"
+        );
     }
 
     // -----------------------------------------------------------------------

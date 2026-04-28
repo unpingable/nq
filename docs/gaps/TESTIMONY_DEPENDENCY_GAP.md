@@ -1,10 +1,41 @@
 # Gap: Testimony Dependency and Observability Loss
 
-**Status:** `proposed` — drafted 2026-04-28
+**Status:** `partial` — V1.0 sub-slice shipped 2026-04-28; V1.1+ pending (see Shipped State)
 **Depends on:** none for spec; V1 implementation depends on existing silence-detector family (parent-state evidence) and on COVERAGE_HONESTY_GAP shape (first consumer)
 **Related:** COVERAGE_HONESTY_GAP (clearance contract — first consumer), SILENCE_UNIFICATION_GAP (silence detectors become parent-node evidence under this primitive, not peer findings), REGISTRY_PROJECTION_GAP (binds role-derived severity once declared roles exist), CANNOT_TESTIFY_STATUS (the leaf admissibility state this primitive promotes through the tree), EVIDENCE_RETIREMENT_GAP (sibling — passive basis decay), MAINTENANCE_DECLARATION_GAP (declared standing change vs unobservability)
 **Blocks:** clean clearance for any producer-dependent finding (producer-silent path); honest subtree behavior when a witness, host, or transport drops; a path out of N independent silence-shaped alerts pretending to be peers
 **Last updated:** 2026-04-28
+
+## Shipped State
+
+### V1.0 — Witness-silence as host-masking parent kinds (2026-04-28)
+
+Smallest viable implementation of the loss-collapse case, riding NQ's existing host-scoped masking infrastructure (`MASKING_RULES` in `crates/nq-db/src/publish.rs`). No schema changes; no new finding kinds; no `producer_ref` column.
+
+**Live:**
+
+- `MaskingRule` extended with `child_kind_prefix: Option<&'static str>` so a parent kind can scope its descendant suppression to kinds matching a prefix (rather than only whole-host loss).
+- Two new entries in `MASKING_RULES`:
+  - `smart_witness_silent` → `witness_unobservable`, prefix `"smart_"`
+  - `zfs_witness_silent` → `witness_unobservable`, prefix `"zfs_"`
+- New `suppression_reason` value: `witness_unobservable` (documented in `MASKING_RULES` header comment).
+- First-matching-rule semantics preserved: `stale_host` → `host_unreachable` outranks `smart_witness_silent` → `witness_unobservable` when both fire on the same host (whole-host loss is the broader claim).
+- Six new tests in `publish::tests` covering: domain-scoped suppression, cross-domain non-suppression, recovery hysteresis under sustained witness silence, persistence-across-suppression round-trip, self-mask exclusion, and rule precedence.
+
+**What this gives:**
+
+When a SMART or ZFS witness goes silent, the per-device findings it was producing transition from `visibility_state='observed'` to `visibility_state='suppressed'` with `suppression_reason='witness_unobservable'` — last-known degraded state preserved on the row, `absent_gens` does not increment, no auto-clear. When the witness recovers, the per-device finding re-emits and suppression clears via the existing upsert path; `consecutive_gens` survives the round-trip.
+
+This closes the rot pocket for the witness-silent path of the COVERAGE_HONESTY clearance contract: producer absence cannot manufacture recovery for findings produced by `*_witness_silent`-shaped producers.
+
+**Pending (V1.1+):**
+
+- **Schema additions** — `producer_ref` column on `warning_state` and `finding_observations`. V1.0 uses host-scoped masking which is sufficient for the SMART/ZFS witness case but does not generalize to producers whose substrate is not a host (transports, aggregators, multi-host adapters).
+- **Paired `node_unobservable` finding kind** — V1.0 treats the silence detector itself as the parent. The canonical shape (with `node_type`, `cause_candidate`, `subject_role`, `responsibility_class`, `suppressed_descendant_count`) is not yet emitted.
+- **Admissibility view** (`v_admissibility`) — V1.0 exposes admissibility through existing `visibility_state` + `suppression_reason` columns. The dedicated view that resolves ancestry per-finding is not yet shipped.
+- **COVERAGE_HONESTY shape fields** — `degradation_kind` / `recovery_criteria` / etc. tracked separately under COVERAGE_HONESTY V1.
+- **Multi-level ancestry** — V1.0 is one level (silence detector → descendants on same host). Hosts → witnesses → findings remains deferred.
+- **Role-derived severity** — reserved field shape only; binding to declared roles waits for REGISTRY_PROJECTION.
 
 ## The Problem
 
