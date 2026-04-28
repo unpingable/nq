@@ -51,9 +51,10 @@ pub const CONTRACT_VERSION: u32 = 1;
 ///
 /// v1 touches: `warning_state.absent_gens` (migration 020),
 /// `warning_state.failure_class` etc. (027), `warning_state.stability`
-/// (028), and `regime_features` (030). The most recent of those is
-/// 30; exporter requires `>= 30`.
-pub const MIN_SCHEMA_FOR_EXPORT: u32 = 33;
+/// (028), `regime_features` (030), and the COVERAGE_HONESTY envelope
+/// columns (038). The most recent of those is 38; exporter requires
+/// `>= 38`.
+pub const MIN_SCHEMA_FOR_EXPORT: u32 = 38;
 
 // ---------------------------------------------------------------------------
 // Filter — what export_findings accepts.
@@ -99,6 +100,55 @@ pub struct FindingSnapshot {
     /// EVIDENCE_RETIREMENT_GAP V1: basis lifecycle state. Always present.
     /// `basis_state = 'unknown'` is a truthful value, not missing data.
     pub basis: FindingBasis,
+    /// COVERAGE_HONESTY_GAP V1 admissible-lie envelope. Populated for
+    /// `coverage_degraded` and `health_claim_misleading` finding kinds;
+    /// `None` for every other kind. Additive on the v1 contract — older
+    /// consumers ignore the field, newer ones can branch on its discriminator.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<CoverageEnvelopeExport>,
+}
+
+/// COVERAGE_HONESTY_GAP V1 wire shape. Discriminated by `kind`:
+/// `degraded` carries the degradation envelope + recovery contract;
+/// `health_claim_misleading` carries the parent reference.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CoverageEnvelopeExport {
+    Degraded {
+        degradation: CoverageDegradationExport,
+        recovery: CoverageRecoveryExport,
+    },
+    HealthClaimMisleading {
+        /// `finding_key` of the companion `coverage_degraded` finding.
+        coverage_degraded_ref: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CoverageDegradationExport {
+    /// Small extensible vocabulary: `intake_loss`, `sampling_not_covering`,
+    /// `partial_collection_sustained`, etc.
+    pub kind: String,
+    pub metric: String,
+    pub current: Option<f64>,
+    pub threshold: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CoverageRecoveryExport {
+    /// `active` | `candidate` | `satisfied`. Producer-driven.
+    pub state: String,
+    pub metric: String,
+    /// `lt` | `gt` | `le` | `ge` | `eq`.
+    pub comparator: String,
+    pub threshold: f64,
+    pub sustained_for_s: i64,
+    /// When the producer first observed criteria passing (RFC3339 UTC).
+    /// `None` while `state == active`.
+    pub evidence_since: Option<String>,
+    /// When the sustained-for horizon was met (RFC3339 UTC).
+    /// `None` until `state == satisfied`.
+    pub satisfied_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -332,7 +382,11 @@ pub fn export_findings_from_conn(
                 visibility_state, finding_class, rule_hash, stability,
                 failure_class, service_impact, action_bias, synopsis, why_care,
                 basis_state, basis_source_id, basis_witness_id,
-                last_basis_generation, basis_state_at
+                last_basis_generation, basis_state_at,
+                degradation_kind, degradation_metric, degradation_value, degradation_threshold,
+                recovery_state, recovery_metric, recovery_comparator, recovery_threshold,
+                recovery_sustained_for_s, recovery_evidence_since, recovery_satisfied_at,
+                coverage_degraded_ref
          FROM warning_state{} ORDER BY host, kind, subject",
         where_clause
     );
@@ -369,6 +423,18 @@ pub fn export_findings_from_conn(
             basis_witness_id: row.get(24)?,
             last_basis_generation: row.get(25)?,
             basis_state_at: row.get(26)?,
+            degradation_kind: row.get(27)?,
+            degradation_metric: row.get(28)?,
+            degradation_value: row.get(29)?,
+            degradation_threshold: row.get(30)?,
+            recovery_state: row.get(31)?,
+            recovery_metric: row.get(32)?,
+            recovery_comparator: row.get(33)?,
+            recovery_threshold: row.get(34)?,
+            recovery_sustained_for_s: row.get(35)?,
+            recovery_evidence_since: row.get(36)?,
+            recovery_satisfied_at: row.get(37)?,
+            coverage_degraded_ref: row.get(38)?,
         })
     })?;
 
@@ -406,6 +472,33 @@ pub fn export_findings_from_conn(
         let condition_state =
             derive_condition_state(&r.visibility_state, r.consecutive_gens, r.absent_gens)
                 .to_string();
+
+        // COVERAGE_HONESTY_GAP V1: project envelope columns onto wire shape.
+        // Discriminator: `coverage_degraded_ref` populated → HealthClaimMisleading;
+        // `degradation_kind` populated → Degraded; otherwise None.
+        let coverage = match (r.coverage_degraded_ref.as_deref(), r.degradation_kind.as_deref()) {
+            (Some(cdref), _) => Some(CoverageEnvelopeExport::HealthClaimMisleading {
+                coverage_degraded_ref: cdref.to_string(),
+            }),
+            (None, Some(dkind)) => Some(CoverageEnvelopeExport::Degraded {
+                degradation: CoverageDegradationExport {
+                    kind: dkind.to_string(),
+                    metric: r.degradation_metric.clone().unwrap_or_default(),
+                    current: r.degradation_value,
+                    threshold: r.degradation_threshold,
+                },
+                recovery: CoverageRecoveryExport {
+                    state: r.recovery_state.clone().unwrap_or_default(),
+                    metric: r.recovery_metric.clone().unwrap_or_default(),
+                    comparator: r.recovery_comparator.clone().unwrap_or_default(),
+                    threshold: r.recovery_threshold.unwrap_or(0.0),
+                    sustained_for_s: r.recovery_sustained_for_s.unwrap_or(0),
+                    evidence_since: r.recovery_evidence_since.clone(),
+                    satisfied_at: r.recovery_satisfied_at.clone(),
+                },
+            }),
+            (None, None) => None,
+        };
 
         snapshots.push(FindingSnapshot {
             schema: SCHEMA_ID,
@@ -450,6 +543,7 @@ pub fn export_findings_from_conn(
                 last_basis_generation: r.last_basis_generation,
                 state_at: r.basis_state_at,
             },
+            coverage,
         });
     }
 
@@ -485,6 +579,19 @@ struct WarningStateRow {
     basis_witness_id: Option<String>,
     last_basis_generation: Option<i64>,
     basis_state_at: Option<String>,
+    // COVERAGE_HONESTY_GAP V1 envelope columns. NULL on every other kind.
+    degradation_kind: Option<String>,
+    degradation_metric: Option<String>,
+    degradation_value: Option<f64>,
+    degradation_threshold: Option<f64>,
+    recovery_state: Option<String>,
+    recovery_metric: Option<String>,
+    recovery_comparator: Option<String>,
+    recovery_threshold: Option<f64>,
+    recovery_sustained_for_s: Option<i64>,
+    recovery_evidence_since: Option<String>,
+    recovery_satisfied_at: Option<String>,
+    coverage_degraded_ref: Option<String>,
 }
 
 fn parse_finding_key(key: &str) -> anyhow::Result<(String, String, String, String)> {
@@ -1037,6 +1144,208 @@ mod tests {
         assert!(r.trajectory.is_none());
         assert!(r.co_occurrence.is_none());
         assert!(r.resolution.is_none());
+    }
+
+    // ------------------------------------------------------------------
+    // COVERAGE_HONESTY_GAP V1.1 — JSON round-trip
+    //
+    // Verifies that a coverage_degraded finding emitted via the publish
+    // path lands in FindingSnapshot.coverage with the right discriminator
+    // and field values, and that the wire shape survives serde JSON
+    // round-trip.
+    // ------------------------------------------------------------------
+
+    fn coverage_degraded_test_finding(host: &str, subject: &str) -> crate::detect::Finding {
+        use crate::detect::{
+            CoverageDegradedEnvelope, CoverageEnvelope, RecoveryComparator, RecoveryState,
+        };
+        crate::detect::Finding {
+            host: host.into(),
+            kind: "coverage_degraded".into(),
+            subject: subject.into(),
+            domain: "Δs".into(),
+            message: "intake_loss sustained 4d22h".into(),
+            value: Some(0.32),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: crate::detect::StateKind::Degradation,
+            diagnosis: None,
+            basis_source_id: Some(format!("witness@{host}")),
+            basis_witness_id: Some(format!("witness@{host}")),
+            coverage_envelope: Some(CoverageEnvelope::Degraded(CoverageDegradedEnvelope {
+                degradation_kind: "intake_loss".into(),
+                degradation_metric: "drop_frac".into(),
+                degradation_value: Some(0.32),
+                degradation_threshold: Some(0.05),
+                recovery_state: RecoveryState::Active,
+                recovery_metric: "drop_frac".into(),
+                recovery_comparator: RecoveryComparator::Lt,
+                recovery_threshold: 0.05,
+                recovery_sustained_for_s: 86_400,
+                recovery_evidence_since: None,
+                recovery_satisfied_at: None,
+            })),
+        }
+    }
+
+    #[test]
+    fn coverage_degraded_exports_with_envelope() {
+        let mut db = make_db();
+        for g in 1..=2 {
+            ensure_generation(&db, g);
+        }
+        let esc = crate::publish::EscalationConfig::default();
+
+        crate::publish::update_warning_state(
+            &mut db,
+            1,
+            &[coverage_degraded_test_finding("host-1", "driftwatch.jetstream_ingest")],
+            &esc,
+        )
+        .unwrap();
+
+        let snapshots = export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        assert_eq!(snapshots.len(), 1);
+        let cov = snapshots[0].coverage.as_ref().expect("coverage field must be populated");
+        match cov {
+            CoverageEnvelopeExport::Degraded { degradation, recovery } => {
+                assert_eq!(degradation.kind, "intake_loss");
+                assert_eq!(degradation.metric, "drop_frac");
+                assert_eq!(degradation.current, Some(0.32));
+                assert_eq!(degradation.threshold, Some(0.05));
+                assert_eq!(recovery.state, "active");
+                assert_eq!(recovery.metric, "drop_frac");
+                assert_eq!(recovery.comparator, "lt");
+                assert_eq!(recovery.threshold, 0.05);
+                assert_eq!(recovery.sustained_for_s, 86_400);
+                assert!(recovery.evidence_since.is_none());
+                assert!(recovery.satisfied_at.is_none());
+            }
+            _ => panic!("expected Degraded variant, got {cov:?}"),
+        }
+    }
+
+    #[test]
+    fn coverage_envelope_json_round_trip() {
+        // Wire-level: serialize FindingSnapshot to JSON, deserialize back as
+        // serde_json::Value (consumer-side simulation), and confirm the
+        // discriminator and key fields land where consumers will read them.
+        let mut db = make_db();
+        ensure_generation(&db, 1);
+        let esc = crate::publish::EscalationConfig::default();
+
+        crate::publish::update_warning_state(
+            &mut db,
+            1,
+            &[coverage_degraded_test_finding("host-1", "driftwatch.jetstream_ingest")],
+            &esc,
+        )
+        .unwrap();
+
+        let snapshots = export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        assert_eq!(snapshots.len(), 1);
+
+        let json = serde_json::to_string(&snapshots[0]).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        let cov = &back["coverage"];
+        assert_eq!(cov["kind"].as_str(), Some("degraded"));
+        assert_eq!(cov["degradation"]["kind"].as_str(), Some("intake_loss"));
+        assert_eq!(cov["degradation"]["metric"].as_str(), Some("drop_frac"));
+        assert_eq!(cov["degradation"]["current"].as_f64(), Some(0.32));
+        assert_eq!(cov["degradation"]["threshold"].as_f64(), Some(0.05));
+        assert_eq!(cov["recovery"]["state"].as_str(), Some("active"));
+        assert_eq!(cov["recovery"]["comparator"].as_str(), Some("lt"));
+        assert_eq!(cov["recovery"]["sustained_for_s"].as_i64(), Some(86_400));
+        assert!(cov["recovery"]["evidence_since"].is_null());
+        assert!(cov["recovery"]["satisfied_at"].is_null());
+    }
+
+    #[test]
+    fn health_claim_misleading_exports_with_ref_only() {
+        use crate::detect::{CoverageEnvelope, HealthClaimMisleadingEnvelope};
+        let mut db = make_db();
+        ensure_generation(&db, 1);
+        ensure_generation(&db, 2);
+        let esc = crate::publish::EscalationConfig::default();
+
+        // Parent first.
+        crate::publish::update_warning_state(
+            &mut db,
+            1,
+            &[coverage_degraded_test_finding("host-1", "driftwatch.jetstream_ingest")],
+            &esc,
+        )
+        .unwrap();
+        let parent_key = crate::publish::compute_finding_key(
+            "local", "host-1", "coverage_degraded", "driftwatch.jetstream_ingest",
+        );
+
+        // Companion finding referencing the parent.
+        let derived = crate::detect::Finding {
+            host: "host-1".into(),
+            kind: "health_claim_misleading".into(),
+            subject: "driftwatch.jetstream_ingest".into(),
+            domain: "Δs".into(),
+            message: "witness reports status=ok while coverage_degraded is active".into(),
+            value: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: crate::detect::StateKind::Degradation,
+            diagnosis: None,
+            basis_source_id: Some("witness@host-1".into()),
+            basis_witness_id: Some("witness@host-1".into()),
+            coverage_envelope: Some(CoverageEnvelope::HealthClaimMisleading(
+                HealthClaimMisleadingEnvelope { coverage_degraded_ref: parent_key.clone() },
+            )),
+        };
+        crate::publish::update_warning_state(&mut db, 2, &[derived], &esc).unwrap();
+
+        let snapshots = export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        let derived_snapshot = snapshots
+            .iter()
+            .find(|s| s.identity.detector == "health_claim_misleading")
+            .expect("derived finding must export");
+        let cov = derived_snapshot.coverage.as_ref().expect("coverage field must be populated");
+        match cov {
+            CoverageEnvelopeExport::HealthClaimMisleading { coverage_degraded_ref } => {
+                assert_eq!(coverage_degraded_ref, &parent_key);
+            }
+            _ => panic!("expected HealthClaimMisleading variant, got {cov:?}"),
+        }
+
+        // JSON shape: discriminator + ref, no degradation/recovery keys.
+        let json = serde_json::to_string(derived_snapshot).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["coverage"]["kind"].as_str(), Some("health_claim_misleading"));
+        assert_eq!(
+            back["coverage"]["coverage_degraded_ref"].as_str(),
+            Some(parent_key.as_str())
+        );
+        assert!(back["coverage"]["degradation"].is_null());
+        assert!(back["coverage"]["recovery"].is_null());
+    }
+
+    #[test]
+    fn other_findings_omit_coverage_field_in_json() {
+        // Findings without an envelope must serialize with `coverage` absent
+        // (skip_serializing_if = "Option::is_none"). Older consumers ignore
+        // unknown keys; serialization must not emit `null` clutter or
+        // misclassify a normal finding.
+        let db = make_db();
+        ensure_generation(&db, 100);
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 10);
+
+        let snapshots =
+            export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert!(snapshots[0].coverage.is_none());
+
+        let json = serde_json::to_string(&snapshots[0]).unwrap();
+        assert!(
+            !json.contains("\"coverage\""),
+            "coverage key must be absent on non-coverage findings; got: {json}"
+        );
     }
 
     #[test]

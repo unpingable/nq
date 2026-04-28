@@ -1,6 +1,6 @@
 # Gap: `coverage_honesty` — liveness, coverage, and truthfulness are three axes
 
-**Status:** `partial` — V1.0 sub-slice shipped 2026-04-28; JSON export wiring + composition logic pending (see Shipped State)
+**Status:** `partial` — V1.0 + V1.1 shipped 2026-04-28; composition validation pending (see Shipped State)
 **Depends on:** TESTIMONY_DEPENDENCY_GAP for clean producer-silent clearance semantics (a `coverage_degraded` finding whose producer goes silent must be suppressed by ancestor, not auto-cleared)
 **Related:** CANNOT_TESTIFY_STATUS (declared lack of standing — different failure mode), COMPLETENESS_PROPAGATION_GAP (how partial-state propagates downstream — composes), TESTIMONY_DEPENDENCY_GAP (clearance contract: explicit recovery testimony OR ancestor-suppression), SCOPE_AND_WITNESS_MODEL.md §NQ / Night Shift contract (consumer-side discipline that requires this finding shape)
 **Blocks:** Night Shift's ability to refuse acting on degraded-coverage evidence (NS-claude pinned 2026-04-28: will not anticipate a finding shape — consumes what NQ emits, P27 attack surface stays open until NQ surfaces this)
@@ -33,10 +33,26 @@
 
 **Pending:**
 
-- **JSON export round-trip.** `FindingSnapshot` (in `crates/nq-db/src/export.rs`) does not yet carry a `coverage` field. Adding `Option<CoverageEnvelopeExport>` is straightforward and preserves the existing `nq.finding_snapshot.v1` contract (additive). The accompanying round-trip test (the gap doc's V1 acceptance item 4) lands with that change.
-- **Composition logic for `health_claim_misleading`.** Today producers emit it with a `coverage_degraded_ref` and NQ persists; there is no NQ-side check that the ref actually points at an open `coverage_degraded` finding. Spec defers cross-finding composition to V1.1.
+- **Composition logic for `health_claim_misleading`.** Today producers emit it with a `coverage_degraded_ref` and NQ persists; there is no NQ-side check that the ref actually points at an open `coverage_degraded` finding. Spec defers cross-finding composition to a later slice.
 - **One concrete real producer path.** Synthetic test producer is the V1 cash-out per spec; a driftwatch witness adapter (the live forcing case) is its own slice.
 - **Operator surface beyond `nq query`.** Dashboard rendering deferred per spec.
+
+### V1.1 — JSON export wiring (2026-04-28)
+
+**Live:**
+
+- `FindingSnapshot` carries an additive `coverage: Option<CoverageEnvelopeExport>` field. The export contract stays at `nq.finding_snapshot.v1` — older consumers see no change; newer ones can branch on the discriminator. `MIN_SCHEMA_FOR_EXPORT` bumped from 33 to 38 because export now reads the migration 038 columns.
+- `CoverageEnvelopeExport` is a tagged enum (`#[serde(tag = "kind")]`) with two variants:
+  - `Degraded { degradation, recovery }` — degradation envelope (`kind`/`metric`/`current`/`threshold`) plus recovery contract (`state`/`metric`/`comparator`/`threshold`/`sustained_for_s`/`evidence_since`/`satisfied_at`).
+  - `HealthClaimMisleading { coverage_degraded_ref }` — composition reference to the parent finding, no envelope fields.
+- `coverage` is `#[serde(skip_serializing_if = "Option::is_none")]` so non-coverage findings emit JSON without a `coverage` key at all (forward compat for older readers, no `null` clutter).
+- Four new tests in `export::tests`:
+  - `coverage_degraded_exports_with_envelope` — publish → export round-trip preserves all envelope fields
+  - `coverage_envelope_json_round_trip` — wire-shape assertions on the serialized JSON (discriminator, nested degradation/recovery objects)
+  - `health_claim_misleading_exports_with_ref_only` — derived shape carries the parent ref and no envelope
+  - `other_findings_omit_coverage_field_in_json` — non-coverage findings have no `coverage` key in JSON
+
+**Acceptance criterion #4 from V1 (JSON export round-trip test) is now satisfied.**
 
 ## The Problem
 
