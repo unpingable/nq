@@ -2640,6 +2640,61 @@ fn smart_witness_silent_quiet_when_witness_fresh_and_ok() {
 }
 
 #[test]
+fn smart_witness_silent_emits_paired_node_unobservable() {
+    // TESTIMONY_DEPENDENCY_GAP V1.2: when smart_witness_silent fires, NQ
+    // also emits a paired `node_unobservable` finding carrying the canonical
+    // parent shape (node_type=witness, cause_candidate=agent_unreachable,
+    // evidence_finding_key pointing back at the silence finding).
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let dev = scsi_device(
+        "wwn:0x5000ccahealthy",
+        "HEALTHY",
+        Some(true),
+        Some(0),
+        Some(0),
+        &["smart_overall_status", "scsi_error_counters"],
+    );
+    let b = smart_witness_batch_with_status("lil-nas-x", vec![dev], t, "failed");
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+
+    // Both findings emit on the same generation.
+    let silence = find_by_kind(&findings, "smart_witness_silent");
+    let parent = find_by_kind(&findings, "node_unobservable");
+    assert_eq!(silence.len(), 1, "silence finding must fire");
+    assert_eq!(parent.len(), 1, "paired node_unobservable must fire");
+
+    // Aggregation: one parent per witness, identity = (host, witness_id).
+    assert_eq!(parent[0].host, "lil-nas-x");
+    assert_eq!(parent[0].subject, silence[0].subject);
+
+    // Envelope shape.
+    let env = parent[0]
+        .node_unobservable_envelope
+        .as_ref()
+        .expect("node_unobservable_envelope must be populated");
+    assert_eq!(env.node_type.as_str(), "witness");
+    assert_eq!(env.cause_candidate.as_str(), "agent_unreachable");
+
+    // evidence_finding_key resolves to the silence finding.
+    let expected_evidence_key = nq_db::publish::compute_finding_key(
+        "local",
+        &silence[0].host,
+        "smart_witness_silent",
+        &silence[0].subject,
+    );
+    assert_eq!(env.evidence_finding_key, expected_evidence_key);
+
+    // Producer reference: paired finding's producer_ref helper points
+    // at the same witness identifier.
+    assert_eq!(parent[0].producer_ref(), Some(silence[0].subject.as_str()));
+}
+
+#[test]
 fn smart_witness_silent_subject_is_witness_id() {
     // Sanity: the finding's subject must be the witness id, not the
     // host name. zfs_witness_silent has the same shape; consumers (Night

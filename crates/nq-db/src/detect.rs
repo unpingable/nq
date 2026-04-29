@@ -359,6 +359,79 @@ pub enum CoverageEnvelope {
     HealthClaimMisleading(HealthClaimMisleadingEnvelope),
 }
 
+/// TESTIMONY_DEPENDENCY_GAP V1 — `node_type` for `node_unobservable` parents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeType {
+    Host,
+    Witness,
+    Transport,
+    Collector,
+}
+
+impl NodeType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Host => "host",
+            Self::Witness => "witness",
+            Self::Transport => "transport",
+            Self::Collector => "collector",
+        }
+    }
+}
+
+/// TESTIMONY_DEPENDENCY_GAP V1 — bounded vocabulary for `node_unobservable`
+/// cause classification. Add on forcing case; no free text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CauseCandidate {
+    /// Producer process not running.
+    AgentStopped,
+    /// Producer running but cannot deliver evidence.
+    AgentUnreachable,
+    /// Host-level loss (network, power, kernel).
+    HostUnreachable,
+    /// Delivery layer between producer and aggregator failed.
+    TransportFailed,
+    /// Aggregator-side collection timed out / errored.
+    CollectorExpired,
+}
+
+impl CauseCandidate {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AgentStopped => "agent_stopped",
+            Self::AgentUnreachable => "agent_unreachable",
+            Self::HostUnreachable => "host_unreachable",
+            Self::TransportFailed => "transport_failed",
+            Self::CollectorExpired => "collector_expired",
+        }
+    }
+}
+
+/// TESTIMONY_DEPENDENCY_GAP V1 — typed envelope on `node_unobservable`
+/// findings. The canonical parent shape: when a witness, host, transport,
+/// or collector loses standing, this carries the cause classification
+/// plus a pointer to the silence-detector evidence that triggered the
+/// promotion.
+///
+/// V1 stores a single evidence finding key (the silence detector that
+/// fired this generation). Multi-evidence cases — e.g. composite parent
+/// findings drawing from multiple silence detectors at once — are
+/// deferred until a forcing case appears. The export wire shape uses a
+/// list from day one (`evidence_finding_keys: Vec<String>`) so
+/// generalizing later does not bump the contract.
+#[derive(Debug, Clone)]
+pub struct NodeUnobservableEnvelope {
+    pub node_type: NodeType,
+    pub cause_candidate: CauseCandidate,
+    /// `finding_key` of the silence-detector finding that triggered this
+    /// node_unobservable promotion. Required in V1.
+    pub evidence_finding_key: String,
+    /// Operator hint: how many descendant findings have lost admissibility
+    /// because this node lost standing. Computed by the publish path at
+    /// emission time when known; left `None` when unresolved.
+    pub suppressed_descendant_count: Option<i64>,
+}
+
 /// A single detector output. Identity = (host, domain, kind, subject).
 #[derive(Debug, Clone)]
 pub struct Finding {
@@ -395,6 +468,32 @@ pub struct Finding {
     /// `coverage_degraded` and `health_claim_misleading` findings; `None`
     /// on every other kind.
     pub coverage_envelope: Option<CoverageEnvelope>,
+    /// TESTIMONY_DEPENDENCY_GAP V1 envelope. Populated only on
+    /// `node_unobservable` findings; `None` on every other kind.
+    pub node_unobservable_envelope: Option<NodeUnobservableEnvelope>,
+}
+
+impl Finding {
+    /// V1 producer reference (TESTIMONY_DEPENDENCY_GAP).
+    ///
+    /// Returns the opaque identifier of whoever emitted this finding. NQ's
+    /// existing `basis_witness_id` and `basis_source_id` columns already
+    /// serve this purpose, so V1 reuses them rather than adding a third
+    /// column with the same content under a new name.
+    ///
+    /// Precedence:
+    /// - V1: `basis_witness_id` (every promoter today is a witness path).
+    /// - Future: fallback to `basis_source_id` for non-witness producer
+    ///   paths (e.g. transport adapters, collectors).
+    ///
+    /// Returns `None` for findings without a tracked producer; under
+    /// existing lifecycle semantics those auto-clear normally.
+    pub fn producer_ref(&self) -> Option<&str> {
+        // Precedence rule above. Today only `basis_witness_id` is consulted;
+        // when a non-witness producer path lands, switch to:
+        //   self.basis_witness_id.as_deref().or_else(|| self.basis_source_id.as_deref())
+        self.basis_witness_id.as_deref()
+    }
 }
 
 /// Configurable thresholds for built-in detectors.
@@ -585,6 +684,7 @@ fn detect_wal_bloat(
                 basis_source_id: None,
                 basis_witness_id: None,
                 coverage_envelope: None,
+                node_unobservable_envelope: None,
             });
         }
     }
@@ -682,6 +782,7 @@ fn detect_pinned_wal(
             basis_source_id: Some(host),
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -745,6 +846,7 @@ fn detect_freelist_bloat(
                 basis_source_id: None,
                 basis_witness_id: None,
                 coverage_envelope: None,
+                node_unobservable_envelope: None,
             });
         }
     }
@@ -821,6 +923,7 @@ fn detect_stale_hosts(
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -872,6 +975,7 @@ fn detect_stale_services(
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -927,6 +1031,7 @@ fn detect_service_status(
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -969,6 +1074,7 @@ fn detect_source_errors(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -1016,6 +1122,7 @@ fn detect_metric_nan(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -1074,6 +1181,7 @@ fn detect_disk_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resu
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -1114,6 +1222,7 @@ fn detect_memory_pressure(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Re
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -1207,6 +1316,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     basis_source_id: None,
                     basis_witness_id: None,
                     coverage_envelope: None,
+                    node_unobservable_envelope: None,
                 });
             }
         }
@@ -1237,6 +1347,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     basis_source_id: None,
                     basis_witness_id: None,
                     coverage_envelope: None,
+                    node_unobservable_envelope: None,
                 });
             }
         }
@@ -1267,6 +1378,7 @@ fn detect_resource_drift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
                     basis_source_id: None,
                     basis_witness_id: None,
                     coverage_envelope: None,
+                    node_unobservable_envelope: None,
                 });
             }
         }
@@ -1340,6 +1452,7 @@ fn detect_service_flap(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Resul
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -1402,6 +1515,7 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
 
@@ -1455,6 +1569,7 @@ fn detect_signal_dropout(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Res
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
 
@@ -1533,6 +1648,7 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                 basis_source_id: None,
                 basis_witness_id: None,
                 coverage_envelope: None,
+                node_unobservable_envelope: None,
             });
         }
 
@@ -1561,6 +1677,7 @@ fn detect_scrape_regime_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow
                 basis_source_id: None,
                 basis_witness_id: None,
                 coverage_envelope: None,
+                node_unobservable_envelope: None,
             });
         }
     }
@@ -1633,6 +1750,7 @@ fn detect_log_silence(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
 
@@ -1721,6 +1839,7 @@ fn detect_error_shift(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
 
@@ -1778,6 +1897,7 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                     basis_source_id: None,
                     basis_witness_id: None,
                     coverage_envelope: None,
+                    node_unobservable_envelope: None,
                 });
             }
             Ok((row_count, rows)) => {
@@ -1827,6 +1947,7 @@ fn run_saved_checks(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<(
                         basis_source_id: None,
                         basis_witness_id: None,
                         coverage_envelope: None,
+                        node_unobservable_envelope: None,
                     });
                 }
             }
@@ -1973,6 +2094,7 @@ fn detect_zfs_pool_degraded(
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -2113,6 +2235,7 @@ fn detect_zfs_vdev_faulted(
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -2260,6 +2383,7 @@ fn detect_zfs_error_count_increased(
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
         let _ = pool; // retained in SQL for clarity; message already references it
     }
@@ -2360,6 +2484,7 @@ fn detect_zfs_scrub_overdue(
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
         let _ = last_completed_at;
     }
@@ -2378,6 +2503,80 @@ fn detect_zfs_scrub_overdue(
 /// The "configured but never reported" case (config says witness is on
 /// but no row has ever existed) is a Phase C addition once witness
 /// expectation is tracked server-side.
+/// TESTIMONY_DEPENDENCY_GAP V1 promoter — paired `node_unobservable` emission.
+///
+/// Whenever a witness-silence detector fires for a witness, push a paired
+/// `node_unobservable` finding carrying the canonical parent shape: typed
+/// `node_type=witness`, bounded `cause_candidate`, and an `evidence_finding_key`
+/// pointing back to the silence-detector finding that triggered this promotion.
+///
+/// Aggregation: identity is `(host, kind="node_unobservable", subject=witness_id)`.
+/// Witness-silence detectors emit one row per silent witness, so the paired
+/// node_unobservable is naturally one-per-witness — never fans out per
+/// descendant.
+///
+/// V1 cause classification: both `witness_status='failed'` and "received_age
+/// past threshold" map to `AgentUnreachable` (running but cannot deliver, or
+/// running-or-not-we-don't-know — conservative single value). Finer-grained
+/// classification (`agent_stopped` vs `host_unreachable` vs `transport_failed`)
+/// requires out-of-band evidence we don't have today.
+fn push_paired_node_unobservable(
+    out: &mut Vec<Finding>,
+    host: &str,
+    witness_id: &str,
+    silence_kind: &str,
+    silence_synopsis: &str,
+) {
+    let evidence_key =
+        crate::publish::compute_finding_key("local", host, silence_kind, witness_id);
+    let message = format!(
+        "node {witness_id} (witness) lost standing — testimony unavailable from this producer"
+    );
+    out.push(Finding {
+        host: host.to_string(),
+        domain: "Δo".into(),
+        kind: "node_unobservable".into(),
+        subject: witness_id.to_string(),
+        message,
+        value: None,
+        finding_class: "meta".into(),
+        rule_hash: None,
+        state_kind: StateKind::Degradation,
+        diagnosis: Some(FindingDiagnosis {
+            failure_class: FailureClass::Silence,
+            service_impact: ServiceImpact::NoneCurrent,
+            action_bias: ActionBias::InvestigateNow,
+            synopsis: format!(
+                "Witness {witness_id} on {host} has lost standing to testify. \
+                 Findings produced by this witness are no longer admissible \
+                 evidence; descendants under it inherit suppressed_by_ancestor."
+            ),
+            why_care: format!(
+                "This is a producer observability failure, not a descendant \
+                 service failure. The substrate the witness covered may be \
+                 fine, or may be degrading unobserved. The leaf evidence is \
+                 the silence detector itself ({silence_kind}); rendered here \
+                 because consumers branch on the canonical parent shape \
+                 rather than parsing kind strings. Original silence synopsis: \
+                 {silence_synopsis}"
+            ),
+        }),
+        basis_source_id: Some(witness_id.to_string()),
+        basis_witness_id: Some(witness_id.to_string()),
+        coverage_envelope: None,
+        node_unobservable_envelope: Some(NodeUnobservableEnvelope {
+            node_type: NodeType::Witness,
+            // V1: both failed and stale paths → AgentUnreachable (see fn doc).
+            cause_candidate: CauseCandidate::AgentUnreachable,
+            evidence_finding_key: evidence_key,
+            // V1 leaves descendant-count unresolved; the publish path could
+            // count via a join, but that's a future slice. Operators can
+            // query suppressed_by_ancestor admissibility for the live count.
+            suppressed_descendant_count: None,
+        }),
+    });
+}
+
 fn detect_zfs_witness_silent(
     db: &Connection,
     out: &mut Vec<Finding>,
@@ -2442,8 +2641,9 @@ fn detect_zfs_witness_silent(
         // (witness-current row's timestamp) even though that witness is
         // not currently producing fresh ZFS observations. basis_state = 'live'
         // for this finding is correct — the silence measurement is live.
+        let synopsis_for_promoter = synopsis.clone();
         out.push(Finding {
-            host,
+            host: host.clone(),
             domain: "Δo".into(),
             kind: "zfs_witness_silent".into(),
             subject: witness_id.clone(),
@@ -2460,9 +2660,21 @@ fn detect_zfs_witness_silent(
                 why_care,
             }),
             basis_source_id: Some(witness_id.clone()),
-            basis_witness_id: Some(witness_id),
+            basis_witness_id: Some(witness_id.clone()),
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
+
+        // TESTIMONY_DEPENDENCY_GAP V1 promoter: pair the silence detector
+        // with a canonical node_unobservable parent finding. Carries
+        // node_type=witness + cause_candidate + evidence_finding_key.
+        push_paired_node_unobservable(
+            out,
+            &host,
+            &witness_id,
+            "zfs_witness_silent",
+            &synopsis_for_promoter,
+        );
     }
     Ok(())
 }
@@ -2603,6 +2815,7 @@ fn detect_smart_status_lies(
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -2744,6 +2957,7 @@ fn detect_smart_uncorrected_errors_nonzero(
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -2826,8 +3040,9 @@ fn detect_smart_witness_silent(
         // timestamp) is itself live, so basis_state = 'live' is correct
         // even though the witness is not currently producing fresh SMART
         // observations.
+        let synopsis_for_promoter = synopsis.clone();
         out.push(Finding {
-            host,
+            host: host.clone(),
             domain: "Δo".into(),
             kind: "smart_witness_silent".into(),
             subject: witness_id.clone(),
@@ -2844,9 +3059,19 @@ fn detect_smart_witness_silent(
                 why_care,
             }),
             basis_source_id: Some(witness_id.clone()),
-            basis_witness_id: Some(witness_id),
+            basis_witness_id: Some(witness_id.clone()),
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
+
+        // TESTIMONY_DEPENDENCY_GAP V1 promoter — paired node_unobservable.
+        push_paired_node_unobservable(
+            out,
+            &host,
+            &witness_id,
+            "smart_witness_silent",
+            &synopsis_for_promoter,
+        );
     }
     Ok(())
 }
@@ -2954,6 +3179,7 @@ fn detect_smart_nvme_percentage_used(
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -3061,6 +3287,7 @@ fn detect_smart_nvme_available_spare_low(
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -3190,6 +3417,7 @@ fn detect_smart_nvme_critical_warning_set(
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -3328,6 +3556,7 @@ fn detect_smart_reallocated_sectors_rising(
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())
@@ -3454,6 +3683,7 @@ fn detect_smart_temperature_high(
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
     }
     Ok(())

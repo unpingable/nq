@@ -111,6 +111,32 @@ pub struct FindingSnapshot {
     /// onto the wire so consumers don't have to query two surfaces.
     /// Additive on the v1 contract.
     pub admissibility: AdmissibilityExport,
+    /// TESTIMONY_DEPENDENCY_GAP V1 canonical parent envelope. Populated only
+    /// on `node_unobservable` findings; `None` on every other kind.
+    /// Additive on the v1 contract.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_unobservable: Option<NodeUnobservableExport>,
+}
+
+/// TESTIMONY_DEPENDENCY_GAP V1 wire shape for `node_unobservable` findings.
+///
+/// `evidence_finding_keys` is a list from day one, even though V1 storage
+/// holds exactly one key per finding. Multi-evidence cases (composite
+/// parent findings drawing from multiple silence detectors) are deferred
+/// until forcing case; pluralizing the wire shape now avoids a future
+/// contract bump.
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeUnobservableExport {
+    /// `host` | `witness` | `transport` | `collector`
+    pub node_type: String,
+    /// `agent_stopped` | `agent_unreachable` | `host_unreachable` |
+    /// `transport_failed` | `collector_expired`
+    pub cause_candidate: String,
+    /// Pointers to the silence-detector findings that triggered this
+    /// promotion. V1 always emits length 1; multi-evidence reserved.
+    pub evidence_finding_keys: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suppressed_descendant_count: Option<i64>,
 }
 
 /// TESTIMONY_DEPENDENCY_GAP V1 wire shape — answers "is this finding
@@ -421,7 +447,8 @@ pub fn export_findings_from_conn(
                 recovery_state, recovery_metric, recovery_comparator, recovery_threshold,
                 recovery_sustained_for_s, recovery_evidence_since, recovery_satisfied_at,
                 coverage_degraded_ref,
-                suppression_reason
+                suppression_reason,
+                node_type, cause_candidate, evidence_finding_key, suppressed_descendant_count
          FROM warning_state{} ORDER BY host, kind, subject",
         where_clause
     );
@@ -471,6 +498,10 @@ pub fn export_findings_from_conn(
             recovery_satisfied_at: row.get(37)?,
             coverage_degraded_ref: row.get(38)?,
             suppression_reason: row.get(39)?,
+            node_type: row.get(40)?,
+            cause_candidate: row.get(41)?,
+            evidence_finding_key: row.get(42)?,
+            suppressed_descendant_count: row.get(43)?,
         })
     })?;
 
@@ -513,6 +544,24 @@ pub fn export_findings_from_conn(
         // visibility_state + suppression_reason. ancestor_finding_key is
         // resolved via host-scoped masking lookup (the V1.0/V1.1 model).
         let admissibility = build_admissibility(conn, &r);
+
+        // TESTIMONY_DEPENDENCY V1 node_unobservable envelope — populated
+        // when the row carries the canonical parent shape. Discriminator:
+        // `node_type` is non-NULL exactly when this is a node_unobservable
+        // finding.
+        let node_unobservable = match r.node_type.as_deref() {
+            Some(nt) => Some(NodeUnobservableExport {
+                node_type: nt.to_string(),
+                cause_candidate: r.cause_candidate.clone().unwrap_or_default(),
+                evidence_finding_keys: r
+                    .evidence_finding_key
+                    .clone()
+                    .into_iter()
+                    .collect(),
+                suppressed_descendant_count: r.suppressed_descendant_count,
+            }),
+            None => None,
+        };
 
         // COVERAGE_HONESTY_GAP V1: project envelope columns onto wire shape.
         // Discriminator: `coverage_degraded_ref` populated → HealthClaimMisleading;
@@ -586,6 +635,7 @@ pub fn export_findings_from_conn(
             },
             coverage,
             admissibility,
+            node_unobservable,
         });
     }
 
@@ -636,6 +686,11 @@ struct WarningStateRow {
     coverage_degraded_ref: Option<String>,
     // Suppression metadata (joins admissibility derivation with the row).
     suppression_reason: Option<String>,
+    // TESTIMONY_DEPENDENCY_GAP V1 node_unobservable envelope columns.
+    node_type: Option<String>,
+    cause_candidate: Option<String>,
+    evidence_finding_key: Option<String>,
+    suppressed_descendant_count: Option<i64>,
 }
 
 /// Build the AdmissibilityExport block from a warning_state row plus an
@@ -1311,6 +1366,7 @@ mod tests {
                 recovery_evidence_since: None,
                 recovery_satisfied_at: None,
             })),
+            node_unobservable_envelope: None,
         }
     }
 
@@ -1424,6 +1480,7 @@ mod tests {
             coverage_envelope: Some(CoverageEnvelope::HealthClaimMisleading(
                 HealthClaimMisleadingEnvelope { coverage_degraded_ref: parent_key.clone() },
             )),
+            node_unobservable_envelope: None,
         };
         crate::publish::update_warning_state(&mut db, 2, &[derived], &esc).unwrap();
 
@@ -1500,6 +1557,7 @@ mod tests {
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         }
     }
 
@@ -1683,6 +1741,7 @@ mod tests {
                 recovery_evidence_since: None,
                 recovery_satisfied_at: None,
             })),
+            node_unobservable_envelope: None,
         };
         crate::publish::update_warning_state(&mut db, 1, &[cov], &esc).unwrap();
 
@@ -1741,6 +1800,93 @@ mod tests {
         );
         assert_eq!(back["admissibility"]["state"].as_str(), Some("observable"));
         assert_eq!(back["admissibility"]["reason"].as_str(), Some("none"));
+    }
+
+    #[test]
+    fn node_unobservable_envelope_round_trips_through_export() {
+        // TESTIMONY_DEPENDENCY_GAP V1.2: a node_unobservable finding emits
+        // with a populated NodeUnobservableExport block; the JSON wire
+        // shape carries node_type, cause_candidate, and a list-shaped
+        // evidence_finding_keys (length 1 in V1, plural for forward compat).
+        use crate::detect::{CauseCandidate, NodeType, NodeUnobservableEnvelope};
+
+        let mut db = make_db();
+        ensure_generation(&db, 1);
+        let esc = crate::publish::EscalationConfig::default();
+
+        let evidence_key = crate::publish::compute_finding_key(
+            "local",
+            "host-1",
+            "smart_witness_silent",
+            "smart-witness@host-1",
+        );
+        let parent = crate::detect::Finding {
+            host: "host-1".into(),
+            kind: "node_unobservable".into(),
+            subject: "smart-witness@host-1".into(),
+            domain: "Δo".into(),
+            message: "witness lost standing".into(),
+            value: None,
+            finding_class: "meta".into(),
+            rule_hash: None,
+            state_kind: crate::detect::StateKind::Degradation,
+            diagnosis: None,
+            basis_source_id: Some("smart-witness@host-1".into()),
+            basis_witness_id: Some("smart-witness@host-1".into()),
+            coverage_envelope: None,
+            node_unobservable_envelope: Some(NodeUnobservableEnvelope {
+                node_type: NodeType::Witness,
+                cause_candidate: CauseCandidate::AgentUnreachable,
+                evidence_finding_key: evidence_key.clone(),
+                suppressed_descendant_count: None,
+            }),
+        };
+        crate::publish::update_warning_state(&mut db, 1, &[parent], &esc).unwrap();
+
+        let snaps = export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        let snap = snaps
+            .iter()
+            .find(|s| s.identity.detector == "node_unobservable")
+            .expect("node_unobservable must export");
+
+        let env = snap
+            .node_unobservable
+            .as_ref()
+            .expect("node_unobservable export field must be populated");
+        assert_eq!(env.node_type, "witness");
+        assert_eq!(env.cause_candidate, "agent_unreachable");
+        assert_eq!(env.evidence_finding_keys, vec![evidence_key.clone()]);
+        assert!(env.suppressed_descendant_count.is_none());
+
+        // JSON wire-shape: discriminator + plural list, even with one entry.
+        let json = serde_json::to_string(snap).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["node_unobservable"]["node_type"].as_str(), Some("witness"));
+        assert_eq!(
+            back["node_unobservable"]["cause_candidate"].as_str(),
+            Some("agent_unreachable")
+        );
+        let keys = back["node_unobservable"]["evidence_finding_keys"]
+            .as_array()
+            .expect("evidence_finding_keys must serialize as array");
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].as_str(), Some(evidence_key.as_str()));
+    }
+
+    #[test]
+    fn other_findings_omit_node_unobservable_field_in_json() {
+        let db = make_db();
+        ensure_generation(&db, 100);
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 10);
+
+        let snaps = export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        assert!(snaps[0].node_unobservable.is_none());
+
+        let json = serde_json::to_string(&snaps[0]).unwrap();
+        assert!(
+            !json.contains("\"node_unobservable\""),
+            "node_unobservable key must be absent on non-promoter findings; got: {json}"
+        );
     }
 
     #[test]

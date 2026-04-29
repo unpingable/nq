@@ -423,6 +423,36 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
             ],
         },
 
+        // ── Δo: testimony dependency (TESTIMONY_DEPENDENCY_GAP V1) ──
+        "node_unobservable" => FindingMeta {
+            plain_label: "Node lost standing to testify",
+            operator_label: "Node Unobservable",
+            gloss: "An interior node in the testimony chain — a witness, host, \
+                    transport, or collector — has lost the standing to make \
+                    or update claims. This is a producer observability \
+                    failure, not a descendant service failure: the substrate \
+                    the node covered may be fine, may be degrading, or may \
+                    be down — we cannot currently tell. Findings produced \
+                    by this node inherit suppressed_by_ancestor admissibility \
+                    rather than auto-clearing.",
+            contradiction: "The leaf evidence is the silence detector itself \
+                            (e.g. smart_witness_silent, zfs_witness_silent). \
+                            This finding is the canonical parent shape: same \
+                            event, rendered for consumers who branch on \
+                            (node_type, cause_candidate, evidence_finding_key) \
+                            rather than parsing leaf-detector kind strings. \
+                            Single-alert-per-outage on the operator surface; \
+                            descendants stay visible to forensic consumers as \
+                            suppressed-with-last-state.",
+            next_checks: &[
+                "evidence_finding_key — the silence detector finding that triggered this promotion (e.g. smart_witness_silent on this host)",
+                "cause_candidate — agent_stopped vs agent_unreachable vs host_unreachable (V1 emits agent_unreachable for both failed-witness and stale-witness; finer classification requires out-of-band evidence)",
+                "node_type=witness in V1 (host / transport / collector are reserved for non-witness producer paths)",
+                "suppressed_by_ancestor descendants — query v_admissibility for the live count of findings whose admissibility just flipped",
+                "the producer's deploy / sudoers / process state out-of-band — NQ cannot testify about that here",
+            ],
+        },
+
         // ── Δs: coverage honesty (COVERAGE_HONESTY_GAP V1) ───────
         "coverage_degraded" => FindingMeta {
             plain_label: "Witness coverage materially degraded",

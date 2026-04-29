@@ -926,9 +926,11 @@ fn update_warning_state_inner(
           degradation_kind, degradation_metric, degradation_value, degradation_threshold,
           recovery_state, recovery_metric, recovery_comparator, recovery_threshold,
           recovery_sustained_for_s, recovery_evidence_since, recovery_satisfied_at,
-          coverage_degraded_ref)
+          coverage_degraded_ref,
+          node_type, cause_candidate, evidence_finding_key, suppressed_descendant_count)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9, ?10, ?11, 0, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22,
-                 ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34)
+                 ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34,
+                 ?35, ?36, ?37, ?38)
          ON CONFLICT(host, kind, subject) DO UPDATE SET
              domain = ?4,
              message = ?5,
@@ -984,7 +986,14 @@ fn update_warning_state_inner(
              recovery_sustained_for_s = ?31,
              recovery_evidence_since = ?32,
              recovery_satisfied_at = ?33,
-             coverage_degraded_ref = ?34",
+             coverage_degraded_ref = ?34,
+             -- TESTIMONY_DEPENDENCY_GAP V1: node_unobservable envelope.
+             -- Carried per-row so consumers can branch on the canonical
+             -- parent shape without parsing kind strings.
+             node_type = ?35,
+             cause_candidate = ?36,
+             evidence_finding_key = ?37,
+             suppressed_descendant_count = ?38",
     )?;
 
     let mut insert_obs = tx.prepare_cached(
@@ -996,10 +1005,12 @@ fn update_warning_state_inner(
           degradation_kind, degradation_metric, degradation_value, degradation_threshold,
           recovery_state, recovery_metric, recovery_comparator, recovery_threshold,
           recovery_sustained_for_s, recovery_evidence_since, recovery_satisfied_at,
-          coverage_degraded_ref)
+          coverage_degraded_ref,
+          node_type, cause_candidate, evidence_finding_key, suppressed_descendant_count)
          VALUES (?1, ?2, 'local', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
                  ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
-                 ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32)"
+                 ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32,
+                 ?33, ?34, ?35, ?36)"
     )?;
 
     for f in findings {
@@ -1092,6 +1103,24 @@ fn update_warning_state_inner(
             ),
         };
 
+        // TESTIMONY_DEPENDENCY_GAP V1: project the optional node_unobservable
+        // envelope onto the 4 typed columns. None on every other finding kind.
+        let (
+            cov_node_type,
+            cov_cause_candidate,
+            cov_evidence_finding_key,
+            cov_suppressed_descendant_count,
+        ): (Option<&str>, Option<&str>, Option<&str>, Option<i64>) =
+            match &f.node_unobservable_envelope {
+                None => (None, None, None, None),
+                Some(env) => (
+                    Some(env.node_type.as_str()),
+                    Some(env.cause_candidate.as_str()),
+                    Some(env.evidence_finding_key.as_str()),
+                    env.suppressed_descendant_count,
+                ),
+            };
+
         // Basis lifecycle (EVIDENCE_RETIREMENT_GAP V1):
         //   basis_source_id present → basis_state = 'live', last_basis_generation
         //                              and basis_state_at carry real values.
@@ -1137,6 +1166,10 @@ fn update_warning_state_inner(
             cov_recovery_evidence_since,
             cov_recovery_satisfied_at,
             cov_coverage_degraded_ref,
+            cov_node_type,
+            cov_cause_candidate,
+            cov_evidence_finding_key,
+            cov_suppressed_descendant_count,
         ])?;
 
         upsert.execute(rusqlite::params![
@@ -1174,6 +1207,10 @@ fn update_warning_state_inner(
             cov_recovery_evidence_since,
             cov_recovery_satisfied_at,
             cov_coverage_degraded_ref,
+            cov_node_type,
+            cov_cause_candidate,
+            cov_evidence_finding_key,
+            cov_suppressed_descendant_count,
         ])?;
     }
     drop(upsert);
@@ -1792,6 +1829,7 @@ mod tests {
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         }
     }
 
@@ -2817,6 +2855,7 @@ mod tests {
                 recovery_evidence_since: None,
                 recovery_satisfied_at: None,
             })),
+            node_unobservable_envelope: None,
         }
     }
 
@@ -2998,6 +3037,7 @@ mod tests {
             coverage_envelope: Some(CoverageEnvelope::HealthClaimMisleading(
                 HealthClaimMisleadingEnvelope { coverage_degraded_ref: parent_key.clone() },
             )),
+            node_unobservable_envelope: None,
         };
         update_warning_state(&mut db, 2, &[derived], &esc).unwrap();
 
@@ -3012,6 +3052,120 @@ mod tests {
         assert_eq!(degradation_kind, None, "health_claim_misleading does not carry degradation envelope");
         assert_eq!(recovery_state, None, "health_claim_misleading does not carry recovery state");
         assert_eq!(ref_val.as_deref(), Some(parent_key.as_str()));
+    }
+
+    // -----------------------------------------------------------------------
+    // node_unobservable promoter + producer_ref (TESTIMONY_DEPENDENCY_GAP V1.2)
+    // -----------------------------------------------------------------------
+    //
+    // Whenever a witness-silence detector fires, NQ emits a paired
+    // node_unobservable parent finding carrying the canonical envelope
+    // (node_type / cause_candidate / evidence_finding_key). The leaf
+    // silence finding stays as evidence; the parent is the primary
+    // operator-facing alert under the testimony-dependency primitive.
+    //
+    // V1 producer reference: Finding::producer_ref() returns
+    // basis_witness_id (witness-produced findings only); future fallback
+    // to basis_source_id is documented but not implemented.
+
+    #[test]
+    fn finding_producer_ref_returns_basis_witness_id() {
+        // Doctrinal-name helper. V1 returns basis_witness_id; basis_source_id
+        // alone is not sufficient (precedence rule documented in detect.rs).
+        let f = finding("host-1", "smart_status_lies", "/dev/sda", "Δh");
+        assert_eq!(f.producer_ref(), None, "no basis → no producer_ref");
+
+        let f_with_witness = Finding {
+            basis_witness_id: Some("smart-witness@host-1".into()),
+            basis_source_id: Some("smart-witness@host-1".into()),
+            ..finding("host-1", "smart_status_lies", "/dev/sda", "Δh")
+        };
+        assert_eq!(
+            f_with_witness.producer_ref(),
+            Some("smart-witness@host-1")
+        );
+
+        let f_source_only = Finding {
+            basis_witness_id: None,
+            basis_source_id: Some("some-collector".into()),
+            ..finding("host-1", "smart_status_lies", "/dev/sda", "Δh")
+        };
+        assert_eq!(
+            f_source_only.producer_ref(),
+            None,
+            "V1 producer_ref reads basis_witness_id only; basis_source_id fallback is future"
+        );
+    }
+
+    fn node_unobservable_finding(host: &str, witness_id: &str, evidence_kind: &str) -> Finding {
+        use crate::detect::{CauseCandidate, NodeType, NodeUnobservableEnvelope};
+        let evidence_key = compute_finding_key("local", host, evidence_kind, witness_id);
+        Finding {
+            host: host.into(),
+            kind: "node_unobservable".into(),
+            subject: witness_id.into(),
+            domain: "Δo".into(),
+            message: format!("witness {witness_id} lost standing"),
+            value: None,
+            finding_class: "meta".into(),
+            rule_hash: None,
+            state_kind: crate::detect::StateKind::Degradation,
+            diagnosis: None,
+            basis_source_id: Some(witness_id.into()),
+            basis_witness_id: Some(witness_id.into()),
+            coverage_envelope: None,
+            node_unobservable_envelope: Some(NodeUnobservableEnvelope {
+                node_type: NodeType::Witness,
+                cause_candidate: CauseCandidate::AgentUnreachable,
+                evidence_finding_key: evidence_key,
+                suppressed_descendant_count: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn node_unobservable_envelope_round_trips() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            node_unobservable_finding("host-1", "smart-witness@host-1", "smart_witness_silent"),
+        ], &esc).unwrap();
+
+        let row: (String, String, String, Option<i64>) = db.conn.query_row(
+            "SELECT node_type, cause_candidate, evidence_finding_key, suppressed_descendant_count
+             FROM warning_state WHERE kind = 'node_unobservable'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).unwrap();
+        assert_eq!(row.0, "witness");
+        assert_eq!(row.1, "agent_unreachable");
+        let expected_key =
+            compute_finding_key("local", "host-1", "smart_witness_silent", "smart-witness@host-1");
+        assert_eq!(row.2, expected_key);
+        assert_eq!(row.3, None);
+    }
+
+    #[test]
+    fn other_kinds_carry_null_node_unobservable_columns() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+
+        let (nt, cc, ek): (Option<String>, Option<String>, Option<String>) = db.conn.query_row(
+            "SELECT node_type, cause_candidate, evidence_finding_key
+             FROM warning_state WHERE kind = 'disk_pressure'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!(nt, None);
+        assert_eq!(cc, None);
+        assert_eq!(ek, None);
     }
 
     // -----------------------------------------------------------------------
@@ -3175,6 +3329,7 @@ mod tests {
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         }
     }
 
@@ -3380,6 +3535,7 @@ mod tests {
             basis_source_id: None,
             basis_witness_id: None,
             coverage_envelope: None,
+            node_unobservable_envelope: None,
         });
 
         update_warning_state(&mut db, 1, &findings, &esc).unwrap();

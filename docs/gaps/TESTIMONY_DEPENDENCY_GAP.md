@@ -1,6 +1,6 @@
 # Gap: Testimony Dependency and Observability Loss
 
-**Status:** `partial` — V1.0 + V1.1 (admissibility view + JSON wire surface) shipped 2026-04-28; producer_ref + paired `node_unobservable` kind still pending (see Shipped State)
+**Status:** `built, shipped` — V1 acceptance criteria all satisfied as of 2026-04-29 (V1.0 + V1.1 + V1.2). Multi-level ancestry and role-derived severity are explicitly deferred per V1 non-goals; promoting them is post-V1 work.
 **Depends on:** none for spec; V1 implementation depends on existing silence-detector family (parent-state evidence) and on COVERAGE_HONESTY_GAP shape (first consumer)
 **Related:** COVERAGE_HONESTY_GAP (clearance contract — first consumer), SILENCE_UNIFICATION_GAP (silence detectors become parent-node evidence under this primitive, not peer findings), REGISTRY_PROJECTION_GAP (binds role-derived severity once declared roles exist), CANNOT_TESTIFY_STATUS (the leaf admissibility state this primitive promotes through the tree), EVIDENCE_RETIREMENT_GAP (sibling — passive basis decay), OPERATIONAL_INTENT_DECLARATION_GAP (orthogonal axis — declaration changes expectation, ancestry-loss changes standing; both can suppress, distinguished by `suppression_kind`), MAINTENANCE_DECLARATION_GAP (one profile of OPERATIONAL_INTENT_DECLARATION)
 **Blocks:** clean clearance for any producer-dependent finding (producer-silent path); honest subtree behavior when a witness, host, or transport drops; a path out of N independent silence-shaped alerts pretending to be peers
@@ -71,13 +71,42 @@ This closes the rot pocket for the witness-silent path of the COVERAGE_HONESTY c
 
 **Acceptance criteria from V1 §5 ("admissibility view exposes per-finding admissibility resolved through ancestry") and the consumer-contract goal are now satisfied end-to-end — DB view + JSON wire surface.**
 
-**Pending:**
+### V1.2 — Paired `node_unobservable` finding + producer reference (2026-04-29)
 
-- **Schema additions** — `producer_ref` column on `warning_state` and `finding_observations`. V1.0+V1.1 use host-scoped masking which is sufficient for the SMART/ZFS witness case but does not generalize to producers whose substrate is not a host (transports, aggregators, multi-host adapters).
-- **Paired `node_unobservable` finding kind** — silence detectors are still the parent shape on the operator surface. The canonical wire shape (with `node_type`, `cause_candidate`, `subject_role`, `responsibility_class`, `suppressed_descendant_count`) is not yet emitted.
-- **Richer admissibility states** — V1.1 derives only `observable` and `suppressed_by_ancestor`. The other gap-doc states (`degraded`, `unobservable`, `cannot_testify`) are functions of finding kind, coverage envelope, and producer-side state; consumers needing those compose on top of v_admissibility today. Promoting them into the view is a future slice.
-- **Multi-level ancestry** — V1.0 is one level (silence detector → descendants on same host). Hosts → witnesses → findings remains deferred.
-- **Role-derived severity** — reserved field shape only; binding to declared roles waits for REGISTRY_PROJECTION.
+**Live:**
+
+- Migration 040 adds 4 typed columns to both `warning_state` and `finding_observations`:
+  - `node_type` — `host | witness | transport | collector` (CHECK constraint)
+  - `cause_candidate` — `agent_stopped | agent_unreachable | host_unreachable | transport_failed | collector_expired` (CHECK constraint)
+  - `evidence_finding_key` — pointer to the silence-detector finding that triggered this promotion
+  - `suppressed_descendant_count` — operator hint
+  - `subject_role` and `responsibility_class` are explicitly **not** added in V1.2; they wait for REGISTRY_PROJECTION binding per the gap's non-goals.
+- `v_warnings` recreated to expose every envelope field.
+- `node_unobservable` finding kind in the vocabulary with a `finding_meta` entry pinning the operator copy: this is a producer observability failure, not a descendant service failure. Distinguishes itself from leaf silence detectors (which become evidence inputs).
+- Type machinery in `nq-db::detect`: `NodeType` enum, `CauseCandidate` enum, `NodeUnobservableEnvelope` struct, plus `node_unobservable_envelope: Option<NodeUnobservableEnvelope>` field on `Finding`.
+- **Producer reference (`producer_ref`)**: implemented as a doctrinal-name helper `Finding::producer_ref()` rather than a redundant DB column. Maps to `basis_witness_id` (every V1 promoter today is a witness path). Future fallback to `basis_source_id` for non-witness producer paths is documented in the helper's doc comment but not implemented.
+- **Promoter**: both `detect_smart_witness_silent` and `detect_zfs_witness_silent` now emit a paired `node_unobservable` parent finding via the shared `push_paired_node_unobservable` helper. Aggregation: identity is `(host, kind="node_unobservable", subject=witness_id)` — exactly one parent per silent witness per generation, never fanning out per descendant.
+- **V1 cause classification**: both `witness_status='failed'` and "received_age past threshold" map to `agent_unreachable` (running but cannot deliver, or running-or-not-we-don't-know — conservative single value). Finer-grained classification requires out-of-band evidence we don't have today.
+- **Wire shape**: `FindingSnapshot.node_unobservable: Option<NodeUnobservableExport>` (additive, contract stays v1). `evidence_finding_keys` is plural-from-day-one (`Vec<String>` length 1 in V1) so multi-evidence cases generalize without a contract bump.
+- Six new tests:
+  - `finding_producer_ref_returns_basis_witness_id` (publish) — pins the V1 precedence rule
+  - `node_unobservable_envelope_round_trips` (publish) — DB round-trip
+  - `other_kinds_carry_null_node_unobservable_columns` (publish) — non-promoter findings have NULL on every envelope column
+  - `smart_witness_silent_emits_paired_node_unobservable` (detector_fixtures, integration) — exercises the full promoter path: SMART witness fixture → both findings emit, evidence_finding_key resolves correctly, `producer_ref()` matches
+  - `node_unobservable_envelope_round_trips_through_export` (export) — JSON wire shape, plural list, discriminator
+  - `other_findings_omit_node_unobservable_field_in_json` (export) — `skip_serializing_if` keeps the JSON clean
+
+**Acceptance criteria #1, #2, #3 from V1 (kind in vocabulary, producer ref, promoter pairing) are now satisfied. The gap moves to `built, shipped` for V1.**
+
+**Additive contract caveat**: V1.2 ships `node_unobservable` as a new finding kind appearing in JSON exports. Consumers using strict deserialization (e.g. serde with `deny_unknown_fields`) would see this; consumers using permissive deserialization or `serde_json::Value` walking will not. NS today reads via permissive paths; the schema-version gate `MIN_SCHEMA_FOR_EXPORT = 38` does not bump because we did not add columns to the existing read query in a breaking way.
+
+**Pending (post-V1, deferred per non-goals):**
+
+- **Multi-level ancestry** — V1 is one level (silence detector → descendants on same host). Hosts → witnesses → findings remains deferred until the multi-level forcing case appears.
+- **Role-derived severity** — `subject_role` and `responsibility_class` field shapes reserved in the gap doc but not in V1 schema; both wait for REGISTRY_PROJECTION binding.
+- **Richer admissibility states** — V1.1 derives only `observable` and `suppressed_by_ancestor`. `degraded` / `unobservable` / `cannot_testify` are functions of finding kind, coverage envelope, and producer-side state; consumers compose on top of `v_admissibility` today.
+- **Multi-evidence `node_unobservable`** — V1 stores one `evidence_finding_key`; the export shape is plural so generalization does not bump the contract.
+- **Producer-ref-based masking lookup** — V1 keeps host-scoped masking via `MASKING_RULES` for the SMART/ZFS witness case. Generalizing to producers whose substrate is not a host (transports, aggregators) is a future slice that would consult `producer_ref()` directly.
 
 ## The Problem
 
