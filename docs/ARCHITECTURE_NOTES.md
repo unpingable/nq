@@ -99,6 +99,12 @@ Witness position (`substrate` / `application_internal` / `application_external` 
 
 NQ's `cannot_testify` / `stale_*` / staleness annotations have a stable downstream contract: they trigger re-observation or deferral, never action. Confirmed 2026-04-28 by Night Shift role-pinning ("Don't propose execution on stale evidence"). NQ can lean into producing honest staleness signals knowing consumers will defer/revalidate, not act-on-stale. Maps cleanly to Paper 24 freshness-discipline: an aged observation is informative about the past, not authoritative about the present.
 
+### A witness must report the boundary of its testimony.
+
+Operational rule: do not let a witness imply more than it can testify to. NQ's job is bounded testimony — saying what it observed, what it could not observe, what its claim depends on, what its claim does not imply, and whether its claim is the result of observation or declared expectation. Trustworthiness in the cybernetic sense (admissibility for downstream action) is Governor's adjudication, not NQ's. NQ supplies bounded testimony; Governor decides whether that testimony can bind the proposed transition.
+
+The three V1 design laws below — testimony dependency, declared-absence-vs-lost-observability, and liveness/coverage/truthfulness — are operational sub-rules of this principle. Cross-reference: Governor doctrine carries the heavier admissibility framing ("trustworthiness requires bounded testimony before admissibility"); NQ stays in lane with the witness-bounded variant. Keeps the organs out of each other's pockets.
+
 ### Testimony depends. Standing inherits. Silence at a parent is not health at a leaf.
 
 Findings inherit admissibility through the testimony chain that produced them. A finding produced by a witness inherits the witness's standing; the witness's standing inherits the host's. When an interior node (host, witness, transport, collector) loses observability, descendants do not become healthy and do not duplicate the parent's failure into N peer alarms — they transition to `suppressed_by_ancestor`, preserving last-known state with admissibility revoked. Suppression is not clearance. Producer absence is observability loss, not recovery. Codified in `docs/gaps/TESTIMONY_DEPENDENCY_GAP.md`.
