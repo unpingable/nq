@@ -924,7 +924,21 @@ pub fn update_warning_state_with_declarations(
     active_declarations: &[crate::declarations::Declaration],
 ) -> anyhow::Result<()> {
     let tx = db.conn.transaction()?;
-    update_warning_state_inner(&tx, generation_id, findings, escalation)?;
+
+    // COVERAGE_HONESTY V1 composition validation: any health_claim_misleading
+    // whose coverage_degraded_ref doesn't resolve to an open coverage_degraded
+    // parent gets a hygiene companion finding. Runs as a pre-pass so the
+    // synthesized hygiene findings flow through the normal upsert path.
+    let composition_hygiene = validate_coverage_composition(&tx, findings)?;
+    let combined: Vec<crate::detect::Finding> = if composition_hygiene.is_empty() {
+        findings.to_vec()
+    } else {
+        let mut v = findings.to_vec();
+        v.extend(composition_hygiene);
+        v
+    };
+
+    update_warning_state_inner(&tx, generation_id, &combined, escalation)?;
     apply_declaration_overlay(&tx, generation_id, active_declarations)?;
     tx.commit()?;
     Ok(())
@@ -1501,6 +1515,132 @@ fn compute_severity(
 
 fn fmt_ts(ts: &OffsetDateTime) -> String {
     ts.format(&Rfc3339).expect("timestamp format")
+}
+
+/// COVERAGE_HONESTY V1 composition validator.
+///
+/// `health_claim_misleading` is derived: it cannot stand alone. The schema
+/// requires a populated `coverage_degraded_ref`, but until this validator
+/// existed, NQ persisted whatever ref the producer emitted without checking
+/// that it actually resolved to an open `coverage_degraded` parent.
+///
+/// The check is conceptually "is the parent admissibly present right now?"
+/// For V1 that means: parent exists in `warning_state` with
+/// `visibility_state = 'observed'`, OR the parent is in the current batch
+/// (about to be upserted as observed). Suppression — by ancestor loss or
+/// operator declaration — counts as not-open: a derived finding has no
+/// standing when its parent's standing is revoked. Absent counts as
+/// not-open.
+///
+/// **V1 limitation (post-mask edge case)**: this validator runs *before*
+/// the masking pass and declaration overlay execute on the current batch,
+/// so a parent emitted in this same batch and then masked later in the
+/// same cycle (because its host went stale or its witness silent) will
+/// be treated as open here. In practice, when the witness/host is in
+/// trouble, producers typically don't emit dependent findings — the
+/// masking firing in the same cycle as fresh emission is rare. The
+/// invariant the validator wants to enforce is "parent admissibly
+/// present after suppression for this cycle"; the implementation
+/// approximates that with "parent observed in prior cycle's final
+/// state, or upserted in this batch." Tightening to true post-mask
+/// requires a second pass after `apply_declaration_overlay` and is
+/// deferred until a forcing case shows the gap matters operationally.
+///
+/// Dedupe: one hygiene finding per `(host, bad_ref)` per generation,
+/// even if multiple children share a missing parent ref. Avoids
+/// fan-out noise.
+fn validate_coverage_composition(
+    tx: &rusqlite::Transaction,
+    findings: &[crate::detect::Finding],
+) -> anyhow::Result<Vec<crate::detect::Finding>> {
+    use crate::detect::CoverageEnvelope;
+    use std::collections::{HashMap, HashSet};
+
+    // Set of in-batch coverage_degraded parent keys. _inner will upsert
+    // these as observed; treat as open for this cycle.
+    let in_batch: HashSet<String> = findings
+        .iter()
+        .filter(|f| f.kind == "coverage_degraded")
+        .map(|f| compute_finding_key("local", &f.host, &f.kind, &f.subject))
+        .collect();
+
+    // Set of currently-open coverage_degraded parents in warning_state.
+    // visibility_state='observed' means post-mask state from prior cycle —
+    // i.e. parent is admissibly present, not suppressed by ancestor loss
+    // or declaration.
+    let mut open_in_state: HashSet<String> = HashSet::new();
+    {
+        let mut stmt = tx.prepare(
+            "SELECT host, kind, subject FROM warning_state
+              WHERE kind = 'coverage_degraded' AND visibility_state = 'observed'",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (host, kind, subject) = row?;
+            open_in_state.insert(compute_finding_key("local", &host, &kind, &subject));
+        }
+    }
+
+    // Walk health_claim_misleading findings, dedupe orphans by (host, ref).
+    // Map value records the first child finding_key encountered for the
+    // pair so the hygiene finding can carry the child reference per
+    // chatty's tightening ("orphan relative to what?").
+    let mut orphans: HashMap<(String, String), String> = HashMap::new();
+    for f in findings {
+        if f.kind != "health_claim_misleading" {
+            continue;
+        }
+        let parent_ref = match &f.coverage_envelope {
+            Some(CoverageEnvelope::HealthClaimMisleading(env)) => env.coverage_degraded_ref.clone(),
+            _ => continue,
+        };
+        if in_batch.contains(&parent_ref) || open_in_state.contains(&parent_ref) {
+            continue;
+        }
+        let child_key = compute_finding_key("local", &f.host, &f.kind, &f.subject);
+        orphans
+            .entry((f.host.clone(), parent_ref))
+            .or_insert(child_key);
+    }
+
+    Ok(orphans
+        .into_iter()
+        .map(|((host, bad_ref), child_key)| orphan_hygiene_finding(host, bad_ref, child_key))
+        .collect())
+}
+
+fn orphan_hygiene_finding(host: String, bad_ref: String, child_key: String) -> crate::detect::Finding {
+    use crate::detect::{
+        ActionBias, FailureClass, Finding, FindingDiagnosis, ServiceImpact, StateKind,
+    };
+    Finding {
+        host,
+        domain: "Δs".into(),
+        kind: "health_claim_misleading_orphan_ref".into(),
+        subject: bad_ref,
+        message: format!("child: {child_key}"),
+        value: None,
+        finding_class: "meta".into(),
+        rule_hash: None,
+        state_kind: StateKind::Informational,
+        diagnosis: Some(FindingDiagnosis {
+            failure_class: FailureClass::Drift,
+            service_impact: ServiceImpact::NoneCurrent,
+            action_bias: ActionBias::InvestigateBusinessHours,
+            synopsis: "health_claim_misleading references missing or non-observed coverage_degraded parent.".into(),
+            why_care: "Derived finding has no admissible parent — either the producer is stale, or the parent was cleared/suppressed without the child being retracted.".into(),
+        }),
+        basis_source_id: None,
+        basis_witness_id: None,
+        coverage_envelope: None,
+        node_unobservable_envelope: None,
+    }
 }
 
 /// Operator-declaration suppression overlay.

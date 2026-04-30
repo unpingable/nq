@@ -1,6 +1,6 @@
 # Gap: `coverage_honesty` — liveness, coverage, and truthfulness are three axes
 
-**Status:** `partial` — V1.0 + V1.1 shipped 2026-04-28; composition validation pending (see Shipped State)
+**Status:** `built, shipped (V1)` — V1.0 + V1.1 + V1.2 shipped (V1.0/V1.1 on 2026-04-28; composition validation V1.2 on 2026-04-30). Cross-axis correlation, real-producer adapter, dashboard rendering remain deferred per spec non-goals / V1 boundary.
 **Depends on:** TESTIMONY_DEPENDENCY_GAP for clean producer-silent clearance semantics (a `coverage_degraded` finding whose producer goes silent must be suppressed by ancestor, not auto-cleared)
 **Related:** CANNOT_TESTIFY_STATUS (declared lack of standing — different failure mode), COMPLETENESS_PROPAGATION_GAP (how partial-state propagates downstream — composes), TESTIMONY_DEPENDENCY_GAP (clearance contract: explicit recovery testimony OR ancestor-suppression), SCOPE_AND_WITNESS_MODEL.md §NQ / Night Shift contract (consumer-side discipline that requires this finding shape)
 **Blocks:** Night Shift's ability to refuse acting on degraded-coverage evidence (NS-claude pinned 2026-04-28: will not anticipate a finding shape — consumes what NQ emits, P27 attack surface stays open until NQ surfaces this)
@@ -33,9 +33,28 @@
 
 **Pending:**
 
-- **Composition logic for `health_claim_misleading`.** Today producers emit it with a `coverage_degraded_ref` and NQ persists; there is no NQ-side check that the ref actually points at an open `coverage_degraded` finding. Spec defers cross-finding composition to a later slice.
 - **One concrete real producer path.** Synthetic test producer is the V1 cash-out per spec; a driftwatch witness adapter (the live forcing case) is its own slice.
 - **Operator surface beyond `nq query`.** Dashboard rendering deferred per spec.
+
+### V1.2 — composition validation (2026-04-30)
+
+**Live:**
+
+- `validate_coverage_composition` in `publish.rs` runs as a pre-pass inside `update_warning_state_with_declarations`. For each `health_claim_misleading` finding in the input batch, it checks that the `coverage_degraded_ref` resolves to an open `coverage_degraded` parent — either an in-batch parent about to be upserted, or a prior-cycle parent currently observed in `warning_state`. Suppressed parents (by ancestor loss or operator declaration) and absent parents both count as not-open.
+- Orphan refs produce a `health_claim_misleading_orphan_ref` hygiene finding. Original `health_claim_misleading` is persisted unchanged — producer signal is data, not rejected. Loud companion finding is the V1 posture.
+- Dedupe: one orphan hygiene per `(host, bad_ref)` per generation, even if multiple children share a missing parent ref. Avoids fan-out noise.
+- `finding_meta` entry for `health_claim_misleading_orphan_ref` provides operator-facing label, gloss, contradiction, and next-checks.
+- Six new tests in `tests/coverage_composition.rs`:
+  - `orphan_fires_when_parent_absent`
+  - `orphan_fires_when_parent_suppressed_by_ancestor` — parent suppressed via `stale_host` masking; orphan still fires
+  - `no_orphan_when_parent_in_same_batch` — in-batch parent counts as open
+  - `no_orphan_when_parent_in_warning_state_observed`
+  - `dedupe_two_children_sharing_bad_ref` — two children, one hygiene finding
+  - `no_orphan_for_unrelated_finding_kinds` — wal_bloat etc. don't trigger validation
+
+**V1 limitation (post-mask edge case):** the validator runs *before* the masking pass and declaration overlay execute on the current batch. A parent emitted in this same batch and then masked later in the same cycle (because its host went stale or its witness silent in this same cycle) will be treated as open here. In practice, when the witness/host is in trouble, producers typically don't emit dependent findings in the first place — the masking-firing-in-the-same-cycle-as-fresh-emission pattern is rare. The invariant the validator wants to enforce is "parent admissibly present after suppression for this cycle"; the implementation approximates it. Tightening to true post-mask requires a second pass after `apply_declaration_overlay` and is deferred until a forcing case shows the gap matters operationally.
+
+**Acceptance criterion #6 from V1 (`health_claim_misleading` requires a populated `coverage_degraded_ref`; it cannot stand alone) is now enforced beyond schema-level NOT NULL — the ref must also resolve to an open parent.**
 
 ### V1.1 — JSON export wiring (2026-04-28)
 

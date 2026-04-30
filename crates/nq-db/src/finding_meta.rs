@@ -498,6 +498,30 @@ pub fn finding_meta(kind: &str) -> FindingMeta {
             ],
         },
 
+        "health_claim_misleading_orphan_ref" => FindingMeta {
+            plain_label: "Misleading-claim ref points at no admissible parent",
+            operator_label: "Health Claim Misleading: Orphan Ref",
+            gloss: "A health_claim_misleading finding's coverage_degraded_ref \
+                    does not resolve to an open coverage_degraded parent. \
+                    Either the parent was cleared/suppressed without the child \
+                    being retracted, or the producer is emitting a stale ref. \
+                    Composition validation surfaces this as a hygiene finding \
+                    rather than silently persisting a derived finding with no \
+                    admissible standing.",
+            contradiction: "The producer is asserting that a coverage gap is \
+                            being misleadingly hidden by a green health claim. \
+                            But the coverage_degraded finding it references \
+                            isn't currently admissibly present. The derived \
+                            claim has no parent to compose against.",
+            next_checks: &[
+                "subject — the bad coverage_degraded_ref (the missing/suppressed parent's finding_key)",
+                "message — the child finding_key that referenced the missing parent",
+                "did the parent get cleared in a recent generation? (recovery_state advanced to satisfied, or aged out)",
+                "is the parent currently suppressed_by_ancestor or suppressed_by_declaration? (admissibility revoked)",
+                "is the producer emitting a stale ref it cached from a prior cycle?",
+            ],
+        },
+
         // ── meta ─────────────────────────────────────────────────
         "check_failed" => FindingMeta {
             plain_label: "Check condition detected",
