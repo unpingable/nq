@@ -905,8 +905,27 @@ pub fn update_warning_state(
     findings: &[crate::detect::Finding],
     escalation: &EscalationConfig,
 ) -> anyhow::Result<()> {
+    update_warning_state_with_declarations(db, generation_id, findings, escalation, &[])
+}
+
+/// Same as `update_warning_state`, but also applies the operator-declaration
+/// suppression overlay. Active declarations are loaded and validated by the
+/// caller (`nq_db::declarations::load_declarations`) and passed in here.
+///
+/// Precedence (per ARCHITECTURE_NOTES design law):
+///   operator declaration suppression supersedes ancestor-loss suppression
+///   when both match the same finding. The overlay runs AFTER the existing
+///   MASKING_RULES pass so it has the final word on visibility_state.
+pub fn update_warning_state_with_declarations(
+    db: &mut WriteDb,
+    generation_id: i64,
+    findings: &[crate::detect::Finding],
+    escalation: &EscalationConfig,
+    active_declarations: &[crate::declarations::Declaration],
+) -> anyhow::Result<()> {
     let tx = db.conn.transaction()?;
     update_warning_state_inner(&tx, generation_id, findings, escalation)?;
+    apply_declaration_overlay(&tx, generation_id, active_declarations)?;
     tx.commit()?;
     Ok(())
 }
@@ -1303,7 +1322,9 @@ fn update_warning_state_inner(
         "DELETE FROM warning_state WHERE host = ?1 AND kind = ?2 AND subject = ?3",
     )?;
     let mut suppress = tx.prepare_cached(
-        "UPDATE warning_state SET visibility_state = 'suppressed', suppression_reason = ?5,
+        "UPDATE warning_state SET visibility_state = 'suppressed',
+                                  suppression_kind = 'ancestor_loss',
+                                  suppression_reason = ?5,
                                   suppressed_since_gen = COALESCE(suppressed_since_gen, ?4)
          WHERE host = ?1 AND kind = ?2 AND subject = ?3"
     )?;
@@ -1480,6 +1501,107 @@ fn compute_severity(
 
 fn fmt_ts(ts: &OffsetDateTime) -> String {
     ts.format(&Rfc3339).expect("timestamp format")
+}
+
+/// Operator-declaration suppression overlay.
+///
+/// Implements OPERATIONAL_INTENT_DECLARATION_GAP V1 §"One withdrawal
+/// consumer path". Runs after the existing MASKING_RULES pass so it has
+/// the final word on visibility_state — declaration supersedes
+/// ancestor_loss per the ARCHITECTURE_NOTES precedence law.
+///
+/// V1 wiring is host-subject only (subject_kind='host'). Witness/service/
+/// route/quorum subjects expand here when their masking-pass extensions
+/// ship; the loader rejects unknown subject_kind values today.
+///
+/// V1 mode wiring is `withdrawn` only. `quiesced` declarations are
+/// stored and surfaced by hygiene detectors, but do not suppress
+/// findings — quiescence's consumer path needs work-intake findings
+/// that NQ does not produce yet. Documenting V1 as withdrawal-only is
+/// more honest than wiring quiescence to a meaningless overlay.
+///
+/// `node_unobservable` falls out naturally: it is a regular finding row
+/// keyed on (host, kind, subject), so a withdrawal declaration on the
+/// host suppresses it like any other descendant. The gap design law
+/// "declared absence is not lost observability; lost observability is
+/// not declared absence" is preserved by the precedence rule — the
+/// declaration changes admissibility, but the prior state and the
+/// node_unobservable typed envelope remain on the row for auditability.
+fn apply_declaration_overlay(
+    tx: &rusqlite::Transaction,
+    generation_id: i64,
+    active: &[crate::declarations::Declaration],
+) -> anyhow::Result<()> {
+    use crate::declarations::{Mode, SubjectKind};
+
+    // Pre-pass: clear orphaned declaration suppressions. Any warning_state
+    // row whose suppression_kind='operator_declaration' but whose
+    // suppression_declaration_id is no longer active (revoked, expired, or
+    // removed from the file) gets reverted to 'observed' here. The
+    // re-classification is deliberately simple: clearing to 'observed'
+    // exposes the row to next-generation normal flow, which will either
+    // re-suppress under ancestor_loss, age it out, or keep it observed
+    // depending on the actual current state.
+    {
+        let active_ids: Vec<&str> = active.iter().map(|d| d.declaration_id.as_str()).collect();
+        if active_ids.is_empty() {
+            tx.execute(
+                "UPDATE warning_state
+                    SET visibility_state = 'observed',
+                        suppression_kind = NULL,
+                        suppression_declaration_id = NULL,
+                        suppression_reason = NULL,
+                        suppressed_since_gen = NULL
+                  WHERE suppression_kind = 'operator_declaration'",
+                [],
+            )?;
+        } else {
+            let placeholders = std::iter::repeat("?")
+                .take(active_ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "UPDATE warning_state
+                    SET visibility_state = 'observed',
+                        suppression_kind = NULL,
+                        suppression_declaration_id = NULL,
+                        suppression_reason = NULL,
+                        suppressed_since_gen = NULL
+                  WHERE suppression_kind = 'operator_declaration'
+                    AND suppression_declaration_id NOT IN ({placeholders})"
+            );
+            let params: Vec<&dyn rusqlite::ToSql> = active_ids
+                .iter()
+                .map(|s| s as &dyn rusqlite::ToSql)
+                .collect();
+            tx.execute(&sql, params.as_slice())?;
+        }
+    }
+
+    // Apply pass: for each active withdrawal declaration on a host,
+    // suppress every warning_state row for that host. This includes
+    // node_unobservable parents — the declaration says "we know this
+    // host is absent and that is expected," so its parent finding
+    // should also be suppressed.
+    let mut apply = tx.prepare_cached(
+        "UPDATE warning_state
+            SET visibility_state = 'suppressed',
+                suppression_kind = 'operator_declaration',
+                suppression_declaration_id = ?1,
+                suppression_reason = NULL,
+                suppressed_since_gen = COALESCE(suppressed_since_gen, ?2)
+          WHERE host = ?3",
+    )?;
+    for d in active {
+        if !matches!(d.subject_kind, SubjectKind::Host) {
+            continue;
+        }
+        if !matches!(d.mode, Mode::Withdrawn) {
+            continue;
+        }
+        apply.execute(rusqlite::params![&d.declaration_id, generation_id, &d.subject_id])?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

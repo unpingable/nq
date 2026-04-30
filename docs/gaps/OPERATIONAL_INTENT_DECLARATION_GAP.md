@@ -1,10 +1,35 @@
 # Gap: Operational Intent Declaration — declared expectation as a first-class fact
 
-**Status:** `proposed` — drafted 2026-04-28
+**Status:** `built, shipped (V1)` — drafted 2026-04-28; V1 landed 2026-04-30. Withdrawal-only consumer wiring; quiescence stored but inert pending intake findings. See V1 narrowing notes below.
 **Depends on:** none for spec; implementation composes with TESTIMONY_DEPENDENCY (different axis), MAINTENANCE_DECLARATION (one profile of this primitive), and REGISTRY_PROJECTION (eventual binding for role-derived expectation), but does not block on any of them.
 **Related:** MAINTENANCE_DECLARATION_GAP (becomes a profile of this primitive — `reason_class = maintenance`), TESTIMONY_DEPENDENCY_GAP (orthogonal axis: declaration changes expectation, ancestry-loss changes standing), COVERAGE_HONESTY_GAP (declarations may legitimately change expected coverage population, but cannot hide coverage loss), REGISTRY_PROJECTION_GAP (declarations supply explicit subject IDs and affected expectations until role-derived membership exists), EVIDENCE_RETIREMENT_GAP (sibling — passive basis decay; this is active operator declaration), CANNOT_TESTIFY_STATUS (leaf admissibility state — different mechanism)
 **Blocks:** honest distinction between undeclared absence vs declared withdrawal vs lost observability; correct routing decisions for quiesced subjects (NS / Governor); cross-axis composition with maintenance, registry, and testimony layers
-**Last updated:** 2026-04-28
+**Last updated:** 2026-04-30
+
+## V1 narrowing (what shipped vs what the spec listed)
+
+V1 implementation made several austerity choices to avoid wiring dead semantics. Each is a deliberate "smaller than the spec" landing; expansions happen when the matching consumer surface exists.
+
+- **`subject_kind` enum** — V1 allows `'host'` only at the table CHECK level. Witness/service/route/quorum subjects expand when their masking-pass extensions ship; the loader rejects unknown values. (Spec listed seven; V1 wires one.)
+- **`scope` enum** — V1 allows `'subject_only'` only. `'descendants'` and `'declared_dependency_subtree'` need REGISTRY_PROJECTION to be meaningful. Host-subject + `subject_only` scope expresses whole-host masking cleanly.
+- **`affects` matching** — stored as JSON array of strings; no enum check at table level. V1 matching is coarse (host-subject masking applies whenever the declaration is active, regardless of `affects` content). Richer effect taxonomy is deferred.
+- **`current_admissibility`** — view-derived in `v_admissibility`, not persisted as a column. Persist primitives (`visibility_state`, `suppression_kind`); derive interpretation. Avoids drift from a second-truth column.
+- **Quiescence consumer path** — declared but inert in V1. NQ does not produce work-intake findings yet; `quiesced` declarations are stored, surfaced by hygiene detectors, but produce no suppression effect. Wiring lands when intake-shaped findings exist. Withdrawal path is fully wired.
+- **`declaration_conflicts_with_observed_state`** — narrowed to `withdrawn_subject_active` (the one conflict shape V1 has evidence for: a withdrawn host still producing substrate observations). The grand "conflicts" name is held back until intake-metric data exists. `quiesced_subject_receiving_work` is its quiescence-side counterpart, also deferred.
+- **Ingestion** — file-based JSON only. CLI subcommand (`nq declaration {add|list|revoke}`) is a follow-up. File path is configured at `nq-core::config::DeclarationsConfig::path` and re-read each publish cycle.
+
+### Suppression metadata — schema scope
+
+V1 adds `suppression_kind` and `suppression_declaration_id` to `warning_state` only. The spec listed both `warning_state` and `finding_observations`; the latter is the append-only evidence event log and has no `suppression_reason` to backfill against, so wiring the columns there would be dead semantics. Suppression is a lifecycle decision applied during publish-time consolidation, not a property of an individual emission.
+
+### Hygiene detector set
+
+V1 ships four detectors:
+
+- `declarations_file_unreadable` — file or per-declaration validation failure surfaced as a finding so a broken loader path cannot sit silently.
+- `declaration_expired` — declaration past `expires_at`, not yet revoked.
+- `persistent_declaration_without_review` — durability `persistent` with NULL `review_after`. Emit-only in V1, not load-time blocking.
+- `withdrawn_subject_active` — withdrawn host has finding observations newer than its `declared_at`. Narrow shape per above.
 
 ## The Problem
 

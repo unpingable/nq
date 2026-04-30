@@ -1,4 +1,5 @@
 pub mod connect;
+pub mod declarations;
 pub mod detect;
 pub mod digest;
 pub mod export;
@@ -35,7 +36,14 @@ pub use regime::{
     RecoveryPhase, RegimeBadge, RegimeHint, ResolutionPayload, TrajectoryPayload,
 };
 pub use migrate::{migrate, read_schema_version, CURRENT_SCHEMA_VERSION};
-pub use publish::{publish_batch, update_warning_state, EscalationConfig, PublishResult};
+pub use declarations::{
+    active_declarations, load_declarations, run_hygiene as run_declaration_hygiene, Declaration,
+    Durability, InvalidDeclaration, LoadOutcome, Mode, Scope, SubjectKind,
+};
+pub use publish::{
+    publish_batch, update_warning_state, update_warning_state_with_declarations, EscalationConfig,
+    PublishResult,
+};
 pub use query::{query_read_only, QueryLimits, QueryResult};
 pub use retention::{prune, PruneStats};
 pub use snapshot::create_snapshot;

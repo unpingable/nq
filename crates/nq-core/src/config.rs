@@ -19,6 +19,22 @@ pub struct Config {
     pub notifications: NotificationConfig,
     #[serde(default)]
     pub liveness: LivenessConfig,
+    #[serde(default)]
+    pub declarations: DeclarationsConfig,
+}
+
+/// Configuration for operational intent declarations.
+/// See docs/gaps/OPERATIONAL_INTENT_DECLARATION_GAP.md.
+///
+/// `path` is the JSON file the publish path re-reads each cycle. If
+/// unset, the suppression pass is a no-op. A configured path that
+/// doesn't exist is treated as "no active declarations" silently
+/// (declarations are opt-in). A configured path that fails to parse or
+/// validates a declaration as malformed surfaces as a finding.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DeclarationsConfig {
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// Configuration for writing the liveness artifact after each successful

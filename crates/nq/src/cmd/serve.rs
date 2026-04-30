@@ -3,7 +3,10 @@ use crate::http;
 use crate::pull;
 use nq_core::config::NotificationChannel;
 use nq_core::Config;
-use nq_db::{migrate, open_ro, open_rw, publish_batch, update_warning_state, CURRENT_SCHEMA_VERSION};
+use nq_db::{
+    active_declarations, load_declarations, migrate, open_ro, open_rw, publish_batch,
+    run_declaration_hygiene, update_warning_state_with_declarations, CURRENT_SCHEMA_VERSION,
+};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
@@ -43,14 +46,35 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                     let mut db = pull_db.lock().await;
                     match publish_batch(&mut db, &batch) {
                         Ok(result) => {
+                            // Load operator-declared intent. Outcome is consumed twice:
+                            // once by the hygiene detectors (which surface bad files,
+                            // expired declarations, etc. as findings), and once by the
+                            // suppression overlay (which uses the active subset).
+                            // Single load per cycle — both paths see the same snapshot.
+                            let decl_path = pull_config
+                                .declarations
+                                .path
+                                .as_deref()
+                                .map(std::path::Path::new);
+                            let decl_outcome = load_declarations(decl_path);
+                            let active_decls = active_declarations(&decl_outcome);
+
                             // Run detectors against current state, then update lifecycle
                             match nq_db::detect::run_all(db.conn(), &detector_config) {
-                                Ok(findings) => {
-                                    if let Err(e) = update_warning_state(
+                                Ok(mut findings) => {
+                                    if let Err(e) = run_declaration_hygiene(
+                                        db.conn(),
+                                        &decl_outcome,
+                                        &mut findings,
+                                    ) {
+                                        warn!(err = %e, "declaration hygiene detector failed");
+                                    }
+                                    if let Err(e) = update_warning_state_with_declarations(
                                         &mut db,
                                         result.generation_id,
                                         &findings,
                                         &escalation_config,
+                                        &active_decls,
                                     ) {
                                         error!(err = %e, "warning state update failed");
                                     }

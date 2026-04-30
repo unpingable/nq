@@ -145,10 +145,12 @@ pub struct NodeUnobservableExport {
 /// `state` is the leaf value the consumer reads. `reason` is the doctrine
 /// bucket — lets consumers branch by gap-doc without knowing every state.
 ///
-/// V1 populates two states: `observable` and `suppressed_by_ancestor`.
-/// The remaining states (`suppressed_by_declaration`, `cannot_testify`,
-/// `stale`) are reserved — older consumers see only the V1 set, newer
-/// consumers can branch on additions without a contract bump.
+/// V1 populates three states: `observable`, `suppressed_by_ancestor`
+/// (TESTIMONY_DEPENDENCY V1), and `suppressed_by_declaration`
+/// (OPERATIONAL_INTENT_DECLARATION V1). The remaining states
+/// (`cannot_testify`, `stale`) are reserved — older consumers see only
+/// the V1 set, newer consumers can branch on additions without a
+/// contract bump.
 #[derive(Debug, Clone, Serialize)]
 pub struct AdmissibilityExport {
     /// `observable` | `suppressed_by_ancestor` | `suppressed_by_declaration`
@@ -163,7 +165,7 @@ pub struct AdmissibilityExport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ancestor_finding_key: Option<String>,
     /// Declaration ID when suppression cause is operator declaration.
-    /// Reserved — populated when OPERATIONAL_INTENT_DECLARATION ships.
+    /// Populated for `state = suppressed_by_declaration`; `None` otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub declaration_id: Option<String>,
 }
@@ -448,7 +450,8 @@ pub fn export_findings_from_conn(
                 recovery_sustained_for_s, recovery_evidence_since, recovery_satisfied_at,
                 coverage_degraded_ref,
                 suppression_reason,
-                node_type, cause_candidate, evidence_finding_key, suppressed_descendant_count
+                node_type, cause_candidate, evidence_finding_key, suppressed_descendant_count,
+                suppression_kind, suppression_declaration_id
          FROM warning_state{} ORDER BY host, kind, subject",
         where_clause
     );
@@ -502,6 +505,8 @@ pub fn export_findings_from_conn(
             cause_candidate: row.get(41)?,
             evidence_finding_key: row.get(42)?,
             suppressed_descendant_count: row.get(43)?,
+            suppression_kind: row.get(44)?,
+            suppression_declaration_id: row.get(45)?,
         })
     })?;
 
@@ -691,6 +696,9 @@ struct WarningStateRow {
     cause_candidate: Option<String>,
     evidence_finding_key: Option<String>,
     suppressed_descendant_count: Option<i64>,
+    // OPERATIONAL_INTENT_DECLARATION_GAP V1 suppression discriminator.
+    suppression_kind: Option<String>,
+    suppression_declaration_id: Option<String>,
 }
 
 /// Build the AdmissibilityExport block from a warning_state row plus an
@@ -698,34 +706,52 @@ struct WarningStateRow {
 /// `ancestor_finding_key` resolution which the view cannot compute in
 /// pure SQL (needs URL-encoding).
 fn build_admissibility(conn: &rusqlite::Connection, r: &WarningStateRow) -> AdmissibilityExport {
-    if r.visibility_state == "suppressed" {
-        let reason = match r.suppression_reason.as_deref() {
-            Some("host_unreachable")
-            | Some("source_unreachable")
-            | Some("witness_unobservable") => "testimony_dependency",
-            // Forward-compat: any future suppression_reason that isn't a
-            // recognized testimony-dependency value lands as `lifecycle`
-            // until the gap defining it lands. Consumers branching on
-            // `reason` will see a stable bucket.
-            Some(_) => "lifecycle",
-            None => "lifecycle",
-        };
-        let ancestor = r
-            .suppression_reason
-            .as_deref()
-            .and_then(|sr| resolve_ancestor_finding_key(conn, &r.host, &r.kind, sr));
-        AdmissibilityExport {
-            state: "suppressed_by_ancestor".to_string(),
-            reason: reason.to_string(),
-            ancestor_finding_key: ancestor,
-            declaration_id: None,
-        }
-    } else {
-        AdmissibilityExport {
+    if r.visibility_state != "suppressed" {
+        return AdmissibilityExport {
             state: "observable".to_string(),
             reason: "none".to_string(),
             ancestor_finding_key: None,
             declaration_id: None,
+        };
+    }
+
+    // Fork on suppression_kind. Operator-declaration suppression carries the
+    // declaration_id but no ancestor_finding_key (the suppression cause is
+    // intent, not a parent finding). Ancestor-loss suppression carries the
+    // ancestor finding_key when resolvable.
+    //
+    // Pre-OPERATIONAL_INTENT rows have suppression_kind = NULL but a
+    // populated suppression_reason — treat them as ancestor_loss for
+    // backward-compat with snapshots predating the migration backfill.
+    match r.suppression_kind.as_deref() {
+        Some("operator_declaration") => AdmissibilityExport {
+            state: "suppressed_by_declaration".to_string(),
+            reason: "operational_declaration".to_string(),
+            ancestor_finding_key: None,
+            declaration_id: r.suppression_declaration_id.clone(),
+        },
+        _ => {
+            let reason = match r.suppression_reason.as_deref() {
+                Some("host_unreachable")
+                | Some("source_unreachable")
+                | Some("witness_unobservable") => "testimony_dependency",
+                // Forward-compat: any future suppression_reason that isn't a
+                // recognized testimony-dependency value lands as `lifecycle`
+                // until the gap defining it lands. Consumers branching on
+                // `reason` will see a stable bucket.
+                Some(_) => "lifecycle",
+                None => "lifecycle",
+            };
+            let ancestor = r
+                .suppression_reason
+                .as_deref()
+                .and_then(|sr| resolve_ancestor_finding_key(conn, &r.host, &r.kind, sr));
+            AdmissibilityExport {
+                state: "suppressed_by_ancestor".to_string(),
+                reason: reason.to_string(),
+                ancestor_finding_key: ancestor,
+                declaration_id: None,
+            }
         }
     }
 }
