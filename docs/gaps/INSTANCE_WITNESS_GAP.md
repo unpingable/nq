@@ -44,4 +44,5 @@ Without this spec, multi-instance deployment will drift into either one of two f
 
 - `SENTINEL_LIVENESS_GAP.md` (the prerequisite; `instance_id` originates there)
 - `FEDERATION_GAP.md` (the next scope up — cross-site, not just cross-instance)
+- `FLEET_INDEX_GAP.md` (V1 cash-out of FEDERATION's umbrella; reads per-instance identity from each declared target without merging authority across them)
 - memory: `project_liveness_and_federation.md` (three-gap decomposition: sentinel → instance witness → subject federation)

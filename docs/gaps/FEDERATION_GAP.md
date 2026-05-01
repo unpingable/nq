@@ -40,3 +40,4 @@ Single-site behavior is still being hardened (masking, projection, stability, re
 - memory: `project_federation_shape.md`
 - memory: `project_liveness_and_federation.md`
 - `SENTINEL_LIVENESS_GAP.md`
+- `FLEET_INDEX_GAP.md` — V1 cash-out of this umbrella, scoped to comparison-only (no merged authority). Filed 2026-05-01 when the deployment count crossed three with a fourth (mac-mini, experimental) on the realistic list, on the basis that retrofit cost of letting the comparison layer emerge ad hoc was predictably high.
