@@ -1,6 +1,6 @@
 # Gap: Finding Export — canonical consumer-facing finding state
 
-**Status:** `built, shipped (V1)` — V1 wire surface shipped 2026-04-16 → 2026-05-01 (initial DTO + CLI on 2026-04-16; extended through TESTIMONY_DEPENDENCY V1.1/V1.2, COVERAGE_HONESTY V1.1, OPERATIONAL_INTENT_DECLARATION V1, EVIDENCE_RETIREMENT basis lifecycle, schema preflight). **Acceptance criterion #11 cleared 2026-05-01** with Night Shift V1.2 admissibility enforcement landing in `~/git/scheduler` against the live Linode surface. Acceptance-criteria coverage-map audit remains a follow-up.
+**Status:** `built, shipped (V1)` — V1 wire surface shipped 2026-04-16 → 2026-05-01 (initial DTO + CLI on 2026-04-16; extended through TESTIMONY_DEPENDENCY V1.1/V1.2, COVERAGE_HONESTY V1.1, OPERATIONAL_INTENT_DECLARATION V1, EVIDENCE_RETIREMENT basis lifecycle, schema preflight). **Acceptance criterion #11 cleared 2026-05-01** with Night Shift V1.2 admissibility enforcement landing in `~/git/scheduler` against the live Linode surface. **Acceptance-criteria coverage-map audit completed 2026-05-01** with two test gaps closed inline (idempotence + regime positive case) and #12 (consumer-semantics in `--help`) deferred by design.
 **Depends on:** EVIDENCE_LAYER (finding_observations substrate), REGIME_FEATURES (trajectory / persistence / recovery / co_occurrence / resolution payloads), TESTIMONY_DEPENDENCY (admissibility surface), COVERAGE_HONESTY (typed envelope columns), OPERATIONAL_INTENT_DECLARATION (`suppression_kind` / `declaration_id`), EVIDENCE_RETIREMENT (basis lifecycle), OBSERVER_DISTORTION (consumer-side sibling discipline), DASHBOARD_MODE_SEPARATION (*snapshot is evidence, not current state* invariant extended to a programmatic surface). FINDING_DIAGNOSIS is **not** a hard dependency: the diagnosis envelope columns exist and are read into `Option<FindingDiagnosisExport>`, populated when the typed-nucleus producer work fills them. FINDING_DIAGNOSIS V1 will upgrade the guarantee from "present-when-populated" to "always populated"; export V1 does not block on it.
 **Build phase:** structural — introduces a consumer contract; no new storage
 **Blocks:** Night Shift MVP (`nightshift watchbill run wal-bloat-review`); any external consumer that currently has to reconstruct finding state from raw SQL; future federation aggregators that need a stable inter-NQ wire format
@@ -45,9 +45,33 @@ Night Shift V1.2 landed cross-repo (`~/git/scheduler`) with admissibility enforc
 
 This closes the integration-acceptance bar described in the Forcing Consumer section. NS V1.2's discipline (admissibility is load-bearing, suppressed evidence is refused, not papered over) is the consumer-side mirror of NQ's "evidence, not authority" invariant.
 
-### Pending for V1 closure
+### Acceptance-criteria coverage map (audited 2026-05-01)
 
-- **Acceptance-criteria coverage map.** `crates/nq-db/src/export.rs` carries ~30 `#[test]` functions covering round-trip, special-char keys, filter combinations, regime-null tolerance, suppression gating, and admissibility derivation. An exhaustive map of which of the 12 acceptance criteria each test covers (and which criteria have no explicit coverage) is a worthwhile follow-up but is **not blocking** — the surface is plainly shipped and now consumed.
+`crates/nq-db/src/export.rs` carries 32 `#[test]` functions (30 prior + 2 added during this audit). Mapping the original 12 acceptance criteria to covering tests:
+
+| # | Criterion | Covering test(s) |
+|---|-----------|------------------|
+| 1 | jsonl one-per-line, stable across re-exports | `snapshot_has_schema_and_contract_version`, `unicode_and_special_chars_round_trip`, **`export_is_stable_across_re_exports`** (added) |
+| 2 | `--changed-since` filters by last_seen_gen | `changed_since_filters_by_last_seen_gen` |
+| 3 | `--detector` and `--host` independent + combined | `host_and_detector_filters` |
+| 4 | `--finding-key` returns one or empty (exit 0) | `finding_key_filter_returns_exactly_one`, `finding_key_filter_empty_when_no_match_is_not_error` |
+| 5 | unicode / special-char finding keys round-trip | `unicode_and_special_chars_round_trip`, `parse_finding_key_roundtrips_unicode` |
+| 6 | cleared excluded by default; `--include-cleared` includes | `include_cleared_default_excludes` (covers both sides) |
+| 7 | suppressed excluded by default; `--include-suppressed` includes; masking lineage preserved | `include_suppressed_default_excludes` (both sides), `admissibility_suppressed_by_witness_silence_with_ancestor_key`, `admissibility_suppressed_by_stale_host_resolves_to_stale_host_key` |
+| 8 | `observations.recent` respects `--observations-limit` | `observations_limit_is_respected` |
+| 9 | `regime` populates when features rows exist; null when not | `regime_is_none_when_no_features_computed` (NULL case), **`regime_persistence_populates_when_features_row_exists`** (added) |
+| 10 | `schema` + `contract_version` present in every snapshot | `snapshot_has_schema_and_contract_version` |
+| 11 | Night Shift integration end-to-end | Cleared cross-repo 2026-05-01 (NS V1.2 in `~/git/scheduler`) |
+| 12 | Consumer-semantics in `--help` | **Deferred by design** — see below |
+
+**Gaps closed during the audit:**
+
+- **#1 stable-across-re-exports** — `export_is_stable_across_re_exports` exports twice from the same DB and asserts byte-equality of the snapshots after nulling `export.exported_at` (the only field permitted to vary across calls).
+- **#9 positive case for regime population** — `regime_persistence_populates_when_features_row_exists` inserts a `regime_features` row keyed by `(subject_kind='finding', subject_id=finding_key, feature_type='persistence')` and asserts the export's `regime.persistence` populates with the parsed payload. Pairs with the existing NULL-case test.
+
+**#12 deferred by design.** The consumer-semantics prose lives in the `Export(FindingsExportCmd)` variant doc-comment in `crates/nq/src/cli.rs`, which clap surfaces as the `nq findings export --help` description. Asserting clap's rendered output via integration tests would be brittle (clap version drift, terminal-width sensitivity, multi-line wrapping) for low marginal value when the doc string is plainly visible in source and any drift would be caught at code review. Re-evaluate if a future change makes the prose programmatically derivable.
+
+**Coverage beyond the 12 criteria.** The suite also exercises post-04-16 wire blocks: 4 coverage-envelope tests, 3 admissibility tests + 1 universality test, 2 node_unobservable tests, 2 diagnosis-gating tests, 3 schema-preflight tests (first-contact scar from NS Phase 1 consumer work), 1 composition test (coverage under witness silence — proves the rot-pocket fix), plus identity helpers and robustness (`empty_db_is_not_an_error`, `condition_state_derivation`).
 
 ### V1 boundary additions (deferred beyond the 04-16 V2+ list)
 

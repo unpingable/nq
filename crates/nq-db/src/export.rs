@@ -1998,4 +1998,88 @@ mod tests {
         let v = crate::migrate::read_schema_version(&db.conn).unwrap();
         assert_eq!(v, crate::CURRENT_SCHEMA_VERSION);
     }
+
+    // ------------------------------------------------------------------
+    // Acceptance-criteria gap closures (audit 2026-05-01).
+    //
+    // Coverage-map audit found two soft gaps in the original 12 criteria:
+    //   - #1 stable-across-re-exports (idempotence): no test asserted
+    //     byte-equality of two sequential exports.
+    //   - #9 positive case for `regime` populating: NULL case was
+    //     covered, but no test asserted the field actually fills when a
+    //     regime_features row exists.
+    // Both are cheap to close. (Criterion #12 — --help contract line —
+    // is the third gap, deferred by design: integration-testing clap's
+    // rendered output is brittle for low value when the doc strings
+    // are clearly visible in source.)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn export_is_stable_across_re_exports() {
+        // Criterion #1: same finding_key, same state → same JSON. Only
+        // `export.exported_at` is allowed to vary between calls.
+        let db = make_db();
+        ensure_generation(&db, 100);
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 10);
+
+        let snaps_a = export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        let snaps_b = export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        assert_eq!(snaps_a.len(), 1);
+        assert_eq!(snaps_b.len(), 1);
+
+        let mut a: serde_json::Value = serde_json::to_value(&snaps_a[0]).unwrap();
+        let mut b: serde_json::Value = serde_json::to_value(&snaps_b[0]).unwrap();
+        // exported_at is wall-clock and is the only field permitted to
+        // vary across re-exports of identical state.
+        a["export"]["exported_at"] = serde_json::Value::Null;
+        b["export"]["exported_at"] = serde_json::Value::Null;
+        assert_eq!(
+            a, b,
+            "snapshots must be byte-identical across re-exports except for export.exported_at"
+        );
+    }
+
+    #[test]
+    fn regime_persistence_populates_when_features_row_exists() {
+        // Criterion #9 positive: when regime_features carries a row keyed
+        // by (subject_kind='finding', subject_id=finding_key,
+        // feature_type='persistence'), the export's regime.persistence
+        // option populates with the parsed payload. Pairs with the
+        // existing NULL-case test `regime_is_none_when_no_features_computed`.
+        let db = make_db();
+        ensure_generation(&db, 100);
+        insert_warning_state(&db, "host-1", "wal_bloat", "/db", 10);
+        let fk = crate::publish::compute_finding_key("local", "host-1", "wal_bloat", "/db");
+
+        let payload = serde_json::json!({
+            "streak_length_generations": 50,
+            "present_ratio_window": 0.95,
+            "interruption_count": 2,
+            "window_generations": 50,
+            "observed_generations": 50,
+            "persistence_class": "entrenched",
+        });
+        db.conn
+            .execute(
+                "INSERT INTO regime_features
+                   (generation_id, subject_kind, subject_id, feature_type,
+                    window_start_generation, window_end_generation,
+                    basis_kind, payload_json)
+                 VALUES (?1, 'finding', ?2, 'persistence', 51, 100,
+                         'direct_history', ?3)",
+                rusqlite::params![100i64, &fk, payload.to_string()],
+            )
+            .unwrap();
+
+        let snaps = export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        assert_eq!(snaps.len(), 1);
+        let p = snaps[0]
+            .regime
+            .persistence
+            .as_ref()
+            .expect("persistence payload must populate when regime_features row exists");
+        assert_eq!(p.streak_length_generations, 50);
+        assert_eq!(p.present_ratio_window, 0.95);
+        assert_eq!(p.interruption_count, 2);
+    }
 }
