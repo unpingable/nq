@@ -1,6 +1,6 @@
 # Gap: Finding Export — canonical consumer-facing finding state
 
-**Status:** `built, shipped (V1 surface)` — V1 wire surface shipped 2026-04-16 → 2026-05-01 (initial DTO + CLI on 2026-04-16; extended through TESTIMONY_DEPENDENCY V1.1/V1.2, COVERAGE_HONESTY V1.1, OPERATIONAL_INTENT_DECLARATION V1, EVIDENCE_RETIREMENT basis lifecycle, schema preflight). Cross-repo Night Shift end-to-end validation (acceptance criterion #11, in `~/git/scheduler`) remains pending — the wire is real; the integration acceptance is external.
+**Status:** `built, shipped (V1)` — V1 wire surface shipped 2026-04-16 → 2026-05-01 (initial DTO + CLI on 2026-04-16; extended through TESTIMONY_DEPENDENCY V1.1/V1.2, COVERAGE_HONESTY V1.1, OPERATIONAL_INTENT_DECLARATION V1, EVIDENCE_RETIREMENT basis lifecycle, schema preflight). **Acceptance criterion #11 cleared 2026-05-01** with Night Shift V1.2 admissibility enforcement landing in `~/git/scheduler` against the live Linode surface. Acceptance-criteria coverage-map audit remains a follow-up.
 **Depends on:** EVIDENCE_LAYER (finding_observations substrate), REGIME_FEATURES (trajectory / persistence / recovery / co_occurrence / resolution payloads), TESTIMONY_DEPENDENCY (admissibility surface), COVERAGE_HONESTY (typed envelope columns), OPERATIONAL_INTENT_DECLARATION (`suppression_kind` / `declaration_id`), EVIDENCE_RETIREMENT (basis lifecycle), OBSERVER_DISTORTION (consumer-side sibling discipline), DASHBOARD_MODE_SEPARATION (*snapshot is evidence, not current state* invariant extended to a programmatic surface). FINDING_DIAGNOSIS is **not** a hard dependency: the diagnosis envelope columns exist and are read into `Option<FindingDiagnosisExport>`, populated when the typed-nucleus producer work fills them. FINDING_DIAGNOSIS V1 will upgrade the guarantee from "present-when-populated" to "always populated"; export V1 does not block on it.
 **Build phase:** structural — introduces a consumer contract; no new storage
 **Blocks:** Night Shift MVP (`nightshift watchbill run wal-bloat-review`); any external consumer that currently has to reconstruct finding state from raw SQL; future federation aggregators that need a stable inter-NQ wire format
@@ -32,10 +32,22 @@
 
 `diagnosis: Option<FindingDiagnosisExport>` populates only when `failure_class` and `synopsis` are both non-empty on `warning_state`. The columns exist (FINDING_DIAGNOSIS_GAP envelope) but the typed-nucleus producer work that *fills* them is its own gap. Consumers see honest partial diagnosis until that work lands. FINDING_DIAGNOSIS V1 will flip `Option` to required; export V1 is not blocked on it.
 
+### Acceptance criterion #11 — cleared 2026-05-01
+
+Night Shift V1.2 landed cross-repo (`~/git/scheduler`) with admissibility enforcement at the parse-time boundary. The contract held under first cross-repo consumer pressure:
+
+- `NqInadmissible { finding_key, state, reason }` error variant rejects non-observable findings before they enter the reconcile pipeline.
+- `NqExportDto` requires `admissibility { state, reason }` — load-bearing on the consumer side, not decorative. The doc comment calls this out explicitly.
+- Three integration tests cover the contract end-to-end: an observable finding traverses capture → reconcile → packet against captured live JSONL from the Linode VM; a suppressed finding raises the typed `NqInadmissible` with `state="suppressed_by_ancestor"`, `reason="testimony_dependency"`; the refusal propagates through CLI subprocess pipes.
+- Fixtures: `tests/fixtures/nq-findings-observable.jsonl` is real evidence captured from the live VM. `tests/fixtures/nq-findings-suppressed-derived.jsonl` is an admissibility-only mutation of the live fixture, marked clearly as derived-not-evidence in `tests/fixtures/README.md`.
+- Forward-compat tolerant per V1 contract: NS silently ignores `basis`, `coverage`, `node_unobservable`, `regime`, `diagnosis`, `observations`, `generation`, `export`. The only V1.2 NS-side load-bearing addition is admissibility.
+- **Zero changes to NQ source.** The contract was the wire. NS adapted to the wire.
+
+This closes the integration-acceptance bar described in the Forcing Consumer section. NS V1.2's discipline (admissibility is load-bearing, suppressed evidence is refused, not papered over) is the consumer-side mirror of NQ's "evidence, not authority" invariant.
+
 ### Pending for V1 closure
 
-- **Acceptance criterion #11 — Night Shift integration validated end-to-end.** The wire surface exists; what's not confirmed is whether `nightshift watchbill run wal-bloat-review` (in `~/git/scheduler`) actually runs against this surface without reading any NQ internal table directly. Cross-repo work; sized small but external to this repo.
-- **Acceptance-criteria coverage map.** `crates/nq-db/src/export.rs` carries ~30 `#[test]` functions covering round-trip, special-char keys, filter combinations, regime-null tolerance, suppression gating, and admissibility derivation. An exhaustive map of which of the 12 acceptance criteria each test covers (and which criteria have no explicit coverage) is a worthwhile follow-up but is **not blocking** the status flip — the surface is plainly shipped.
+- **Acceptance-criteria coverage map.** `crates/nq-db/src/export.rs` carries ~30 `#[test]` functions covering round-trip, special-char keys, filter combinations, regime-null tolerance, suppression gating, and admissibility derivation. An exhaustive map of which of the 12 acceptance criteria each test covers (and which criteria have no explicit coverage) is a worthwhile follow-up but is **not blocking** — the surface is plainly shipped and now consumed.
 
 ### V1 boundary additions (deferred beyond the 04-16 V2+ list)
 
