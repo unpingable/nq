@@ -16,6 +16,8 @@ Specs carry one of these statuses in their header. The index below groups accord
 
 ## Index
 
+> The categories below are implicitly altitude-shaped: doctrinal → strategic → operational → tactical. This is a reading lens, not a schema — use altitude as a question, not a column.
+
 ### Evidence and lineage
 - [`EVIDENCE_LAYER_GAP`](EVIDENCE_LAYER_GAP.md) — `built, shipped`. Transactional finding substrate.
 - [`GENERATION_LINEAGE_GAP`](GENERATION_LINEAGE_GAP.md) — `built, shipped`. Per-generation coverage/suppression counts.
