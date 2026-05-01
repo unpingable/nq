@@ -43,9 +43,11 @@ pub struct FindingsCmd {
 pub enum FindingsAction {
     /// Export finding snapshots as canonical JSON.
     ///
-    /// Output is admissible evidence for downstream reconciliation, not
-    /// an authorization token. Consumers must re-check current finding
-    /// state before acting on a stale snapshot.
+    /// Export is evidence, not authority. A `FindingSnapshot` is admissible
+    /// evidence for downstream reconciliation, not an authorization token —
+    /// consumers must reconcile against current state before acting on any
+    /// snapshot. See docs/gaps/FINDING_EXPORT_GAP.md §"Consumer Semantics"
+    /// for the full discipline.
     Export(FindingsExportCmd),
 }
 

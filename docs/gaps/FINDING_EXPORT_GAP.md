@@ -1,10 +1,50 @@
 # Gap: Finding Export — canonical consumer-facing finding state
 
-**Status:** `proposed` — drafted 2026-04-16, forced by Night Shift becoming NQ's first programmatic consumer
-**Depends on:** EVIDENCE_LAYER (finding_observations substrate), FINDING_DIAGNOSIS (typed diagnosis fields), REGIME_FEATURES (trajectory / persistence / recovery payloads), OBSERVER_DISTORTION (the consumer-side sibling discipline for how callers must treat what they receive), DASHBOARD_MODE_SEPARATION (the *snapshot is evidence, not current state* invariant extended to a programmatic surface)
+**Status:** `built, shipped (V1 surface)` — V1 wire surface shipped 2026-04-16 → 2026-05-01 (initial DTO + CLI on 2026-04-16; extended through TESTIMONY_DEPENDENCY V1.1/V1.2, COVERAGE_HONESTY V1.1, OPERATIONAL_INTENT_DECLARATION V1, EVIDENCE_RETIREMENT basis lifecycle, schema preflight). Cross-repo Night Shift end-to-end validation (acceptance criterion #11, in `~/git/scheduler`) remains pending — the wire is real; the integration acceptance is external.
+**Depends on:** EVIDENCE_LAYER (finding_observations substrate), REGIME_FEATURES (trajectory / persistence / recovery / co_occurrence / resolution payloads), TESTIMONY_DEPENDENCY (admissibility surface), COVERAGE_HONESTY (typed envelope columns), OPERATIONAL_INTENT_DECLARATION (`suppression_kind` / `declaration_id`), EVIDENCE_RETIREMENT (basis lifecycle), OBSERVER_DISTORTION (consumer-side sibling discipline), DASHBOARD_MODE_SEPARATION (*snapshot is evidence, not current state* invariant extended to a programmatic surface). FINDING_DIAGNOSIS is **not** a hard dependency: the diagnosis envelope columns exist and are read into `Option<FindingDiagnosisExport>`, populated when the typed-nucleus producer work fills them. FINDING_DIAGNOSIS V1 will upgrade the guarantee from "present-when-populated" to "always populated"; export V1 does not block on it.
 **Build phase:** structural — introduces a consumer contract; no new storage
 **Blocks:** Night Shift MVP (`nightshift watchbill run wal-bloat-review`); any external consumer that currently has to reconstruct finding state from raw SQL; future federation aggregators that need a stable inter-NQ wire format
-**Last updated:** 2026-04-16
+**Last updated:** 2026-05-01
+
+## Shipped State
+
+### V1 wire surface — shipped 2026-04-16 → 2026-05-01
+
+**Live:**
+
+- `crates/nq-db/src/export.rs` — `FindingSnapshot` DTO + component structs + `export_findings(db, filter)` read helper. `Serialize`-only by design (the boundary forces explicit field mapping; consumers do not get `Deserialize` from internal types). Schema constants: `SCHEMA_ID = "nq.finding_snapshot.v1"`, `CONTRACT_VERSION = 1`. (commit `447db96`)
+- `crates/nq/src/cmd/findings.rs` + `crates/nq/src/cli.rs` `FindingsExportCmd` — `nq findings export` subcommand with the spec's flag set (`--format`, `--changed-since-generation`, `--detector`, `--host`, `--finding-key`, `--include-cleared`, `--include-suppressed`, `--observations-limit`). (commit `447db96`)
+- Schema preflight: `MIN_SCHEMA_FOR_EXPORT = 38` aborts with a specific actionable error when the DB schema predates the columns the contract reads, instead of producing an opaque `no such column` failure. (commit `be83e92`, first-contact scar from Night Shift Phase 1 consumer work 2026-04-18.)
+
+**Wire blocks beyond the 04-16 sketch (additive on the v1 contract):**
+
+- `admissibility { state, reason, ancestor_finding_key, declaration_id }` — always present. State values: `observable`, `suppressed_by_ancestor`, `suppressed_by_declaration`. Reserved (not yet emitted): `cannot_testify`, `stale`. Reason buckets: `testimony_dependency`, `operational_declaration`, `lifecycle`, `none`. Forward-compat: any unrecognized `suppression_reason` lands as `lifecycle` until its gap-defining work lands. (TESTIMONY_DEPENDENCY V1.1 `0a17e89` + OPERATIONAL_INTENT V1 `607dc74`.)
+- `coverage: Option<CoverageEnvelopeExport>` — tagged enum: `Degraded { degradation, recovery }` | `HealthClaimMisleading { coverage_degraded_ref }`. `None` on every other finding kind; serialized with `skip_serializing_if`. (COVERAGE_HONESTY V1.1 `768366b`.)
+- `node_unobservable: Option<NodeUnobservableExport>` — populated only on `node_unobservable` findings; carries `node_type`, `cause_candidate`, `evidence_finding_keys` (plural for forward compat — V1 always emits length 1), and `suppressed_descendant_count`. (TESTIMONY_DEPENDENCY V1.2 `fadf76d`.)
+- `basis { state, source_id, witness_id, last_basis_generation, state_at }` — always present. `state = "unknown"` is a truthful value, not missing data; ID/generation fields stay null when basis cannot be proven (no fabrication of provenance or timestamps). See EVIDENCE_RETIREMENT_GAP invariants 1, 5, 7. (commit `62e5005`.)
+- `regime` covers five payloads — `trajectory`, `persistence`, `recovery`, `co_occurrence`, `resolution` — each `Option`. Trajectory + resolution attach only when the detector subject is a recognised host pressure metric (`disk_pressure`, `mem_pressure` today); finding-scoped detectors leave them null rather than misleading consumers with an unrelated metric's regime. The 04-16 sketch was written before `co_occurrence` and `resolution` landed (commits `6f70f69` and `90a941d`, 2026-04-17).
+
+**Lifecycle derivation (intentionally coarse):**
+
+`lifecycle.condition_state` is computed on the fly from `visibility_state + consecutive_gens + absent_gens`. Coarse vocabulary: `suppressed` | `open` | `clear`. The fine `pending_open` / `pending_close` states described in the 04-16 field notes are deferred until the lifecycle machine tracks them as first-class storage — the export will not invent transitions the storage layer doesn't record.
+
+**Diagnosis gating:**
+
+`diagnosis: Option<FindingDiagnosisExport>` populates only when `failure_class` and `synopsis` are both non-empty on `warning_state`. The columns exist (FINDING_DIAGNOSIS_GAP envelope) but the typed-nucleus producer work that *fills* them is its own gap. Consumers see honest partial diagnosis until that work lands. FINDING_DIAGNOSIS V1 will flip `Option` to required; export V1 is not blocked on it.
+
+### Pending for V1 closure
+
+- **Acceptance criterion #11 — Night Shift integration validated end-to-end.** The wire surface exists; what's not confirmed is whether `nightshift watchbill run wal-bloat-review` (in `~/git/scheduler`) actually runs against this surface without reading any NQ internal table directly. Cross-repo work; sized small but external to this repo.
+- **Acceptance-criteria coverage map.** `crates/nq-db/src/export.rs` carries ~30 `#[test]` functions covering round-trip, special-char keys, filter combinations, regime-null tolerance, suppression gating, and admissibility derivation. An exhaustive map of which of the 12 acceptance criteria each test covers (and which criteria have no explicit coverage) is a worthwhile follow-up but is **not blocking** the status flip — the surface is plainly shipped.
+
+### V1 boundary additions (deferred beyond the 04-16 V2+ list)
+
+These are deferrals discovered during ratification, on top of the existing V2+ section below:
+
+- `pending_open` / `pending_close` `condition_state` granularity — until the lifecycle machine tracks these as first-class state.
+- Multi-evidence `node_unobservable` storage extension — the wire shape is plural for forward compat; storage holds exactly one `evidence_finding_key` per finding in V1. Extension awaits a forcing case.
+- Multi-host / cross-scope ancestor resolution — today's `resolve_ancestor_finding_key` is host-scoped and returns `None` honestly when the parent cannot be resolved. Cross-host parent lineage is V2+.
+- Diagnosis-required guarantee — flip from `Option` to required is gated on FINDING_DIAGNOSIS V1.
 
 ## The Problem
 
@@ -76,6 +116,8 @@ Defaults:
 An HTTP surface (`GET /findings` on `nq serve`) mirrors the CLI for remote consumers; same query params. Deferred to v1.1 unless a consumer explicitly needs it for MVP.
 
 ## FindingSnapshot v1 — canonical DTO shape
+
+> **Note (2026-05-01):** The JSON example below is the 2026-04-16 design sketch, preserved for design-narrative continuity. The **canonical shipped shape** is the `FindingSnapshot` struct in `crates/nq-db/src/export.rs` and the `## Shipped State` section above. Differences: shipped DTO additionally carries `admissibility`, `coverage`, `node_unobservable`, `basis`; `regime` extends to `co_occurrence` and `resolution`; `lifecycle` adds `first_seen_at`, `last_seen_at`, `absent_gens`, `stability`. Consumers reading the wire should treat the source struct (and its `#[serde(skip_serializing_if = "Option::is_none")]` annotations) as authoritative.
 
 ```json
 {
