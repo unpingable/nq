@@ -121,6 +121,14 @@ Both are honest forms of "not currently admissible," but operator intent is more
 
 A system can be reachable and running (liveness green), observing materially less than it claims (coverage degraded), and reporting healthy anyway (truthfulness compromised). Forcing case: driftwatch April 2026 self-shedding — `/health=ok` while ~30-40% of jetstream events were dropped at the internal asyncio queue for 4+ days. NQ must not let green liveness collapse into admissible evidence; if coverage is materially degraded, the finding shape carries that consequence rather than expecting downstream to infer it from absence-of-coverage-signal. This is the concrete P27 attack surface (controller-correct, operator-unsound). Codified in `docs/gaps/COVERAGE_HONESTY_GAP.md` (`coverage_degraded` as operational primitive, `health_claim_misleading` as derived).
 
+### If you wait too long to name a surface, implementation will name it badly for you.
+
+"Wait until forced" is a brake on abstraction fever, not a ceiling on preemptive naming. Some architectural surfaces — APIs, schemas, permission boundaries, wire formats, cross-module vocabulary — do not stay absent when un-named. They emerge ad hoc, in the wrong layer, under delivery pressure, with accidental semantics already baked in. By the time a forcing case arrives, the surface is no longer a clean slice; it's been excavated from sediment.
+
+Operational corollary: **ratify when reality forces it *or* when the retrofit penalty of not naming it is predictably high.** Default-future-work and preemptive-naming are two valid triggers, not one. Operations is institutionalized anticipation under imperfect information — the discipline isn't *only* responding to incidents, it is also preventing the dumb ones from being invented.
+
+The brake remains. Don't build features for imaginary pain. But don't conflate *"no current incident"* with *"no current justification"* — that's how clean architectural slices get lost. Worked example: `docs/gaps/FLEET_INDEX_GAP.md`, filed 2026-05-01 ahead of any forcing case, because four NQ deployments was the threshold where letting the comparison surface emerge ad hoc would have produced a "just one little overview page" smear across dashboard code, config shape, and support-tier handling.
+
 ---
 
 ## Latent notes
