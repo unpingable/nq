@@ -1,6 +1,6 @@
 # Gap: Dominance Projection — per-host operational summary
 
-**Status:** built, shipped
+**Status:** partial — substrate + UI shipped; see [docs/FEATURE_HISTORY.md#dominance_projection-v1](../FEATURE_HISTORY.md#dominance_projection-v1) for evidence and known unproven surfaces.
 **Depends on:** GENERALIZED_MASKING_GAP, FINDING_DIAGNOSIS_GAP, STABILITY_AXIS_GAP, GENERATION_LINEAGE_GAP
 **Build phase:** structural — adds the projection layer between truth (warning_state) and presentation (dashboard)
 **Blocks:** notification routing (digests need projected state), federation (remote sites need projected summaries)

@@ -56,7 +56,7 @@ The detailed Shipped State narrative subsections that already exist in some gap 
 - [`FINDING_DIAGNOSIS_GAP`](FINDING_DIAGNOSIS_GAP.md) — `shipped` (see [FEATURE_HISTORY § FINDING_DIAGNOSIS V1](../FEATURE_HISTORY.md#finding_diagnosis-v1)). Typed finding nucleus (FailureClass, ServiceImpact, baseline action bias). Unblocks DOMINANCE_PROJECTION.
 - [`STABILITY_AXIS_GAP`](STABILITY_AXIS_GAP.md) — `specified, ready to build`. Presence-pattern classification.
 - [`REGIME_FEATURES_GAP`](REGIME_FEATURES_GAP.md) — `partial`. Trajectory + persistence live; recovery/co-occurrence/resolution pending.
-- [`DOMINANCE_PROJECTION_GAP`](DOMINANCE_PROJECTION_GAP.md) — `specified, ready to build`. Per-host rollup/elevation, not demotion.
+- [`DOMINANCE_PROJECTION_GAP`](DOMINANCE_PROJECTION_GAP.md) — `partial` (see [FEATURE_HISTORY § DOMINANCE_PROJECTION V1](../FEATURE_HISTORY.md#dominance_projection-v1)). Per-host rollup/elevation, not demotion. Substrate + UI shipped; 4 of 9 acceptance tests + 1 of 3 elevation rules + notification consumer all noted as unproven surfaces.
 
 ### Operator surface
 - [`ALERT_INTERPRETATION_GAP`](ALERT_INTERPRETATION_GAP.md) — `proposed`. Render alerts from findings, not checks.

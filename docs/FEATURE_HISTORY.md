@@ -20,6 +20,35 @@ The chronological order below is newest-first.
 
 ---
 
+## DOMINANCE_PROJECTION V1
+
+**Status:** partial — substrate + producer + UI consumer shipped; elevation rules partial (2 of 3); test coverage partial (5 of 9 acceptance criteria). Notification consumer is **not** a gap — out of V1 scope by spec design (§"Non-Goals").
+
+**Shipped commits:** Pre-2026-05-04. Original V1 work landed before this session; this entry was written by a narrow ratification pass on 2026-05-04 that verified what's actually live.
+
+**Evidence:**
+- Substrate: `crates/nq-db/migrations/029_host_state.sql` creates `v_host_state` view per spec §1 with full ranking by service_impact > action_bias > severity > stability + tiebreak on consecutive_gens.
+- Producer (struct): `crates/nq-db/src/views.rs::HostStateVm` with all spec-§3 fields plus `elevated_action_bias` and `elevation_reason`.
+- Producer (function): `crates/nq-db/src/views.rs::host_states(&db)` queries `v_host_state` and applies elevation pass.
+- Elevation rules implemented (2 of 3 from spec §2): `views.rs:348-358`. Rule 1 — `immediate_risk_count > 0` elevates baseline to InvestigateNow. Rule 2 — `degraded_count >= 2` elevates to InvestigateNow. Both record `elevation_reason`. Spec's Rule 3 (Pressure + Accumulation co-located → elevate Accumulation) is not implemented.
+- UI consumer: `crates/nq/src/http/routes.rs:124` calls `host_states`, render_overview displays the dominant kind + synopsis + elevated/baseline action_bias + subordinate count + suppressed count + elevation reason badge with hover-text. Elevation badge styled distinctly.
+- Tests: 5 covering tests in `crates/nq-db/src/publish.rs`. `projection_single_finding_host` (#1), `projection_dominance_by_service_impact` (#2), `projection_suppressed_excluded_from_dominance` (#4), `projection_subordinate_count_correct` (#8), `projection_hostless_findings_excluded` (#9).
+
+**Known unproven surfaces:**
+- Tests for spec §6 acceptance criteria #3 (dominance by action_bias when impact ties), #5 (host with all findings suppressed), #6 (compound-degradation elevation positive case), #7 (elevation never demotes baseline).
+- Spec §2 elevation Rule 3 (Pressure + Accumulation co-located → elevate Accumulation's action_bias when Pressure is Degraded).
+- Notification consumer for `elevated_action_bias` / `elevation_reason`. **By spec design** (§"Non-Goals"): "Notification routing changes. The projection produces the data; routing consumes it. Separate gap." Not a V1 hole; a deliberate scope boundary.
+
+**Unblocks:**
+- Notification routing work (separate gap — would consume `host_states` to route by elevated posture).
+- Federation summaries (consume per-host projection).
+- API responses that need "what's most important about this host?"
+
+**Field notes:**
+- This entry was written under the new gap-status discipline (`96c4c81`) as the worked example. The scope of "narrow ratification" was deliberately tight: confirm substrate/producer/consumer/tests exist and name what's missing. No new code, no follow-up slice. Closing the 4 missing tests + 1 elevation rule is real V1.x work but is queued, not blocking, and lives in this entry's "Known unproven surfaces" rather than as an open ticket on the gap doc.
+
+---
+
 ## FINDING_DIAGNOSIS V1
 
 **Status:** shipped (2026-05-04 — V1.0 + V1.1 + V1.2 + doc-flip closure)
