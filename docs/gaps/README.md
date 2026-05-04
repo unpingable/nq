@@ -14,6 +14,62 @@ Specs carry one of these statuses in their header. The index below groups accord
 - **`built, shipped`** — fully implemented per acceptance criteria
 - **`stub`** — placeholder spec; exists to pin the boundary for a referenced-but-unwritten system so the hole does not get filled accidentally by nearby code
 
+## Gap status discipline
+
+Gap front-matter is a **claim about the last ratified state**, not a perpetual truth assertion. Status drift is the predictable failure mode — code lands incrementally, consumers change unevenly, and front-matter does not update itself. Three specimens (FINDING_EXPORT, FINDING_DIAGNOSIS, DOMINANCE_PROJECTION) confirmed this in 2026-04 → 2026-05 reconciliation work; the discipline below is the response.
+
+The keeper distinction is **review vs. ratification**:
+
+> **Review is orientation. Ratification is reliance.**
+
+A 5-minute spot-check that the substrate file still exists is *orientation only*. It tells a reader the claim is plausibly accurate but is not evidence-backed closure. Treating orientation as ratification is how triage becomes false authority.
+
+### Front-matter fields
+
+For gaps that have not been verified against code, omit the freshness fields entirely — front-matter status is the historical claim, no current authority asserted.
+
+For gaps that have been **reviewed only** (sweep-style triage, not full reconciliation):
+
+```markdown
+**Last reviewed:** 2026-05-04
+**Review basis:** front-matter + quick code presence check
+**Reliance status:** requires ratification before treating as shipped
+```
+
+For gaps that have been **ratified** (evidence-backed pass with named substrate / producer / consumer / tests):
+
+```markdown
+**Status:** V1 substrate + UI consumer ratified; notification and acceptance coverage unverified
+**Last ratified:** 2026-05-04
+**Ratification basis:**
+  - migration: crates/nq-db/migrations/029_host_state.sql
+  - producer: crates/nq-db/src/views.rs::HostState
+  - consumer: crates/nq/src/http/routes.rs:1279
+  - tests: crates/nq-db/src/publish.rs (integration test set)
+**Known unproven surfaces:**
+  - notification consumer for elevated_action_bias
+  - cross-host elevation rules, deferred per spec §X
+```
+
+Notes on the fields:
+
+- **`Status`** — keep human-readable but specific. Do not say `built, shipped` if any consumer or acceptance surface is unverified. Better: `V1 substrate + UI consumer ratified; notification and acceptance coverage unverified`. The phrase recreates the ambiguity the discipline is built to kill.
+- **`Last ratified`** — the date evidence was checked. If older than ~30 days or the touched surfaces have materially changed, treat the claim as stale for planning purposes (stale for reliance, not necessarily false).
+- **`Ratification basis`** — file paths to substrate / producer / consumer / tests. The claim's evidence trail. Future readers (and future-you) can spot-check it without re-doing the whole pass.
+- **`Known unproven surfaces`** — surfaces *not* covered by the ratification basis. Not necessarily missing work; just not proven. Phrased this way to avoid the small but real "gap doc known gaps" self-parody.
+
+### What this discipline replaces
+
+Before this convention, gap front-matter implied a perpetually-current claim that nothing in the system enforces. Three back-to-back gaps (FINDING_EXPORT, FINDING_DIAGNOSIS, DOMINANCE_PROJECTION) all displayed the same shape — `built, shipped` filed at design time, code landing incrementally over weeks, status never walked back. Each forced a multi-day reconciliation pass that turned up real consumer/test gaps invisible from the front-matter.
+
+The discipline does not remove the need for occasional reconciliation. It removes the *invisibility* of staleness — a future reader can tell at a glance whether to trust the claim or treat it as historical.
+
+### What this discipline is NOT
+
+- **Not a retroactive annotation sweep.** New convention applies prospectively. Cold gaps (specified-not-built, proposed-not-ratified) stay untouched. The bounded one-time exception is to mark currently-claiming-shipped gaps as `last_reviewed` so the future reader knows the claim is not load-bearing — which is an honest no-op, not retroactive evidence.
+- **Not a five-state enum.** A `status_state: substrate_landed | consumer_complete | acceptance_complete | shipped | stale_requires_reaudit` machine would itself rot. The minimum viable signal is freshness (date) + basis (paths) + honest unproven list.
+- **Not a quality gate.** The discipline does not prevent a gap from being merged in any state. It just makes the state legible.
+
 ## Index
 
 > The categories below are implicitly altitude-shaped: doctrinal → strategic → operational → tactical. This is a reading lens, not a schema — use altitude as a question, not a column.

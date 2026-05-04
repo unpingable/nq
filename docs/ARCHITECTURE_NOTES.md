@@ -141,6 +141,16 @@ Operational corollary: state-space language is an orientation lens, not a wire f
 
 NQ is knob-facing, not actuator-facing.
 
+### Gap front-matter describes the last ratified state, not the repo's present state.
+
+A gap doc carries claims, but those claims age. Before relying on a status claim as current, check `last_ratified` and the ratification basis. If the claim is older than ~30 days, or if the touched surfaces have materially changed, treat it as stale for planning purposes until a narrow ratification pass confirms it. The aging rule is not a fake law of physics — a claim can remain *historically accurate* while losing *authority for current planning*. **Stale for reliance, not necessarily false.**
+
+The missing fuse this codifies: **review is orientation, ratification is reliance.** A 5-minute spot check that the substrate file still exists is `last_reviewed` — orientation, not ratification. Evidence-backed closure (substrate + producer + consumer + tests verified at named paths) is `last_ratified`. Conflating the two is how triage becomes false authority with better formatting. The front-matter convention enforced in `docs/gaps/README.md` keeps the vocabulary distinct.
+
+Status drift is the predictable failure mode: code lands incrementally, consumers change unevenly, and front-matter does not update itself. FINDING_EXPORT, FINDING_DIAGNOSIS, and DOMINANCE_PROJECTION all exhibited this pattern during 2026-04 → 2026-05 reconciliation work — three specimens were enough to name the pathology rather than chase ratification per gap forever. The repair is not "ratify everything harder"; it is to mark the freshness of every status claim and let staleness age out honestly.
+
+Operational corollary: do not retroactively annotate every gap doc with the new front-matter fields. The new discipline applies prospectively and to gaps re-ratified going forward; cold gaps stay untouched. Retroactive sweep is exactly the YAML-acne failure mode the altitude / preemptive-naming / knob-facing trio of laws guards against. The bounded exception is a one-time sweep that marks currently-claiming-shipped gaps as `last_reviewed` (orientation only) so a future reader can tell the claim is no longer load-bearing without doing the spot-check themselves.
+
 ---
 
 ## Latent notes
