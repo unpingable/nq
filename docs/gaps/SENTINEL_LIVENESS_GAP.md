@@ -1,10 +1,13 @@
 # Gap: Sentinel Liveness — out-of-band witness for NQ itself
 
-**Status:** built, shipped
+**Status:** built, shipped (2026-04-13 claim — see reliance status)
 **Depends on:** none (orthogonal to the store spine)
 **Build phase:** infrastructure — adds a constitutional boundary between NQ and its own observation
 **Blocks:** `INSTANCE_WITNESS_GAP` (multi-instance registry needs per-instance liveness first), NAS deployment (can't deploy to a second box without knowing when it stops)
 **Last updated:** 2026-04-13
+**Last reviewed:** 2026-05-04
+**Review basis:** front-matter + quick code presence check (`crates/nq-db/src/liveness.rs` module exists; sentinel config wired in `crates/nq-core/src/config.rs`)
+**Reliance status:** requires ratification before treating as shipped — orientation only, see `docs/gaps/README.md` § "Gap status discipline"
 
 ## The Problem
 

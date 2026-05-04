@@ -1,10 +1,13 @@
 # Gap: Generalized Masking — beyond `stale_host`
 
-**Status:** built, shipped
+**Status:** built, shipped (2026-04-13 claim — see reliance status)
 **Depends on:** schema v24 (visibility_state), v26 (lineage)
 **Build phase:** structural prep, follows EVIDENCE_LAYER and GENERATION_LINEAGE
 **Blocks:** `DOMINANCE_PROJECTION_GAP`, `FEDERATION_GAP`
 **Last updated:** 2026-04-13
+**Last reviewed:** 2026-05-04
+**Review basis:** front-matter + quick code presence check (`MASKING_RULES` in `crates/nq-db/src/publish.rs`)
+**Reliance status:** requires ratification before treating as shipped — orientation only, see `docs/gaps/README.md` § "Gap status discipline"
 
 ## The Problem
 
