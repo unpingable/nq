@@ -24,7 +24,7 @@ Specs carry one of these statuses in their header. The index below groups accord
 - [`GENERALIZED_MASKING_GAP`](GENERALIZED_MASKING_GAP.md) — `specified, ready to build`. Multi-reason masking (first-rule-wins compromise).
 
 ### Typed findings and interpretation
-- [`FINDING_DIAGNOSIS_GAP`](FINDING_DIAGNOSIS_GAP.md) — `specified, ready to build`. Typed finding nucleus (FailureClass, ServiceImpact, baseline action bias).
+- [`FINDING_DIAGNOSIS_GAP`](FINDING_DIAGNOSIS_GAP.md) — `built, shipped (V1)`. Typed finding nucleus (FailureClass, ServiceImpact, baseline action bias). V1.0 nucleus + UI consumer + wire export gating shipped 2026-04-13; V1.1 notification consumer migration + V1.2 test discipline closure shipped 2026-05-04. Detector population: 33/33 production kinds. Acceptance §6: 9/9 covered. DOMINANCE_PROJECTION now unblocked.
 - [`STABILITY_AXIS_GAP`](STABILITY_AXIS_GAP.md) — `specified, ready to build`. Presence-pattern classification.
 - [`REGIME_FEATURES_GAP`](REGIME_FEATURES_GAP.md) — `partial`. Trajectory + persistence live; recovery/co-occurrence/resolution pending.
 - [`DOMINANCE_PROJECTION_GAP`](DOMINANCE_PROJECTION_GAP.md) — `specified, ready to build`. Per-host rollup/elevation, not demotion.

@@ -1,10 +1,70 @@
 # Gap: Finding Diagnosis — typed semantics for operator legibility
 
-**Status:** built, shipped
+**Status:** `built, shipped (V1)` — V1.0 typed nucleus shipped 2026-04-13 (migration 027 + enums + struct + 17-detector population + UI consumer + wire export gating); V1.1 notification consumer migration shipped 2026-05-04 (Slack/Discord/webhook now consume synopsis/why_care/action_bias); V1.2 test discipline closure shipped 2026-05-04 (acceptance §6 went from 3/9 + 1 partial → 9/9). Detector count grew from spec's 17 to **33 production kinds** as the V1 sub-laws (TESTIMONY_DEPENDENCY, COVERAGE_HONESTY, OPERATIONAL_INTENT_DECLARATION) added hygiene/admissibility detectors that all picked up the diagnosis discipline as they landed.
 **Depends on:** schema v25 (finding_observations), v26 (lineage)
 **Build phase:** structural — adds typed semantics to the finding contract
 **Blocks:** `DOMINANCE_PROJECTION_GAP` (which needs typed shape to roll up by cause), the eventual full diagnosis schema (mechanism, trajectory.direction, related findings, runway)
-**Last updated:** 2026-04-13
+**Last updated:** 2026-05-04
+
+## Shipped State
+
+### V1.0 — typed nucleus + UI + wire export gating (shipped 2026-04-13)
+
+**Live:**
+
+- Migration 027 — `failure_class`, `service_impact`, `action_bias`, `synopsis`, `why_care` added (nullable) to both `warning_state` and `finding_observations`. No CHECK constraints (application-side validation, per spec).
+- `crates/nq-db/src/detect.rs` — `FailureClass` (10 variants), `ServiceImpact` (3 variants), `ActionBias` (5 variants), `FindingDiagnosis` struct. Each enum has `as_str()` / `from_str()` for stable serialization.
+- `Finding.diagnosis: Option<FindingDiagnosis>` — set at emission time by every production detector.
+- `crates/nq-db/src/publish.rs::update_warning_state_inner` — diagnosis flows through both the `warning_state` upsert (params ?12–?16) and the `finding_observations` insert (params ?13–?17). Round-trip preserved.
+- `crates/nq/src/http/routes.rs::render_finding_detail` — UI cards consume the typed nucleus when present (synopsis as headline, why_care in "Why this matters", failure_class + action_bias as small badges) and fall back to `finding_meta.rs` static gloss in a visibly-second-class style (opacity 0.6, italic, `(legacy)` tag) when absent. Mixed-mode prevented by if/else at line 644.
+- `crates/nq-db/src/export.rs::FindingDiagnosisExport` — wire-side `Option<FindingDiagnosisExport>`, populated when `failure_class` and `synopsis` are both non-empty on the underlying row. Cross-repo consumer Night Shift sees it in the live JSON export.
+
+**Detector population — 33 production kinds, 100%.**
+
+The original spec named 17 built-in detectors. Subsequent V1 sub-law work added 16 more (ZFS witness/vdev/scrub/error/silent + SMART status/uncorrected/silent/temperature/percentage_used/spare/critical_warning/reallocated + the COVERAGE_HONESTY hygiene detectors `health_claim_misleading_orphan_ref` + the TESTIMONY_DEPENDENCY meta finding `node_unobservable` + the OPERATIONAL_INTENT_DECLARATION hygiene set in `declarations.rs`). All 33 emit `Some(FindingDiagnosis { ... })` deliberately. Two `diagnosis: None` sites remain in `publish.rs` — both are `#[cfg(test)]` fixtures simulating producer-side findings, not production paths.
+
+**Consistency invariant.** The required floor relationship (`ImmediateRisk ⟹ InterveneNow`; `Degraded ⟹ ActionBias ≥ InvestigateNow`) is enforced inline at every construction site — value-dependent detectors emit the right `(impact, bias)` tuple as a single tuple-pattern destructuring, not as two independent decisions. The fleet-wide property test added in V1.2 (`diagnosis_consistency_invariants_hold_across_all_detectors`) catches future drift.
+
+### V1.1 — notification consumer migration (shipped 2026-05-04, commit `81f9754`)
+
+The V1 ratification pass surfaced that the notification path (Slack / Discord / webhook in `crates/nq-db/src/notify.rs`) was a **complete non-consumer** of the diagnosis nucleus despite spec §7 requiring it. V1.1 closes that gap:
+
+- `PendingNotification` gains `diagnosis: Option<FindingDiagnosis>`.
+- `find_pending` SELECTs the five diagnosis columns from `warning_state` and reconstructs via `diagnosis_from_columns`. **No-mixed-mode discipline:** any single NULL among the five collapses the entire nucleus to `None` — a half-populated nucleus is silently bad data, not a useful signal.
+- `build_slack_payload` / `build_discord_payload` — when diagnosis is present, render `` `ACTION BIAS` `` as a backtick-quoted badge in the headline, synopsis as prominent body prose, why_care as italicized (Slack) or `-#` small-text (Discord) supporting line. When absent, all three collapse to empty so the legacy fallback is visibly less informative — per the spec's "fallback must be visibly second-class" requirement.
+- `build_webhook_payload` / `build_rollup_webhook_payload` — emit a `diagnosis` sub-object with all five fields, or JSON `null` when absent. Always emits the key so consumers can branch on null vs. populated reliably.
+- ALERT_INTERPRETATION_GAP invariants (subject-led headline, source footer with raw message preserved) remain intact. The headline-shape collision the spec's "synopsis as headline" language implied was resolved by treating the existing severity-banner as the leading line and synopsis as the prominent prose line directly under it.
+
+### V1.2 — test discipline closure (shipped 2026-05-04, commit `8d21f6c`)
+
+Closes the 5 missing tests + 1 partial from spec §6. Acceptance is now 9/9.
+
+### Acceptance-criteria coverage map
+
+Mapping spec §6's 9 required tests to covering tests in `crates/nq-db/tests/detector_fixtures.rs`:
+
+| # | Criterion | Covering test |
+|---|-----------|---------------|
+| 1 | Every detector emits non-default `FindingDiagnosis` | `every_detector_emits_diagnosis` |
+| 2 | `disk_pressure` action_bias escalates with value | `disk_pressure_diagnosis_escalates_with_value` |
+| 3 | `service_status` down → Availability / ImmediateRisk / InterveneNow | `service_status_down_emits_immediate_risk` |
+| 4 | `wal_bloat` → NoneCurrent regardless of severity | **`wal_bloat_diagnosis_is_none_current_regardless_of_severity`** (V1.2) |
+| 5 | Property: ImmediateRisk⟹InterveneNow / Degraded⟹InvestigateNow across all detectors | **`diagnosis_consistency_invariants_hold_across_all_detectors`** (V1.2 — upgrades from spot-checks) |
+| 6 | Synopsis/why_care prose blacklist (NoneCurrent ⇒ no "outage"/"service down"/"failing now") | **`synopsis_and_why_care_do_not_contradict_typed_nucleus`** (V1.2) |
+| 7 | Round-trip `warning_state` preserves five diagnosis fields | **`diagnosis_round_trip_warning_state`** (V1.2) |
+| 8 | Round-trip `finding_observations` preserves five diagnosis fields | **`diagnosis_round_trip_finding_observations`** (V1.2) |
+| 9 | Pre-migration NULL diagnosis columns are queryable | **`pre_migration_null_diagnosis_columns_are_queryable`** (V1.2) |
+
+Plus 9 V1.1 notify-side tests in `crates/nq-db/src/notify.rs::tests` covering Slack/Discord/webhook present-vs-absent paths and `find_pending` no-mixed-mode reconstruction.
+
+### Field notes
+
+- **Entity-GC trap discovered while writing V1.2 #4.** A multi-cycle test of wal_bloat dropped the finding from `warning_state` at cycle 10 because the test's batch only set `sqlite_db_sets`, leaving the host out of `hosts_current`. The entity-GC pass at `update_warning_state_inner` line 1404 increments `entity_gone_gens` for findings whose host doesn't appear in `hosts_current ∪ services_current ∪ metrics_current ∪ log_observations_current`, deleting after 10 gens. Fix: `wal_bloat_batch` now starts from `host_batch` so the host is always present. Worth knowing for any future multi-cycle test that exercises substrate detectors.
+- **The "synopsis as headline" spec language predates ALERT_INTERPRETATION_GAP.** The two specs collide on what owns the headline line. V1.1 resolved it by keeping the severity-banner as the leading line and inserting synopsis as the prominent prose line directly underneath. Re-litigating would require a separate doc; the current shape satisfies both contracts and tests pass against both invariants.
+
+### V1 boundary deferrals (still V2+, per spec non-goals)
+
+Unchanged from spec §"Non-Goals" — `Mechanism`, `Trajectory.direction`, `Runway`, `RelatedFinding` graph, typed `FindingDetails` per detector, CHECK constraints on enum columns, backfill of pre-027 rows. `DOMINANCE_PROJECTION_GAP` (which this gap blocks) is now unblocked — its build can begin against the typed nucleus when prioritized.
 
 ## The Problem
 
