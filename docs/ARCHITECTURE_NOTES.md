@@ -129,6 +129,18 @@ Operational corollary: **ratify when reality forces it *or* when the retrofit pe
 
 The brake remains. Don't build features for imaginary pain. But don't conflate *"no current incident"* with *"no current justification"* — that's how clean architectural slices get lost. Worked example: `docs/gaps/FLEET_INDEX_GAP.md`, filed 2026-05-01 ahead of any forcing case, because four NQ deployments was the threshold where letting the comparison surface emerge ad hoc would have produced a "just one little overview page" smear across dashboard code, config shape, and support-tier handling.
 
+### Knob-facing, not actuator-facing.
+
+**NQ classifies admissible world-state testimony. It does not authorize consequence.**
+
+NQ maps diagnostic state. It exposes which knobs moved, which knobs cannot be observed, and which testimony is stale, degraded, masked, or inadmissible. A finding may describe operational posture, severity, coverage, staleness, witness position, visibility state, or admissibility. It may recommend revalidation or defer downstream reliance. But NQ must not silently cross from testimony classification into intervention.
+
+If a future feature wants to auto-close, auto-notify, self-heal, restart, suppress, or otherwise change the world, that feature needs an explicit boundary story: who has standing, what authority is being invoked, what consequence is created, and what receipt records the transition. That boundary story is Governor's territory, not NQ's. The cleaner cut: **NQ says what kind of trouble reality is reporting; Governor decides what kind of response is allowed.**
+
+Operational corollary: state-space language is an orientation lens, not a wire format. The accumulated axes (`state_kind`, `basis_state`, `admissibility`, `visibility_state`, `coverage_fraction`, etc.) already constitute a state-space map by stealth — naming the frame is useful for boundary defense, not for adding `state_space` fields or retroactively annotating every artifact as a coordinate. Sibling caution to the altitude lens (see `docs/gaps/README.md` index note): use as a question, not a column.
+
+NQ is knob-facing, not actuator-facing.
+
 ---
 
 ## Latent notes
