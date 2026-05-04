@@ -3648,3 +3648,401 @@ fn smart_temperature_high_silent_without_temperature_coverage() {
     let d = find_by_kind(&findings, "smart_temperature_high");
     assert!(d.is_empty(), "no temperature coverage → silent");
 }
+
+// ================================================================
+// FINDING_DIAGNOSIS V1.2 — acceptance-criteria closure (#4 #5 #6 #7 #8 #9)
+// ================================================================
+
+/// Build a sqlite_db_set sized to trigger wal_bloat: 1 GB DB with a
+/// WAL well above the relative threshold (>5% of db size) so detection
+/// is unambiguous. Includes a HostRow so the host stays in hosts_current
+/// across cycles — without it the entity-GC pass deletes the finding
+/// from warning_state after 10 cycles for "host gone".
+fn wal_bloat_batch(host: &str, db_path: &str, wal_size_mb: f64, t: OffsetDateTime) -> Batch {
+    let mut b = host_batch(t, 0.5, 50.0, 50.0);
+    b.collector_runs.push(CollectorRun {
+        source: host.into(),
+        collector: CollectorKind::SqliteHealth,
+        status: CollectorStatus::Ok,
+        collected_at: Some(t),
+        entity_count: Some(1),
+        error_message: None,
+    });
+    // Override the host so the test owns the value.
+    for row in &mut b.host_rows { row.host = host.into(); }
+    b.sqlite_db_sets.push(SqliteDbSet {
+        host: host.into(),
+        collected_at: t,
+        rows: vec![SqliteDbRow {
+            db_path: db_path.into(),
+            db_size_mb: Some(1024.0),
+            wal_size_mb: Some(wal_size_mb),
+            page_size: Some(4096),
+            page_count: Some(262144),
+            freelist_count: Some(0),
+            journal_mode: Some("wal".into()),
+            auto_vacuum: Some("none".into()),
+            last_checkpoint: None,
+            checkpoint_lag_s: None,
+            last_quick_check: None,
+            last_integrity_check: None,
+            last_integrity_at: None,
+            db_mtime: None,
+            wal_mtime: None,
+        }],
+    });
+    b
+}
+
+#[test]
+fn wal_bloat_diagnosis_is_none_current_regardless_of_severity() {
+    // Spec §6 #4: WAL bloat is substrate, not service. Severity may escalate
+    // through the warning_state lifecycle as consecutive_gens accumulate, but
+    // service_impact must stay NoneCurrent because no user-visible
+    // operational consequence is occurring.
+    //
+    // Use compressed escalation thresholds to reach `critical` in a
+    // tractable number of cycles; the invariant under test is the
+    // severity / impact decoupling, not the production threshold values.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+    let esc = EscalationConfig {
+        warn_after_gens: 3,
+        critical_after_gens: 10,
+    };
+
+    let mut last_severity: Option<String> = None;
+    for i in 0..15 {
+        let cycle_t = t + time::Duration::seconds(i * 60);
+        let b = wal_bloat_batch("test-host", "/var/lib/x.sqlite", 200.0, cycle_t);
+        let r = publish_batch(&mut db, &b).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+
+        // The detector's emitted diagnosis must always be NoneCurrent —
+        // severity-via-lifecycle never colors the impact axis.
+        let wal = find_by_kind(&findings, "wal_bloat");
+        assert_eq!(wal.len(), 1, "wal_bloat should fire each cycle");
+        let d = wal[0].diagnosis.as_ref().expect("wal_bloat populates diagnosis");
+        assert_eq!(d.service_impact, nq_db::ServiceImpact::NoneCurrent,
+            "wal_bloat must stay NoneCurrent (cycle {}): {:?}", i, d.service_impact);
+
+        update_warning_state(&mut db, r.generation_id, &findings, &esc).unwrap();
+
+        last_severity = Some(db.conn().query_row(
+            "SELECT severity FROM warning_state WHERE kind = 'wal_bloat'",
+            [],
+            |row| row.get::<_, String>(0),
+        ).unwrap());
+    }
+
+    // After enough cycles to clear the critical threshold, severity is
+    // critical but service_impact stays NoneCurrent — proving severity
+    // (lifecycle-driven) and impact (detector-declared) are decoupled.
+    let final_severity = last_severity.expect("warning_state populated");
+    assert_eq!(final_severity, "critical",
+        "expected escalation to critical; got {}", final_severity);
+    let impact: String = db.conn().query_row(
+        "SELECT service_impact FROM warning_state WHERE kind = 'wal_bloat'",
+        [],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(impact, "none_current",
+        "warning_state.service_impact must stay none_current at critical severity");
+}
+
+/// Build the same multi-detector fixture as `every_detector_emits_diagnosis`
+/// and return the emitted findings. Used by the property and prose-blacklist
+/// tests so they exercise the same diverse batch.
+fn diverse_batch_findings() -> Vec<nq_db::detect::Finding> {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+    let esc = EscalationConfig::default();
+
+    for i in 0..8 {
+        let mut b = host_batch(t, 0.5, 90.0, 95.0);
+        b.collector_runs.push(CollectorRun {
+            source: "test-host".into(),
+            collector: CollectorKind::Services,
+            status: CollectorStatus::Ok,
+            collected_at: Some(t),
+            entity_count: Some(1),
+            error_message: None,
+        });
+        b.service_sets.push(ServiceSet {
+            host: "test-host".into(),
+            collected_at: t,
+            rows: vec![ServiceRow {
+                service: "broken-svc".into(),
+                status: if i % 2 == 0 { ServiceStatus::Down } else { ServiceStatus::Up },
+                health_detail_json: None,
+                pid: Some(100),
+                uptime_seconds: None,
+                last_restart: None,
+                eps: None,
+                queue_depth: None,
+                consumer_lag: None,
+                drop_count: None,
+            }],
+        });
+        let r = publish_batch(&mut db, &b).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        update_warning_state(&mut db, r.generation_id, &findings, &esc).unwrap();
+    }
+
+    let mut err_batch = empty_batch(t);
+    err_batch.source_runs[0].status = SourceStatus::Error;
+    err_batch.source_runs[0].error_message = Some("connection refused".into());
+    publish_batch(&mut db, &err_batch).unwrap();
+
+    db.conn().execute(
+        "INSERT INTO saved_queries (name, sql_text, check_mode, pinned, created_at, updated_at)
+         VALUES ('always_fire', 'SELECT 1', 'non_empty', 0, datetime('now'), datetime('now'))",
+        [],
+    ).unwrap();
+
+    run_all(db.conn(), &config).unwrap()
+}
+
+#[test]
+fn diagnosis_consistency_invariants_hold_across_all_detectors() {
+    // Spec §6 #5: the floor relationships are non-negotiable.
+    //   service_impact = ImmediateRisk → action_bias MUST = InterveneNow
+    //   service_impact = Degraded      → action_bias MUST be ≥ InvestigateNow
+    //
+    // Run as a property check across every emission from a diverse fixture
+    // batch — not as spot checks at decision boundaries. If a detector
+    // anywhere in the codebase violates the floor, this fails.
+    let findings = diverse_batch_findings();
+    assert!(!findings.is_empty(), "fixture should produce findings");
+
+    let mut violations: Vec<String> = Vec::new();
+    for f in &findings {
+        let Some(d) = &f.diagnosis else { continue };
+        match d.service_impact {
+            nq_db::ServiceImpact::ImmediateRisk => {
+                if d.action_bias != nq_db::ActionBias::InterveneNow {
+                    violations.push(format!(
+                        "{}:{} ImmediateRisk paired with {:?} (must be InterveneNow)",
+                        f.kind, f.subject, d.action_bias,
+                    ));
+                }
+            }
+            nq_db::ServiceImpact::Degraded => {
+                if d.action_bias < nq_db::ActionBias::InvestigateNow {
+                    violations.push(format!(
+                        "{}:{} Degraded paired with {:?} (must be ≥ InvestigateNow)",
+                        f.kind, f.subject, d.action_bias,
+                    ));
+                }
+            }
+            nq_db::ServiceImpact::NoneCurrent => {}
+        }
+    }
+
+    assert!(violations.is_empty(),
+        "consistency-invariant violations: {:#?}", violations);
+}
+
+#[test]
+fn synopsis_and_why_care_do_not_contradict_typed_nucleus() {
+    // Spec §6 #6: blacklist-based prose smoke test. If service_impact is
+    // NoneCurrent, the why_care string MUST NOT claim a current outage —
+    // catches copy-paste contradictions where the prose says "service down"
+    // but the typed nucleus says nothing is currently wrong.
+    //
+    // Floor, not ceiling: real prose alignment is the detector author's
+    // responsibility. This catches the dumbest mistakes.
+    let findings = diverse_batch_findings();
+
+    // Phrases that imply current operational failure. Lowercase comparison.
+    let none_current_blacklist = [
+        "outage",
+        "service down",
+        "service is down",
+        "failing now",
+        "currently down",
+        "currently failing",
+    ];
+
+    let mut violations: Vec<String> = Vec::new();
+    for f in &findings {
+        let Some(d) = &f.diagnosis else { continue };
+        if d.service_impact != nq_db::ServiceImpact::NoneCurrent {
+            continue;
+        }
+        let why_care_lower = d.why_care.to_lowercase();
+        for phrase in &none_current_blacklist {
+            if why_care_lower.contains(phrase) {
+                violations.push(format!(
+                    "{}:{} (NoneCurrent) why_care contains forbidden phrase {:?}: {:?}",
+                    f.kind, f.subject, phrase, d.why_care,
+                ));
+            }
+        }
+    }
+
+    assert!(violations.is_empty(),
+        "prose-blacklist violations: {:#?}", violations);
+}
+
+#[test]
+fn diagnosis_round_trip_warning_state() {
+    // Spec §6 #7: a finding written via update_warning_state must read back
+    // through warning_state with all five diagnosis fields preserved.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+    let esc = EscalationConfig::default();
+
+    let b = wal_bloat_batch("test-host", "/var/lib/round_trip.sqlite", 200.0, t);
+    let r = publish_batch(&mut db, &b).unwrap();
+    let findings = run_all(db.conn(), &config).unwrap();
+    let wal = find_by_kind(&findings, "wal_bloat");
+    assert_eq!(wal.len(), 1);
+    let emitted = wal[0].diagnosis.as_ref().unwrap().clone();
+
+    update_warning_state(&mut db, r.generation_id, &findings, &esc).unwrap();
+
+    let (fc, si, ab, syn, why) = db.conn().query_row(
+        "SELECT failure_class, service_impact, action_bias, synopsis, why_care
+         FROM warning_state WHERE kind = 'wal_bloat'",
+        [],
+        |row| Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+        )),
+    ).unwrap();
+
+    assert_eq!(fc, emitted.failure_class.as_str());
+    assert_eq!(si, emitted.service_impact.as_str());
+    assert_eq!(ab, emitted.action_bias.as_str());
+    assert_eq!(syn, emitted.synopsis);
+    assert_eq!(why, emitted.why_care);
+}
+
+#[test]
+fn diagnosis_round_trip_finding_observations() {
+    // Spec §6 #8: same round trip for the evidence layer. publish_batch
+    // writes findings to finding_observations as the canonical evidence
+    // layer; reading back must preserve all five diagnosis fields.
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let b = wal_bloat_batch("test-host", "/var/lib/obs.sqlite", 200.0, t);
+    let r = publish_batch(&mut db, &b).unwrap();
+    let findings = run_all(db.conn(), &config).unwrap();
+    let wal = find_by_kind(&findings, "wal_bloat");
+    let emitted = wal[0].diagnosis.as_ref().unwrap().clone();
+
+    // The detector path emits, but observations are written by publish_finding
+    // during the publish/lifecycle step. Use update_warning_state which also
+    // writes observations.
+    let esc = EscalationConfig::default();
+    update_warning_state(&mut db, r.generation_id, &findings, &esc).unwrap();
+
+    let (fc, si, ab, syn, why) = db.conn().query_row(
+        "SELECT failure_class, service_impact, action_bias, synopsis, why_care
+         FROM finding_observations
+         WHERE detector_id = 'wal_bloat'
+         ORDER BY observation_id DESC LIMIT 1",
+        [],
+        |row| Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+        )),
+    ).unwrap();
+
+    assert_eq!(fc, emitted.failure_class.as_str());
+    assert_eq!(si, emitted.service_impact.as_str());
+    assert_eq!(ab, emitted.action_bias.as_str());
+    assert_eq!(syn, emitted.synopsis);
+    assert_eq!(why, emitted.why_care);
+}
+
+#[test]
+fn pre_migration_null_diagnosis_columns_are_queryable() {
+    // Spec §6 #9: rows that predate migration 027 carry NULL diagnosis
+    // fields. Read paths over warning_state and finding_observations must
+    // surface them without erroring or backfilling. NULL is honest.
+    let db = test_db();
+    let now_str = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    // Insert a warning_state row with all five diagnosis columns explicitly
+    // NULL. Mirrors the post-migration shape of pre-027 surviving rows.
+    db.conn().execute(
+        "INSERT INTO warning_state
+            (host, kind, subject, domain, message, severity,
+             first_seen_gen, first_seen_at, last_seen_gen, last_seen_at,
+             consecutive_gens, absent_gens,
+             failure_class, service_impact, action_bias, synopsis, why_care)
+         VALUES ('legacy-host', 'wal_bloat', '/legacy/db.sqlite',
+                 'Δg', 'WAL legacy', 'warning',
+                 1, ?1, 1, ?1, 5, 0,
+                 NULL, NULL, NULL, NULL, NULL)",
+        rusqlite::params![&now_str],
+    ).unwrap();
+
+    // Read back: the row exists and the diagnosis columns are NULL.
+    let (kind, fc, si, ab, syn, why): (String, Option<String>, Option<String>,
+                                       Option<String>, Option<String>, Option<String>) =
+        db.conn().query_row(
+            "SELECT kind, failure_class, service_impact, action_bias, synopsis, why_care
+             FROM warning_state WHERE host = 'legacy-host'",
+            [],
+            |row| Ok((
+                row.get(0)?, row.get(1)?, row.get(2)?,
+                row.get(3)?, row.get(4)?, row.get(5)?,
+            )),
+        ).unwrap();
+    assert_eq!(kind, "wal_bloat");
+    assert!(fc.is_none() && si.is_none() && ab.is_none()
+            && syn.is_none() && why.is_none(),
+            "all five diagnosis columns must read back as NULL");
+
+    // v_warnings is the canonical read view; the same row must surface
+    // through it without the join or projection erroring.
+    let from_view: i64 = db.conn().query_row(
+        "SELECT COUNT(*) FROM v_warnings WHERE host = 'legacy-host'",
+        [],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(from_view, 1, "legacy row must be queryable through v_warnings");
+
+    // Mirror in finding_observations: insert a NULL-diagnosis observation
+    // and verify it queries back cleanly.
+    let gen_id: i64 = db.conn().query_row(
+        "INSERT INTO generations (started_at, completed_at, status, sources_expected, sources_ok, sources_failed, duration_ms)
+         VALUES (?1, ?1, 'complete', 1, 1, 0, 0) RETURNING generation_id",
+        rusqlite::params![&now_str],
+        |row| row.get(0),
+    ).unwrap();
+    db.conn().execute(
+        "INSERT INTO finding_observations
+            (generation_id, finding_key, scope, detector_id, host, subject,
+             domain, severity, value, message, finding_class, observed_at,
+             failure_class, service_impact, action_bias, synopsis, why_care)
+         VALUES (?1, 'local/legacy-host/wal_bloat/legacy', 'local',
+                 'wal_bloat', 'legacy-host', '/legacy/db.sqlite',
+                 'Δg', 'warning', NULL, 'legacy', 'signal', ?2,
+                 NULL, NULL, NULL, NULL, NULL)",
+        rusqlite::params![gen_id, &now_str],
+    ).unwrap();
+
+    let obs_count: i64 = db.conn().query_row(
+        "SELECT COUNT(*) FROM finding_observations WHERE host = 'legacy-host'",
+        [],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(obs_count, 1, "legacy observation queryable");
+}
