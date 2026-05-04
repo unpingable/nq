@@ -7,7 +7,7 @@
 //! Notification history persists across warning_state row deletion so that
 //! cyclical conditions are labeled (recurring) rather than (new).
 
-use crate::detect::StateKind;
+use crate::detect::{ActionBias, FailureClass, FindingDiagnosis, ServiceImpact, StateKind};
 use crate::WriteDb;
 
 /// How a notification relates to prior notifications for the same identity.
@@ -43,6 +43,13 @@ pub struct PendingNotification {
     /// warning_state.state_kind. Pre-migration rows read as
     /// `LegacyUnclassified`. Drives lane-ordered rollup rendering.
     pub state_kind: StateKind,
+    /// Typed diagnosis populated by the emitting detector. `None` for
+    /// pre-FINDING_DIAGNOSIS findings or any row where any of the five
+    /// diagnosis columns is NULL — present-or-absent is all-or-nothing
+    /// per the spec's no-mixed-mode discipline. Renderers display
+    /// synopsis/why_care/action_bias prominently when present and fall
+    /// through to legacy rendering when absent.
+    pub diagnosis: Option<FindingDiagnosis>,
 }
 
 /// A group of findings that render as one operator-facing card.
@@ -145,7 +152,8 @@ pub fn find_pending(db: &WriteDb, min_severity: &str) -> anyhow::Result<Vec<Pend
         "SELECT ws.host, ws.domain, ws.kind, ws.subject, ws.message, ws.severity,
                 ws.notified_severity, ws.consecutive_gens, ws.first_seen_at, ws.peak_value,
                 nh.last_notified_at, nh.last_notified_severity, nh.notification_count,
-                ws.state_kind
+                ws.state_kind,
+                ws.failure_class, ws.service_impact, ws.action_bias, ws.synopsis, ws.why_care
          FROM warning_state ws
          LEFT JOIN notification_history nh
            ON ws.host = nh.host AND ws.kind = nh.kind AND ws.subject = nh.subject
@@ -172,6 +180,11 @@ pub fn find_pending(db: &WriteDb, min_severity: &str) -> anyhow::Result<Vec<Pend
             row.get::<_, Option<String>>(11)?, // nh.last_notified_severity
             row.get::<_, Option<i64>>(12)?,    // nh.notification_count
             row.get::<_, String>(13)?,         // ws.state_kind
+            row.get::<_, Option<String>>(14)?, // ws.failure_class
+            row.get::<_, Option<String>>(15)?, // ws.service_impact
+            row.get::<_, Option<String>>(16)?, // ws.action_bias
+            row.get::<_, Option<String>>(17)?, // ws.synopsis
+            row.get::<_, Option<String>>(18)?, // ws.why_care
         ))
     })?;
 
@@ -179,9 +192,11 @@ pub fn find_pending(db: &WriteDb, min_severity: &str) -> anyhow::Result<Vec<Pend
     for row in rows {
         let (host, domain, kind, subject, message, severity,
              _notified_sev, gens, first_seen, peak,
-             hist_last_at, hist_last_sev, _hist_count, state_kind_str) = row?;
+             hist_last_at, hist_last_sev, _hist_count, state_kind_str,
+             fc_str, si_str, ab_str, synopsis_opt, why_care_opt) = row?;
         let state_kind = StateKind::from_str(&state_kind_str)
             .unwrap_or(StateKind::LegacyUnclassified);
+        let diagnosis = diagnosis_from_columns(fc_str, si_str, ab_str, synopsis_opt, why_care_opt);
 
         let current_rank = severity_rank(&severity);
 
@@ -232,11 +247,38 @@ pub fn find_pending(db: &WriteDb, min_severity: &str) -> anyhow::Result<Vec<Pend
                 peak_value: peak,
                 regime,
                 state_kind,
+                diagnosis: diagnosis.clone(),
             });
         }
     }
 
     Ok(pending)
+}
+
+/// Reconstruct a `FindingDiagnosis` from the five `warning_state` columns.
+/// Returns `Some` only when all five columns are present and the enum
+/// columns parse cleanly; any partial population reads as `None` per the
+/// no-mixed-mode discipline (a half-populated nucleus is silently bad
+/// data, not a useful signal).
+fn diagnosis_from_columns(
+    fc: Option<String>,
+    si: Option<String>,
+    ab: Option<String>,
+    synopsis: Option<String>,
+    why_care: Option<String>,
+) -> Option<FindingDiagnosis> {
+    let fc = FailureClass::from_str(&fc?)?;
+    let si = ServiceImpact::from_str(&si?)?;
+    let ab = ActionBias::from_str(&ab?)?;
+    let synopsis = synopsis?;
+    let why_care = why_care?;
+    Some(FindingDiagnosis {
+        failure_class: fc,
+        service_impact: si,
+        action_bias: ab,
+        synopsis,
+        why_care,
+    })
 }
 
 /// Mark a finding as notified at its current severity. Writes through to
@@ -401,8 +443,25 @@ pub fn build_webhook_payload(n: &PendingNotification, generation_id: i64, base_u
             "peak_value": n.peak_value,
             "regime_badge": regime_badge,
             "regime_explanation": regime_explanation,
+            "diagnosis": diagnosis_to_json(n.diagnosis.as_ref()),
         }
     })
+}
+
+/// Serialize the diagnosis nucleus to a JSON sub-object, or `null` when
+/// absent. Always emits the `diagnosis` key so consumers can branch
+/// reliably on null vs. populated.
+fn diagnosis_to_json(diag: Option<&FindingDiagnosis>) -> serde_json::Value {
+    match diag {
+        Some(d) => serde_json::json!({
+            "failure_class": d.failure_class.as_str(),
+            "service_impact": d.service_impact.as_str(),
+            "action_bias": d.action_bias.as_str(),
+            "synopsis": d.synopsis,
+            "why_care": d.why_care,
+        }),
+        None => serde_json::Value::Null,
+    }
 }
 
 /// Render the one-line regime annotation used by Slack and Discord
@@ -418,15 +477,59 @@ fn format_regime_line(n: &PendingNotification) -> String {
     }
 }
 
+/// Human-legible action_bias label: `INVESTIGATE NOW`, `INTERVENE SOON`,
+/// etc. Used in Slack/Discord headline badges to surface the operator
+/// posture without forcing them to read the body.
+fn format_action_bias_label(ab: ActionBias) -> String {
+    ab.as_str().replace('_', " ").to_uppercase()
+}
+
+/// Headline-suffix badge for action_bias. Empty when diagnosis is absent
+/// (legacy fallback): the headline degrades to its pre-diagnosis shape
+/// rather than rendering a placeholder.
+fn format_action_bias_badge(diag: Option<&FindingDiagnosis>) -> String {
+    match diag {
+        Some(d) => format!(" `{}`", format_action_bias_label(d.action_bias)),
+        None => String::new(),
+    }
+}
+
+/// Diagnosis prose lines for Slack: synopsis as plain prose, why_care
+/// italicized as supporting line. Empty when diagnosis is absent.
+/// Caller interpolates with a leading newline so absence collapses cleanly.
+fn format_diagnosis_body_slack(diag: Option<&FindingDiagnosis>) -> String {
+    match diag {
+        Some(d) => format!("\n{}\n_Why care: {}_", d.synopsis, d.why_care),
+        None => String::new(),
+    }
+}
+
+/// Diagnosis prose lines for Discord: synopsis as plain prose, why_care
+/// on a `-#` small-text marker line. Empty when diagnosis is absent.
+fn format_diagnosis_body_discord(diag: Option<&FindingDiagnosis>) -> String {
+    match diag {
+        Some(d) => format!("\n{}\n-# Why care: {}", d.synopsis, d.why_care),
+        None => String::new(),
+    }
+}
+
 /// Build a Slack message payload.
 ///
-/// Render shape (per ALERT_INTERPRETATION_GAP v1, single-finding slice):
+/// Render shape (per ALERT_INTERPRETATION_GAP v1, single-finding slice
+/// + FINDING_DIAGNOSIS V1.1 nucleus when present):
 ///
 /// - subject-led headline: `SEVERITY on {host or global} (domain label)`
+///   with optional `` `ACTION BIAS` `` badge appended when diagnosis present
 /// - finding line as a bullet: `• kind on subject`
+/// - synopsis as a prominent prose line (only when diagnosis present)
+/// - why_care as italicized supporting line (only when diagnosis present)
 /// - metadata line: escalation/generation/consecutive
 /// - since line: human-legible UTC time + approximate relative age
 /// - evidence footer: the raw check/predicate message, demoted to blockquote
+///
+/// Legacy fallback (no diagnosis): the badge, synopsis, and why_care
+/// lines collapse to empty — visibly less informative than the diagnosed
+/// path, per the spec's "fallback must be visibly second-class" discipline.
 ///
 /// The structured payload (`build_webhook_payload`) is the machine interface.
 /// The rendered text is a projection, not identity — do not parse it back.
@@ -441,15 +544,19 @@ pub fn build_slack_payload(n: &PendingNotification, generation_id: i64, base_url
     let since_line = format_since(&n.first_seen_at, now);
 
     let regime_line = format_regime_line(n);
+    let action_bias_badge = format_action_bias_badge(n.diagnosis.as_ref());
+    let diagnosis_body = format_diagnosis_body_slack(n.diagnosis.as_ref());
 
     let text = format!(
-        "{} *<{}|{} on {}>* _({})_\n{}\n_{}_\n_Since {}_{}\n> _Source:_ {}",
+        "{} *<{}|{} on {}>* _({})_{}\n{}{}\n_{}_\n_Since {}_{}\n> _Source:_ {}",
         emoji,
         url,
         n.severity.to_uppercase(),
         scope,
         domain_label,
+        action_bias_badge,
         finding_line,
+        diagnosis_body,
         metadata,
         since_line,
         regime_line,
@@ -461,8 +568,10 @@ pub fn build_slack_payload(n: &PendingNotification, generation_id: i64, base_url
 
 /// Build a Discord message payload (uses `content` not `text`).
 ///
-/// Parallel structure to the Slack payload. Uses Discord's small-text marker
-/// (`-#`) for metadata lines.
+/// Parallel structure to the Slack payload, including the FINDING_DIAGNOSIS
+/// V1.1 nucleus when present (action_bias badge in headline, synopsis as
+/// prose, why_care on a `-#` small-text marker line). Legacy fallback:
+/// badge / synopsis / why_care collapse to empty.
 pub fn build_discord_payload(n: &PendingNotification, generation_id: i64, base_url: &str) -> serde_json::Value {
     let now = time::OffsetDateTime::now_utc();
     let domain_label = domain_label(&n.domain);
@@ -478,14 +587,18 @@ pub fn build_discord_payload(n: &PendingNotification, generation_id: i64, base_u
         Some((badge, sentence)) => format!("\n-# Regime: {} — {}", badge.as_str(), sentence),
         None => String::new(),
     };
+    let action_bias_badge = format_action_bias_badge(n.diagnosis.as_ref());
+    let diagnosis_body = format_diagnosis_body_discord(n.diagnosis.as_ref());
 
     let content = format!(
-        "{} **{} on {}** _({})_\n{}\n-# {}\n-# Since {}{}\n-# [detail]({})\n> _Source:_ {}",
+        "{} **{} on {}** _({})_{}\n{}{}\n-# {}\n-# Since {}{}\n-# [detail]({})\n> _Source:_ {}",
         emoji,
         n.severity.to_uppercase(),
         scope,
         domain_label,
+        action_bias_badge,
         finding_line,
+        diagnosis_body,
         metadata,
         since_line,
         regime_line,
@@ -680,6 +793,7 @@ pub fn build_rollup_webhook_payload(
             "peak_value": f.peak_value,
             "regime_badge": regime_badge,
             "regime_explanation": regime_explanation,
+            "diagnosis": diagnosis_to_json(f.diagnosis.as_ref()),
             "url": finding_url(base_url, f),
         })
     }).collect();
@@ -944,6 +1058,7 @@ mod tests {
             peak_value: None,
             regime: None,
             state_kind: StateKind::LegacyUnclassified,
+            diagnosis: None,
         }
     }
 
@@ -1177,5 +1292,248 @@ mod tests {
         let now = time::OffsetDateTime::now_utc();
         let rendered = format_since("not-a-timestamp", now);
         assert_eq!(rendered, "not-a-timestamp");
+    }
+
+    // ----- FINDING_DIAGNOSIS V1.1: notification consumer migration -----
+
+    fn sample_diagnosis() -> FindingDiagnosis {
+        FindingDiagnosis {
+            failure_class: FailureClass::Accumulation,
+            service_impact: ServiceImpact::NoneCurrent,
+            action_bias: ActionBias::InvestigateNow,
+            synopsis: "WAL has grown to 8.3 GB, exceeding the 2 GB threshold.".to_string(),
+            why_care: "Storage accumulation; disk pressure will follow if unaddressed.".to_string(),
+        }
+    }
+
+    #[test]
+    fn slack_render_includes_diagnosis_when_present() {
+        let mut n = sample_notification(
+            "host-1",
+            "wal_bloat",
+            "/db",
+            "warning",
+            "WAL size 8.3 GB exceeds threshold 2 GB",
+            NotificationKind::New,
+            5,
+            "2026-04-14T03:00:00Z",
+        );
+        n.diagnosis = Some(sample_diagnosis());
+
+        let payload = build_slack_payload(&n, 100, "https://nq.example");
+        let text = payload["text"].as_str().unwrap();
+
+        // Action bias badge appears in the headline line (first line).
+        let headline = text.lines().next().unwrap();
+        assert!(
+            headline.contains("`INVESTIGATE NOW`"),
+            "action_bias badge missing from headline: {}", headline
+        );
+
+        // Synopsis as plain prose body.
+        assert!(
+            text.contains("WAL has grown to 8.3 GB, exceeding the 2 GB threshold."),
+            "synopsis missing: {}", text
+        );
+
+        // Why care label + content.
+        assert!(
+            text.contains("Why care: Storage accumulation; disk pressure will follow if unaddressed."),
+            "why_care missing: {}", text
+        );
+
+        // ALERT_INTERPRETATION_GAP invariants still hold: subject-led headline,
+        // source footer with raw message preserved.
+        assert!(headline.contains("WARNING on host-1"), "subject-led headline broken: {}", headline);
+        assert!(text.contains("_Source:_ WAL size 8.3 GB exceeds threshold 2 GB"), "source footer missing");
+    }
+
+    #[test]
+    fn slack_render_omits_diagnosis_lines_when_absent() {
+        let n = sample_notification(
+            "host-1",
+            "wal_bloat",
+            "/db",
+            "warning",
+            "WAL size 8.3 GB",
+            NotificationKind::New,
+            5,
+            "2026-04-14T03:00:00Z",
+        );
+        // Default diagnosis is None.
+
+        let payload = build_slack_payload(&n, 100, "https://nq.example");
+        let text = payload["text"].as_str().unwrap();
+
+        let headline = text.lines().next().unwrap();
+        // No backtick-quoted action bias badge in headline.
+        assert!(
+            !headline.contains("`INVESTIGATE")
+                && !headline.contains("`INTERVENE")
+                && !headline.contains("`WATCH"),
+            "legacy headline must not carry action_bias badge: {}", headline
+        );
+        assert!(!text.contains("Why care:"), "legacy must not emit why_care label: {}", text);
+        // Headline still subject-led, source footer still present (legacy contract).
+        assert!(headline.contains("WARNING on host-1"), "headline shape broken: {}", headline);
+        assert!(text.contains("_Source:_"), "source footer missing");
+    }
+
+    #[test]
+    fn discord_render_includes_diagnosis_when_present() {
+        let mut n = sample_notification(
+            "host-1",
+            "wal_bloat",
+            "/db",
+            "warning",
+            "WAL size 8.3 GB exceeds threshold 2 GB",
+            NotificationKind::New,
+            5,
+            "2026-04-14T03:00:00Z",
+        );
+        n.diagnosis = Some(sample_diagnosis());
+
+        let payload = build_discord_payload(&n, 100, "https://nq.example");
+        let content = payload["content"].as_str().unwrap();
+
+        let headline = content.lines().next().unwrap();
+        assert!(
+            headline.contains("`INVESTIGATE NOW`"),
+            "action_bias badge missing from headline: {}", headline
+        );
+        assert!(
+            content.contains("WAL has grown to 8.3 GB, exceeding the 2 GB threshold."),
+            "synopsis missing: {}", content
+        );
+        // Discord uses `-#` small-text marker for the why_care line.
+        assert!(
+            content.contains("-# Why care: Storage accumulation; disk pressure will follow if unaddressed."),
+            "why_care line missing or not on small-text marker: {}", content
+        );
+    }
+
+    #[test]
+    fn discord_render_omits_diagnosis_lines_when_absent() {
+        let n = sample_notification(
+            "host-1",
+            "wal_bloat",
+            "/db",
+            "warning",
+            "WAL size 8.3 GB",
+            NotificationKind::New,
+            5,
+            "2026-04-14T03:00:00Z",
+        );
+
+        let payload = build_discord_payload(&n, 100, "https://nq.example");
+        let content = payload["content"].as_str().unwrap();
+        let headline = content.lines().next().unwrap();
+        assert!(
+            !headline.contains("`INVESTIGATE") && !headline.contains("`INTERVENE"),
+            "legacy headline must not carry badge: {}", headline
+        );
+        assert!(!content.contains("Why care:"), "legacy must not emit why_care label: {}", content);
+    }
+
+    #[test]
+    fn webhook_payload_carries_diagnosis_when_present() {
+        let mut n = sample_notification(
+            "host-1",
+            "wal_bloat",
+            "/db",
+            "warning",
+            "WAL at 8GB",
+            NotificationKind::New,
+            12,
+            "2026-04-14T00:00:00Z",
+        );
+        n.diagnosis = Some(sample_diagnosis());
+
+        let payload = build_webhook_payload(&n, 100, "https://nq.example");
+        let diag = &payload["finding"]["diagnosis"];
+        assert_eq!(diag["failure_class"], "accumulation");
+        assert_eq!(diag["service_impact"], "none_current");
+        assert_eq!(diag["action_bias"], "investigate_now");
+        assert_eq!(diag["synopsis"], "WAL has grown to 8.3 GB, exceeding the 2 GB threshold.");
+        assert_eq!(diag["why_care"], "Storage accumulation; disk pressure will follow if unaddressed.");
+    }
+
+    #[test]
+    fn webhook_payload_diagnosis_null_when_absent() {
+        let n = sample_notification(
+            "host-1",
+            "wal_bloat",
+            "/db",
+            "warning",
+            "WAL at 8GB",
+            NotificationKind::New,
+            12,
+            "2026-04-14T00:00:00Z",
+        );
+
+        let payload = build_webhook_payload(&n, 100, "https://nq.example");
+        // The diagnosis key is always present so consumers can branch
+        // reliably; absent rows project as JSON null.
+        assert!(payload["finding"]["diagnosis"].is_null());
+    }
+
+    #[test]
+    fn find_pending_loads_diagnosis_when_columns_populated() {
+        let db = setup_db();
+        let now = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        db.conn.execute(
+            "INSERT OR REPLACE INTO warning_state (host, kind, subject, domain, message, severity,
+                first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, absent_gens,
+                failure_class, service_impact, action_bias, synopsis, why_care)
+             VALUES ('host1', 'wal_bloat', '/db', 'Δs', 'WAL big', 'warning',
+                1, ?1, 1, ?1, 31, 0,
+                'accumulation', 'none_current', 'investigate_now',
+                'WAL has grown.', 'Storage will fill.')",
+            rusqlite::params![&now],
+        ).unwrap();
+
+        let pending = find_pending(&db, "info").unwrap();
+        assert_eq!(pending.len(), 1);
+        let diag = pending[0].diagnosis.as_ref().expect("diagnosis populated");
+        assert_eq!(diag.failure_class, FailureClass::Accumulation);
+        assert_eq!(diag.service_impact, ServiceImpact::NoneCurrent);
+        assert_eq!(diag.action_bias, ActionBias::InvestigateNow);
+        assert_eq!(diag.synopsis, "WAL has grown.");
+        assert_eq!(diag.why_care, "Storage will fill.");
+    }
+
+    #[test]
+    fn find_pending_diagnosis_none_when_columns_null() {
+        let mut db = setup_db();
+        // Default insert_finding leaves all five diagnosis columns NULL.
+        insert_finding(&mut db, "host1", "wal_bloat", "/db", "warning");
+        let pending = find_pending(&db, "info").unwrap();
+        assert_eq!(pending.len(), 1);
+        assert!(pending[0].diagnosis.is_none(), "legacy row must read as None");
+    }
+
+    #[test]
+    fn find_pending_diagnosis_none_when_partially_populated() {
+        // No-mixed-mode discipline: any single NULL drops the whole nucleus.
+        let db = setup_db();
+        let now = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        db.conn.execute(
+            "INSERT OR REPLACE INTO warning_state (host, kind, subject, domain, message, severity,
+                first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, absent_gens,
+                failure_class, service_impact, action_bias, synopsis, why_care)
+             VALUES ('host1', 'wal_bloat', '/db', 'Δs', 'WAL big', 'warning',
+                1, ?1, 1, ?1, 31, 0,
+                'accumulation', 'none_current', 'investigate_now',
+                NULL, 'Storage will fill.')",
+            rusqlite::params![&now],
+        ).unwrap();
+
+        let pending = find_pending(&db, "info").unwrap();
+        assert_eq!(pending.len(), 1);
+        assert!(pending[0].diagnosis.is_none(), "partial population must read as None");
     }
 }
