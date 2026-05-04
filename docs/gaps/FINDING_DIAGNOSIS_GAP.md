@@ -1,6 +1,6 @@
 # Gap: Finding Diagnosis — typed semantics for operator legibility
 
-**Status:** `built, shipped (V1)` — V1.0 typed nucleus shipped 2026-04-13 (migration 027 + enums + struct + 17-detector population + UI consumer + wire export gating); V1.1 notification consumer migration shipped 2026-05-04 (Slack/Discord/webhook now consume synopsis/why_care/action_bias); V1.2 test discipline closure shipped 2026-05-04 (acceptance §6 went from 3/9 + 1 partial → 9/9). Detector count grew from spec's 17 to **33 production kinds** as the V1 sub-laws (TESTIMONY_DEPENDENCY, COVERAGE_HONESTY, OPERATIONAL_INTENT_DECLARATION) added hygiene/admissibility detectors that all picked up the diagnosis discipline as they landed.
+**Status:** shipped; see [docs/FEATURE_HISTORY.md#finding_diagnosis-v1](../FEATURE_HISTORY.md#finding_diagnosis-v1) for shipped commits, evidence, and what's unblocked. The Shipped State narrative below remains as design-record content (what was deferred, what was discovered).
 **Depends on:** schema v25 (finding_observations), v26 (lineage)
 **Build phase:** structural — adds typed semantics to the finding contract
 **Blocks:** `DOMINANCE_PROJECTION_GAP` (which needs typed shape to roll up by cause), the eventual full diagnosis schema (mechanism, trajectory.direction, related findings, runway)
