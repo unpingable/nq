@@ -14,61 +14,34 @@ Specs carry one of these statuses in their header. The index below groups accord
 - **`built, shipped`** — fully implemented per acceptance criteria
 - **`stub`** — placeholder spec; exists to pin the boundary for a referenced-but-unwritten system so the hole does not get filled accidentally by nearby code
 
-## Gap status discipline
+## Gap docs vs. shipped state
 
-Gap front-matter is a **claim about the last ratified state**, not a perpetual truth assertion. Status drift is the predictable failure mode — code lands incrementally, consumers change unevenly, and front-matter does not update itself. Three specimens (FINDING_EXPORT, FINDING_DIAGNOSIS, DOMINANCE_PROJECTION) confirmed this in 2026-04 → 2026-05 reconciliation work; the discipline below is the response.
+**Gap docs are design records, not shipped-state ledgers.** Shipped state lives in [`docs/FEATURE_HISTORY.md`](../FEATURE_HISTORY.md). The split exists because three back-to-back specimens (FINDING_EXPORT, FINDING_DIAGNOSIS, DOMINANCE_PROJECTION) showed that front-matter status fields rot when they're forced to track ongoing reality — code lands incrementally, consumers change unevenly, and the gap doc has no mechanism to refresh itself. A cross-project audit (agent-governor: 3 of 81 specs make shipped claims, all evidence-backed) confirmed the actual difference: AG had a separate `feature-history.md` absorbing the ledger burden. NQ now does the same.
 
-The keeper distinction is **review vs. ratification**:
+### Gap doc front-matter when work has shipped
 
-> **Review is orientation. Ratification is reliance.**
-
-A 5-minute spot-check that the substrate file still exists is *orientation only*. It tells a reader the claim is plausibly accurate but is not evidence-backed closure. Treating orientation as ratification is how triage becomes false authority.
-
-### Front-matter fields
-
-For gaps that have not been verified against code, omit the freshness fields entirely — front-matter status is the historical claim, no current authority asserted.
-
-For gaps that have been **reviewed only** (sweep-style triage, not full reconciliation):
+Keep it brief. One-line status claim plus a pointer:
 
 ```markdown
-**Last reviewed:** 2026-05-04
-**Review basis:** front-matter + quick code presence check
-**Reliance status:** requires ratification before treating as shipped
+**Status:** shipped; see [docs/FEATURE_HISTORY.md#finding_diagnosis-v1](../FEATURE_HISTORY.md#finding_diagnosis-v1)
 ```
 
-For gaps that have been **ratified** (evidence-backed pass with named substrate / producer / consumer / tests):
+Or for partial:
 
 ```markdown
-**Status:** V1 substrate + UI consumer ratified; notification and acceptance coverage unverified
-**Last ratified:** 2026-05-04
-**Ratification basis:**
-  - migration: crates/nq-db/migrations/029_host_state.sql
-  - producer: crates/nq-db/src/views.rs::HostState
-  - consumer: crates/nq/src/http/routes.rs:1279
-  - tests: crates/nq-db/src/publish.rs (integration test set)
-**Known unproven surfaces:**
-  - notification consumer for elevated_action_bias
-  - cross-host elevation rules, deferred per spec §X
+**Status:** partial — substrate landed, consumer/acceptance surfaces unproven
+**Current ledger:** [docs/FEATURE_HISTORY.md#dominance_projection-v1](../FEATURE_HISTORY.md#dominance_projection-v1)
 ```
 
-Notes on the fields:
-
-- **`Status`** — keep human-readable but specific. Do not say `built, shipped` if any consumer or acceptance surface is unverified. Better: `V1 substrate + UI consumer ratified; notification and acceptance coverage unverified`. The phrase recreates the ambiguity the discipline is built to kill.
-- **`Last ratified`** — the date evidence was checked. If older than ~30 days or the touched surfaces have materially changed, treat the claim as stale for planning purposes (stale for reliance, not necessarily false).
-- **`Ratification basis`** — file paths to substrate / producer / consumer / tests. The claim's evidence trail. Future readers (and future-you) can spot-check it without re-doing the whole pass.
-- **`Known unproven surfaces`** — surfaces *not* covered by the ratification basis. Not necessarily missing work; just not proven. Phrased this way to avoid the small but real "gap doc known gaps" self-parody.
-
-### What this discipline replaces
-
-Before this convention, gap front-matter implied a perpetually-current claim that nothing in the system enforces. Three back-to-back gaps (FINDING_EXPORT, FINDING_DIAGNOSIS, DOMINANCE_PROJECTION) all displayed the same shape — `built, shipped` filed at design time, code landing incrementally over weeks, status never walked back. Each forced a multi-day reconciliation pass that turned up real consumer/test gaps invisible from the front-matter.
-
-The discipline does not remove the need for occasional reconciliation. It removes the *invisibility* of staleness — a future reader can tell at a glance whether to trust the claim or treat it as historical.
+The detailed Shipped State narrative subsections that already exist in some gap docs (FINDING_EXPORT, FINDING_DIAGNOSIS, etc.) stay — those are *design-record content* about what was deferred, what was discovered, where the boundary fell. The thing being moved out of the gap doc is the *ledger burden* in the front-matter status: "is this still shipped, when, with what evidence" — that question is answered by FEATURE_HISTORY, not by the gap doc.
 
 ### What this discipline is NOT
 
-- **Not a retroactive annotation sweep.** New convention applies prospectively. Cold gaps (specified-not-built, proposed-not-ratified) stay untouched. The bounded one-time exception is to mark currently-claiming-shipped gaps as `last_reviewed` so the future reader knows the claim is not load-bearing — which is an honest no-op, not retroactive evidence.
-- **Not a five-state enum.** A `status_state: substrate_landed | consumer_complete | acceptance_complete | shipped | stale_requires_reaudit` machine would itself rot. The minimum viable signal is freshness (date) + basis (paths) + honest unproven list.
-- **Not a quality gate.** The discipline does not prevent a gap from being merged in any state. It just makes the state legible.
+- **Not a retroactive annotation sweep.** Apply prospectively. Cold gaps (specified-not-built, proposed-not-ratified) stay untouched. Gap docs that already make shipped claims get pointed at FEATURE_HISTORY entries only as those entries are written.
+- **Not new fields on gap docs.** No `last_reviewed` / `last_ratified` / `ratification_basis` / etc. — that was the first instinct and it treats the symptom (staleness becomes legible) without fixing the cause (gap doc is still being asked to remember shipped state). Any field on a gap doc rots the same way the status field did.
+- **Not a five-state status enum.** Hand-maintained state machines also rot.
+- **Not AG's full receipt ontology.** The thing AG got right was the boring split between design records and shipped ledger, not the typed-receipt machinery surrounding it. This convention imports the split, nothing else.
+- **Not a quality gate.** The discipline does not prevent a gap from being merged in any state. It moves the shipped-state question to a place it can actually be answered.
 
 ## Index
 

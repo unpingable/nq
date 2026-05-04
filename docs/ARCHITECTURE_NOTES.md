@@ -141,15 +141,20 @@ Operational corollary: state-space language is an orientation lens, not a wire f
 
 NQ is knob-facing, not actuator-facing.
 
-### Gap front-matter describes the last ratified state, not the repo's present state.
+### Gap docs are design records, not shipped-state ledgers.
 
-A gap doc carries claims, but those claims age. Before relying on a status claim as current, check `last_ratified` and the ratification basis. If the claim is older than ~30 days, or if the touched surfaces have materially changed, treat it as stale for planning purposes until a narrow ratification pass confirms it. The aging rule is not a fake law of physics — a claim can remain *historically accurate* while losing *authority for current planning*. **Stale for reliance, not necessarily false.**
+**A gap doc remembers why work exists; `docs/FEATURE_HISTORY.md` remembers whether reality still agrees.** Conflating the two is the rot vector. Three specimens — FINDING_EXPORT, FINDING_DIAGNOSIS, DOMINANCE_PROJECTION — all exhibited the same shape during 2026-04 → 2026-05 reconciliation work: `built, shipped` filed at design time, code landing incrementally over weeks, status never walked back. Each pickup forced a multi-day reconciliation pass that turned up real consumer/test gaps invisible from the front-matter.
 
-The missing fuse this codifies: **review is orientation, ratification is reliance.** A 5-minute spot check that the substrate file still exists is `last_reviewed` — orientation, not ratification. Evidence-backed closure (substrate + producer + consumer + tests verified at named paths) is `last_ratified`. Conflating the two is how triage becomes false authority with better formatting. The front-matter convention enforced in `docs/gaps/README.md` keeps the vocabulary distinct.
+The first instinct was to add freshness fields to the gap doc front-matter (`last_reviewed`, `last_ratified`, `ratification_basis`). That treats the symptom — staleness becomes legible — but leaves the cause in place: the gap doc is still being asked to remember whether shipped state still holds, and any field on a gap doc rots the same way the status field did. A cross-project audit (agent-governor, where 3 of 81 specs make shipped claims and all three are evidence-backed) confirmed the actual difference is **role separation**: AG had `feature-history.md` absorbing the shipped-state ledger burden, leaving gap specs as design records. NQ's gap docs were carrying both roles simultaneously.
 
-Status drift is the predictable failure mode: code lands incrementally, consumers change unevenly, and front-matter does not update itself. FINDING_EXPORT, FINDING_DIAGNOSIS, and DOMINANCE_PROJECTION all exhibited this pattern during 2026-04 → 2026-05 reconciliation work — three specimens were enough to name the pathology rather than chase ratification per gap forever. The repair is not "ratify everything harder"; it is to mark the freshness of every status claim and let staleness age out honestly.
+The repair: import the role separation, not more fields. Gap docs go back to being design records (problem, design, acceptance criteria, deferred work, open questions). Shipped-state lives in `docs/FEATURE_HISTORY.md` with explicit evidence pointers (commits, paths, evidence summary, what's unblocked). The gap-doc front-matter Status returns to a brief one-line claim plus a pointer to the FEATURE_HISTORY entry when shipped.
 
-Operational corollary: do not retroactively annotate every gap doc with the new front-matter fields. The new discipline applies prospectively and to gaps re-ratified going forward; cold gaps stay untouched. Retroactive sweep is exactly the YAML-acne failure mode the altitude / preemptive-naming / knob-facing trio of laws guards against. The bounded exception is a one-time sweep that marks currently-claiming-shipped gaps as `last_reviewed` (orientation only) so a future reader can tell the claim is no longer load-bearing without doing the spot-check themselves.
+Operational corollary — what NOT to do:
+- Do not retroactively annotate every gap doc with new front-matter fields. That is exactly the YAML-acne failure mode the altitude / preemptive-naming / knob-facing trio of laws guards against.
+- Do not invent a five-state status enum (`substrate_landed | consumer_complete | acceptance_complete | shipped | stale_requires_reaudit`). Five-state machines that need to be hand-maintained also rot.
+- Do not import AG's full receipt ontology, validators, or admissibility vocabulary. The thing AG got right was the boring split between design records and shipped ledger, not the typed-receipt machinery surrounding it.
+
+Keeper line: **a gap doc can remember why work exists; it should not be forced to remember whether reality still agrees.** That belongs in the ledger.
 
 ---
 
