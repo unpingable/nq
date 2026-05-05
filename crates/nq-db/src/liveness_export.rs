@@ -159,12 +159,24 @@ pub fn export_liveness(
         },
     })?;
 
-    snapshot_from_artifact(artifact, path, stale_threshold_seconds)
+    snapshot_from_artifact(artifact, &path.display().to_string(), stale_threshold_seconds)
+}
+
+/// Build a `LivenessSnapshot` from an already-loaded `LivenessArtifact`.
+/// The `source_label` populates `source.artifact_path` — callers reading
+/// over a non-filesystem transport (SSH cat, HTTP, etc.) can pass a
+/// human-meaningful identifier for the read endpoint.
+pub fn snapshot_from_loaded_artifact(
+    artifact: LivenessArtifact,
+    source_label: &str,
+    stale_threshold_seconds: Option<i64>,
+) -> Result<LivenessSnapshot, LivenessExportError> {
+    snapshot_from_artifact(artifact, source_label, stale_threshold_seconds)
 }
 
 fn snapshot_from_artifact(
     artifact: LivenessArtifact,
-    path: &Path,
+    source_label: &str,
     stale_threshold_seconds: Option<i64>,
 ) -> Result<LivenessSnapshot, LivenessExportError> {
     let now = time::OffsetDateTime::now_utc();
@@ -204,7 +216,7 @@ fn snapshot_from_artifact(
             fresh,
         },
         source: LivenessSource {
-            artifact_path: path.display().to_string(),
+            artifact_path: source_label.to_string(),
             artifact_kind: "file",
         },
         export: LivenessExportMetadata {

@@ -31,6 +31,51 @@ pub enum Command {
     /// shape is forward-compatible with a future multi-instance
     /// registry via the `instance_id` field.
     Liveness(LivenessCmd),
+    /// Fleet index — comparison surface for declared NQ targets. Reads
+    /// each target's liveness artifact via the manifest URL and renders
+    /// one row per target. No merged authority, no synthetic fleet
+    /// rollup. See `docs/gaps/FLEET_INDEX_GAP.md`.
+    Fleet(FleetCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct FleetCmd {
+    #[command(subcommand)]
+    pub action: FleetAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FleetAction {
+    /// Render the fleet status table from the configured manifest.
+    Status(FleetStatusCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct FleetStatusCmd {
+    /// Path to the fleet manifest JSON (typically
+    /// `~/.config/nq-fleet/targets.json`).
+    #[arg(long, default_value = "~/.config/nq-fleet/targets.json", value_parser = expand_tilde)]
+    pub manifest: std::path::PathBuf,
+
+    /// Output format: `table` (default, operator-readable) or `json`
+    /// (machine-readable, jsonpath-friendly).
+    #[arg(long, short, default_value = "table")]
+    pub format: String,
+
+    /// Bounded per-target read timeout in seconds. One slow target
+    /// must not block the others; this caps how long any single read
+    /// can run.
+    #[arg(long, default_value_t = 5)]
+    pub timeout_seconds: u64,
+}
+
+fn expand_tilde(s: &str) -> Result<std::path::PathBuf, String> {
+    if let Some(rest) = s.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return Ok(std::path::PathBuf::from(home).join(rest));
+        }
+    }
+    Ok(std::path::PathBuf::from(s))
 }
 
 #[derive(Debug, Args)]
