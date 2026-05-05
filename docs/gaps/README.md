@@ -61,7 +61,7 @@ The detailed Shipped State narrative subsections that already exist in some gap 
 ### Operator surface
 - [`ALERT_INTERPRETATION_GAP`](ALERT_INTERPRETATION_GAP.md) — `proposed`. Render alerts from findings, not checks.
 - [`DASHBOARD_MODE_SEPARATION_GAP`](DASHBOARD_MODE_SEPARATION_GAP.md) — `proposed`. Snapshots are evidence; live probes are instrumentation. The dashboard default should be live-probe state; snapshot data renders as historical evidence only. Supersedes an earlier STALE_SNAPSHOT_RENDER bandaid draft.
-- [`FLEET_INDEX_GAP`](FLEET_INDEX_GAP.md) — `proposed`. V1 cash-out of FEDERATION: comparison surface for declared NQ targets, not federation truth. One row per target with reachability, build/schema/contract metadata, target-scope support tier (`active | experimental | unsupported | observed-only`), and click-through to the local dashboard. Static manifest only in V1; no discovery, no merged finding stream, no synthetic fleet state. Drafted preemptively — four targets is the threshold where "remember which box is which" turns into folklore.
+- [`FLEET_INDEX_GAP`](FLEET_INDEX_GAP.md) — `code-complete` (see [FEATURE_HISTORY § FLEET_INDEX V1](../FEATURE_HISTORY.md#fleet_index-v1)). V1 cash-out of FEDERATION: comparison surface for declared NQ targets, not federation truth. One row per target with reachability, build/schema/contract metadata, target-scope support tier (`active | experimental | unsupported | observed-only`), and click-through to the local dashboard. Cross-host live smoke deferred to deploy session.
 
 ### Self-governance
 - [`OBSERVER_DISTORTION_GAP`](OBSERVER_DISTORTION_GAP.md) — `proposed`. Δq detector domain: observers are members of the fault domain. Self-audit first (v1); host-wide deferred.
