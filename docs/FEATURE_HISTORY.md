@@ -20,6 +20,31 @@ The chronological order below is newest-first.
 
 ---
 
+## Real-SMART deploy (sushi-k + lil-nas-x)
+
+**Status:** shipped. Both target hosts running real SMART witness via sudoers-bounded helper paths; 8 Phase 2 detectors operational against live data; cross-witness corroboration with ZFS demonstrably working.
+
+**Shipped commits:** Pre-2026-05-04. Witness binary, detectors, schema, and per-host wiring landed incrementally before this session. This entry was written by an orientation pass on 2026-05-05 that verified what's actually live, after the pickup pointer mistakenly carried "Real-SMART deploy" as a pending item for two sessions.
+
+**Evidence:**
+- Witness binary: `~/git/nq-witness/examples/nq-smart-witness` (sushi-k canonical path); shipped to lil-nas-x as `/home/claude/nq-smart-witness`. Profile `nq.witness.smart.v0`. Privilege model: `nopasswd_fixed_helper`.
+- Schema: `smart_devices_current`, `smart_witness_current`, `smart_witness_coverage_current`, `smart_witness_standing_current`, `smart_witness_errors_current` (introduced by migration `034_smart_witness.sql`); `smart_reallocated_history` (`037_smart_reallocated_history.sql`).
+- Detectors (8 kinds in `crates/nq-db/src/detect.rs`): `smart_status_lies`, `smart_uncorrected_errors_nonzero`, `smart_witness_silent`, `smart_nvme_percentage_used`, `smart_nvme_available_spare_low`, `smart_nvme_critical_warning_set`, `smart_reallocated_sectors_rising`, `smart_temperature_high`. All populate `FindingDiagnosis` per FINDING_DIAGNOSIS V1 discipline.
+- sushi-k wiring: `~/nq/publisher.json` `smart_witness` block → `helper_path: /home/jbeck/git/nq-witness/examples/nq-smart-witness`, `wrapper: ["sudo", "-n"]`. Sudoers entry exists (witness invocation succeeds every cycle without password prompt — visible as `sudo[N]: pam_unix(sudo:session)` open/close pairs in journalctl per generation).
+- lil-nas-x wiring: `/home/claude/nq/publisher.json` `smart_witness` block → `helper_path: /home/claude/nq-smart-witness`, `wrapper: ["sudo", "-n"]`. Sudoers: `(root) NOPASSWD: /home/claude/nq-smart-witness` — bounded fixed-path NOPASSWD per the witness-privilege playbook. The general "no sudo on the NAS" frame applies to interactive sudo for the `claude` user; bounded helper sudoers are fine and were established for both `nq-smart-witness` and `nq-zfs-snapshot`.
+- Live findings on lil-nas-x demonstrating the V1 sub-laws working as designed: `smart_status_lies` (drive `2TKYU2KD` self-reports `passed` while raw counters show 88 read errors) and `smart_uncorrected_errors_nonzero` (88 raw uncorrected) both firing since 2026-04-27 with full diagnosis (`failure_class=drift`, `service_impact=degraded`, `action_bias=investigate_now`). Same drive shows up cross-witness as `zfs_vdev_faulted` from the ZFS witness — the FINDING_DIAGNOSIS testimony-dependency story working in production.
+
+**Unblocks:**
+- Cross-host SMART comparison surface (FLEET_INDEX V1 will be the first consumer of multi-host SMART state).
+- Any future "drive lifetime forecasting" work — the substrate (reallocated history, percentage-used, available spare) is already collected.
+
+**Field notes:**
+- The witness-privilege playbook is encoded as practice rather than a single documented page. Pattern: helper binary at fixed absolute path, sudoers entry granting `(root) NOPASSWD` on that exact path with no arguments, publisher config invokes via `wrapper: ["sudo", "-n"]`. NQ process never runs as root. Mentioned in passing in `docs/gaps/ZFS_COLLECTOR_GAP.md` Path A (sub-tier A-full); not yet hoisted to a standalone playbook doc. Worth doing if a third host (mac-mini) gets SMART-enabled — at three live deployments, the implicit pattern crosses the preemptive-naming threshold.
+- mac-mini is the fourth target in the host fleet but does not have SMART witness deployed — Apple Silicon SMART surface is different from Linux smartctl (different tooling, different ABI). Not a gap; out of V1 target-scope unless explicitly added.
+- Real-SMART was carried as "pending" on the pickup pointer for the prior two sessions because the front-matter / pickup tracking did not have a way to record "this shipped, here's the evidence" until FEATURE_HISTORY existed. Classic role-overload symptom — same pathology the doctrine retool (`96c4c81`) was written to address. This entry is the first new ledger record born under the post-retool discipline.
+
+---
+
 ## DOMINANCE_PROJECTION V1
 
 **Status:** partial — substrate + producer + UI consumer shipped; elevation rules partial (2 of 3); test coverage partial (5 of 9 acceptance criteria). Notification consumer is **not** a gap — out of V1 scope by spec design (§"Non-Goals").
