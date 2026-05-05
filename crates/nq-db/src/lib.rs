@@ -4,6 +4,7 @@ pub mod detect;
 pub mod digest;
 pub mod export;
 pub mod finding_meta;
+pub mod fleet;
 pub mod liveness;
 pub mod liveness_export;
 pub mod migrate;
@@ -22,13 +23,16 @@ pub use export::{
     ObservationRecord, ObservationsSummary, CONTRACT_VERSION, SCHEMA_ID,
 };
 pub use detect::{ActionBias, DetectorConfig, FailureClass, Finding, FindingDiagnosis, ServiceImpact, Stability};
+pub use fleet::{
+    load_manifest, FleetManifest, FleetManifestError, SupportTier, TargetClass, TargetDeclaration,
+};
 pub use liveness::{
     build_commit, read_liveness, write_liveness, LivenessArtifact, LivenessReadError,
     LIVENESS_FORMAT_VERSION,
 };
 pub use liveness_export::{
-    export_liveness, LivenessExportError, LivenessExportMetadata, LivenessFreshness,
-    LivenessSnapshot, LivenessSource, LivenessWitness,
+    export_liveness, snapshot_from_loaded_artifact, LivenessExportError, LivenessExportMetadata,
+    LivenessFreshness, LivenessSnapshot, LivenessSource, LivenessWitness,
 };
 pub use regime::{
     badge_explanation, build_trajectory, classify_persistence, classify_recovery_lag,
