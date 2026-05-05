@@ -20,6 +20,44 @@ The chronological order below is newest-first.
 
 ---
 
+## FLEET_INDEX V1
+
+**Status:** code-complete; live cross-host smoke (acceptance criterion #11) deferred to deploy session.
+
+**Shipped commits:**
+- `6c8c9bd` (2026-05-05) — V1a: extend liveness artifact with `contract_version` + `build_commit`. Substrate prerequisite — comparison surface needs build/schema/contract metadata per target row.
+- `59538de` (2026-05-05) — V1b: manifest + loader (`crates/nq-db/src/fleet.rs`), per-target reader, `nq fleet status` CLI render. `crates/nq/src/cmd/fleet.rs`.
+
+**Evidence:**
+- Manifest types: `TargetClass` (local | remote), `SupportTier` (active | experimental | unsupported | observed_only), `TargetDeclaration`, `FleetManifest` with serde rename_all = "snake_case" so unknown values reject at parse time.
+- Loader (`load_manifest`): rejects missing required fields, unknown enum values, duplicate ids, empty target list, IO failure. 10 unit tests in `crates/nq-db/src/fleet.rs::tests`.
+- Reader transports: `file://` (local artifact via `export_liveness`), `ssh://[user@]host/abs/path` (BatchMode + ConnectTimeout + cat-and-parse via the new public `snapshot_from_loaded_artifact` helper), bare absolute path (same as file://). Unsupported scheme yields explicit error.
+- Parallel reads: thread-per-target with mpsc collection; manifest order preserved regardless of completion order. Bounded per-target timeout via `--timeout-seconds`.
+- Unreachable targets: rendered with `reachable: false` and human-readable failure reason in `unreachable_reason`. Never omitted from the row set.
+- CLI: `nq fleet status [--manifest PATH] [--format table|json] [--timeout-seconds N]`. Manifest defaults to `~/.config/nq-fleet/targets.json` with tilde expansion.
+- Table render: fixed-width columns `ID / CLASS / TIER / REACHABLE / BUILD / SCHEMA / CONTRACT / LAST_GEN / AGE_S`. Non-active tiers wrapped in `[brackets]` for visual distinction.
+- JSON render: per-target object array with `serde::Serialize`-derived shape; `Option` fields use `skip_serializing_if` so absence stays absent.
+- No-aggregate-state guarantee: test `render_carries_no_top_level_aggregate_state` asserts the rendered output contains no `fleet health` / `constellation` / `overall:` / `aggregate` / `rollup:` tokens.
+- 10 CLI integration tests in `crates/nq/src/cmd/fleet.rs::tests` covering: local round-trip including V1a fields; missing-artifact unreachable row (#3); parallel-reads-don't-block (#9); experimental tier rendering (#4, #7); no-aggregate-state (#5); empty-manifest rejection (#8); dashboard link fallback / override; ssh URL parser.
+- Live smoke against sushi-k (after publisher restart): single-target manifest reads `build=6c8c9bdf1ae0 schema=43 contract=1 last_gen=27248`. Multi-target manifest with one missing artifact renders both rows correctly — reachable + unreachable side-by-side.
+- Spec acceptance criteria 1–10 covered via tests + live smoke.
+
+**Known unproven surfaces:**
+- Acceptance criterion #11 (live four-target smoke against the actual deployment set) — deferred. lil-nas-x and Linode publishers are on pre-V1a binaries; their `liveness.json` files lack `contract_version` and `build_commit` until those hosts redeploy. The reader handles missing fields honestly (renders `?` in the table, JSON omits the key) so V1b will work against legacy targets — but full evidence-of-deployment-alignment requires a deploy round.
+
+**Unblocks:**
+- Operator workflow for visually checking version drift across the four-target deployment set without ad-hoc per-host SSH.
+- Future Night Shift consumer that wants to read more than one NQ at a time (the wire shape — JSON list of `TargetRow` — is consumer-friendly).
+- The mac-mini onboarding path: experimental support_tier already round-trips through the loader, so adding mac-mini is a manifest edit when the time comes.
+
+**Field notes:**
+- This is the first feature shipped end-to-end under the post-retool gap-status discipline. FEATURE_HISTORY entry born concurrent with the work, not as cleanup. The gap doc retains its design-record content (problem, design-stance, non-goals); the front-matter Status will get trimmed to a one-line pointer in a follow-up touch.
+- `snapshot_from_loaded_artifact` was added to `liveness_export` mid-V1b to avoid a tempfile dance in the SSH read path. Cleaner than re-serializing through the file API; useful for any future non-filesystem transport (HTTP, etc.).
+- The CLI argument expansion of `~/.config/...` had to be done via a custom `value_parser`; clap doesn't expand tilde automatically. Worth knowing for future CLI work.
+- Spec acceptance criterion #11 (cross-host smoke) is the only legitimate "deferred" item; everything else is verifiable from this session's evidence.
+
+---
+
 ## Real-SMART deploy (sushi-k + lil-nas-x)
 
 **Status:** shipped. Both target hosts running real SMART witness via sudoers-bounded helper paths; 8 Phase 2 detectors operational against live data; cross-witness corroboration with ZFS demonstrably working.

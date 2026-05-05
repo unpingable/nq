@@ -1,6 +1,6 @@
 # Gap: Fleet Index — comparison surface, not federation truth
 
-**Status:** `proposed` — drafted 2026-05-01 after the third NQ deployment landed and a fourth (mac-mini, experimental) became visible on the realistic deployment list
+**Status:** code-complete; see [docs/FEATURE_HISTORY.md#fleet_index-v1](../../docs/FEATURE_HISTORY.md#fleet_index-v1) for shipped evidence and the one deferred surface (cross-host live smoke, criterion #11). Originally drafted 2026-05-01.
 **Depends on:** SENTINEL_LIVENESS_GAP (per-instance liveness primitive — already shipped; `nq liveness export` is what each row reads), FINDING_EXPORT_GAP (canonical export contract — already shipped; the index optionally reads the dominant-posture summary against it), INSTANCE_WITNESS_GAP (per-instance identity discipline — stub, but its non-fabrication invariant already informs every row)
 **Related:** FEDERATION_GAP (parent — this gap is its V1 cash-out, scoped down to comparison-only), PORTABILITY_GAP (sibling pattern at a different scope: collector-tier vs target-tier), DASHBOARD_MODE_SEPARATION_GAP (extends *snapshots are evidence, live probes are instrumentation* upward from per-panel to per-target), OBSERVER_DISTORTION_GAP (the index is itself an observer of its targets — must not participate in their substrate)
 **Build phase:** structural — introduces a manifest schema and a read protocol; no new collectors, no new storage on the targets
