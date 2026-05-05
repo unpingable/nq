@@ -149,6 +149,8 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                                     generated_at: now,
                                     generation_id: result.generation_id,
                                     schema_version: CURRENT_SCHEMA_VERSION,
+                                    contract_version: Some(nq_db::CONTRACT_VERSION),
+                                    build_commit: nq_db::build_commit().map(String::from),
                                     findings_observed,
                                     findings_suppressed,
                                     detectors_run,

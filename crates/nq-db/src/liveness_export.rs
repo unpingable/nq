@@ -52,6 +52,16 @@ pub struct LivenessWitness {
     pub generation_id: i64,
     pub generated_at: String,
     pub schema_version: u32,
+    /// Wire-protocol contract version baked into the artifact at write time.
+    /// `None` for artifacts that predate this field — consumers should treat
+    /// absence as unknown rather than assume `1`. Added 2026-05-05 for
+    /// FLEET_INDEX V1 per-target metadata comparison.
+    pub contract_version: Option<u32>,
+    /// Build identity of the NQ binary that wrote the artifact. Typically
+    /// a 12-char git commit hash. `None` for artifacts written before this
+    /// field landed or for builds where the build environment did not
+    /// capture a commit.
+    pub build_commit: Option<String>,
     pub status: String,
     pub findings_observed: i64,
     pub findings_suppressed: i64,
@@ -180,6 +190,8 @@ fn snapshot_from_artifact(
             generation_id: artifact.generation_id,
             generated_at: artifact.generated_at,
             schema_version: artifact.schema_version,
+            contract_version: artifact.contract_version,
+            build_commit: artifact.build_commit,
             status: artifact.status,
             findings_observed: artifact.findings_observed,
             findings_suppressed: artifact.findings_suppressed,
@@ -224,6 +236,8 @@ mod tests {
             generated_at: generated_at.into(),
             generation_id: 42,
             schema_version: 30,
+            contract_version: Some(CONTRACT_VERSION),
+            build_commit: Some("test-build-12c".into()),
             findings_observed: 5,
             findings_suppressed: 1,
             detectors_run: 17,
@@ -369,6 +383,45 @@ mod tests {
         std::fs::write(&path, b"not json {{{").unwrap();
         let err = export_liveness(&path, None).unwrap_err();
         assert!(matches!(err, LivenessExportError::Malformed { .. }));
+    }
+
+    #[test]
+    fn witness_surfaces_contract_version_and_build_commit() {
+        // FLEET_INDEX V1a substrate: every liveness snapshot must carry the
+        // new fields when the artifact populated them, and they must be
+        // queryable as ordinary fields under `witness`.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("liveness.json");
+        let now = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        write_sample(&path, Some("test"), &now);
+
+        let snap = export_liveness(&path, None).unwrap();
+        assert_eq!(snap.witness.contract_version, Some(CONTRACT_VERSION));
+        assert_eq!(snap.witness.build_commit.as_deref(), Some("test-build-12c"));
+    }
+
+    #[test]
+    fn witness_surfaces_none_for_legacy_artifact() {
+        // Legacy artifacts (pre-2026-05-05) lack the fields; the snapshot
+        // must surface None rather than fabricating a value.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("liveness.json");
+        let now = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        let legacy = format!(
+            "{{\"liveness_format_version\":1,\"instance_id\":\"legacy\",\"generated_at\":\"{}\",\
+            \"generation_id\":42,\"schema_version\":30,\
+            \"findings_observed\":0,\"findings_suppressed\":0,\"detectors_run\":0,\"status\":\"ok\"}}",
+            now,
+        );
+        std::fs::write(&path, legacy).unwrap();
+
+        let snap = export_liveness(&path, None).unwrap();
+        assert_eq!(snap.witness.contract_version, None);
+        assert_eq!(snap.witness.build_commit, None);
     }
 
     #[test]

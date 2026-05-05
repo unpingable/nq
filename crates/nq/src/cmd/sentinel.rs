@@ -245,6 +245,8 @@ mod tests {
             generated_at: generated_at.into(),
             generation_id: gen,
             schema_version: CURRENT_SCHEMA_VERSION,
+            contract_version: None,
+            build_commit: None,
             findings_observed: 0,
             findings_suppressed: 0,
             detectors_run: 0,
