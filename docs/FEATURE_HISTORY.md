@@ -20,6 +20,43 @@ The chronological order below is newest-first.
 
 ---
 
+## SENTINEL_LIVENESS V1
+
+**Status:** shipped. V1 landed 2026-04-13; refined incrementally through 2026-05-05. Ratified under the gap-status discipline 2026-05-06 (this entry).
+
+**Shipped commits:**
+- `dd9a971` (2026-04-13) — V1.0: liveness artifact write path in the publish loop + `nq sentinel` subcommand + state machine + acceptance tests.
+- `ce394f3` (later in arc) — V1.1: canonical `LivenessSnapshot` DTO + `nq liveness export` CLI. Originally added when FLEET_INDEX needed a programmatic reader; folded back into the SENTINEL_LIVENESS evidence as the canonical artifact-read path.
+- `7a5f0a2` (later in arc) — V1.2: schema_version pulled from `CURRENT_SCHEMA_VERSION` constant rather than a literal, so artifact stays accurate as migrations land.
+- `6c8c9bd` (2026-05-05) — V1.3: extended artifact with `contract_version` and `build_commit` (substrate work for FLEET_INDEX V1a; see [FLEET_INDEX V1](#fleet_index-v1) entry for that arc's details). The artifact is additive — both new fields skip-on-None for legacy producers.
+
+**Evidence:**
+- Artifact write: `crates/nq/src/cmd/serve.rs:130-160`. After each successful generation cycle, builds a `LivenessArtifact` (instance_id from `pull_config.liveness.instance_id`, generated_at from now, generation_id, schema_version from `CURRENT_SCHEMA_VERSION`, finding/detector counts, contract_version, build_commit) and calls `nq_db::write_liveness`. Write failure is logged warn but does not crash the cycle — spec §"Open Questions" explicitly endorses this posture.
+- Atomic write helper: `nq_db::write_liveness` writes to `.tmp` then renames. Partial reads cannot occur.
+- Read/parse path: `crates/nq-db/src/liveness_export.rs::export_liveness` is the canonical reader. Returns `LivenessSnapshot` with normalized fields + freshness verdict against an optional threshold. Used by `nq liveness export`, `nq sentinel`, and `nq fleet status`.
+- Sentinel state machine: `crates/nq/src/cmd/sentinel.rs::classify` returns `Healthy / Stale / Stuck / Missing / Malformed`. Configurable thresholds (`max_age_secs=180`, `poll_interval_secs=60`, `grace_secs=120`, `stuck_polls=5`). Deduplicates: alert on transition to unhealthy, recovery once on transition to healthy. Webhook delivery via the existing notifier transport (Slack/Discord).
+- Tests:
+  - 14 in `crates/nq-db/src/liveness_export.rs::tests` — schema/contract surfacing, instance_id present/absent, freshness threshold semantics, missing/malformed errors, V1a witness-fields propagation, deterministic JSON shape.
+  - 8 in `crates/nq/src/cmd/sentinel.rs::tests` — fresh artifact healthy, stale on threshold breach, missing on absent file, malformed on parse error, malformed on bad timestamp, stuck after N polls of frozen generation_id, not stuck below threshold, real-file round trip.
+- Live evidence: every NQ host (sushi-k, lil-nas-x, labelwatch) now writes a populated artifact every cycle; `nq fleet status --manifest /tmp/fleet-smoke/four.json` reads them all and renders schema=44 contract=1 build_commit=40bcac7fe092 across the deployed fleet (see [FLEET_INDEX V1](#fleet_index-v1) entry for that smoke).
+
+**Known unproven surfaces:**
+- Remote sentinel — explicit V2 deferral. Same-host sentinel catches process/scheduler/DB failures; remote catches host failures. Forcing case for remote is multi-instance + production-pager wiring; not yet present.
+- Content-hash for stuck detection — explicit V2 deferral per spec §"Open Questions". V1 uses freshness + monotonicity, which is sufficient.
+- The reverse direction — sentinel-of-the-sentinel — is a v2 question. V1 leans on systemd to restart the sentinel.
+
+**Unblocks:**
+- INSTANCE_WITNESS_GAP — multi-instance liveness aggregation. The `instance_id` field landed from V1.0; FLEET_INDEX V1 now provides the multi-target read surface.
+- FLEET_INDEX V1 (consumed): used `LivenessSnapshot` as its per-target row substrate.
+- NAS deployment — lil-nas-x went live with full artifact + sentinel readiness.
+
+**Field notes:**
+- The liveness write lives in `serve.rs` (the aggregator+publisher path that holds the read connection), not in `publish.rs` (the per-batch write path). Spec §1 said "after each successful generation commit" — `serve.rs` is the lifecycle layer that observes generation completion across the pull/aggregate loop, which is where the artifact's "I just produced a generation" semantic actually lives.
+- The original V1 artifact omitted `contract_version` and `build_commit`; both were added under FLEET_INDEX V1a (`6c8c9bd`) as additive Optional fields. Legacy producers continue to write valid artifacts without them, and consumers (sentinel, `nq fleet status`) handle absence honestly. This is the build.rs "honest absence beats fabricated identity" doctrine put into practice — see [FLEET_INDEX V1](#fleet_index-v1) field notes for the deployment wrinkle on Linode where `.git` is rsync-excluded and `NQ_BUILD_COMMIT` must be passed explicitly.
+- `nq liveness export` started life as a SENTINEL helper (`ce394f3`) and became FLEET_INDEX's canonical read primitive. Nice example of the spec §"Tests" architecture (artifact as contract, not implementation) paying off — both consumers depend only on the JSON shape and the helper that produces a typed snapshot from it.
+
+---
+
 ## STABILITY_AXIS V1
 
 **Status:** shipped. V1 landed 2026-04-13. Ratified under the gap-status discipline 2026-05-06 (this entry).
