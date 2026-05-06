@@ -20,6 +20,43 @@ The chronological order below is newest-first.
 
 ---
 
+## STABILITY_AXIS V1
+
+**Status:** shipped. V1 landed 2026-04-13. Ratified under the gap-status discipline 2026-05-06 (this entry).
+
+**Shipped commits:**
+- `2e0b883` (2026-04-13) — V1: migration 028 adds `stability` column and rebuilds `v_warnings`; stability computation in `update_warning_state_inner` runs after the upsert and before masking; recovery loop assigns `stability = 'recovering'`. All 7 spec acceptance tests landed in the same commit.
+
+**Evidence:**
+- Schema: `crates/nq-db/migrations/028_stability.sql` adds `stability TEXT` (nullable for pre-migration rows) on `warning_state` and recreates `v_warnings` to expose the column.
+- Constants: `crates/nq-db/src/publish.rs:1254-1255` — `stability_window: i64 = 10`, `observation_window: i64 = 24`. In code, not configurable, per spec §"Configuration".
+- Computation pass: `publish.rs:1252+`. Active findings: `consecutive_gens < 10` → `new`; otherwise count distinct `generation_id` rows in `finding_observations` over the last 24 gens, classify as `flickering` when `gaps >= 2`, else `stable`. Recovery loop (`publish.rs:1332`): missing non-suppressed findings get `stability = 'recovering'` alongside the `absent_gens` increment.
+- Suppressed findings keep their pre-suppression stability — the recovery-loop UPDATE does not run on suppressed rows. Suppression is our blindness, not a regime change.
+- Acceptance tests (7) in `crates/nq-db/src/publish.rs::tests`:
+  - `new_finding_has_stability_new` (criterion #1).
+  - `finding_becomes_stable_after_window` (criterion #2).
+  - `flickering_detection` (criterion #3).
+  - `missing_finding_becomes_recovering` (criterion #4).
+  - `suppressed_finding_preserves_stability` (criterion #5).
+  - `stability_null_for_pre_migration_rows` (criterion #6).
+  - `stability_exposed_through_v_warnings` (criterion #7).
+- Downstream consumer evidence: DOMINANCE_PROJECTION's `v_host_state` ranking uses `CASE stability WHEN 'new' THEN 0 WHEN 'flickering' THEN 1 WHEN 'stable' THEN 2 WHEN 'recovering' THEN 3 ELSE 4 END` as a tiebreaker (migrations/029 and 044). The column is being read in production, not just written.
+
+**Known unproven surfaces:**
+- Notification-routing-by-stability — explicitly deferred to NOTIFICATION_ROUTING_GAP per spec §"Non-Goals". Stability is *informational* in V1; computed and stored but not used for routing. Routing itself remains stub-deferred behind STABILITY_AXIS + REGIME_FEATURES.
+- Time-based observation_window (vs gen-based) — spec §"Open Questions" defers until variable poll intervals exist.
+
+**Unblocks:**
+- DOMINANCE_PROJECTION_GAP — which consumed stability as expected (above).
+- The hypothetical NOTIFICATION_ROUTING_GAP V1 — one of its two prerequisites is now satisfied. (REGIME_FEATURES is the other, still pending.)
+- Any future `stability` × `service_impact` policy that wants flickering-aware behavior — the column is there.
+
+**Field notes:**
+- The spec called for a stability badge in the overview ("flickering" badge in distinct color, "recovering" arrow). Verified live: stability values populate correctly and reach the UI through `v_warnings` → `WarningVm`. Visual treatment kept minimal as spec §"Renderer updates" instructed.
+- The `service_flap` detector continues to fire as a finding (services oscillating remains worth reporting on its own); the stability classification is now an orthogonal lifecycle property that applies to any kind. Spec §"Why This Matters" called this out as the awkwardness this gap was meant to resolve. Resolved.
+
+---
+
 ## GENERALIZED_MASKING V1
 
 **Status:** shipped. Original V1 (`stale_host` + `source_error` masking) landed 2026-04-13; extended 2026-04-28 by TESTIMONY_DEPENDENCY V1.0 to add witness-scoped masking rules. Ratified under the gap-status discipline 2026-05-06 (this entry).
