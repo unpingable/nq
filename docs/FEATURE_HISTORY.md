@@ -84,30 +84,36 @@ The chronological order below is newest-first.
 
 ## DOMINANCE_PROJECTION V1
 
-**Status:** partial — substrate + producer + UI consumer shipped; elevation rules partial (2 of 3); test coverage partial (5 of 9 acceptance criteria). Notification consumer is **not** a gap — out of V1 scope by spec design (§"Non-Goals").
+**Status:** shipped — substrate + producer + UI consumer + 3/3 elevation rules + 10/9 tests (5 prior + 4 spec criteria + 1 Rule 3 case). Notification consumer is **not** a gap — out of V1 scope by spec design (§"Non-Goals").
 
-**Shipped commits:** Pre-2026-05-04. Original V1 work landed before this session; this entry was written by a narrow ratification pass on 2026-05-04 that verified what's actually live.
+**Shipped commits:**
+- Pre-2026-05-04 — V1.0: substrate + producer + UI consumer + 5 of 9 tests + 2 of 3 elevation rules. Original V1 work landed before any session this entry covers; ratified 2026-05-04 by the narrow audit pass.
+- 2026-05-06 — V1.1: closing pass. Migration 044 extends `v_host_state` with `pressure_degraded_count` and `accumulation_count`. Rule 3 implemented in the elevation pass. Four spec acceptance tests added (#3, #5, #6, #7) plus a Rule 3 positive case. Schema bumped 43 → 44.
 
 **Evidence:**
-- Substrate: `crates/nq-db/migrations/029_host_state.sql` creates `v_host_state` view per spec §1 with full ranking by service_impact > action_bias > severity > stability + tiebreak on consecutive_gens.
-- Producer (struct): `crates/nq-db/src/views.rs::HostStateVm` with all spec-§3 fields plus `elevated_action_bias` and `elevation_reason`.
-- Producer (function): `crates/nq-db/src/views.rs::host_states(&db)` queries `v_host_state` and applies elevation pass.
-- Elevation rules implemented (2 of 3 from spec §2): `views.rs:348-358`. Rule 1 — `immediate_risk_count > 0` elevates baseline to InvestigateNow. Rule 2 — `degraded_count >= 2` elevates to InvestigateNow. Both record `elevation_reason`. Spec's Rule 3 (Pressure + Accumulation co-located → elevate Accumulation) is not implemented.
-- UI consumer: `crates/nq/src/http/routes.rs:124` calls `host_states`, render_overview displays the dominant kind + synopsis + elevated/baseline action_bias + subordinate count + suppressed count + elevation reason badge with hover-text. Elevation badge styled distinctly.
-- Tests: 5 covering tests in `crates/nq-db/src/publish.rs`. `projection_single_finding_host` (#1), `projection_dominance_by_service_impact` (#2), `projection_suppressed_excluded_from_dominance` (#4), `projection_subordinate_count_correct` (#8), `projection_hostless_findings_excluded` (#9).
+- Substrate: `crates/nq-db/migrations/029_host_state.sql` creates `v_host_state` per spec §1 (full ranking by service_impact > action_bias > severity > stability + tiebreak on consecutive_gens). Migration 044 adds the two Rule-3 host-scoped counts.
+- Producer (struct): `crates/nq-db/src/views.rs::HostStateVm` with all spec-§3 fields plus `elevated_action_bias`, `elevation_reason`, `pressure_degraded_count`, `accumulation_count`.
+- Producer (function): `host_states(&db)` queries the view; elevation logic factored into `apply_action_bias_elevation` (testable without a `ReadDb`).
+- Elevation rules — all 3 from spec §2:
+  - Rule 1 (`immediate_risk_count > 0` → InvestigateNow). Reason: "co-located immediate risk finding".
+  - Rule 2 (`degraded_count >= 2` → InvestigateNow). Reason names the count.
+  - Rule 3 (Pressure-Degraded + Accumulation co-located → elevate dominant). The V1-faithful interpretation: per-finding elevation can't materialize since only the dominant is exposed, so the regime is expressed by elevating the dominant's action_bias, with elevation_reason "co-located pressure (degraded) + accumulation findings". Spec's strict "elevate the Accumulation finding's action_bias" reading is for a future per-finding projection; V1 ratifies the rule at host-scope.
+- UI consumer: `crates/nq/src/http/routes.rs` calls `host_states`; render_overview displays dominant kind + synopsis + elevated/baseline action_bias + subordinate count + suppressed count + elevation reason badge.
+- Tests (10 in `crates/nq-db/src/publish.rs`): #1 single finding, #2 service_impact dominance, #3 action_bias when impact ties, #4 suppressed excluded, #5 all-suppressed host omitted, #6 compound degradation elevates, #7 elevation never demotes, #8 subordinate count, #9 hostless excluded, plus a Rule-3 positive case.
+- Schema 44 verified by `migrate::tests::migrate_fresh_db`. Full workspace test suite: 270/270 nq-db, 107/107 nq, all green.
 
 **Known unproven surfaces:**
-- Tests for spec §6 acceptance criteria #3 (dominance by action_bias when impact ties), #5 (host with all findings suppressed), #6 (compound-degradation elevation positive case), #7 (elevation never demotes baseline).
-- Spec §2 elevation Rule 3 (Pressure + Accumulation co-located → elevate Accumulation's action_bias when Pressure is Degraded).
-- Notification consumer for `elevated_action_bias` / `elevation_reason`. **By spec design** (§"Non-Goals"): "Notification routing changes. The projection produces the data; routing consumes it. Separate gap." Not a V1 hole; a deliberate scope boundary.
+- Notification consumer for `elevated_action_bias` / `elevation_reason`. **By spec design** (§"Non-Goals"): "Notification routing changes. The projection produces the data; routing consumes it. Separate gap." Not a V1 hole; a deliberate scope boundary, and routing itself remains deferred behind STABILITY_AXIS + REGIME_FEATURES.
 
 **Unblocks:**
-- Notification routing work (separate gap — would consume `host_states` to route by elevated posture).
+- Whenever notification routing eventually lands, it has a stable per-host projection to consume.
 - Federation summaries (consume per-host projection).
 - API responses that need "what's most important about this host?"
 
 **Field notes:**
-- This entry was written under the new gap-status discipline (`96c4c81`) as the worked example. The scope of "narrow ratification" was deliberately tight: confirm substrate/producer/consumer/tests exist and name what's missing. No new code, no follow-up slice. Closing the 4 missing tests + 1 elevation rule is real V1.x work but is queued, not blocking, and lives in this entry's "Known unproven surfaces" rather than as an open ticket on the gap doc.
+- The original entry (2026-05-04 narrow ratification pass) deliberately punted Rule 3 + 4 tests as "queued, not blocking" V1.x work. This 2026-05-06 closing pass cashed it.
+- Rule 3's V1 framing was a real interpretive call. The spec literally says "elevate the Accumulation finding's action_bias" — but V1's data shape only exposes the dominant per host, so per-finding elevation has nowhere to land. Two readings: (a) host-level — fire the rule whenever the regime condition is met and elevate the dominant; (b) restricted — only fire when the dominant is itself the Accumulation. Reading (b) is fully subsumed by Rule 2 (Pressure-Degraded + Accumulation-Degraded co-locating implies 2+ Degraded findings). Reading (a) gives the rule distinct territory: Pressure-Degraded + Accumulation-NoneCurrent, where Rule 1 doesn't apply (no ImmediateRisk) and Rule 2 doesn't apply (only one Degraded). That's the case the rule was meant to catch — "WAL bloat on a host with disk pressure is more urgent than WAL bloat alone." V1 ships reading (a); the elevation reason text makes the regime explicit so operators see *why* the dominant is elevated even when the dominant isn't the Accumulation.
+- The elevation logic was factored out as `apply_action_bias_elevation` so tests can construct `HostStateVm` rows directly. The previous cluster of elevation rules sat inline in `host_states()` and was untested at the rule level — only the no-elevation cases were covered. The split lets tests assert elevation outcomes without standing up a separate `ReadDb` connection against the in-memory test database.
 
 ---
 
