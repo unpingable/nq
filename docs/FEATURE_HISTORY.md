@@ -20,6 +20,44 @@ The chronological order below is newest-first.
 
 ---
 
+## GENERALIZED_MASKING V1
+
+**Status:** shipped. Original V1 (`stale_host` + `source_error` masking) landed 2026-04-13; extended 2026-04-28 by TESTIMONY_DEPENDENCY V1.0 to add witness-scoped masking rules. Ratified under the gap-status discipline 2026-05-06 (this entry).
+
+**Shipped commits:**
+- `8577559` (2026-04-13) — V1.0: replace hardcoded `stale_hosts` HashSet with data-driven `MASKING_RULES` const table; add `source_error` as the second parent kind. `source_error` detector starts emitting with `host = source_name` (Option A from spec §3) so source-scoped masking can match by the same key as host-scoped masking.
+- `eecd3f5` (2026-04-28) — V1.1: TESTIMONY_DEPENDENCY V1.0 extends `MaskingRule` with an optional `child_kind_prefix` field and adds two witness-scoped rules (`smart_witness_silent` → `smart_*` masked under `witness_unobservable`; `zfs_witness_silent` → `zfs_*`). Same data shape, narrower scope per child kind.
+
+**Evidence:**
+- Substrate: `crates/nq-db/migrations/024_visibility_state.sql` introduced `visibility_state`, `suppression_reason`, `suppressed_since_gen`. Migration 026 added the per-generation `findings_suppressed` counter.
+- Rule table: `crates/nq-db/src/publish.rs:842-888` (`struct MaskingRule { parent_kind, suppression_reason, child_kind_prefix }` plus the 4-rule `MASKING_RULES` const). Comment block at line 858 enumerates the valid `suppression_reason` taxonomy: `host_unreachable`, `source_unreachable`, `witness_unobservable`. `agent_down`, `collector_partition`, `parent_mask`, `maintenance` reserved.
+- Masking pass: `update_warning_state_inner` scans rules in `MASKING_RULES` order, builds a `HashMap<host, Vec<&MaskingRule>>` of active parents, then in the recovery loop suppresses each child whose `(host, kind)` matches the first applicable rule. Parent kinds never mask themselves (`is_parent_kind` guard).
+- `source_error` detector: `crates/nq-db/src/detect.rs::detect_source_errors` emits with `host: source.clone()` per spec §3 Option A. Diagnosis: `failure_class=Silence`, `service_impact=NoneCurrent`, `action_bias=InvestigateNow`.
+- Acceptance tests in `crates/nq-db/src/publish.rs::tests`:
+  - `source_error_masks_findings_on_same_host` (criterion #1).
+  - First-rule-wins covered around line 2720 — both stale_host + source_error active, `host_unreachable` wins because stale_host comes first in the rule order (criterion #2).
+  - `recovery_from_source_error_unsuppresses_children` (criterion #3).
+  - `source_error_does_not_mask_itself` (criterion #4).
+  - `source_error_masking_updates_lineage_suppressed_count` (criterion #5 — composed against GENERATION_LINEAGE_GAP).
+  - Existing visibility tests (`stale_host_*` family at line 2160+) still pass (criterion #6).
+- 270/270 nq-db lib tests green at HEAD.
+
+**Known unproven surfaces:**
+- `agent_down`, `collector_partition` — explicit non-goals. Reserved as future `MaskScope` variants.
+- Composed-reason model (multi-parent) — explicit non-goal. First rule wins; the loser is invisible by spec §"Open Questions".
+- Cascading suppression (suppressed parents masking grandchildren) — explicit non-goal. One level deep.
+
+**Unblocks:**
+- DOMINANCE_PROJECTION_GAP — projection layer needs to know what's suppressed and why; this gap gave it three reasons to dominate over.
+- FEDERATION_GAP — observability-loss honesty across instances depends on the substrate-rule generalization landed here.
+- TESTIMONY_DEPENDENCY_GAP V1 — built directly on this gap's rule table.
+
+**Field notes:**
+- `child_kind_prefix` was not in the original spec; the witness-silence work needed it (witness silence is domain-scoped, not host-scoped). The data shape stayed clean — adding the optional field was one struct member and one filter clause in the masking loop. The fact that the rule shape grew without breaking is evidence the const-table choice over configuration was right.
+- Original spec §"Reserved" listed `MaskScope::SameHostAgentLocal` and `MaskScope::SameLogSource`. The implementation collapsed these into `child_kind_prefix` rather than keeping a `MaskScope` enum, since "scope = whole host" vs "scope = kind-prefix on same host" was the only axis the witness work actually exercised. If a third axis (e.g. subject-keyed, for `log_silence` → `error_shift`) ever materializes, the choice between extending `child_kind_prefix` to a more general predicate vs. re-introducing `MaskScope` is local — not load-bearing on the rule table's shape.
+
+---
+
 ## FLEET_INDEX V1
 
 **Status:** shipped. All 11 acceptance criteria evidenced; live four-target smoke run 2026-05-06 against the deployed fleet.

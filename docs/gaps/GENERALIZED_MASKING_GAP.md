@@ -1,6 +1,6 @@
 # Gap: Generalized Masking — beyond `stale_host`
 
-**Status:** built, shipped
+**Status:** shipped; see [docs/FEATURE_HISTORY.md#generalized_masking-v1](../FEATURE_HISTORY.md#generalized_masking-v1) for evidence (V1.0 + V1.1 witness-scope extension via TESTIMONY_DEPENDENCY).
 **Depends on:** schema v24 (visibility_state), v26 (lineage)
 **Build phase:** structural prep, follows EVIDENCE_LAYER and GENERATION_LINEAGE
 **Blocks:** `DOMINANCE_PROJECTION_GAP`, `FEDERATION_GAP`
