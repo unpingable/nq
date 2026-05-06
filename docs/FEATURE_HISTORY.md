@@ -22,7 +22,7 @@ The chronological order below is newest-first.
 
 ## FLEET_INDEX V1
 
-**Status:** code-complete; live cross-host smoke (acceptance criterion #11) deferred to deploy session.
+**Status:** shipped. All 11 acceptance criteria evidenced; live four-target smoke run 2026-05-06 against the deployed fleet.
 
 **Shipped commits:**
 - `6c8c9bd` (2026-05-05) — V1a: extend liveness artifact with `contract_version` + `build_commit`. Substrate prerequisite — comparison surface needs build/schema/contract metadata per target row.
@@ -40,10 +40,8 @@ The chronological order below is newest-first.
 - No-aggregate-state guarantee: test `render_carries_no_top_level_aggregate_state` asserts the rendered output contains no `fleet health` / `constellation` / `overall:` / `aggregate` / `rollup:` tokens.
 - 10 CLI integration tests in `crates/nq/src/cmd/fleet.rs::tests` covering: local round-trip including V1a fields; missing-artifact unreachable row (#3); parallel-reads-don't-block (#9); experimental tier rendering (#4, #7); no-aggregate-state (#5); empty-manifest rejection (#8); dashboard link fallback / override; ssh URL parser.
 - Live smoke against sushi-k (after publisher restart): single-target manifest reads `build=6c8c9bdf1ae0 schema=43 contract=1 last_gen=27248`. Multi-target manifest with one missing artifact renders both rows correctly — reachable + unreachable side-by-side.
-- Spec acceptance criteria 1–10 covered via tests + live smoke.
-
-**Known unproven surfaces:**
-- Acceptance criterion #11 (live four-target smoke against the actual deployment set) — deferred. lil-nas-x and Linode publishers are on pre-V1a binaries; their `liveness.json` files lack `contract_version` and `build_commit` until those hosts redeploy. The reader handles missing fields honestly (renders `?` in the table, JSON omits the key) so V1b will work against legacy targets — but full evidence-of-deployment-alignment requires a deploy round.
+- **Live four-target smoke (2026-05-06)** against `/tmp/fleet-smoke/four.json` covering sushi-k + lil-nas-x + labelwatch + mac-mini. All three real targets show `build_commit=e341b24cfcb9 schema=43 contract=1`; mac-mini renders as `[experimental] NO` with `unreachable_reason: liveness artifact missing: /nonexistent/liveness.json`. Version-alignment across the deployed fleet visible at a glance — exactly the operator workflow the gap was specified to enable.
+- Spec acceptance criteria 1–11 covered via tests + live smoke.
 
 **Unblocks:**
 - Operator workflow for visually checking version drift across the four-target deployment set without ad-hoc per-host SSH.
@@ -54,7 +52,8 @@ The chronological order below is newest-first.
 - This is the first feature shipped end-to-end under the post-retool gap-status discipline. FEATURE_HISTORY entry born concurrent with the work, not as cleanup. The gap doc retains its design-record content (problem, design-stance, non-goals); the front-matter Status will get trimmed to a one-line pointer in a follow-up touch.
 - `snapshot_from_loaded_artifact` was added to `liveness_export` mid-V1b to avoid a tempfile dance in the SSH read path. Cleaner than re-serializing through the file API; useful for any future non-filesystem transport (HTTP, etc.).
 - The CLI argument expansion of `~/.config/...` had to be done via a custom `value_parser`; clap doesn't expand tilde automatically. Worth knowing for future CLI work.
-- Spec acceptance criterion #11 (cross-host smoke) is the only legitimate "deferred" item; everything else is verifiable from this session's evidence.
+- **Linode build needs `NQ_BUILD_COMMIT` passed explicitly.** `crates/nq-db/build.rs` derives the commit from `git rev-parse`, but the Linode source tree is rsync-deployed without `.git` (per the existing exclude). The first deploy round produced a binary with `contract_version` populated but `build_commit` absent — the build.rs intentionally returns absent rather than fabricated identity. Fix: pass the local HEAD sha as `NQ_BUILD_COMMIT=$(git rev-parse --short=12 HEAD)` to the on-host `cargo build`. The source we just rsynced *is* local HEAD, so reporting that sha is honest. Memory `project_deployment.md` carries the updated ritual.
+- The fleet reader's SSH transport uses `ssh user@host cat path` without an explicit `-i` flag — it relies on agent / SSH config. Operator-side, this means `~/.ssh/config` aliases or pre-loaded agent keys. For the smoke session the plex key was added via `ssh-add ~/git/claude/ssh/plex`. Not a bug; a deliberate choice in the reader to keep the URL shape simple. Worth knowing for any future automation that wants to invoke `nq fleet status` from a context where the agent is empty.
 
 ---
 
