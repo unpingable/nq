@@ -3863,6 +3863,238 @@ mod tests {
         assert_eq!(subordinate, 3, "4 observed findings → 1 dominant + 3 subordinate");
     }
 
+    /// Build a FindingDiagnosis with synopsis/why_care boilerplate so
+    /// elevation tests can focus on the typed axes that matter.
+    fn diag(
+        failure_class: FailureClass,
+        service_impact: ServiceImpact,
+        action_bias: ActionBias,
+        kind: &str,
+    ) -> FindingDiagnosis {
+        FindingDiagnosis {
+            failure_class,
+            service_impact,
+            action_bias,
+            synopsis: format!("{kind} synopsis"),
+            why_care: format!("{kind} matters"),
+        }
+    }
+
+    /// Read v_host_state for a single host into a HostStateVm and apply
+    /// the elevation pass. Tests that exercise elevation rules need this
+    /// because the production reader takes a ReadDb (separate
+    /// connection); test_db only provides a WriteDb.
+    fn host_state_with_elevation(db: &WriteDb, host: &str) -> Option<crate::views::HostStateVm> {
+        let row = db.conn.query_row(
+            "SELECT host, dominant_kind, dominant_subject, dominant_severity,
+                    dominant_failure_class, dominant_service_impact, dominant_action_bias,
+                    dominant_stability, dominant_synopsis, dominant_consecutive_gens,
+                    total_findings, observed_findings, suppressed_findings,
+                    immediate_risk_count, degraded_count, flickering_count, subordinate_count,
+                    pressure_degraded_count, accumulation_count
+             FROM v_host_state WHERE host = ?1",
+            rusqlite::params![host],
+            |r| {
+                Ok(crate::views::HostStateVm {
+                    host: r.get(0)?,
+                    dominant_kind: r.get(1)?,
+                    dominant_subject: r.get(2)?,
+                    dominant_severity: r.get(3)?,
+                    dominant_failure_class: r.get(4)?,
+                    dominant_service_impact: r.get(5)?,
+                    dominant_action_bias: r.get(6)?,
+                    dominant_stability: r.get(7)?,
+                    dominant_synopsis: r.get(8)?,
+                    elevated_action_bias: None,
+                    elevation_reason: None,
+                    total_findings: r.get(10)?,
+                    observed_findings: r.get(11)?,
+                    suppressed_findings: r.get(12)?,
+                    immediate_risk_count: r.get(13)?,
+                    degraded_count: r.get(14)?,
+                    flickering_count: r.get(15)?,
+                    subordinate_count: r.get(16)?,
+                    pressure_degraded_count: r.get(17)?,
+                    accumulation_count: r.get(18)?,
+                })
+            },
+        ).ok()?;
+        let mut states = vec![row];
+        crate::views::apply_action_bias_elevation(&mut states);
+        states.into_iter().next()
+    }
+
+    /// Acceptance #3 — dominance by action_bias when service_impact ties.
+    /// Two NoneCurrent findings, one with action_bias InvestigateNow and
+    /// one with Watch: the more urgent action_bias wins.
+    #[test]
+    fn projection_dominance_by_action_bias_when_impact_ties() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            finding_with_diagnosis(
+                "host-1", "wal_bloat", "/db", "Δg",
+                diag(FailureClass::Accumulation, ServiceImpact::NoneCurrent,
+                     ActionBias::Watch, "wal_bloat"),
+            ),
+            finding_with_diagnosis(
+                "host-1", "checkpoint_lag", "/db", "Δg",
+                diag(FailureClass::Accumulation, ServiceImpact::NoneCurrent,
+                     ActionBias::InvestigateNow, "checkpoint_lag"),
+            ),
+        ], &esc).unwrap();
+
+        let (kind, _, action) = query_host_state(&db, "host-1").unwrap();
+        assert_eq!(kind, "checkpoint_lag",
+            "InvestigateNow should dominate Watch when service_impact ties");
+        assert_eq!(action.as_deref(), Some("investigate_now"));
+    }
+
+    /// Acceptance #5 — host with all findings suppressed should not appear
+    /// in v_host_state. The view's WHERE visibility_state = 'observed'
+    /// clause excludes the host once every finding is suppressed.
+    #[test]
+    fn projection_host_with_all_findings_suppressed() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Gen 1: disk_pressure observed.
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "disk_pressure", "", "Δg"),
+        ], &esc).unwrap();
+        assert!(query_host_state(&db, "host-1").is_some(),
+            "sanity: host appears with one observed finding");
+
+        // Gen 2: stale_host fires and suppresses disk_pressure. But
+        // stale_host itself is observed, so the host still appears.
+        // To get all-suppressed, manually suppress stale_host too —
+        // simulating an operator declaration suppressing the parent.
+        update_warning_state(&mut db, 2, &[
+            finding("host-1", "stale_host", "", "Δo"),
+        ], &esc).unwrap();
+        db.conn.execute(
+            "UPDATE warning_state
+                SET visibility_state = 'suppressed',
+                    suppression_kind = 'operator_declaration',
+                    suppression_reason = 'test: simulate operator suppress',
+                    suppressed_since_gen = 2
+              WHERE host = 'host-1' AND visibility_state = 'observed'",
+            [],
+        ).unwrap();
+
+        let state = query_host_state(&db, "host-1");
+        assert!(state.is_none(),
+            "host with all findings suppressed should not appear in v_host_state");
+    }
+
+    /// Acceptance #6 — compound-degradation elevation positive case.
+    /// Two Degraded findings on the same host: elevated_action_bias on
+    /// the dominant must be at least InvestigateNow, even when the
+    /// dominant's baseline is less urgent (Watch).
+    #[test]
+    fn projection_compound_degradation_elevates() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[
+            finding_with_diagnosis(
+                "host-1", "disk_pressure", "", "Δg",
+                diag(FailureClass::Pressure, ServiceImpact::Degraded,
+                     ActionBias::InvestigateBusinessHours, "disk_pressure"),
+            ),
+            finding_with_diagnosis(
+                "host-1", "mem_pressure", "", "Δg",
+                diag(FailureClass::Pressure, ServiceImpact::Degraded,
+                     ActionBias::Watch, "mem_pressure"),
+            ),
+        ], &esc).unwrap();
+
+        let s = host_state_with_elevation(&db, "host-1").unwrap();
+        assert_eq!(s.degraded_count, 2);
+        assert_eq!(s.elevated_action_bias.as_deref(), Some("investigate_now"),
+            "2+ Degraded findings should elevate dominant to InvestigateNow");
+        assert!(s.elevation_reason.as_deref().unwrap().contains("degraded"));
+    }
+
+    /// Acceptance #7 — elevation never demotes baseline. A dominant
+    /// finding with InterveneNow baseline (more urgent than InvestigateNow)
+    /// must not be demoted by Rule 1/2/3, even when those rules' trigger
+    /// conditions are met.
+    #[test]
+    fn projection_elevation_never_demotes_baseline() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Dominant: ImmediateRisk + InterveneNow (rank 0, most urgent).
+        // Subordinate: Degraded — would otherwise trigger Rule 1
+        // (ImmediateRisk present). Verify no demotion.
+        update_warning_state(&mut db, 1, &[
+            finding_with_diagnosis(
+                "host-1", "service_status", "svc", "Δg",
+                diag(FailureClass::Availability, ServiceImpact::ImmediateRisk,
+                     ActionBias::InterveneNow, "service_status"),
+            ),
+            finding_with_diagnosis(
+                "host-1", "disk_pressure", "", "Δg",
+                diag(FailureClass::Pressure, ServiceImpact::Degraded,
+                     ActionBias::Watch, "disk_pressure"),
+            ),
+        ], &esc).unwrap();
+
+        let s = host_state_with_elevation(&db, "host-1").unwrap();
+        assert_eq!(s.dominant_action_bias.as_deref(), Some("intervene_now"));
+        // Either no elevation set (baseline already satisfies all rules)
+        // or elevated equal to baseline — never less urgent.
+        match s.elevated_action_bias.as_deref() {
+            None => {} // no rule fired, baseline kept — fine
+            Some(e) => assert_eq!(e, "intervene_now",
+                "elevation must not demote baseline below InterveneNow"),
+        }
+    }
+
+    /// Spec §2 Rule 3 — Pressure (Degraded+) co-located with Accumulation
+    /// elevates the dominant action_bias when Rules 1 and 2 don't already
+    /// fire. Verifies the rule's distinct contribution.
+    #[test]
+    fn projection_pressure_accumulation_co_located_elevates() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // One Pressure-Degraded + one Accumulation-NoneCurrent.
+        // Rule 1 needs ImmediateRisk (none here). Rule 2 needs 2+ Degraded
+        // (only one). Rule 3 should fire on the Pressure+Accumulation
+        // co-location and elevate the dominant's Watch baseline.
+        update_warning_state(&mut db, 1, &[
+            finding_with_diagnosis(
+                "host-1", "disk_pressure", "", "Δg",
+                diag(FailureClass::Pressure, ServiceImpact::Degraded,
+                     ActionBias::Watch, "disk_pressure"),
+            ),
+            finding_with_diagnosis(
+                "host-1", "wal_bloat", "/db", "Δg",
+                diag(FailureClass::Accumulation, ServiceImpact::NoneCurrent,
+                     ActionBias::Watch, "wal_bloat"),
+            ),
+        ], &esc).unwrap();
+
+        let s = host_state_with_elevation(&db, "host-1").unwrap();
+        assert_eq!(s.degraded_count, 1, "only one Degraded → Rule 2 should not fire");
+        assert_eq!(s.immediate_risk_count, 0, "no ImmediateRisk → Rule 1 should not fire");
+        assert_eq!(s.pressure_degraded_count, 1);
+        assert_eq!(s.accumulation_count, 1);
+        assert_eq!(s.elevated_action_bias.as_deref(), Some("investigate_now"),
+            "Rule 3 should elevate Watch to InvestigateNow");
+        let reason = s.elevation_reason.as_deref().unwrap();
+        assert!(reason.contains("pressure") && reason.contains("accumulation"),
+            "elevation_reason should name both kinds: {reason:?}");
+    }
+
     // -----------------------------------------------------------------------
     // Stability axis tests (STABILITY_AXIS_GAP)
     // -----------------------------------------------------------------------

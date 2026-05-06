@@ -95,6 +95,13 @@ pub struct HostStateVm {
     pub immediate_risk_count: i64,
     pub degraded_count: i64,
     pub flickering_count: i64,
+    /// Observed findings on this host with `failure_class = 'pressure'`
+    /// and `service_impact` in `{degraded, immediate_risk}`. Drives the
+    /// Rule 3 elevation case (Pressure-Degraded + Accumulation
+    /// co-located → elevate dominant action_bias).
+    pub pressure_degraded_count: i64,
+    /// Observed findings on this host with `failure_class = 'accumulation'`.
+    pub accumulation_count: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -296,7 +303,8 @@ pub fn host_states(db: &ReadDb) -> anyhow::Result<Vec<HostStateVm>> {
                 dominant_failure_class, dominant_service_impact, dominant_action_bias,
                 dominant_stability, dominant_synopsis, dominant_consecutive_gens,
                 total_findings, observed_findings, suppressed_findings,
-                immediate_risk_count, degraded_count, flickering_count, subordinate_count
+                immediate_risk_count, degraded_count, flickering_count, subordinate_count,
+                pressure_degraded_count, accumulation_count
          FROM v_host_state
          ORDER BY
             CASE dominant_service_impact
@@ -332,14 +340,26 @@ pub fn host_states(db: &ReadDb) -> anyhow::Result<Vec<HostStateVm>> {
             degraded_count: row.get(14)?,
             flickering_count: row.get(15)?,
             subordinate_count: row.get(16)?,
+            pressure_degraded_count: row.get(17)?,
+            accumulation_count: row.get(18)?,
         })
     })?;
 
     let mut states: Vec<HostStateVm> = rows.collect::<Result<_, _>>()?;
+    apply_action_bias_elevation(&mut states);
+    Ok(states)
+}
 
-    // Action bias elevation: compound regimes promote action_bias.
-    // Never demotes below the detector's baseline.
-    for s in &mut states {
+/// Apply spec §2 elevation rules in place. Never demotes below the
+/// detector's baseline action_bias — rules can only set
+/// `elevated_action_bias` to something at least as urgent as the
+/// dominant baseline.
+///
+/// Split out so tests can construct `HostStateVm` rows directly and
+/// verify the elevation logic without needing a `ReadDb` open against
+/// the in-memory test database.
+pub(crate) fn apply_action_bias_elevation(states: &mut [HostStateVm]) {
+    for s in states {
         let baseline = s.dominant_action_bias.as_deref().unwrap_or("watch");
 
         let mut elevated = baseline.to_string();
@@ -357,13 +377,26 @@ pub fn host_states(db: &ReadDb) -> anyhow::Result<Vec<HostStateVm>> {
             reason = Some(format!("{} co-located degraded findings", s.degraded_count));
         }
 
+        // Rule 3: Pressure (Degraded+) + Accumulation co-located → elevate.
+        // V1 framing: per-finding elevation can't materialize since only
+        // the dominant is exposed, so the regime gets expressed by
+        // elevating the dominant's action_bias. Operator reads the
+        // elevation reason as "this host's regime is jointly worse than
+        // the dominant alone implies." See migration 044 for the
+        // count definitions.
+        if s.pressure_degraded_count > 0
+            && s.accumulation_count > 0
+            && action_bias_rank(&elevated) > action_bias_rank("investigate_now")
+        {
+            elevated = "investigate_now".to_string();
+            reason = Some("co-located pressure (degraded) + accumulation findings".into());
+        }
+
         if elevated != baseline {
             s.elevated_action_bias = Some(elevated);
             s.elevation_reason = reason;
         }
     }
-
-    Ok(states)
 }
 
 /// Lower rank = more urgent. Used for elevation comparisons.
