@@ -20,6 +20,53 @@ The chronological order below is newest-first.
 
 ---
 
+## OPERATIONAL_INTENT_DECLARATION V1
+
+**Status:** shipped 2026-04-30. Withdrawal-only consumer wiring on host subjects with `subject_only` scope; quiescence stored but inert pending intake-shaped findings. The gap-doc §"V1 narrowing" enumerates the spec-vs-shipped austerity choices, all deliberate. Ratified under the gap-status discipline 2026-05-07 (this entry).
+
+**Shipped commits:**
+- `607dc74` (2026-04-30) — V1: migrations 041-043 + `crates/nq-db/src/declarations.rs` (loader + active-window filter + hygiene detectors) + `apply_declaration_overlay` in `publish.rs` + `v_admissibility` fork + export surface gain.
+
+**Evidence:**
+- Schema migrations:
+  - `crates/nq-db/migrations/041_operational_intent_declarations.sql` — `operational_intent_declarations` table per gap §"Canonical shape": `declaration_id PK`, `subject_kind` (V1 CHECK = `'host'` only), `subject_id`, `mode` (`quiesced` | `withdrawn`), `durability` (`transient` | `persistent`), `affects` (JSON array), `reason_class`, `declared_by`, `declared_at`, `expires_at`, `review_after`, `scope` (V1 CHECK = `'subject_only'` only), `evidence_refs` (JSON), `revoked_at`.
+  - `crates/nq-db/migrations/042_suppression_kind.sql` — adds `suppression_kind` discriminator on `warning_state` (`ancestor_loss` | `operator_declaration`), `suppression_declaration_id`. Mechanical UPDATE backfills existing TESTIMONY_DEPENDENCY suppression rows to `suppression_kind = 'ancestor_loss'` so the taxonomy is complete after migration.
+  - `crates/nq-db/migrations/043_admissibility_declaration.sql` — extends `v_admissibility` to fork on `suppression_kind`. Operator-declaration suppression returns the declaration_id; ancestor-loss returns the witness reason. Pre-OPERATIONAL_INTENT rows with `suppression_kind = NULL` but `suppression_reason IS NOT NULL` are treated as ancestor_loss for taxonomy consistency.
+- Loader: `crates/nq-db/src/declarations.rs::load_declarations` (line 148) — file-based JSON ingestion at `nq-core::config::DeclarationsConfig::path`, re-read each publish cycle. Rejects unknown `subject_kind` / `scope` values at parse time so no dead semantics enter the lifecycle.
+- Active-window filter: `active_declarations` (line 236) returns only declarations whose `(declared_at, expires_at, revoked_at)` window covers the current generation.
+- Suppression overlay: `crates/nq-db/src/publish.rs::apply_declaration_overlay` (line 1670). Runs *after* `MASKING_RULES` so declaration supersedes ancestor_loss when both match (per ARCHITECTURE_NOTES precedence law). Orphan suppressions clear (`suppression_kind = NULL`) when a declaration is revoked, expires, or has its scope narrowed (`publish.rs:1685-1710`).
+- Hygiene detectors (4 — one more than the spec's V1 #5 list): `crates/nq-db/src/declarations.rs::run_hygiene` and `detect_*` helpers around lines 270, 349, 374, 409, 440:
+  - `declarations_file_unreadable` (line 349) — file present but unparseable, or per-declaration validation failed; surfaces a broken loader path so it cannot sit silently.
+  - `declaration_expired` (line 374) — declaration past `expires_at`, not yet revoked.
+  - `persistent_declaration_without_review` (line 409) — `durability = 'persistent'` with NULL `review_after`. Emit-only in V1 (gap §"V1 narrowing" #5: not load-time blocking).
+  - `withdrawn_subject_active` (line 440) — withdrawn host has finding observations newer than its `declared_at`. Narrowed `declaration_conflicts_with_observed_state` shape per gap §"V1 narrowing" — the one conflict shape V1 has substrate evidence for. `quiesced_subject_receiving_work` is its quiescence-side counterpart, deferred until intake-metric findings exist.
+- Export surface: `crates/nq-db/src/export.rs:454,508,700,718-726`. `FindingSnapshot.admissibility` carries `suppression_kind` and `suppression_declaration_id` so consumers branch on cause without re-resolving. Comment at line 723: "Pre-OPERATIONAL_INTENT rows have suppression_kind = NULL but a suppression_reason set" — backfill discipline preserved across the wire.
+- Wire-shape composition: a `node_unobservable` finding on a host that is also under a `withdrawn` declaration falls out of suppressed_descendant_count by virtue of the overlay running on top of TESTIMONY_DEPENDENCY's masking pass; the two suppression kinds compose correctly (operator-declaration wins precedence; ancestor-loss is the floor).
+- Tests: `crates/nq-db/tests/declaration_overlay.rs` (10 tests). Plus declaration coverage threaded through `coverage_composition` and `detector_fixtures` integration suites.
+
+**Known unproven surfaces / V1 austerity (per gap §"V1 narrowing"):**
+- **`subject_kind` enum narrowed to `'host'`.** Witness/service/route/quorum subjects expand when their masking-pass extensions ship; loader rejects unknown values today.
+- **`scope` enum narrowed to `'subject_only'`.** `'descendants'` and `'declared_dependency_subtree'` need REGISTRY_PROJECTION to be meaningful.
+- **`affects` matching is coarse.** Stored as JSON array, but V1 host-subject masking applies whenever a withdrawn declaration is active regardless of `affects` content. Richer effect taxonomy is deferred.
+- **`current_admissibility` is view-derived, not a column.** Persist primitives (`visibility_state`, `suppression_kind`) and derive interpretation in `v_admissibility`. Avoids drift from a second-truth column.
+- **Quiescence consumer path is inert.** `quiesced` declarations are stored, surfaced by hygiene, and rejected on conflict, but produce no suppression effect today — NQ has no work-intake findings yet. Withdrawal path is fully wired.
+- **`declaration_conflicts_with_observed_state` is narrowed to `withdrawn_subject_active`.** The grand "conflicts" name is held back until intake-metric data exists.
+- **CLI subcommand absent.** Ingestion is file-based JSON only; `nq declaration {add|list|revoke}` is a follow-up.
+- **Suppression metadata on `finding_observations` was deliberately not added.** The spec listed both `warning_state` and `finding_observations`; the latter is the append-only evidence event log and has no `suppression_reason` to backfill against — wiring there would be dead semantics. Suppression is a lifecycle decision applied during publish-time consolidation, not a property of an individual emission.
+
+**Unblocks:**
+- MAINTENANCE_DECLARATION_GAP — re-scoped 2026-04-28 as a profile of OPERATIONAL_INTENT_DECLARATION (`reason_class = maintenance`). The substrate it depends on is now built.
+- TESTIMONY_DEPENDENCY ↔ OPERATIONAL_INTENT composition — the `suppression_kind` discriminator is the contract between the two gaps; consumers can now branch on cause.
+- Future REGISTRY_PROJECTION work — declarations supply explicit `subject_id`s today; once roles exist, `scope = 'declared_dependency_subtree'` becomes a meaningful CHECK widening, not a wholesale rewrite.
+
+**Field notes:**
+- The "V1 narrowing" section of the gap doc was written *before* the implementation and held the line at landing time. Multiple temptations to widen scope (full `subject_kind` enum, full `scope` enum, persisted `current_admissibility` column) were resisted with explicit "would ship dead semantics" reasoning. Same discipline as REGIME_FEATURES V1 slice-stop and EVIDENCE_RETIREMENT V1.0 micro-slice — substrate first, semantics earned later.
+- The view-derived `current_admissibility` decision was operationally important. Persisting the field would have required a maintenance pass to keep it consistent with `(visibility_state, suppression_kind)`; deriving it lets the persisted columns be the single source of truth and the view be the operator-facing read shape.
+- The `apply_declaration_overlay` runs *after* `MASKING_RULES`, not interleaved. Deliberate: the precedence law (operator declaration supersedes ancestor-loss) is enforced by execution order, not by per-rule conditional logic. Easier to reason about, easier to test, easier to verify the contract holds end-to-end.
+- The 2026-04-22 sushi-k residue cleanup (referenced by EVIDENCE_RETIREMENT V1.0) is the operational template this gap was meant to formalize. Manual `finding_transitions` cleanup with `changed_by = 'manual-cleanup'` is exactly the kind of semantic that this gap moves into a typed, declared, revocable shape.
+
+---
+
 ## EVIDENCE_RETIREMENT V1.0 (substrate)
 
 **Status:** partial — V1 substrate (ground structure for basis propagation) shipped 2026-04-22 in `62e5005`. Five-state basis lifecycle landed at the schema, detector, write-path, and export layers, but the V1 spec also names four follow-on slices that have not shipped: basis-stale detector, `nq source retire` verb, per-state notification gating, render distinction in Slack/v_warnings beyond the column being present. Ratified under the gap-status discipline 2026-05-07 (this entry).
