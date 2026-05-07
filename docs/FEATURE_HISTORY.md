@@ -20,6 +20,46 @@ The chronological order below is newest-first.
 
 ---
 
+## COVERAGE_HONESTY V1
+
+**Status:** shipped. V1.0 + V1.1 (2026-04-28) + V1.2 (2026-04-30). Cross-axis correlation, real-producer adapter, dashboard rendering remain deferred per spec non-goals / V1 boundary. Ratified under the gap-status discipline 2026-05-07 (this entry).
+
+**Shipped commits:**
+- `4248414` (2026-04-28) — V1.0: schema + finding-kind vocabulary + DB round-trip. Migration 038 adds 12 typed envelope columns; `RecoveryState` / `RecoveryComparator` / `CoverageDegradedEnvelope` / `HealthClaimMisleadingEnvelope` / `CoverageEnvelope` types in `nq-db::detect`; `Option<CoverageEnvelope>` field on `Finding`; `coverage_degraded` and `health_claim_misleading` kinds in `finding_meta`.
+- `768366b` (2026-04-28) — V1.1: JSON export wiring. `FindingSnapshot.coverage: Option<CoverageEnvelopeExport>` (tagged enum `Degraded | HealthClaimMisleading`); `MIN_SCHEMA_FOR_EXPORT` bumped 33 → 38; `skip_serializing_if` on the field so non-coverage findings emit clean JSON.
+- `eeb1f72` (2026-04-30) — V1.2: composition validation. `validate_coverage_composition` runs as a pre-pass inside `update_warning_state_with_declarations`; `health_claim_misleading_orphan_ref` hygiene finding when `coverage_degraded_ref` doesn't resolve to an open parent; per-`(host, bad_ref)` dedupe.
+
+**Evidence:**
+- Schema: `crates/nq-db/migrations/038_coverage_honesty.sql`. Twelve columns on both `warning_state` and `finding_observations`: `degradation_kind`, `degradation_metric`, `degradation_value`, `degradation_threshold`, `recovery_state` (CHECK = `active|candidate|satisfied`), `recovery_metric`, `recovery_comparator` (CHECK = `lt|gt|le|ge|eq`), `recovery_threshold`, `recovery_sustained_for_s`, `recovery_evidence_since`, `recovery_satisfied_at`, `coverage_degraded_ref`. `v_warnings` recreated to expose every envelope field.
+- Type machinery: `crates/nq-db/src/detect.rs` — `RecoveryState`, `RecoveryComparator`, `CoverageDegradedEnvelope`, `HealthClaimMisleadingEnvelope`, `CoverageEnvelope` enum with `Degraded` and `HealthClaimMisleading` variants, plus `coverage_envelope: Option<CoverageEnvelope>` field on `Finding`.
+- Persist path: `crates/nq-db/src/publish.rs:1097-1137` projects the `Option<CoverageEnvelope>` onto the 12 columns. None on every other finding kind → all NULL. Two shapes (Degraded / HealthClaimMisleading) populate disjoint subsets; the rest stay NULL. `degraded_since` maps to existing `first_seen_at` (set-once-never-updated, the spec invariant for window start).
+- Composition validation: `crates/nq-db/src/publish.rs::validate_coverage_composition` runs inside `update_warning_state_with_declarations` (`publish.rs:932-939`) as a pre-pass. For each `health_claim_misleading` finding, checks that `coverage_degraded_ref` resolves to an open `coverage_degraded` parent — either an in-batch parent about to upsert or a prior-cycle parent currently observed in `warning_state`. Suppressed parents (ancestor loss / operator declaration) and absent parents both count as not-open. Orphan refs produce `health_claim_misleading_orphan_ref`; original `health_claim_misleading` is persisted unchanged (producer signal is data, not rejected).
+- Wire surface: `crates/nq-db/src/export.rs::CoverageEnvelopeExport` (tagged enum, `#[serde(tag = "kind")]`). `Degraded { degradation, recovery }` carries `kind`, `metric`, `current`, `threshold` (degradation) plus `state`, `metric`, `comparator`, `threshold`, `sustained_for_s`, `evidence_since`, `satisfied_at` (recovery contract). `HealthClaimMisleading { coverage_degraded_ref }` carries the parent ref only. `coverage` field is `skip_serializing_if = Option::is_none` — non-coverage findings emit JSON without a `coverage` key (forward-compat for older readers, no `null` clutter). Export contract stays at `nq.finding_snapshot.v1`; older consumers see no change.
+- Tests:
+  - V1.0 (5) in `publish::tests`: `coverage_degraded_round_trip_persists_envelope`, `coverage_degraded_window_is_set_once_not_updated`, `recovery_state_advances_through_producer_emissions`, `health_claim_misleading_carries_ref_and_no_envelope`, `other_finding_kinds_have_null_coverage_columns`.
+  - V1.1 (4) in `export::tests`: `coverage_degraded_exports_with_envelope`, `coverage_envelope_json_round_trip`, `health_claim_misleading_exports_with_ref_only`, `other_findings_omit_coverage_field_in_json`.
+  - V1.2 (6) in `crates/nq-db/tests/coverage_composition.rs`: `orphan_fires_when_parent_absent`, `orphan_fires_when_parent_suppressed_by_ancestor`, `no_orphan_when_parent_in_same_batch`, `no_orphan_when_parent_in_warning_state_observed`, `dedupe_two_children_sharing_bad_ref`, `no_orphan_for_unrelated_finding_kinds`.
+- Cross-axis composition evidence: `coverage_honesty_under_witness_silence_exports_suppressed_with_envelope_preserved` (TESTIMONY_DEPENDENCY V1.1 export-side test) — proves the rot-pocket fix end-to-end: when a producer of `coverage_degraded` matches a witness-silence masking rule, the envelope is preserved on the suppressed row, admissibility flips to `suppressed_by_ancestor`, ancestor key resolves correctly. The two gaps shipped together; this test is the joint regression guard.
+
+**Known unproven surfaces / explicit deferrals:**
+- **One concrete real producer path.** Synthetic test producer is the V1 cash-out per spec; a driftwatch witness adapter (the live forcing case from the 2026-04-15 self-shedding incident) is its own slice.
+- **Operator surface beyond `nq query`.** Dashboard rendering deferred per spec non-goal.
+- **V1.2 post-mask edge case.** `validate_coverage_composition` runs *before* the masking pass and declaration overlay execute on the current batch. A parent emitted in this same batch and then masked later in the same cycle (because its host went stale or its witness silent in this same cycle) is treated as open. In practice, when the witness/host is in trouble, producers typically don't emit dependent findings — the masking-firing-in-the-same-cycle-as-fresh-emission pattern is rare. Tightening to true post-mask requires a second pass after `apply_declaration_overlay` and is deferred until a forcing case shows the gap matters.
+- **Sustained-recovery timer not enforced by NQ.** V1 persists `recovery_state` transitions through `active → candidate → satisfied` but does not enforce the `recovery_sustained_for_s` timer — that responsibility sits with the producer. NQ records the contract; the producer drives the lifecycle.
+
+**Unblocks:**
+- Night Shift's ability to refuse acting on degraded-coverage evidence — NS-claude pinned 2026-04-28 with a will-not-anticipate-a-finding-shape posture; the wire shape now exists for NS to consume on its own schedule.
+- Cross-axis composition with TESTIMONY_DEPENDENCY V1 — the producer-silent clearance contract holds end-to-end.
+- Future producers (driftwatch, real adapters) — the schema, type machinery, persist path, and wire surface are all in place.
+
+**Field notes:**
+- The two shapes (`coverage_degraded` operational primitive + `health_claim_misleading` derived/composition) were a deliberate split. `coverage_degraded` is greppable and emit-by-detector; `health_claim_misleading` only fires when both signals are present. A single combined finding would have collapsed the P27 distinction (operationally up + epistemically degraded) into one bucket and lost the consumer contract that NS depends on.
+- The "boring detector names" discipline (spec §"Detector surface, not theology") drove the naming. `epistemically_degraded` was the original prose term; it stayed in the spec writing and out of the detector surface. Names that are too clever stop being greppable while operators are angry.
+- `MIN_SCHEMA_FOR_EXPORT` bumping from 33 to 38 was the sole breaking-ish change in V1.1 — older NQ binaries against a newer DB will hit the preflight error explicitly. Forward-only, with the loud-failure path that FINDING_EXPORT V1's preflight (`be83e92`) was built for.
+- The V1.2 "loud companion finding rather than rejection" posture for orphan refs is the same discipline as the OPERATIONAL_INTENT_DECLARATION hygiene detectors and the SCOPE_AND_WITNESS layer's posture toward bad witness data: producer signal is data; reject the silence around it, not the data itself.
+
+---
+
 ## TESTIMONY_DEPENDENCY V1
 
 **Status:** shipped. V1.0 + V1.1 + V1.2 landed 2026-04-28 → 2026-04-29; all V1 acceptance criteria satisfied. Ratified under the gap-status discipline 2026-05-07 (this entry).
