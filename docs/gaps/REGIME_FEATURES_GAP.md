@@ -1,14 +1,14 @@
 # Gap: Regime Features — temporal fact compiler between evidence and diagnosis
 
-**Status:** partial — trajectory + persistence + recovery shipped; co-occurrence, observability, resolution pending
+**Status:** partial — shipped (trajectory + persistence + recovery + co-occurrence + resolution + badge surface); §5 observability remains pending. See [docs/FEATURE_HISTORY.md#regime_features-partial-v1](../FEATURE_HISTORY.md#regime_features-partial-v1) for evidence (10 commits across 2026-04-14 → 2026-04-20, 90 tests, downstream consumers in notify.rs / routes.rs / ZFS Phase C). Ratified 2026-05-07.
 **Depends on:** FINDING_DIAGNOSIS_GAP (typed nucleus to consume features), STABILITY_AXIS_GAP (presence pattern as input), finding_observations + hosts_history + metrics_history (the raw temporal substrate)
 **Build phase:** structural — adds the missing middle layer between stored evidence and typed diagnosis
-**Blocks:** trajectory/direction in diagnosis (currently deferred), forecasting/time-to-exhaustion, regime composition ("this host is in an accumulation regime" vs "three bad things are true near each other")
-**Last updated:** 2026-04-15
+**Blocks:** §5 observability slice (genuinely pending — typed `signal_silence_generations` / `expected_metric_missing` / `evidence_basis` not yet built; only an indirect `RegimeHint::ObservabilityFailure` from co-occurrence pairs exists); forecasting/time-to-exhaustion (explicit non-goal of V1); a richer renderer surface beyond the one-token badge.
+**Last updated:** 2026-05-07
 
-## Shipped State (2026-04-14)
+## Shipped State (2026-04-14 → 2026-04-20)
 
-Three of the six feature classes are live (trajectory, persistence, recovery). Three remain pending (co-occurrence §4, observability §5, resolution §6):
+Five of the six feature classes from §"Feature Classes" plus the badge surface are live. §5 observability is the only first-class slice still pending:
 
 **Trajectory (commit `34dd15e`)**
 - Subject: `host_metric` with subject_id `{host}/{metric}`
@@ -36,7 +36,20 @@ Architecture verified against real contention. The `entrenched/persistent/transi
 - Computed: `last_recovery_lag_generations`, `median_recovery_lag_generations`, `last_recurrence_interval_generations`, `median_recurrence_interval_generations`, `prior_cycles_observed`, `recovery_lag_class` (normal/slow/pathological/insufficient_history — self-referential against own prior median)
 - Canonical worked examples: synthetic (see §3); backfill with live data after sufficient cycle history accumulates on labelwatch-host
 
-**Still pending:** co-occurrence (§4), observability (§5), resolution/stabilization (§6), renderer surface.
+**Co-occurrence shipped (2026-04-17)**
+- Commit `6f70f69` — `compute_finding_co_occurrence` + `CO_OCCURRENCE_SIGNATURES` const table + `lookup_regime_hint`. Five named hints: Accumulation, Pressure, ObservabilityFailure, Entrenchment, DurabilityDegrading. Subject: `host`. Pairwise overlap depth from `finding_observations`; signatured pairs preferred over unsignatured at equal depth.
+
+**Resolution subset shipped (2026-04-17)**
+- Commit `90a941d` — `compute_host_resolution` + `plateau_depth` + `classify_recovery_phase`. Three of the four spec variants: Acute / Improving / Settling. `SteadyState` reserved per spec §6 boundary discipline (would require `reuse_behavior` + `residual_anomaly_class`).
+
+**Badge + notifier surface shipped (2026-04-17)**
+- Commits `1736142` (one-token badge + one notifier sentence — slice stop) + `9f771f6` (post-review fixes — notifier ordering + wildcard-safe host lookup).
+- Four-state `RegimeBadge` (None/Stable/Resolving/Worsening), `derive_regime_badge` priority order, `badge_explanation` operator copy. Consumed by `notify.rs` and `routes.rs`.
+
+**Still pending:**
+- §5 observability as a first-class feature class — typed `signal_silence_generations` / `expected_metric_missing` / `evidence_basis` shape per the §5 vocabulary. Today only the indirect `RegimeHint::ObservabilityFailure` variant on co-occurrence pairs exists.
+- Retention horizon per feature class (spec §"Design Stance" mandates this; today rows live until `generations` cascade).
+- Richer renderer surface beyond the badge (spec §"Integration Points" envisioned rising/falling markers, recurrence badges, recovery lag, regime hints, confidence indicators).
 
 ## The Problem
 
