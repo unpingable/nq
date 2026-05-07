@@ -1,14 +1,14 @@
 # Gap: Regime Features — temporal fact compiler between evidence and diagnosis
 
-**Status:** partial — shipped (trajectory + persistence + recovery + co-occurrence + resolution + badge surface); §5 observability remains pending. See [docs/FEATURE_HISTORY.md#regime_features-partial-v1](../FEATURE_HISTORY.md#regime_features-partial-v1) for evidence (10 commits across 2026-04-14 → 2026-04-20, 90 tests, downstream consumers in notify.rs / routes.rs / ZFS Phase C). Ratified 2026-05-07.
+**Status:** shipped (V1 — all six feature classes + badge surface). See [docs/FEATURE_HISTORY.md#regime_features-v1](../FEATURE_HISTORY.md#regime_features-v1) for evidence (11 commits across 2026-04-14 → 2026-05-07, 97 tests, downstream consumers in notify.rs / routes.rs / ZFS Phase C). All 8 V1 acceptance criteria satisfied. Ratified 2026-05-07.
 **Depends on:** FINDING_DIAGNOSIS_GAP (typed nucleus to consume features), STABILITY_AXIS_GAP (presence pattern as input), finding_observations + hosts_history + metrics_history (the raw temporal substrate)
 **Build phase:** structural — adds the missing middle layer between stored evidence and typed diagnosis
-**Blocks:** §5 observability slice (genuinely pending — typed `signal_silence_generations` / `expected_metric_missing` / `evidence_basis` not yet built; only an indirect `RegimeHint::ObservabilityFailure` from co-occurrence pairs exists); forecasting/time-to-exhaustion (explicit non-goal of V1); a richer renderer surface beyond the one-token badge.
+**Blocks:** observability consumer wiring (the substrate landed in V1.6; consumers like the badge surface qualifying recovery during silence, or dominance projection refusing to demote a host whose `evidence_basis = Missing`, are downstream); forecasting/time-to-exhaustion (explicit non-goal of V1); a richer renderer surface beyond the one-token badge; per-feature-class retention horizon.
 **Last updated:** 2026-05-07
 
-## Shipped State (2026-04-14 → 2026-04-20)
+## Shipped State (2026-04-14 → 2026-05-07)
 
-Five of the six feature classes from §"Feature Classes" plus the badge surface are live. §5 observability is the only first-class slice still pending:
+All six feature classes from §"Feature Classes" plus the badge surface are live:
 
 **Trajectory (commit `34dd15e`)**
 - Subject: `host_metric` with subject_id `{host}/{metric}`
@@ -46,8 +46,11 @@ Architecture verified against real contention. The `entrenched/persistent/transi
 - Commits `1736142` (one-token badge + one notifier sentence — slice stop) + `9f771f6` (post-review fixes — notifier ordering + wildcard-safe host lookup).
 - Four-state `RegimeBadge` (None/Stable/Resolving/Worsening), `derive_regime_badge` priority order, `badge_explanation` operator copy. Consumed by `notify.rs` and `routes.rs`.
 
-**Still pending:**
-- §5 observability as a first-class feature class — typed `signal_silence_generations` / `expected_metric_missing` / `evidence_basis` shape per the §5 vocabulary. Today only the indirect `RegimeHint::ObservabilityFailure` variant on co-occurrence pairs exists.
+**Observability shipped (2026-05-07, V1.6)**
+- `compute_host_observability` emits per-host `subject_kind = 'host'` rows with `ObservabilityPayload { signal_silence_generations, evidence_basis }`. Three-valued `EvidenceBasis`: `Direct` (silence == 0), `Inferred` (silence > 0 with covering finding active — `stale_host` / `smart_witness_silent` / `zfs_witness_silent`), `Missing` (silence > 0 with no covering finding — names the gap between "missed a generation" and "declared stale"). Suppressed covering findings cannot ground `Inferred`. `expected_metric_missing` deferred — NQ has no notion of "expected metrics" today. 7 acceptance tests in `regime.rs::tests` (direct / missing / inferred-stale_host / inferred-witness_silent / suppressed-covering-rejected / recompute-upserts / unknown-hosts-skipped).
+
+**Still pending (downstream of substrate, no longer V1 hole):**
+- Observability consumer wiring (badge qualification during silence; dominance projection refusing to demote a host with `evidence_basis = Missing`; renderer surfacing the silence count).
 - Retention horizon per feature class (spec §"Design Stance" mandates this; today rows live until `generations` cascade).
 - Richer renderer surface beyond the badge (spec §"Integration Points" envisioned rising/falling markers, recurrence badges, recovery lag, regime hints, confidence indicators).
 

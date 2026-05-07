@@ -38,9 +38,10 @@ pub use regime::{
     badge_explanation, build_trajectory, classify_persistence, classify_recovery_lag,
     classify_recovery_phase, compute_features, compute_regime_annotation, derive_regime_badge,
     latest_finding_persistence, latest_finding_recovery, latest_host_co_occurrence,
-    latest_host_resolution, latest_host_trajectory, plateau_depth, BasisKind, CoOccurrencePayload,
-    Direction, PersistenceClass, PersistencePayload, RecoveryLagClass, RecoveryPayload,
-    RecoveryPhase, RegimeBadge, RegimeHint, ResolutionPayload, TrajectoryPayload,
+    latest_host_observability, latest_host_resolution, latest_host_trajectory, plateau_depth,
+    BasisKind, CoOccurrencePayload, Direction, EvidenceBasis, ObservabilityPayload,
+    PersistenceClass, PersistencePayload, RecoveryLagClass, RecoveryPayload, RecoveryPhase,
+    RegimeBadge, RegimeHint, ResolutionPayload, TrajectoryPayload,
 };
 pub use migrate::{migrate, read_schema_version, CURRENT_SCHEMA_VERSION};
 pub use declarations::{
