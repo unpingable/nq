@@ -1,10 +1,10 @@
 # Gap: Evidence Retirement — present tense requires a live basis
 
-**Status:** proposed
-**Depends on:** EVIDENCE_LAYER_GAP (built — transactional finding substrate), FINDING_EXPORT_GAP (partial — export carries identity; needs basis fields), COMPLETENESS_PROPAGATION_GAP (proposed — sibling, about observation-time partiality)
-**Related:** SENTINEL_LIVENESS_GAP (built — `zfs_witness_silent` is the prior art for one half of this), INSTANCE_WITNESS_GAP (witness lifecycle semantics), FEDERATION_GAP (amplifies this problem — remote sources disappear more often), ZFS_COLLECTOR_GAP (first concrete case: torn-down zfs witness left fossil findings)
-**Blocks:** safe federation rollout, safe witness decommissioning, any teardown that involves detector-backed sources
-**Last updated:** 2026-04-22
+**Status:** partial — V1.0 substrate (basis lifecycle columns + propagation + export envelope) shipped 2026-04-22; basis-stale detector, retirement verb, render distinction, and per-state notification gating remain V1 follow-on slices. See [docs/FEATURE_HISTORY.md#evidence_retirement-v1-0-substrate](../FEATURE_HISTORY.md#evidence_retirement-v10-substrate). Ratified 2026-05-07.
+**Depends on:** EVIDENCE_LAYER_GAP (shipped — transactional finding substrate), FINDING_EXPORT_GAP (shipped — basis envelope round-trips), COMPLETENESS_PROPAGATION_GAP (proposed — sibling, about observation-time partiality)
+**Related:** SENTINEL_LIVENESS_GAP (shipped — `zfs_witness_silent` is the prior art for one half of this), INSTANCE_WITNESS_GAP (witness lifecycle semantics), FEDERATION_GAP (amplifies this problem — remote sources disappear more often), ZFS_COLLECTOR_GAP (first concrete case: torn-down zfs witness left fossil findings)
+**Blocks:** safe federation rollout, safe witness decommissioning, any teardown that involves detector-backed sources (still blocked — V1 follow-on slices required to close)
+**Last updated:** 2026-05-07
 
 ## The Problem
 
