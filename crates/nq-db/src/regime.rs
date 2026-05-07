@@ -219,6 +219,57 @@ pub struct CoOccurrencePayload {
     pub active_finding_count: i64,
 }
 
+/// Quality of the silence evidence for a host. REGIME_FEATURES_GAP §5
+/// vocabulary: direct / inferred / missing.
+///
+/// - `Direct`: host emitted in the current generation (silence = 0).
+/// - `Inferred`: silence ≥ 1 generation AND a covering finding (`stale_host`,
+///   `smart_witness_silent`, `zfs_witness_silent`) is currently observed for
+///   the host. We have both the silence and a finding explaining it.
+/// - `Missing`: silence ≥ 1 generation AND no covering finding. The silence
+///   is real; the explanation is not yet structurally captured. This case
+///   names the gap between "we just missed a generation" and "we declare
+///   staleness" — until `stale_host` crosses its threshold, that gap is
+///   invisible to consumers reading findings, but the observability feature
+///   names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceBasis {
+    Direct,
+    Inferred,
+    Missing,
+}
+
+impl EvidenceBasis {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::Inferred => "inferred",
+            Self::Missing => "missing",
+        }
+    }
+}
+
+/// Per-host observability — REGIME_FEATURES_GAP §5 first-class typed shape.
+///
+/// Companion to the indirect `RegimeHint::ObservabilityFailure` co-occurrence
+/// hint: this is the typed silence-accounting fact, computed per-host per
+/// generation independent of detector emission. Consumers can refuse to
+/// claim recovery / health when `signal_silence_generations > 0` even
+/// before `stale_host` crosses its emission threshold.
+///
+/// Spec field `expected_metric_missing` is deferred. NQ has no notion of
+/// "expected metrics" today — per `GENERATION_LINEAGE_GAP` non-goal,
+/// defining expected entities or detectors requires detector-configuration
+/// metadata that does not yet exist. The field is named in the spec but
+/// has no producer; adding it now would be a promise the substrate cannot
+/// keep.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservabilityPayload {
+    pub signal_silence_generations: i64,
+    pub evidence_basis: EvidenceBasis,
+}
+
 // Basis/provenance per HISTORY_COMPACTION invariant #23 and
 // REGIME_FEATURES spec §Basis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1216,6 +1267,83 @@ fn compute_finding_co_occurrence(
 /// Runs in its own transaction — if feature computation fails, the lifecycle
 /// is still correct. Features are derived; they are not load-bearing for
 /// the generation's validity.
+// ---------------------------------------------------------------------------
+// Observability: per-host silence accounting + evidence-basis classification.
+// REGIME_FEATURES_GAP §5 — first-class typed shape, distinct from the
+// indirect `RegimeHint::ObservabilityFailure` emitted by co-occurrence pairs.
+// ---------------------------------------------------------------------------
+
+/// Covering finding kinds for `EvidenceBasis::Inferred`. A host's silence is
+/// "inferred" when one of these is currently observed (not suppressed) for
+/// the host: we have the silence AND a finding explaining it. Order of the
+/// SQL params below must match this list.
+const OBSERVABILITY_COVERING_KINDS: [&str; 3] = [
+    "stale_host",
+    "smart_witness_silent",
+    "zfs_witness_silent",
+];
+
+fn compute_host_observability(
+    tx: &rusqlite::Transaction,
+    generation_id: i64,
+) -> anyhow::Result<()> {
+    // Hosts we know about — `hosts_current` is keyed by host PRIMARY KEY,
+    // and `as_of_generation` is the most recent generation for which the
+    // publisher wrote a row. Hosts never seen are absent from this set;
+    // we don't emit observability for unknown subjects.
+    let hosts: Vec<(String, i64)> = {
+        let mut stmt = tx.prepare(
+            "SELECT host, as_of_generation FROM hosts_current"
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        rows.collect::<Result<_, _>>()?
+    };
+
+    for (host, as_of_gen) in &hosts {
+        let silence = std::cmp::max(0, generation_id - as_of_gen);
+
+        let evidence_basis = if silence == 0 {
+            EvidenceBasis::Direct
+        } else {
+            let covered: bool = tx.query_row(
+                "SELECT EXISTS (
+                   SELECT 1 FROM warning_state
+                   WHERE host = ?1
+                     AND visibility_state = 'observed'
+                     AND kind IN (?2, ?3, ?4)
+                 )",
+                rusqlite::params![
+                    host,
+                    OBSERVABILITY_COVERING_KINDS[0],
+                    OBSERVABILITY_COVERING_KINDS[1],
+                    OBSERVABILITY_COVERING_KINDS[2],
+                ],
+                |r| r.get::<_, i64>(0).map(|n| n != 0),
+            )?;
+            if covered { EvidenceBasis::Inferred } else { EvidenceBasis::Missing }
+        };
+
+        let payload = ObservabilityPayload {
+            signal_silence_generations: silence,
+            evidence_basis,
+        };
+
+        upsert_feature(
+            tx, generation_id,
+            "host", host, "observability",
+            generation_id, generation_id,
+            BasisKind::Mixed,
+            true,
+            1,
+            &serde_json::to_string(&payload)?,
+        )?;
+    }
+
+    Ok(())
+}
+
 pub fn compute_features(db: &mut WriteDb, generation_id: i64) -> anyhow::Result<()> {
     let tx = db.conn.transaction()?;
     compute_host_trajectories(&tx, generation_id)?;
@@ -1223,6 +1351,7 @@ pub fn compute_features(db: &mut WriteDb, generation_id: i64) -> anyhow::Result<
     compute_finding_recovery(&tx, generation_id)?;
     compute_finding_co_occurrence(&tx, generation_id)?;
     compute_host_resolution(&tx, generation_id)?;
+    compute_host_observability(&tx, generation_id)?;
     tx.commit()?;
     Ok(())
 }
@@ -1324,6 +1453,27 @@ pub fn latest_host_resolution(
             let p: ResolutionPayload = serde_json::from_str(&json)?;
             Ok(Some((p, sufficient != 0)))
         }
+        None => Ok(None),
+    }
+}
+
+/// Read the most recent observability feature for a host. Absent row → `None`
+/// means we have no record of this host (it has never appeared in
+/// `hosts_current`). Callers should treat that as a different signal from
+/// `Some(payload)` with `evidence_basis = Missing`.
+pub fn latest_host_observability(
+    db: &crate::ReadDb,
+    host: &str,
+) -> anyhow::Result<Option<ObservabilityPayload>> {
+    let row: Option<String> = db.conn.query_row(
+        "SELECT payload_json FROM regime_features
+         WHERE subject_kind = 'host' AND subject_id = ?1 AND feature_type = 'observability'
+         ORDER BY generation_id DESC LIMIT 1",
+        rusqlite::params![host],
+        |row| row.get(0),
+    ).ok();
+    match row {
+        Some(json) => Ok(Some(serde_json::from_str(&json)?)),
         None => Ok(None),
     }
 }
@@ -3035,5 +3185,148 @@ mod tests {
             [], |r| r.get(0),
         ).unwrap();
         assert_eq!(sufficient, 0, "generation count below MIN_DEPTH should flag insufficient");
+    }
+
+    // ------------------------------------------------------------------
+    // Observability tests — REGIME_FEATURES_GAP §5
+    // ------------------------------------------------------------------
+
+    fn insert_host_current(db: &crate::WriteDb, host: &str, as_of_gen: i64) {
+        ensure_generation(db, as_of_gen);
+        db.conn.execute(
+            "INSERT INTO hosts_current (host, as_of_generation, collected_at)
+             VALUES (?1, ?2, '2026-01-01T00:00:00Z')
+             ON CONFLICT(host) DO UPDATE SET as_of_generation = excluded.as_of_generation",
+            rusqlite::params![host, as_of_gen],
+        ).unwrap();
+    }
+
+    #[test]
+    fn observability_direct_when_host_observed_this_generation() {
+        let mut db = make_db();
+        insert_host_current(&db, "host-1", 50);
+
+        compute_features(&mut db, 50).unwrap();
+
+        let payload_json: String = db.conn.query_row(
+            "SELECT payload_json FROM regime_features
+             WHERE subject_kind = 'host' AND subject_id = 'host-1' AND feature_type = 'observability'",
+            [], |r| r.get(0),
+        ).unwrap();
+        let p: ObservabilityPayload = serde_json::from_str(&payload_json).unwrap();
+        assert_eq!(p.signal_silence_generations, 0);
+        assert_eq!(p.evidence_basis, EvidenceBasis::Direct);
+    }
+
+    fn read_observability(db: &crate::WriteDb, host: &str) -> ObservabilityPayload {
+        let json: String = db.conn.query_row(
+            "SELECT payload_json FROM regime_features
+             WHERE subject_kind = 'host' AND subject_id = ?1 AND feature_type = 'observability'
+             ORDER BY generation_id DESC LIMIT 1",
+            rusqlite::params![host],
+            |r| r.get(0),
+        ).expect("observability row must exist");
+        serde_json::from_str(&json).unwrap()
+    }
+
+    #[test]
+    fn observability_missing_when_silent_without_covering_finding() {
+        let mut db = make_db();
+        // host-1 last observed 3 gens ago; no stale_host or witness_silent
+        // finding fired yet (the threshold is typically > 5 gens).
+        insert_host_current(&db, "host-1", 47);
+        ensure_generation(&db, 50);
+
+        compute_features(&mut db, 50).unwrap();
+
+        let p = read_observability(&db, "host-1");
+        assert_eq!(p.signal_silence_generations, 3);
+        assert_eq!(p.evidence_basis, EvidenceBasis::Missing,
+            "silence without covering finding must classify as Missing — \
+             names the gap between 'missed a generation' and 'declared stale'");
+    }
+
+    #[test]
+    fn observability_inferred_when_silent_with_stale_host() {
+        let mut db = make_db();
+        insert_host_current(&db, "host-1", 38);
+        ensure_generation(&db, 50);
+        insert_warning_state(&db, "host-1", "stale_host", "", 12);
+
+        compute_features(&mut db, 50).unwrap();
+
+        let p = read_observability(&db, "host-1");
+        assert_eq!(p.signal_silence_generations, 12);
+        assert_eq!(p.evidence_basis, EvidenceBasis::Inferred);
+    }
+
+    #[test]
+    fn observability_inferred_when_silent_with_witness_silent() {
+        let mut db = make_db();
+        insert_host_current(&db, "host-1", 47);
+        ensure_generation(&db, 50);
+        // No stale_host (silence below the staleness threshold), but a
+        // witness_silent finding is active for the host.
+        insert_warning_state(&db, "host-1", "smart_witness_silent", "", 3);
+
+        compute_features(&mut db, 50).unwrap();
+
+        let p = read_observability(&db, "host-1");
+        assert_eq!(p.signal_silence_generations, 3);
+        assert_eq!(p.evidence_basis, EvidenceBasis::Inferred,
+            "witness_silent must count as covering even without stale_host");
+    }
+
+    #[test]
+    fn observability_missing_when_covering_finding_is_suppressed() {
+        let mut db = make_db();
+        insert_host_current(&db, "host-1", 38);
+        ensure_generation(&db, 50);
+        insert_warning_state(&db, "host-1", "stale_host", "", 12);
+        // Covering finding exists but is suppressed (e.g. by a higher-tier
+        // ancestor mask) — not currently observable, so it cannot serve
+        // as the basis for "we know why" claims.
+        db.conn.execute(
+            "UPDATE warning_state SET visibility_state = 'suppressed' WHERE host = 'host-1' AND kind = 'stale_host'",
+            [],
+        ).unwrap();
+
+        compute_features(&mut db, 50).unwrap();
+
+        let p = read_observability(&db, "host-1");
+        assert_eq!(p.evidence_basis, EvidenceBasis::Missing,
+            "suppressed covering findings cannot ground Inferred — \
+             we don't know what we can't see");
+    }
+
+    #[test]
+    fn observability_recompute_upserts_not_duplicates() {
+        let mut db = make_db();
+        insert_host_current(&db, "host-1", 50);
+
+        compute_features(&mut db, 50).unwrap();
+        compute_features(&mut db, 50).unwrap();
+
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM regime_features
+             WHERE subject_kind = 'host' AND subject_id = 'host-1' AND feature_type = 'observability'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1, "two compute passes for the same generation must upsert, not duplicate");
+    }
+
+    #[test]
+    fn observability_skips_unknown_hosts() {
+        let mut db = make_db();
+        ensure_generation(&db, 50);
+        // No hosts_current rows — only known subjects (hosts that have
+        // appeared in hosts_current at least once) emit observability.
+        compute_features(&mut db, 50).unwrap();
+
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM regime_features WHERE feature_type = 'observability'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 0, "no rows for hosts we've never seen");
     }
 }
