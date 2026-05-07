@@ -20,6 +20,47 @@ The chronological order below is newest-first.
 
 ---
 
+## EVIDENCE_LAYER V1
+
+**Status:** shipped. V1 landed 2026-04-10 in the same commit that filed the gap doc — the first NQ change written spec-first under the gap spec discipline. The schema and write path have been extended substantially by downstream V1 sub-laws (FINDING_DIAGNOSIS, COVERAGE_HONESTY, TESTIMONY_DEPENDENCY, EVIDENCE_RETIREMENT, OPERATIONAL_INTENT_DECLARATION) that all attached additive columns to `finding_observations` rather than adding a new table. Ratified under the gap-status discipline 2026-05-07 (this entry).
+
+**Shipped commits:**
+- `e376f6e` (2026-04-10) — V1: migration 025 (`finding_observations` table) + `compute_finding_key` helper + transactional `update_warning_state` refactor + write-path inside `update_warning_state_inner` + 7 acceptance tests + the gap doc itself. Spec and implementation landed together.
+
+**Evidence:**
+- Schema: `crates/nq-db/migrations/025_finding_observations.sql` creates `finding_observations` with: synthetic `observation_id` (rowid alias), `generation_id` FK with `ON DELETE CASCADE`, opaque `finding_key TEXT NOT NULL`, denormalized identity columns (`detector_id`, `host`, `subject`), payload columns (`domain`, `severity`, `value`, `message`, `finding_class`, `rule_hash`), `observed_at TEXT NOT NULL` (witness time, distinct from publish time), and reserved nullable forward-looking columns (`coverage_fraction`, `correlation_key`, `cause_hint`). `UNIQUE (generation_id, finding_key)` enforces one observation per detector emission per generation. Three indexes (`finding_key`, `detector_id`, `host`) all DESC on `generation_id` for recency queries.
+- Identity helper: `crates/nq-db/src/publish.rs:824-834` — `compute_finding_key(scope, host, detector_id, subject)` returns `"{scope}/{enc(host)}/{enc(detector_id)}/{enc(subject)}"` with URL-encoding on each component. Format documented as opaque from SQL — never SPLIT or LIKE'd; queries use the denormalized columns. Forward-compatible with federation (`scope` becomes `site/{site_id}` when remote publishers exist).
+- Transaction wrap: `update_warning_state` (`publish.rs:902`) opens a `tx`, calls `update_warning_state_with_declarations` which calls `update_warning_state_inner(&tx, ...)`, then commits. Errors propagate; the transaction rolls back automatically via Drop. Atomicity across upsert + masking + entity GC is now real, not aspirational.
+- Write path: `publish.rs:1032-1250`. Inside `update_warning_state_inner`, a `prepare_cached` INSERT writes one row to `finding_observations` per finding before the upsert. The original V1 column set has grown via downstream V1 sub-laws — failure_class, service_impact, action_bias, synopsis, why_care (FINDING_DIAGNOSIS V1), basis_source_id, basis_witness_id (TESTIMONY_DEPENDENCY V1.1 / EVIDENCE_RETIREMENT), state_kind (state_kind axis 2026-04-23), degradation/recovery columns (COVERAGE_HONESTY V1), node_unobservable columns (TESTIMONY_DEPENDENCY V1.2) — but the V1 contract (one observation per finding per generation, atomic with lifecycle, never overwritten) holds end-to-end.
+- Acceptance tests (7) in `crates/nq-db/src/publish.rs::tests`:
+  - `observations_are_written_per_finding` (criterion #1).
+  - `observations_survive_lifecycle_deletion` (criterion #2).
+  - `retention_cascades_to_observations` (criterion #3).
+  - `duplicate_finding_in_same_generation_fails` (criterion #4).
+  - `finding_key_handles_special_characters` (criterion #5).
+  - `observed_at_is_required` (criterion #6).
+  - `observation_failure_rolls_back_lifecycle` (criterion #7 — transactional safety; pre-inserts a colliding row and verifies the lifecycle changes also roll back).
+- Downstream consumer evidence: every subsequent V1 sub-law has used `finding_observations` as its read substrate. FINDING_DIAGNOSIS round-trips through `finding_observations` (`diagnosis_round_trips_through_finding_observations` at line 3633). GENERATION_LINEAGE counts derive from this layer. STABILITY_AXIS computes presence patterns by counting distinct `generation_id` rows across the observation_window. DOMINANCE_PROJECTION reads dominance from rolled-up observations. The "build the substrate now; flip the model later, cheaply" thesis from the gap's §"Why This Matters" has cashed out — the substrate has supported every V1 sub-law without schema breakage.
+- Live evidence: schema 44 in production; observations written every cycle on all three NQ hosts. The `nq findings export` JSONL surface (FINDING_EXPORT V1) reads from `finding_observations` and is consumed cross-repo by Night Shift.
+
+**Known unproven surfaces:**
+- `observed_at` is detector emission time (`fmt_ts(now)` at the top of the inner function), not source collection time. The TODO at `publish.rs:1083-1085` flags this against the gap's open question — federation will care about the difference. Forcing case has not appeared.
+- Reads from `finding_observations` for the operator surface — original V1 explicit non-goal ("no UI or query path reads") was accurate at landing. Reads have grown organically through downstream consumers (FINDING_EXPORT, STABILITY_AXIS computation, FINDING_DIAGNOSIS round-trip), but `warning_state` and `v_warnings` remain the operationally authoritative read surface for current lifecycle. The "warning_state as materialized view of finding_observations" flip remains its own larger gap, deliberately deferred.
+- The reserved columns (`coverage_fraction`, `correlation_key`, `cause_hint`) are still dormant. Federation has not arrived; no consumer populates them.
+
+**Unblocks:**
+- GENERATION_LINEAGE_GAP — direct dependency; the lineage counters are aggregates over `finding_observations` written in the same transaction.
+- FEDERATION_GAP — the witness-time-vs-publish-time distinction is preserved in `observed_at`; `scope` is forward-compatible.
+- DOMINANCE_PROJECTION_GAP — the rolled-up dominance surface reads observations.
+- Every V1 sub-law since (FINDING_DIAGNOSIS, COVERAGE_HONESTY, TESTIMONY_DEPENDENCY, EVIDENCE_RETIREMENT, STABILITY_AXIS, OPERATIONAL_INTENT_DECLARATION). Each attached its typed shape onto `finding_observations` rather than introducing a new event table — direct consequence of the V1 substrate landing first.
+
+**Field notes:**
+- The latent transaction-wrapping bug (`update_warning_state` relied on SQLite's implicit per-statement transactions) was made visible by this gap. The "atomic rollback on observation write failure" criterion #7 cannot pass without real transactional semantics. The refactor was small and mechanical; the test catches regressions cheaply.
+- The schema's reserved-but-nullable columns (`coverage_fraction`, `correlation_key`, `cause_hint`) approach was the right call. SQLite cost is negligible; having them dormant in the schema kept later additive moves cheap. The bigger lesson, post-hoc: every column added since V1 has been additive and downstream-V1-sub-law-specific. The original V1 schema didn't paint into a corner.
+- This is the first commit explicitly written under the post-retool spec-first discipline (gap doc landed alongside code, with acceptance criteria upfront). The discipline has proved out — every successor V1 sub-law has followed the same shape.
+
+---
+
 ## GENERATION_LINEAGE V1
 
 **Status:** shipped. V1 landed 2026-04-10 in the same commit that filed the gap doc. Ratified under the gap-status discipline 2026-05-07 (this entry).

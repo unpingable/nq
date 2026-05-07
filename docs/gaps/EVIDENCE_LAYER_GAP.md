@@ -1,6 +1,6 @@
 # Gap: Evidence Layer — `finding_observations`
 
-**Status:** specified, ready to build
+**Status:** shipped; see [docs/FEATURE_HISTORY.md#evidence_layer-v1](../FEATURE_HISTORY.md#evidence_layer-v1) for evidence (migration 025 + `compute_finding_key` + transactional `update_warning_state` + 7 acceptance tests). Ratified 2026-05-07.
 **Depends on:** schema v24 (visibility_state, suppression_reason)
 **Build phase:** structural prep, before federation
 **Blocks:** `GENERATION_LINEAGE_GAP`, `FEDERATION_GAP`, `DOMINANCE_PROJECTION_GAP`
