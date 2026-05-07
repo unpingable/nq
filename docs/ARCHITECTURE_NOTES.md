@@ -156,6 +156,8 @@ Operational corollary — what NOT to do:
 
 Keeper line: **a gap doc can remember why work exists; it should not be forced to remember whether reality still agrees.** That belongs in the ledger.
 
+CI tripwire (added 2026-05-07): `scripts/check_gap_status.sh` runs in the `gap-status-discipline` job and refuses any `docs/gaps/*.md` whose Status field contains "shipped" without a FEATURE_HISTORY pointer in the doc. Cheap, narrow, and load-bearing — every recurrence of the rot pattern this doctrine names will fail CI before merge. Eight legacy ratifications across 2026-05-06 → 2026-05-07 (GENERALIZED_MASKING / STABILITY_AXIS / SENTINEL_LIVENESS, then GENERATION_LINEAGE / EVIDENCE_LAYER / REGIME_FEATURES / EVIDENCE_RETIREMENT / OPERATIONAL_INTENT_DECLARATION / TESTIMONY_DEPENDENCY / COVERAGE_HONESTY / ZFS_COLLECTOR) cleared the rot pocket; the check prevents recurrence.
+
 ---
 
 ## Latent notes
