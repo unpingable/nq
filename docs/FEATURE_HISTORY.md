@@ -20,6 +20,60 @@ The chronological order below is newest-first.
 
 ---
 
+## TESTIMONY_DEPENDENCY V1
+
+**Status:** shipped. V1.0 + V1.1 + V1.2 landed 2026-04-28 → 2026-04-29; all V1 acceptance criteria satisfied. Ratified under the gap-status discipline 2026-05-07 (this entry).
+
+**Shipped commits:**
+- `eecd3f5` (2026-04-28) — V1.0: witness-silence as host-masking parents (smart_witness_silent → smart_*; zfs_witness_silent → zfs_*) via `MaskingRule.child_kind_prefix` extension and a new `witness_unobservable` suppression_reason.
+- `fc969d4` (2026-04-28) — V1.1: `v_admissibility` view (migration 039). Maps visibility_state + suppression_reason onto the admissibility vocabulary (`observable | suppressed_by_ancestor`); exposes `ancestor_reason` so consumers branch on cause without parsing kind strings.
+- `0a17e89` (2026-04-28) — V1.1: admissibility surface in JSON export. `FindingSnapshot.admissibility: AdmissibilityExport` always-present block; `ancestor_finding_key` resolved server-side via host-scoped lookup.
+- `fadf76d` (2026-04-29) — V1.2: paired `node_unobservable` parent finding + producer reference. Migration 040 adds 4 typed columns to `warning_state` and `finding_observations`. Both witness-silence detectors emit a paired `node_unobservable` parent via the shared `push_paired_node_unobservable` helper.
+
+**Evidence:**
+- V1.0 — Host-masking extension:
+  - `MaskingRule` extended with `child_kind_prefix: Option<&'static str>` (`crates/nq-db/src/publish.rs:842-852`).
+  - Two new entries in `MASKING_RULES` (`publish.rs:878-887`): `smart_witness_silent` → `witness_unobservable` prefix `"smart_"`; `zfs_witness_silent` → `witness_unobservable` prefix `"zfs_"`.
+  - First-matching-rule semantics preserved: `stale_host` → `host_unreachable` outranks witness-silent → `witness_unobservable` when both fire on the same host (whole-host loss is the broader claim — test `stale_host_outranks_witness_silent_when_both_fire`).
+  - Six tests in `publish::tests` covering domain-scoped suppression, cross-domain non-suppression, recovery hysteresis, persistence-across-suppression round-trip, self-mask exclusion, and rule precedence.
+- V1.1 — Admissibility view:
+  - `crates/nq-db/migrations/039_admissibility_view.sql` creates `v_admissibility`. `visibility_state = 'observed'` → `admissibility = 'observable'`; `visibility_state = 'suppressed'` → `admissibility = 'suppressed_by_ancestor'`. `ancestor_reason` mirrors `suppression_reason` (`host_unreachable | source_unreachable | witness_unobservable`).
+  - Four tests covering the named query (`admissibility_view_filter_for_consumer_query` exercises `WHERE admissibility = 'suppressed_by_ancestor'`), open-finding observability, witness-silence suppression with reason, and host-unreachable under stale_host.
+- V1.1 — Wire surface:
+  - `FindingSnapshot.admissibility: AdmissibilityExport` always-serialized (`crates/nq-db/src/export.rs`). Wire shape: `{ state, reason, ancestor_finding_key?, declaration_id? }`. V1 emits two `state` values (`observable`, `suppressed_by_ancestor`) and two `reason` buckets (`testimony_dependency`, `none`); the remaining states are reserved (later populated by OPERATIONAL_INTENT_DECLARATION).
+  - `ancestor_finding_key` resolved server-side via host-scoped lookup mirroring `MASKING_RULES`. Returns `None` honestly when the parent cannot be resolved; consumer wire shape stays honest about partial knowledge.
+  - Five export-side tests, including `coverage_honesty_under_witness_silence_exports_suppressed_with_envelope_preserved` — composes COVERAGE_HONESTY V1 with TESTIMONY_DEPENDENCY V1, proves the rot-pocket-fix end-to-end (envelope intact, admissibility flipped, ancestor key resolved).
+- V1.2 — Paired `node_unobservable` + producer reference:
+  - `crates/nq-db/migrations/040_node_unobservable.sql` adds 4 typed columns to both `warning_state` and `finding_observations`: `node_type` (`host | witness | transport | collector` CHECK), `cause_candidate` (`agent_stopped | agent_unreachable | host_unreachable | transport_failed | collector_expired` CHECK), `evidence_finding_key`, `suppressed_descendant_count`.
+  - `v_warnings` recreated to expose every envelope field.
+  - Type machinery: `NodeType` enum, `CauseCandidate` enum, `NodeUnobservableEnvelope` struct, plus `node_unobservable_envelope: Option<NodeUnobservableEnvelope>` field on `Finding` (`crates/nq-db/src/detect.rs`).
+  - `Finding::producer_ref()` helper (`detect.rs`) maps to `basis_witness_id` for V1; documented fallback to `basis_source_id` for non-witness producers reserved but not implemented.
+  - Both `detect_smart_witness_silent` and `detect_zfs_witness_silent` emit a paired `node_unobservable` parent via the shared `push_paired_node_unobservable` helper. Aggregation: identity is `(host, kind="node_unobservable", subject=witness_id)` — exactly one parent per silent witness per generation, never fanning out per descendant.
+  - V1 cause classification: both `witness_status='failed'` and "received_age past threshold" map to `agent_unreachable` (running but cannot deliver, or running-or-not-we-don't-know — conservative single value).
+  - Wire shape: `FindingSnapshot.node_unobservable: Option<NodeUnobservableExport>` (additive; contract stays v1). `evidence_finding_keys` is plural-from-day-one (`Vec<String>` length 1 in V1) so multi-evidence cases generalize without a contract bump.
+  - Six new tests covering producer_ref mapping, envelope round-trip, NULL columns on non-promoter findings, full promoter integration via SMART witness fixture, JSON wire round-trip with plural list, and `skip_serializing_if` discipline.
+- V1 acceptance criteria satisfied: kind in vocabulary (V1.2), producer_ref helper (V1.2), promoter pairing (V1.2), admissibility view (V1.1), per-finding admissibility resolved through ancestry (V1.1 + V1.2 end-to-end).
+
+**Known unproven surfaces / explicit deferrals:**
+- **Multi-level ancestry.** V1 is one level (silence detector → descendants on same host). Hosts → witnesses → findings remains deferred until the multi-level forcing case appears.
+- **Role-derived severity.** `subject_role` and `responsibility_class` field shapes reserved in the gap doc but not in V1 schema; both wait for REGISTRY_PROJECTION binding. Severity falls back to producer-configured severity in V1.
+- **Richer admissibility states.** V1.1 derives only `observable` and `suppressed_by_ancestor`. `degraded` / `unobservable` / `cannot_testify` are functions of finding kind, coverage envelope, and producer-side state; consumers compose on top of `v_admissibility` today.
+- **Multi-evidence `node_unobservable`.** V1 stores one `evidence_finding_key`; the export shape is plural-from-day-one (`evidence_finding_keys: Vec<String>` length 1 in V1) so generalization does not bump the contract.
+- **Producer-ref-based masking lookup.** V1 keeps host-scoped masking via `MASKING_RULES` for the SMART/ZFS witness case. Generalizing to producers whose substrate is not a host (transports, aggregators) is a future slice that would consult `producer_ref()` directly.
+
+**Unblocks:**
+- COVERAGE_HONESTY V1 — clearance contract: producer-silent findings cannot manufacture recovery; first consumer of the suppression-vs-clearance distinction.
+- OPERATIONAL_INTENT_DECLARATION V1 — `suppression_kind` discriminator with `ancestor_loss` value covers TESTIMONY_DEPENDENCY's path; declarations layer on top.
+- The export-side `admissibility` block is consumer-stable for Night Shift; `state` and `reason` enum values can grow without breaking permissive consumers.
+
+**Field notes:**
+- The "no schema changes for V1.0" decision was load-bearing. Host-masking already had the right shape; extending `MaskingRule` with `child_kind_prefix: Option<&'static str>` was one struct field plus one filter clause in the masking loop. Smaller landing than the spec's full producer-ref schema would have implied; same operational behavior for the V1 forcing cases (SMART + ZFS witness silence).
+- `producer_ref()` as a doctrinal-name helper rather than a redundant DB column is a similar choice — the value already exists on the row as `basis_witness_id`; a duplicate column would have created drift risk. The helper carries the doctrinal name; the DB stays normalized.
+- `evidence_finding_keys` plural-from-day-one is the same forward-compat pattern as `coverage_fraction` / `correlation_key` / `cause_hint` reserved-nullable columns in EVIDENCE_LAYER V1: shape it for the future even when V1 only uses one slot, so the contract bump never has to happen retroactively.
+- The wire shape's discipline that `admissibility` is always present (`state = "unknown"` is truthful, not missing) is the same pattern as `basis_state = 'unknown'` in EVIDENCE_RETIREMENT V1.0. Honest absence beats fabricated identity, applied to consumer wire shapes.
+
+---
+
 ## OPERATIONAL_INTENT_DECLARATION V1
 
 **Status:** shipped 2026-04-30. Withdrawal-only consumer wiring on host subjects with `subject_only` scope; quiescence stored but inert pending intake-shaped findings. The gap-doc §"V1 narrowing" enumerates the spec-vs-shipped austerity choices, all deliberate. Ratified under the gap-status discipline 2026-05-07 (this entry).
