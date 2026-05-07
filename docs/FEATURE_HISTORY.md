@@ -20,6 +20,58 @@ The chronological order below is newest-first.
 
 ---
 
+## ZFS_COLLECTOR Phases A/B/C
+
+**Status:** shipped — Phase A (witness ingestion spine), Phase B (first detector cashout), Phase C (worsening + regime integration). Five of the nine detectors specified in the gap V1 set are live (`zfs_pool_degraded`, `zfs_vdev_faulted`, `zfs_error_count_increased`, `zfs_scrub_overdue`, `zfs_witness_silent`); the remaining four (`zfs_pool_suspended`, `zfs_pool_health_changed`, `zfs_pool_capacity_pressure`, `zfs_spare_activated`) are deferred forcing-case-gated. Shipped 2026-04-20. Ratified under the gap-status discipline 2026-05-07 (this entry).
+
+**Shipped commits:**
+- `9e5892c` (2026-04-20) — **Phase A**: witness ingestion spine. ZFS witness collector at `crates/nq/src/collect/zfs.rs`. Migration 031 introduces `zfs_pools_current`, `zfs_vdevs_current`, `zfs_witness_current`, `zfs_witness_coverage_current` tables. Schema/profile-version verification (`nq.witness.v0` + `nq.witness.zfs.v0`); coverage-tag ingestion; bounded timeout; reject-on-malformed.
+- `714dacc` (2026-04-20) — **Phase B**: first detector cashout, gated off coverage. `detect_zfs_pool_degraded` fires only when the witness's `can_testify` includes `pool_state` for the report. Establishes the "detector requires coverage tag" gating rule for the rest of the family.
+- `811e5de` (2026-04-20) — **Phase C**: `zfs_vdev_faulted` detector. Per-vdev FAULTED/UNAVAIL emission gated on `vdev_state` coverage tag. Severity `critical` (beyond pool DEGRADED).
+- `e3cdf25` (2026-04-20) — **Phase C**: `zfs_error_count_increased` (edge-triggered). Migration 032 adds `zfs_vdev_errors_history` for cross-generation error-counter comparison. Gated on `vdev_state` + `vdev_error_counters` (both required: identity persistence AND counters comparable). Plus `zfs_scrub_overdue` (gated on `scrub_completion`, default 35-day window) and `zfs_witness_silent` (coverage-independent — fires on witness metadata).
+- `36d42de` (2026-04-20) — **Phase C regime integration**: chronic-stable vs worsening. Wires the live ZFS findings into REGIME_FEATURES (persistence + recovery + co-occurrence). The `zfs_pool_degraded × zfs_error_count_increased → DurabilityDegrading` co-occurrence signature is added in the same arc; the chronic-degraded forcing case (lil-nas-x: 1 drive faulted, 2 spares, error counts flat) classifies as `persistent + stable`, not as a screaming-every-generation event.
+
+**Evidence:**
+- Witness consumer: `crates/nq/src/collect/zfs.rs`. Two ingestion modes per spec §"V1 Slice": `sudo_helper` (subprocess, configurable `helper_path` + `wrapper`) and `root_exporter_localhost` / `unprivileged` HTTP. Δq participation declared; bounded by `timeout_ms` (default 5000ms); fails gracefully with `Skipped` collector status on absent / misconfigured / malformed witnesses (no generic error). Schema/profile-version verification is strict — unknown versions emit a `zfs_witness_silent`-shaped finding rather than silently ingesting.
+- Schema migrations:
+  - `crates/nq-db/migrations/031_zfs_witness.sql` — `zfs_pools_current` (per-pool state, capacity, fragmentation), `zfs_vdevs_current` (per-vdev state + identity + error counters), `zfs_witness_current` (witness identity + status), `zfs_witness_coverage_current` (per-cycle `can_testify` / `cannot_testify` arrays), `zfs_witness_standing_current` (witness lifecycle), `zfs_witness_errors_current` (collection-side errors).
+  - `crates/nq-db/migrations/032_zfs_vdev_errors_history.sql` — per-generation error-counter rolling history; the substrate that `zfs_error_count_increased` reads to decide "rose since last generation."
+- Detectors: `crates/nq-db/src/detect.rs`:
+  - `detect_zfs_pool_degraded` (line 2038) — pool in state DEGRADED. Requires `pool_state` coverage. Severity `warning` while stable; regime features escalate on worsening.
+  - `detect_zfs_vdev_faulted` (line 2114) — per-vdev FAULTED/UNAVAIL. Requires `vdev_state` coverage. Severity `critical`. Per-vdev fanout (unlike `zfs_pool_degraded` which fires per-pool) — multi-vdev composite incidents stay legible.
+  - `detect_zfs_error_count_increased` (line 2261) — read/write/checksum counts rose since last generation. Requires `vdev_state` + `vdev_error_counters`. Edge-triggered against `zfs_vdev_errors_history`.
+  - `detect_zfs_scrub_overdue` (line 2424) — no scrub completion within configurable window (default 35 days — one month plus a week's slack). Requires `scrub_completion`. Stays silent on null completion or while a scrub is in progress.
+  - `detect_zfs_witness_silent` (line 2580) — witness report absent, stale, or status=`failed`. Coverage-independent — fires on witness metadata regardless of `can_testify`. Same shape as `stale_host`, scoped to ZFS. A witness cannot hide by disappearing.
+- Coverage gating: `detect.rs` — every detector reads `zfs_witness_coverage_current` and stays silent when its required `can_testify` tags are absent (whether never declared or demoted to `cannot_testify` this cycle by a `partial` collection). The "emitting a detector whose coverage was never declared manufactures confidence" rule from spec §Detectors holds at every emission site.
+- Regime integration: REGIME_FEATURES V1.4 co-occurrence signature `zfs_pool_degraded × zfs_error_count_increased → DurabilityDegrading` (`crates/nq-db/src/regime.rs`). Chronic-degraded pools classify as `persistent + stable` via STABILITY_AXIS V1; the worsening transition (error counts rising, second vdev FAULTED) trips `DurabilityDegrading` and pushes regime badge to `Worsening`. Tests at `regime.rs::tests::zfs_pool_degraded_chronic_stable_does_not_produce_worsening_hint` and family.
+- Tests: 30+ ZFS-specific tests across `crates/nq/src/collect/zfs.rs::tests` (witness ingestion: schema mismatch, profile mismatch, helper missing, helper nonzero exit, malformed stdout, slow helper times out, conforming report accepted, disabled collector skipped) and `crates/nq-db/tests/detector_fixtures.rs` (one per detector × multiple coverage-gating cases: fires-with-coverage, stays-silent-without-coverage, escalates-on-multiple-faults, edge-triggered increase, persistent classification after enough cycles, chronic-stable does not produce Worsening hint).
+- Live evidence (lil-nas-x, 2026-04-21 → present): HGST drive `2TKYU2KD` / `wwn:0x5000cca26adf4db8` FAULTED in `tank/raidz2-0`. Pool `tank` DEGRADED. Findings firing since 2026-04-21 / 2026-04-27 (also referenced in pickup pointer §"Real ops state on lil-nas-x"). The forcing scenario the gap was written to handle has been live and stable for weeks — `persistent + stable` classification holds; no spurious escalation despite the finding being open every generation.
+
+**Known unproven surfaces / V1 detectors not yet shipped:**
+- **`zfs_pool_suspended`** — would require pool state SUSPENDED forcing case. Spec §Detectors says "writes are blocked"; `lil-nas-x` is degraded-but-not-suspended, so the case has not appeared.
+- **`zfs_pool_health_changed`** — pure transition detector between generations. Forcing case is a recovering pool moving DEGRADED → ONLINE, which would imply the operator finished disk replacement. Not yet seen.
+- **`zfs_pool_capacity_pressure`** — `lil-nas-x` is at 11% used per the gap doc; capacity pressure is not the operational pain point. Forcing case waits for a pool nearing fill.
+- **`zfs_spare_activated`** — spare-state transition detection. The `lil-nas-x` deployment already has spares assigned (configured pre-NQ); a fresh activation would be a forcing case. Spec §Detectors allows for this distinction; the implementation slot is reserved.
+
+**Other V1 surfaces deferred / forcing-case-gated:**
+- **Real-witness deployment as documented playbook.** The reference `nq-zfs-witness` example lives in `~/git/nq-witness/examples/`; deployment-side patterns (sudoers + fixed-path NOPASSWD) are encoded as practice but not yet hoisted to a standalone playbook doc. The witness-privilege playbook field note in Real-SMART deploy is the closest extant write-up. At three live witness deployments (sushi-k SMART, lil-nas-x SMART, lil-nas-x ZFS), the implicit pattern is crossing the preemptive-naming threshold — calling the playbook a separate doctrine doc is its own follow-up.
+- **Bare Prometheus exporter shim path** — explicit non-goal. `pdf/zfs_exporter` v2.3.12 was deployed on lil-nas-x at 2026-04-16; the gap explicitly says non-witness sources do not satisfy this gap's detector set. `metric_signal` may still emit threshold-based findings from such exporters but they carry no ZFS-domain standing.
+- **Windows / macOS ZFS** — explicit V2+ non-goal.
+- **ZED zedlet integration** — explicit V2+ non-goal.
+
+**Unblocks:**
+- The "chronic degraded stability" regime — third operational regime (alongside labelwatch acute / sushi-k pre-failure forensics) is now legible at the host fleet level.
+- REGIME_FEATURES V1.4's `DurabilityDegrading` hint — the gap's forcing case is the worked example that justified naming the hint at all.
+- Future SMART ↔ ZFS cross-witness composition — TESTIMONY_DEPENDENCY V1 + COVERAGE_HONESTY V1 + this gap together compose the "witness produced this finding; witness went silent; finding does not fake recovery" contract end-to-end. The lil-nas-x cross-witness corroboration (drive `2TKYU2KD` shows up as both `smart_status_lies` and `zfs_vdev_faulted`) is the live evidence.
+
+**Field notes:**
+- The witness-contract design (`nq-witness` as the canonical adapter contract home) was a deliberate split. Earlier drafts had a Path A / Path B dichotomy; the witness-contract collapse is what made the consumer code identical across deployment shapes (`sudo_helper`, `root_exporter_localhost`, `unprivileged`). NQ doesn't know which mode is in use; it consumes JSON.
+- Coverage-tag gating is the load-bearing operational discipline of this gap. A detector that fires without its required coverage tag manufactures confidence the witness never declared. The gating rule is enforced at every emission site, not as a post-hoc filter — the "emitting a detector whose coverage was never declared" gate is structural.
+- The chronic-degraded classification working in production (lil-nas-x stable for weeks without spurious escalation) was the test of the entire design. The detector is open every generation; the regime layer keeps the operational signal at warning + persistent + stable. If a second drive faulted or error counts rose, the regime would flip — and that's the test of the worsening branch (not yet exercised by reality, only by fixtures).
+- The `pdf/zfs_exporter` non-witness deployment on lil-nas-x at 2026-04-16 is the concrete counter-example. Generic `metric_signal` findings can fire from its metrics, but they do not carry ZFS-domain standing. The line between "non-witness data is data" and "non-witness data does not satisfy ZFS-specific detection" is enforced by the gating rule — `coverage.can_testify` is the gate, not metric volume.
+
+---
+
 ## COVERAGE_HONESTY V1
 
 **Status:** shipped. V1.0 + V1.1 (2026-04-28) + V1.2 (2026-04-30). Cross-axis correlation, real-producer adapter, dashboard rendering remain deferred per spec non-goals / V1 boundary. Ratified under the gap-status discipline 2026-05-07 (this entry).
