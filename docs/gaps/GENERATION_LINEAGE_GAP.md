@@ -1,6 +1,6 @@
 # Gap: Generation Lineage — coverage metadata on the generation row
 
-**Status:** specified, ready to build
+**Status:** shipped; see [docs/FEATURE_HISTORY.md#generation_lineage-v1](../FEATURE_HISTORY.md#generation_lineage-v1) for evidence (migration 026 + counter computation in `update_warning_state_inner` + 6 acceptance tests). Ratified 2026-05-07.
 **Depends on:** `EVIDENCE_LAYER_GAP` (schema 25, finding_observations exists)
 **Build phase:** structural prep, before federation
 **Blocks:** `DOMINANCE_PROJECTION_GAP`, `FEDERATION_GAP`

@@ -20,6 +20,43 @@ The chronological order below is newest-first.
 
 ---
 
+## GENERATION_LINEAGE V1
+
+**Status:** shipped. V1 landed 2026-04-10 in the same commit that filed the gap doc. Ratified under the gap-status discipline 2026-05-07 (this entry).
+
+**Shipped commits:**
+- `9ea4537` (2026-04-10) — V1: migration 026 (four columns on `generations`) + counter computation + atomic UPDATE inside `update_warning_state_inner` + 6 acceptance tests + the gap doc itself. Spec and implementation landed together.
+
+**Evidence:**
+- Schema: `crates/nq-db/migrations/026_generation_lineage.sql` adds four columns to `generations`: `findings_observed INTEGER NOT NULL DEFAULT 0`, `detectors_run INTEGER NOT NULL DEFAULT 0`, `findings_suppressed INTEGER NOT NULL DEFAULT 0`, `coverage_json TEXT` (nullable). Defaults of 0 mean pre-migration rows read as "we don't know" — honest, since they were created before the metadata was tracked.
+- Population: `crates/nq-db/src/publish.rs:1429-1451`. Computed inside `update_warning_state_inner` after the masking/recovery pass and before transaction commit. `findings_observed = findings.len()`; `detectors_run = HashSet of distinct kinds`; `findings_suppressed = SELECT COUNT(*) FROM warning_state WHERE visibility_state = 'suppressed'` (post-mask). The UPDATE runs in the same transaction as the rest of the lifecycle update, so counters cannot disagree with what was written.
+- Acceptance tests (6) in `crates/nq-db/src/publish.rs::tests`:
+  - `lineage_findings_observed_matches_input` (criterion #1).
+  - `lineage_detectors_run_counts_distinct_kinds` (criterion #2).
+  - `lineage_suppressed_count_reflects_visibility_state` (criterion #3).
+  - `lineage_empty_findings_zero_counters` (criterion #4).
+  - `lineage_counters_atomic_with_rollback` (criterion #5 — transactional safety against observation-collision rollback).
+  - `lineage_pre_migration_rows_default_to_zero` (criterion #6).
+- Downstream consumer evidence: `source_error_masking_updates_lineage_suppressed_count` at `publish.rs:2795` (GENERALIZED_MASKING V1.0 uses lineage as a state-correctness oracle for masking passes). `LivenessArtifact` carries `findings_observed`, `findings_suppressed`, `detectors_run` per cycle (`crates/nq-db/src/liveness.rs:52-54`); they are the per-instance summary in the wire format and reach `nq fleet status`.
+- Live evidence: schema 44 in production; counters populated every cycle on all three NQ hosts. The `liveness.json` artifacts on sushi-k / lil-nas-x / labelwatch carry non-zero values per the FLEET_INDEX V1 smoke (2026-05-06).
+
+**Known unproven surfaces:**
+- `coverage_json` reserved but unused; explicit non-goal until federation. The column shape held — no schema change needed since.
+- `detectors_executed` (distinct from `detectors_run`) — explicit non-goal per spec §"Open Questions" #1. A detector that runs but emits nothing is invisible today; forcing case has not appeared.
+- Suppression breakdown by `suppression_reason` — explicit non-goal per #2. Reserved for `coverage_json` later if needed.
+
+**Unblocks:**
+- DOMINANCE_PROJECTION_GAP — per-generation coverage was a substrate prerequisite for the projection layer.
+- COVERAGE_HONESTY_GAP — `Depends on:` line names `GENERATION_LINEAGE_GAP (built — per-generation coverage counters)`; the dependency is satisfied.
+- FEDERATION_GAP — `coverage_json` is the column federation will populate with per-site coverage.
+
+**Field notes:**
+- The gap doc and the implementation landed in the same commit (`9ea4537`). The pre-trim Status field "specified, ready to build" is a remnant of the design phase; in practice this gap was spec-AND-build, a slightly different shape from the three legacy ratifications on 2026-05-06 (filed first, built later). The gap-status doctrine still applies — what matters is whether FEATURE_HISTORY carries the shipped-state record, not the spec/build sequencing.
+- The "post-mask suppressed count" decision (count after the masking pass, not before) was the load-bearing design call. A pre-mask count would just be `findings_observed` again; the post-mask count is the substrate rule made queryable: how many findings is the system holding through observability loss.
+- The transactional wrap was already present from EVIDENCE_LAYER V1 (`e376f6e`). This gap got atomicity for free — the UPDATE is one statement appended to a transaction the substrate already manages.
+
+---
+
 ## SENTINEL_LIVENESS V1
 
 **Status:** shipped. V1 landed 2026-04-13; refined incrementally through 2026-05-05. Ratified under the gap-status discipline 2026-05-06 (this entry).
