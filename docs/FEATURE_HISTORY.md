@@ -20,6 +20,39 @@ The chronological order below is newest-first.
 
 ---
 
+## EVIDENCE_RETIREMENT V1.0 (substrate)
+
+**Status:** partial — V1 substrate (ground structure for basis propagation) shipped 2026-04-22 in `62e5005`. Five-state basis lifecycle landed at the schema, detector, write-path, and export layers, but the V1 spec also names four follow-on slices that have not shipped: basis-stale detector, `nq source retire` verb, per-state notification gating, render distinction in Slack/v_warnings beyond the column being present. Ratified under the gap-status discipline 2026-05-07 (this entry).
+
+**Shipped commits:**
+- `62e5005` (2026-04-22) — V1.0 substrate: migration 033_basis_state.sql adds `basis_state TEXT NOT NULL DEFAULT 'unknown' CHECK (state IN ('live','stale','retired','invalidated','unknown'))` plus `basis_source_id`, `basis_witness_id`, `last_basis_generation`, `basis_state_at` to `warning_state`; `basis_source_id` + `basis_witness_id` to `finding_observations`. v_warnings recreated. Write path and detector code propagate basis-state. Export surface carries the basis envelope.
+
+**Evidence:**
+- Schema: `crates/nq-db/migrations/033_basis_state.sql`. Five-state CHECK constraint declared up front so future basis-stale and retirement transitions don't need a widening migration. `last_basis_generation` and `basis_state_at` nullable when state = 'unknown' (Invariant 7: don't fabricate timestamps for "we know that we don't know").
+- Default-to-unknown discipline: `crates/nq-db/src/publish.rs:1162-1167` sets `(basis_state, last_basis_generation, basis_state_at)` per finding — `('live', generation_id, now)` when `basis_source_id.is_some()`, `('unknown', None, None)` otherwise. No inference. Pre-migration rows land at 'unknown' forever (legacy rows are honest, not retroactively "live").
+- Detector population: `crates/nq-db/src/detect.rs` — finding constructions in detectors that have basis (witness-backed: ZFS, SMART, etc.) populate `basis_source_id` / `basis_witness_id`; detectors that emit findings without a clean basis (host-level rollups, `stale_host`, etc.) leave those fields `None` and inherit `basis_state = 'unknown'` from the default. Comments at lines 458–459, 2642, 3040 cite the discipline at point of construction.
+- Export surface: `crates/nq-db/src/export.rs:101,446-490,635-637`. `FindingSnapshot` includes `basis_state`, `basis_source_id`, `basis_witness_id`, `last_basis_generation`, `basis_state_at`. Comment at line 101: "`basis_state = 'unknown'` is a truthful value, not missing data" — Invariant 7 in the wire shape. The wire envelope is a `BasisRef` block always-present; `state="unknown"` is truthful, not missing.
+- Downstream consumer: Night Shift's V1.2 admissibility enforcement (FINDING_EXPORT V1 entry, `0e49298`) consumes the basis fields. The two gaps shipped together; this entry is the missing FEATURE_HISTORY record for the EVIDENCE_RETIREMENT half of the work.
+
+**Known unproven surfaces / V1 slice items not yet shipped:**
+- **Basis-stale detector (V1 #2).** No detector currently transitions `live → stale` when a `basis_source_id` misses its freshness window. The five-state enum is reserved in the schema; the transition logic is not yet built.
+- **`nq source retire` / `nq source unretire` verb (V1 #3).** No CLI command, no `sources_retired` table, no atomic `live → retired` transitions. Manual cleanup (the 2026-04-22 sushi-k template referenced in the gap doc §"References") remains the only path.
+- **State-transition notifications (V1 V1 §"Notification discipline").** `live → stale` does not emit the spec's "🔕 basis went silent" notification yet.
+- **Render distinction beyond column presence (V1 #5).** `v_warnings` exposes `basis_state`; Slack/Discord renderers do not yet visibly mark `stale` / `retired` / `invalidated` differently from `live`. The substrate is there for renderers to consume; rendering itself is the unfinished surface.
+- **Per-state notification gating (V1 #6).** The intended `basis_state = 'live'` page-gate is not enforced; retired/invalidated findings are kept off-page today only because no path produces them yet.
+- **Inverse acceptance check (sushi-k reproduction).** The gap doc's V1 acceptance criterion #6 (stand up a stub witness, tear it down, watch the lifecycle transitions) cannot pass without #2/#3 above.
+
+**Unblocks:**
+- FINDING_EXPORT V1's basis envelope — Night Shift V1.2 admissibility consumes it (per FINDING_EXPORT V1 entry).
+- The TESTIMONY_DEPENDENCY V1.2 producer-ref pairing — `node_unobservable + producer_ref` lifecycle composes with this gap's basis-state.
+
+**Field notes:**
+- The V1 micro-slice was deliberate: ship the substrate end-to-end (schema → write path → detector code → export wire shape) before any state transition logic, because the detector-side discipline ("populate basis_source_id when you can prove live; never infer") is what makes the rest tractable. The transitions and verb are pure data mutations once the substrate is honest.
+- `basis_state = 'unknown'` is the most operationally important value of the V1 micro-slice. Pre-migration rows have it; detectors without a clean basis have it; the system is honest about the absence rather than silently defaulting to `live` and quietly violating Invariant 7. Every consumer that handles `unknown` correctly is doing the right thing for free; future retirement work just adds two more value-of-state cases (`stale`, `retired`) on top of the same vocabulary.
+- The CHECK constraint declares all five states up front rather than adding new states across follow-on slices. Migration cost of widening that enum at a future date would have been zero (SQLite CHECK constraint can be replaced via table rebuild) but the shape choice signals intent: this is a five-axis lifecycle, not a two-state on/off.
+
+---
+
 ## REGIME_FEATURES V1
 
 **Status:** shipped. All six feature classes from the V1 spec are live: trajectory, persistence, recovery, co-occurrence, resolution, observability. Plus the badge surface that summarizes them for operators. Shipped across 2026-04-14 → 2026-04-20 (V1.1–V1.5 + badge); §5 observability shipped 2026-05-07 as V1.6. Ratified under the gap-status discipline 2026-05-07 (this entry).
