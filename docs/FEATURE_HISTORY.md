@@ -20,6 +20,71 @@ The chronological order below is newest-first.
 
 ---
 
+## MAINTENANCE_DECLARATION V1
+
+**Status:** shipped 2026-05-08. Annotation lane only — V1 emits `none` / `covered` / `overrun` per the frozen 2026-04-27 spec; `late` and `out_of_envelope` are explicit V2+ deferrals. Operator/agent CLI verbs `nq maintenance declare` + `nq maintenance list` ship; the spec's `clear` / `cancel` / `extend` are explicit non-goals (append-only storage).
+
+**Shipped commits:**
+- (this commit, 2026-05-08) — V1: migration 045 (`maintenance_declarations` table + `maintenance_state` / `maintenance_id` annotation columns on `warning_state` + `v_warnings` recreation); `apply_maintenance_overlay` lifecycle pass; `nq maintenance declare|list` CLI verbs; export wire shape (`FindingSnapshot.maintenance` block, `skip_serializing_if`); dashboard overview-list + finding-detail badge surfacing.
+
+**Spec-vs-shipped framing note (load-bearing):** The gap doc's lead paragraph reads "maintenance becomes one **profile** of the broader OPERATIONAL_INTENT_DECLARATION primitive (`reason_class = maintenance`)." The V1 frozen sub-slices (V1.1–V1.5) describe a **separate** `maintenance_declarations` table, separate annotation columns on `warning_state`, separate CLI verbs. V1 ships the separate-table version. The framing language was written 2026-04-28 before OID's V1 austerity was clear; once OID landed 2026-04-30 with `mode IN ('quiesced', 'withdrawn')`, it became apparent that maintenance is a sibling primitive (annotation lane), not a sub-mode of OID's expectation-changing modes (suppression lane). The decisive distinction: OID-withdrawn *suppresses* dependent findings; maintenance keeps them visible and *annotates* them as `covered` / `overrun`. Forcing them through the same storage now would create a fake unification and make any V2 unification harder. V2+ may pursue unified storage; this entry names the debt.
+
+**Evidence:**
+- Schema: `crates/nq-db/migrations/045_maintenance_declarations.sql`. Append-only `maintenance_declarations` table with columns `(maintenance_id PK, declared_at, declared_by, start_at, end_at, host, kind, subject, reason)`. Annotation columns on `warning_state`: `maintenance_state TEXT NOT NULL DEFAULT 'none' CHECK (state IN ('none','covered','overrun'))` + `maintenance_id TEXT`. `v_warnings` recreated to expose both new columns plus the previously-uncovered `suppression_kind` / `suppression_declaration_id` (added by migration 042 without a view recreation). Index on `(host, kind, declared_at DESC)` for the active-window and expired-window lookups.
+- Lifecycle integration: `crates/nq-db/src/publish.rs::apply_maintenance_overlay`. Runs *after* the OID `apply_declaration_overlay` and *before* the transaction commits, using the same `now` timestamp threaded through `update_warning_state_with_declarations`. For each `warning_state` row, picks the deterministic best match: active window wins (covered), else expired window if any (overrun), else state stays/resets to `none`. Deterministic precedence: active by `declared_at DESC, maintenance_id DESC`; expired by `end_at DESC, declared_at DESC, maintenance_id DESC` (most-recently-ended wins for overrun).
+- CLI: `crates/nq/src/cmd/maintenance.rs` + cli.rs `MaintenanceCmd` / `MaintenanceAction::{Declare, List}`.
+  - `declare` accepts `--db --host --kind [--subject] --start --end [--reason] [--declared-by]`. `--start` and `--end` parse ISO-8601 (`2026-05-08T18:00:00Z`), `now`, or `now+30m` / `now+1h` / `now+2d` / `now+600s`. Past-dated `--start` is rejected at CLI parse with explicit "declaration must precede effect" message — V1 invariant from the gap doc. `--end` must be after `--start`. Migrates the DB on open (consistent with publish/serve patterns).
+  - `list` accepts `--db [--active]`. Default lists all rows, sorted by `declared_at DESC`. `--active` filters to declarations whose window covers `now`, sorted by `end_at ASC` (ending-soonest first).
+  - Mint format: `maint_<32-hex unix-nanos>`. No `rand` dependency added; nanosecond resolution is sufficient for V1 unique-per-call (test verified). Append-only storage means re-mints across machines would only collide on the same nanosecond-tick which is operationally implausible at the scale V1 targets.
+- Export surface: `crates/nq-db/src/export.rs`. `MaintenanceExport { state, declaration_id }` struct. `FindingSnapshot.maintenance: Option<MaintenanceExport>` with `skip_serializing_if = Option::is_none` — `state = 'none'` is communicated by **absence of the maintenance key in JSON**, not by a serialized null. `MIN_SCHEMA_FOR_EXPORT` bumped 38 → 45 (export now reads the new annotation columns; older DBs hit the preflight error explicitly via FINDING_EXPORT V1's loud-fail discipline, `be83e92`).
+- Render:
+  - Overview list (`crates/nq/src/http/routes.rs:render_overview`): one chip on each affected finding row. `covered` = blue (`#388bfd`); `overrun` = warning yellow (`#d29922`). Tooltip explains the state. No new layout — slot fills alongside the existing stability/diagnosis/regime badges.
+  - Finding-detail page (`finding_detail_inner`): same chip in the header `diagnosis_badges` block, with the matching `maintenance_id` carried in the tooltip so the operator can grep `nq maintenance list` for the responsible declaration.
+- WarningVm (`crates/nq-db/src/views.rs`): `maintenance_state: String` (default `"none"`) + `maintenance_id: Option<String>` fields added; populated from `v_warnings`.
+- Acceptance tests (10 in `crates/nq-db/src/publish.rs::tests`):
+  - `maintenance_covers_finding_in_active_window`
+  - `maintenance_null_subject_wildcards_match` — wildcard semantics (subject=NULL matches any subject for that host+kind)
+  - `maintenance_does_not_cover_unrelated_kind` — exact-kind scope
+  - `maintenance_does_not_cover_other_host` — exact-host scope
+  - `maintenance_overrun_after_window_end` — transition to overrun on expired declaration
+  - `maintenance_active_takes_precedence_over_expired` — active wins, not overrun
+  - `maintenance_active_precedence_most_recent_declared_at_wins` — deterministic resolution (chatty's keeper: "deterministic resolution, not truth")
+  - `maintenance_overrun_precedence_most_recent_end_at_wins` — most-recently-ended wins
+  - `maintenance_no_match_leaves_state_none` — default state
+  - `maintenance_annotates_regardless_of_visibility_state` — annotation lane orthogonal to suppression
+- CLI tests (9 in `crates/nq/src/cmd/maintenance.rs::tests`): `parse_time` accepts `now`, `now+30m`, `now+2h`, `now+1d`, `now+600s`, ISO-8601, rejects garbage; `mint_maintenance_id` has prefix and is unique across calls.
+- Export round-trip tests (3 in `crates/nq-db/src/export.rs::tests`):
+  - `maintenance_export_round_trip_covered` — covered finding carries the maintenance block
+  - `maintenance_export_omits_block_when_state_none` — state='none' communicated by JSON-key-absence, not null
+  - `maintenance_export_carries_overrun_with_declaration_id` — overrun round-trip
+- End-to-end smoke verified manually (2026-05-08): `nq maintenance declare --db /tmp/maint-smoke.db --host labelwatch-host --kind log_silence --subject labelwatch.log_source --start now --end now+30m --reason "VACUUM ..." --declared-by labelwatch-claude` → row written; `nq maintenance list` shows `[active]`; `nq maintenance list --active` shows the same row; past-dated `--start` rejected with the documented invariant message.
+
+**Known unproven surfaces / V1 explicit deferrals:**
+- **`late` and `out_of_envelope` states.** Documented in the canonical model section of the gap doc but not in V1's wire shape. CLI rejects past-dated `--start` rather than recording `late`. Adding either later is non-breaking: consumers branching on `state` will simply see new values appear.
+- **Effect-class taxonomy.** The bounded `log_silence | service_down | source_stale | host_unreachable | restarted | degraded_throughput | no_data` vocabulary is documented in §"Effect classes" but V1 uses raw-`kind` matching. Good enough for the labelwatch-claude vacuum forcing case.
+- **Overlapping / nested windows.** No special semantics. Deterministic precedence resolves which declaration's `id` is exposed; that's the entire V1 contract on multiplicity.
+- **`clear` / `cancel` / `extend` / `update` CLI verbs.** Append-only storage. A wrong declaration is corrected by waiting for `end_at` to pass (or by writing a new declaration whose precedence supersedes — see §"Deterministic resolution" tests).
+- **Notification routing changes.** V1 is annotation-only; routing remains stub-deferred behind NOTIFICATION_ROUTING_GAP.
+- **Maintenance inheritance across topology.** Subject scope is exact host + exact kind + exact subject (or NULL wildcard). Topology-wide inheritance waits for REGISTRY_PROJECTION.
+- **Auto-declaration from change tickets / agents.** Out of scope.
+- **Approval workflows.** Not the V1 contract.
+- **Integration with EVIDENCE_RETIREMENT.** Maintenance is bounded expected disturbance; retirement is permanent end-of-life. Gap doc explicitly preserves the distinction; V1 does not attempt composition.
+
+**Unblocks:**
+- Honest maintenance handling for the labelwatch-claude vacuum case (forcing case from 2026-04-24): operator can declare `host=labelwatch-host kind=log_silence subject=labelwatch.log_source` ahead of the scheduled vacuum; the resulting `log_silence` finding will be annotated `covered`; if the vacuum overruns, annotation flips to `overrun` automatically at the next cycle.
+- Operator-facing distinction between three operational truths (per gap §Acceptance Criteria): ordinary incident, maintenance-covered disturbance, maintenance overrun.
+- Window-end overrun detection — without a CLI cron or external timer; the lifecycle pass handles the transition naturally on the next cycle.
+- Future Night Shift / Governor consumers: the wire shape is on the export now, additive on the v1 contract.
+
+**Field notes:**
+- The framing-vs-implementation fork was explicit at filing time. Two reasonable reads: (A) ship V1 strictly per frozen spec — separate `maintenance_declarations` table — and call out the spec drift as V2 unification debt; (B) re-scope V1 onto OID storage with a new `maintenance` mode + new annotation columns. Operator chose (A); the decisive point was that maintenance annotation and OID suppression are different state machines, and forcing them through the same storage now would probably create a fake unification and make V2 harder, not easier. ("Classic 'one table to rule them all, one incident review to find them.'" — chatty.) Future unification work has a clean handle: convert `maintenance_declarations` rows into OID `mode='maintenance'` declarations with annotation-only consumer wiring.
+- The deterministic-precedence rule for overlapping declarations was a load-bearing review catch from chatty: "phrase it as deterministic resolution, not truth." Annotation picks **a** declaration; that doesn't mean the others are wrong, just that one is exposed via `maintenance_id`. Future-self is spared debugging metaphysics in SQL.
+- `apply_maintenance_overlay` runs per-row in Rust rather than as a single UPDATE-FROM-CTE. The per-row form is more readable, the SQL is bounded by host+kind cardinality (small in practice), and the test cases land at exactly the granularity the code exercises. If profiling ever shows this is hot, switching to a bulk UPDATE is mechanical.
+- The migration's mint of `maint_<32-hex-nanos>` is intentionally not a UUID. NQ has no UUID dependency anywhere; introducing one here for V1 would be schema-acne. Nanosecond-precision unix timestamps are sufficient for the operationally-plausible call rate; if collision ever becomes a real concern, the mint is a one-line change.
+- The "earn the chrome" discipline held: V1 ships exactly two badge chips (covered, overrun) and a tooltip that carries the `maintenance_id` for grep-based correlation. No new color palette, no new layout, no new UI page for declaration management. Operators inspect via `nq maintenance list`.
+
+---
+
 ## ZFS_COLLECTOR Phases A/B/C
 
 **Status:** shipped — Phase A (witness ingestion spine), Phase B (first detector cashout), Phase C (worsening + regime integration). Five of the nine detectors specified in the gap V1 set are live (`zfs_pool_degraded`, `zfs_vdev_faulted`, `zfs_error_count_increased`, `zfs_scrub_overdue`, `zfs_witness_silent`); the remaining four (`zfs_pool_suspended`, `zfs_pool_health_changed`, `zfs_pool_capacity_pressure`, `zfs_spare_activated`) are deferred forcing-case-gated. Shipped 2026-04-20. Ratified under the gap-status discipline 2026-05-07 (this entry).

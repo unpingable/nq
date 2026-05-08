@@ -3,6 +3,7 @@ pub mod collect;
 pub mod findings;
 pub mod fleet;
 pub mod liveness;
+pub mod maintenance;
 pub mod publish;
 pub mod query;
 pub mod sentinel;
@@ -21,5 +22,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Findings(cmd) => findings::run(cmd),
         Command::Liveness(cmd) => liveness::run(cmd),
         Command::Fleet(cmd) => fleet::run(cmd),
+        Command::Maintenance(cmd) => maintenance::run(cmd),
     }
 }

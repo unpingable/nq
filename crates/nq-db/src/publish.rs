@@ -940,6 +940,8 @@ pub fn update_warning_state_with_declarations(
 
     update_warning_state_inner(&tx, generation_id, &combined, escalation)?;
     apply_declaration_overlay(&tx, generation_id, active_declarations)?;
+    let now = fmt_ts(&OffsetDateTime::now_utc());
+    apply_maintenance_overlay(&tx, &now)?;
     tx.commit()?;
     Ok(())
 }
@@ -1741,6 +1743,107 @@ fn apply_declaration_overlay(
         }
         apply.execute(rusqlite::params![&d.declaration_id, generation_id, &d.subject_id])?;
     }
+    Ok(())
+}
+
+/// Annotate every `warning_state` row with its current `maintenance_state`
+/// per MAINTENANCE_DECLARATION_GAP V1. Resolves to one of:
+///
+/// - `covered`: an active declaration (start_at <= now <= end_at) matches
+///   the row's (host, kind, subject) — exact host+kind, exact subject OR
+///   declaration's subject IS NULL (wildcard).
+/// - `overrun`: no active match, but at least one declaration with
+///   matching scope has `end_at < now` and the row still exists.
+/// - `none`: no scope-matching declaration in either window.
+///
+/// Annotation is orthogonal to suppression: a row's `visibility_state` and
+/// `suppression_kind` are independent of its `maintenance_state`. The lane
+/// expresses "expected disturbance" as a first-class fact, not "hide this."
+///
+/// Deterministic precedence on multiple matches:
+///   active   → ORDER BY declared_at DESC, maintenance_id DESC
+///   expired  → ORDER BY end_at DESC, declared_at DESC, maintenance_id DESC
+fn apply_maintenance_overlay(
+    tx: &rusqlite::Transaction,
+    now: &str,
+) -> anyhow::Result<()> {
+    let rows: Vec<(String, String, String)> = {
+        let mut stmt = tx.prepare(
+            "SELECT host, kind, subject FROM warning_state",
+        )?;
+        let mapped = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        mapped.collect::<Result<_, _>>()?
+    };
+
+    for (host, kind, subject) in &rows {
+        // Active match wins; deterministic precedence by declared_at, id.
+        let active: Option<String> = tx
+            .query_row(
+                "SELECT maintenance_id FROM maintenance_declarations
+                 WHERE host = ?1 AND kind = ?2
+                   AND (subject IS NULL OR subject = ?3)
+                   AND start_at <= ?4 AND end_at >= ?4
+                 ORDER BY declared_at DESC, maintenance_id DESC
+                 LIMIT 1",
+                rusqlite::params![host, kind, subject, now],
+                |r| r.get(0),
+            )
+            .ok();
+
+        if let Some(id) = active {
+            tx.execute(
+                "UPDATE warning_state
+                    SET maintenance_state = 'covered', maintenance_id = ?1
+                  WHERE host = ?2 AND kind = ?3 AND subject = ?4",
+                rusqlite::params![id, host, kind, subject],
+            )?;
+            continue;
+        }
+
+        // Expired match → overrun. Most-recently-ended is the deterministic
+        // choice; tie-break by declared_at, then by id.
+        let expired: Option<String> = tx
+            .query_row(
+                "SELECT maintenance_id FROM maintenance_declarations
+                 WHERE host = ?1 AND kind = ?2
+                   AND (subject IS NULL OR subject = ?3)
+                   AND end_at < ?4
+                 ORDER BY end_at DESC, declared_at DESC, maintenance_id DESC
+                 LIMIT 1",
+                rusqlite::params![host, kind, subject, now],
+                |r| r.get(0),
+            )
+            .ok();
+
+        if let Some(id) = expired {
+            tx.execute(
+                "UPDATE warning_state
+                    SET maintenance_state = 'overrun', maintenance_id = ?1
+                  WHERE host = ?2 AND kind = ?3 AND subject = ?4",
+                rusqlite::params![id, host, kind, subject],
+            )?;
+            continue;
+        }
+
+        // No scope-matching declaration anywhere → reset to none. This also
+        // handles "previously had an annotation, declaration was removed" —
+        // the storage is append-only in V1, so removal is rare, but the
+        // reset path keeps annotations honest if it ever happens.
+        tx.execute(
+            "UPDATE warning_state
+                SET maintenance_state = 'none', maintenance_id = NULL
+              WHERE host = ?1 AND kind = ?2 AND subject = ?3
+                AND maintenance_state != 'none'",
+            rusqlite::params![host, kind, subject],
+        )?;
+    }
+
     Ok(())
 }
 
@@ -4602,5 +4705,352 @@ mod tests {
             "info",
             "stale_host must not inherit the service_status floor",
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Maintenance overlay tests — MAINTENANCE_DECLARATION_GAP V1
+    // -----------------------------------------------------------------------
+    //
+    // V1 ships annotation-only: maintenance_state ∈ {none, covered, overrun}
+    // with maintenance_id pointer. Annotation lane is orthogonal to
+    // suppression — these tests exercise the matching, precedence, and
+    // transition rules without touching visibility_state.
+
+    fn insert_maintenance(
+        db: &WriteDb,
+        id: &str,
+        host: &str,
+        kind: &str,
+        subject: Option<&str>,
+        start_at: &str,
+        end_at: &str,
+    ) {
+        db.conn
+            .execute(
+                "INSERT INTO maintenance_declarations
+                 (maintenance_id, declared_at, declared_by, start_at, end_at,
+                  host, kind, subject, reason)
+                 VALUES (?1, ?2, 'test', ?3, ?4, ?5, ?6, ?7, 'test reason')",
+                rusqlite::params![id, start_at, start_at, end_at, host, kind, subject],
+            )
+            .unwrap();
+    }
+
+    fn read_maintenance(db: &WriteDb, host: &str, kind: &str) -> (String, Option<String>) {
+        db.conn
+            .query_row(
+                "SELECT maintenance_state, maintenance_id FROM warning_state
+                 WHERE host = ?1 AND kind = ?2",
+                rusqlite::params![host, kind],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn maintenance_covers_finding_in_active_window() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        insert_maintenance(
+            &db,
+            "maint_1",
+            "host-1",
+            "log_silence",
+            Some("source-X"),
+            "2000-01-01T00:00:00Z",
+            "2099-01-01T00:00:00Z",
+        );
+
+        update_warning_state(&mut db, 1, &[finding("host-1", "log_silence", "source-X", "Δl")], &esc).unwrap();
+
+        let (state, id) = read_maintenance(&db, "host-1", "log_silence");
+        assert_eq!(state, "covered");
+        assert_eq!(id.as_deref(), Some("maint_1"));
+    }
+
+    #[test]
+    fn maintenance_null_subject_wildcards_match() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Subject NULL = wildcard; covers any subject for that host+kind.
+        insert_maintenance(
+            &db,
+            "maint_w",
+            "host-1",
+            "log_silence",
+            None,
+            "2000-01-01T00:00:00Z",
+            "2099-01-01T00:00:00Z",
+        );
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "log_silence", "source-A", "Δl"),
+            finding("host-1", "log_silence", "source-B", "Δl"),
+        ], &esc).unwrap();
+
+        for subject in &["source-A", "source-B"] {
+            let (state, id): (String, Option<String>) = db.conn
+                .query_row(
+                    "SELECT maintenance_state, maintenance_id FROM warning_state
+                     WHERE host = 'host-1' AND kind = 'log_silence' AND subject = ?1",
+                    rusqlite::params![subject],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                ).unwrap();
+            assert_eq!(state, "covered", "wildcard must cover subject={subject}");
+            assert_eq!(id.as_deref(), Some("maint_w"));
+        }
+    }
+
+    #[test]
+    fn maintenance_does_not_cover_unrelated_kind() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Declaration covers log_silence; disk_pressure must not inherit.
+        insert_maintenance(
+            &db,
+            "maint_logs",
+            "host-1",
+            "log_silence",
+            None,
+            "2000-01-01T00:00:00Z",
+            "2099-01-01T00:00:00Z",
+        );
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "log_silence", "", "Δl"),
+            finding("host-1", "disk_pressure", "", "Δh"),
+        ], &esc).unwrap();
+
+        let (logs_state, _) = read_maintenance(&db, "host-1", "log_silence");
+        let (disk_state, disk_id) = read_maintenance(&db, "host-1", "disk_pressure");
+        assert_eq!(logs_state, "covered");
+        assert_eq!(disk_state, "none", "scope is exact-kind; disk_pressure stays uncovered");
+        assert!(disk_id.is_none());
+    }
+
+    #[test]
+    fn maintenance_does_not_cover_other_host() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+        ensure_host_known(&db, "host-2");
+
+        insert_maintenance(
+            &db,
+            "maint_h1",
+            "host-1",
+            "log_silence",
+            None,
+            "2000-01-01T00:00:00Z",
+            "2099-01-01T00:00:00Z",
+        );
+
+        update_warning_state(&mut db, 1, &[
+            finding("host-1", "log_silence", "", "Δl"),
+            finding("host-2", "log_silence", "", "Δl"),
+        ], &esc).unwrap();
+
+        let (h1_state, _) = read_maintenance(&db, "host-1", "log_silence");
+        let (h2_state, h2_id) = read_maintenance(&db, "host-2", "log_silence");
+        assert_eq!(h1_state, "covered");
+        assert_eq!(h2_state, "none");
+        assert!(h2_id.is_none());
+    }
+
+    #[test]
+    fn maintenance_overrun_after_window_end() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Window ended in 2001 — finding is active in 2026 (now); should be
+        // annotated overrun, not covered.
+        insert_maintenance(
+            &db,
+            "maint_old",
+            "host-1",
+            "log_silence",
+            Some("source-X"),
+            "2000-01-01T00:00:00Z",
+            "2001-01-01T00:00:00Z",
+        );
+
+        update_warning_state(&mut db, 1, &[finding("host-1", "log_silence", "source-X", "Δl")], &esc).unwrap();
+
+        let (state, id) = read_maintenance(&db, "host-1", "log_silence");
+        assert_eq!(state, "overrun");
+        assert_eq!(id.as_deref(), Some("maint_old"));
+    }
+
+    #[test]
+    fn maintenance_active_takes_precedence_over_expired() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // An expired declaration AND an active one both scope-match.
+        // Active wins (covered), not overrun.
+        insert_maintenance(
+            &db,
+            "maint_old",
+            "host-1",
+            "log_silence",
+            Some("source-X"),
+            "2000-01-01T00:00:00Z",
+            "2001-01-01T00:00:00Z",
+        );
+        insert_maintenance(
+            &db,
+            "maint_new",
+            "host-1",
+            "log_silence",
+            Some("source-X"),
+            "2000-01-01T00:00:00Z",
+            "2099-01-01T00:00:00Z",
+        );
+
+        update_warning_state(&mut db, 1, &[finding("host-1", "log_silence", "source-X", "Δl")], &esc).unwrap();
+
+        let (state, id) = read_maintenance(&db, "host-1", "log_silence");
+        assert_eq!(state, "covered");
+        assert_eq!(id.as_deref(), Some("maint_new"));
+    }
+
+    #[test]
+    fn maintenance_active_precedence_most_recent_declared_at_wins() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        // Two active declarations, both scope-match. The one with the
+        // later start_at (which equals declared_at in our test helper)
+        // wins by the deterministic-precedence rule.
+        insert_maintenance(
+            &db,
+            "maint_earlier",
+            "host-1",
+            "log_silence",
+            Some("source-X"),
+            "2000-01-01T00:00:00Z",
+            "2099-01-01T00:00:00Z",
+        );
+        insert_maintenance(
+            &db,
+            "maint_later",
+            "host-1",
+            "log_silence",
+            Some("source-X"),
+            "2024-06-01T00:00:00Z",
+            "2099-01-01T00:00:00Z",
+        );
+
+        update_warning_state(&mut db, 1, &[finding("host-1", "log_silence", "source-X", "Δl")], &esc).unwrap();
+
+        let (state, id) = read_maintenance(&db, "host-1", "log_silence");
+        assert_eq!(state, "covered");
+        assert_eq!(id.as_deref(), Some("maint_later"),
+            "deterministic precedence: most-recent declared_at wins");
+    }
+
+    #[test]
+    fn maintenance_overrun_precedence_most_recent_end_at_wins() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        insert_maintenance(
+            &db,
+            "maint_oldest",
+            "host-1",
+            "log_silence",
+            Some("source-X"),
+            "1999-01-01T00:00:00Z",
+            "1999-12-31T00:00:00Z",
+        );
+        insert_maintenance(
+            &db,
+            "maint_newer_overrun",
+            "host-1",
+            "log_silence",
+            Some("source-X"),
+            "2001-01-01T00:00:00Z",
+            "2001-12-31T00:00:00Z",
+        );
+
+        update_warning_state(&mut db, 1, &[finding("host-1", "log_silence", "source-X", "Δl")], &esc).unwrap();
+
+        let (state, id) = read_maintenance(&db, "host-1", "log_silence");
+        assert_eq!(state, "overrun");
+        assert_eq!(id.as_deref(), Some("maint_newer_overrun"),
+            "deterministic precedence: most-recently-ended wins for overrun");
+    }
+
+    #[test]
+    fn maintenance_no_match_leaves_state_none() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        update_warning_state(&mut db, 1, &[finding("host-1", "log_silence", "source-X", "Δl")], &esc).unwrap();
+
+        let (state, id) = read_maintenance(&db, "host-1", "log_silence");
+        assert_eq!(state, "none");
+        assert!(id.is_none());
+    }
+
+    #[test]
+    fn maintenance_annotates_regardless_of_visibility_state() {
+        // Annotation lane is orthogonal to suppression — the overlay must
+        // stamp maintenance_state on warning_state rows regardless of their
+        // visibility_state. A consumer can decide whether to render the
+        // annotation on a suppressed row; that's a render-side question.
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "host-1");
+
+        insert_maintenance(
+            &db,
+            "maint_x",
+            "host-1",
+            "log_silence",
+            Some("source-X"),
+            "2000-01-01T00:00:00Z",
+            "2099-01-01T00:00:00Z",
+        );
+
+        update_warning_state(&mut db, 1, &[finding("host-1", "log_silence", "source-X", "Δl")], &esc).unwrap();
+
+        // Manually mark the row suppressed (simulating an external masking
+        // path that flipped visibility) and re-run the cycle.
+        db.conn.execute(
+            "UPDATE warning_state SET visibility_state = 'suppressed', suppression_reason = 'host_unreachable'
+             WHERE host = 'host-1' AND kind = 'log_silence'",
+            [],
+        ).unwrap();
+
+        update_warning_state(&mut db, 2, &[finding("host-1", "log_silence", "source-X", "Δl")], &esc).unwrap();
+
+        let visibility: String = db.conn
+            .query_row(
+                "SELECT visibility_state FROM warning_state
+                 WHERE host = 'host-1' AND kind = 'log_silence'",
+                [], |r| r.get(0),
+            ).unwrap();
+        let (state, id) = read_maintenance(&db, "host-1", "log_silence");
+
+        // Visibility is determined by the existing masking pass; whether
+        // the manually-flipped 'suppressed' survives the next cycle's
+        // upsert/recovery loop is not the point. The point is annotation
+        // ran and stamped covered regardless.
+        let _ = visibility;
+        assert_eq!(state, "covered",
+            "annotation lane is orthogonal — covered stamps regardless of visibility");
+        assert_eq!(id.as_deref(), Some("maint_x"));
     }
 }

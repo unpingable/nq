@@ -69,6 +69,13 @@ pub struct WarningVm {
     pub action_bias: Option<String>,
     pub synopsis: Option<String>,
     pub stability: Option<String>,
+    /// MAINTENANCE_DECLARATION_GAP V1 annotation lane. `"none"` for the
+    /// vast majority of findings; `"covered"` or `"overrun"` when an
+    /// active or expired maintenance declaration scope-matches.
+    pub maintenance_state: String,
+    /// Pointer to the matching declaration when `maintenance_state` is
+    /// `"covered"` or `"overrun"`; `None` when state is `"none"`.
+    pub maintenance_id: Option<String>,
 }
 
 /// Per-host operational summary from dominance projection.
@@ -214,7 +221,8 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
     let warnings: Vec<WarningVm> = if gen_id.is_some() {
         let mut warn_stmt = db.conn.prepare(
             "SELECT severity, kind, host, subject, message, domain, first_seen_at, consecutive_gens, acknowledged, finding_class, visibility_state, suppression_reason,
-                    failure_class, service_impact, action_bias, synopsis, stability
+                    failure_class, service_impact, action_bias, synopsis, stability,
+                    maintenance_state, maintenance_id
              FROM v_warnings ORDER BY severity DESC, kind, host",
         )?;
         let rows = warn_stmt
@@ -237,6 +245,8 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
                     action_bias: row.get(14).ok(),
                     synopsis: row.get(15).ok(),
                     stability: row.get(16).ok(),
+                    maintenance_state: row.get::<_, String>(17).unwrap_or_else(|_| "none".to_string()),
+                    maintenance_id: row.get(18).ok(),
                 })
             })?
             .collect::<Result<_, _>>()?;

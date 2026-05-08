@@ -68,6 +68,8 @@ fn hostile_strings_are_escaped_in_overview_html() {
             action_bias: None,
             synopsis: None,
             stability: None,
+            maintenance_state: "none".into(),
+            maintenance_id: None,
         }],
         history_generations: 10,
     };
