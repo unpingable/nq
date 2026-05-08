@@ -36,6 +36,70 @@ pub enum Command {
     /// one row per target. No merged authority, no synthetic fleet
     /// rollup. See `docs/gaps/FLEET_INDEX_GAP.md`.
     Fleet(FleetCmd),
+    /// Maintenance — declare expected disturbance windows that annotate
+    /// findings as `covered` (in window) or `overrun` (window past, finding
+    /// persists). Annotation only — never suppresses or hides findings.
+    /// See `docs/gaps/MAINTENANCE_DECLARATION_GAP.md`.
+    Maintenance(MaintenanceCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct MaintenanceCmd {
+    #[command(subcommand)]
+    pub action: MaintenanceAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MaintenanceAction {
+    /// Declare a maintenance window. The CLI rejects past-dated `--start`
+    /// per the V1 invariant: declaration must precede effect.
+    Declare(MaintenanceDeclareCmd),
+    /// List maintenance declarations. Default lists all rows; pass
+    /// `--active` to restrict to declarations currently in window.
+    List(MaintenanceListCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct MaintenanceDeclareCmd {
+    /// Path to the nq database.
+    #[arg(long)]
+    pub db: PathBuf,
+    /// Host the maintenance applies to. Exact match.
+    #[arg(long)]
+    pub host: String,
+    /// Detector kind covered by the window. Exact match (e.g.
+    /// `log_silence`, `service_status`).
+    #[arg(long)]
+    pub kind: String,
+    /// Specific subject within the host+kind (e.g. service name, db path).
+    /// Omit for a host+kind wildcard covering any subject.
+    #[arg(long)]
+    pub subject: Option<String>,
+    /// Window start. Accepts ISO-8601 (`2026-05-08T18:00:00Z`), `now`, or
+    /// `now+30m` / `now+1h` / `now+2d`. Must be `>= now` — past-dated
+    /// starts are rejected (declaration precedes effect).
+    #[arg(long)]
+    pub start: String,
+    /// Window end. Same parsing rules as `--start`. Must be after `--start`.
+    #[arg(long)]
+    pub end: String,
+    /// Free-text reason ("VACUUM labelwatch sqlite stores post-unblock").
+    #[arg(long)]
+    pub reason: Option<String>,
+    /// Operator or agent name declaring the window.
+    #[arg(long = "declared-by")]
+    pub declared_by: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct MaintenanceListCmd {
+    /// Path to the nq database.
+    #[arg(long)]
+    pub db: PathBuf,
+    /// Restrict to declarations currently in window (start_at <= now <= end_at).
+    /// Default: list all rows.
+    #[arg(long)]
+    pub active: bool,
 }
 
 #[derive(Debug, Args)]

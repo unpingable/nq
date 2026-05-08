@@ -194,7 +194,8 @@ async fn finding_detail_inner(db: Db, kind: &str, host: &str, subject: &str) -> 
                     first_seen_gen, first_seen_at, last_seen_gen, last_seen_at,
                     consecutive_gens, peak_value, acknowledged, notified_severity, notified_at,
                     work_state, owner, note, external_ref, visibility_state, suppression_reason,
-                    failure_class, service_impact, action_bias, synopsis, why_care
+                    failure_class, service_impact, action_bias, synopsis, why_care,
+                    maintenance_state, maintenance_id
              FROM warning_state
              WHERE kind = '{}' AND host = '{}' AND subject = '{}'",
             kind.replace('\'', "''"),
@@ -329,7 +330,7 @@ fn render_finding_detail(
 
     // Extract finding fields
     let (severity, domain, message, first_seen, consecutive, peak, notified_sev, work_state, owner, note, ext_ref, visibility, suppr_reason,
-         failure_class, _service_impact, action_bias, synopsis, why_care) =
+         failure_class, _service_impact, action_bias, synopsis, why_care, maintenance_state) =
         if let Ok(ref r) = finding {
             if let Some(row) = r.rows.first() {
                 (
@@ -351,13 +352,19 @@ fn render_finding_detail(
                     row.get(23).map(|s| s.as_str()).unwrap_or(""),
                     row.get(24).map(|s| s.as_str()).unwrap_or(""),
                     row.get(25).map(|s| s.as_str()).unwrap_or(""),
+                    row.get(26).map(|s| s.as_str()).unwrap_or("none"),
                 )
             } else {
-                ("?", "?", "Finding not found", "?", "0", "", "none", "new", "", "", "", "observed", "", "", "", "", "", "")
+                ("?", "?", "Finding not found", "?", "0", "", "none", "new", "", "", "", "observed", "", "", "", "", "", "", "none")
             }
         } else {
-            ("?", "?", "Error loading finding", "?", "0", "", "none", "new", "", "", "", "observed", "", "", "", "", "", "")
+            ("?", "?", "Error loading finding", "?", "0", "", "none", "new", "", "", "", "observed", "", "", "", "", "", "", "none")
         };
+    let maintenance_id = if let Ok(ref r) = finding {
+        r.rows.first().and_then(|row| row.get(27)).map(|s| s.clone()).unwrap_or_default()
+    } else {
+        String::new()
+    };
 
     let domain_meta = nq_db::finding_meta::domain_meta(domain);
     let domain_label = domain_meta.map(|d| d.operator_label).unwrap_or(domain);
@@ -639,6 +646,21 @@ async function runQuery(e) {{
                     ));
                 }
             }
+            // Maintenance annotation chip — MAINTENANCE_DECLARATION_GAP V1.5.
+            // covered = expected disturbance; overrun = window has ended,
+            // finding persists. Tooltip carries the declaration_id so the
+            // operator can find the matching `nq maintenance list` row.
+            match maintenance_state {
+                "covered" => out.push_str(&format!(
+                    "<span class=\"domain-tag\" style=\"background:#388bfd;color:#fff;\" title=\"declared maintenance window in effect — {}\">maintenance</span>",
+                    escape_html(&maintenance_id),
+                )),
+                "overrun" => out.push_str(&format!(
+                    "<span class=\"domain-tag\" style=\"background:#d29922;color:#fff;\" title=\"maintenance window has ended; finding still active — {}\">maintenance overrun</span>",
+                    escape_html(&maintenance_id),
+                )),
+                _ => {}
+            }
             out
         },
         why_section = if has_diagnosis {
@@ -889,6 +911,17 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
                 _ => "",
             };
 
+            // Maintenance annotation badge — MAINTENANCE_DECLARATION_GAP V1.5.
+            // covered = expected disturbance currently in window; overrun =
+            // disturbance persists past the window's declared end. "Earn the
+            // chrome" minimal: one chip, no new layout. Operator can grep
+            // `nq maintenance list` for the declaration_id if they need it.
+            let maintenance_badge = match w.maintenance_state.as_str() {
+                "covered" => " <span class=\"diag-badge\" style=\"border-color:#388bfd;color:#388bfd;\" title=\"expected disturbance — declared maintenance window in effect\">maintenance</span>",
+                "overrun" => " <span class=\"diag-badge\" style=\"border-color:#d29922;color:#d29922;\" title=\"declared maintenance window has ended; finding still active\">maintenance overrun</span>",
+                _ => "",
+            };
+
             // Typed diagnosis badges (only when diagnosis is present)
             let diag_badges = if let Some(ref fc) = w.failure_class {
                 let ab_label = w.action_bias.as_deref().unwrap_or("");
@@ -910,7 +943,7 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
             format!(
                 "<tr class=\"{sev_class}\" data-domain=\"{domain}\">
                     <td class=\"sev-dot\"></td>
-                    <td><a href=\"{detail_url}\">{label}</a>{suppressed_badge}{diag_badges}{stability_badge}<br><span class=\"kind-sub\">{kind} · {domain}</span></td>
+                    <td><a href=\"{detail_url}\">{label}</a>{suppressed_badge}{diag_badges}{stability_badge}{maintenance_badge}<br><span class=\"kind-sub\">{kind} · {domain}</span></td>
                     <td>{host}</td>
                     <td>{message}</td>
                     <td class=\"gens\"{gens_title_attr}>{gens_cell}</td>

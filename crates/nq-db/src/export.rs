@@ -51,10 +51,10 @@ pub const CONTRACT_VERSION: u32 = 1;
 ///
 /// v1 touches: `warning_state.absent_gens` (migration 020),
 /// `warning_state.failure_class` etc. (027), `warning_state.stability`
-/// (028), `regime_features` (030), and the COVERAGE_HONESTY envelope
-/// columns (038). The most recent of those is 38; exporter requires
-/// `>= 38`.
-pub const MIN_SCHEMA_FOR_EXPORT: u32 = 38;
+/// (028), `regime_features` (030), the COVERAGE_HONESTY envelope
+/// columns (038), and the MAINTENANCE_DECLARATION annotation columns
+/// (045). The most recent of those is 45; exporter requires `>= 45`.
+pub const MIN_SCHEMA_FOR_EXPORT: u32 = 45;
 
 // ---------------------------------------------------------------------------
 // Filter — what export_findings accepts.
@@ -116,6 +116,27 @@ pub struct FindingSnapshot {
     /// Additive on the v1 contract.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_unobservable: Option<NodeUnobservableExport>,
+    /// MAINTENANCE_DECLARATION_GAP V1 annotation lane. Populated only when
+    /// the finding's `maintenance_state` is `covered` or `overrun`; absent
+    /// (skipped) when state is `none`. Additive on the v1 contract; older
+    /// consumers ignore the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maintenance: Option<MaintenanceExport>,
+}
+
+/// MAINTENANCE_DECLARATION_GAP V1 wire shape. Two values plus the
+/// declaration ID pointer. `state = 'none'` is communicated by the field
+/// being absent (skip_serializing_if), not by being serialized.
+#[derive(Debug, Clone, Serialize)]
+pub struct MaintenanceExport {
+    /// `covered` (active declaration matches scope) or `overrun`
+    /// (declaration ended; finding still active). The `none` state is
+    /// represented by the parent field being skipped entirely.
+    pub state: String,
+    /// Pointer to the declaration responsible for this annotation. Always
+    /// present when state is set, by the deterministic-precedence rule
+    /// (most-recent declared_at for active; most-recent end_at for expired).
+    pub declaration_id: String,
 }
 
 /// TESTIMONY_DEPENDENCY_GAP V1 wire shape for `node_unobservable` findings.
@@ -451,7 +472,8 @@ pub fn export_findings_from_conn(
                 coverage_degraded_ref,
                 suppression_reason,
                 node_type, cause_candidate, evidence_finding_key, suppressed_descendant_count,
-                suppression_kind, suppression_declaration_id
+                suppression_kind, suppression_declaration_id,
+                maintenance_state, maintenance_id
          FROM warning_state{} ORDER BY host, kind, subject",
         where_clause
     );
@@ -507,6 +529,8 @@ pub fn export_findings_from_conn(
             suppressed_descendant_count: row.get(43)?,
             suppression_kind: row.get(44)?,
             suppression_declaration_id: row.get(45)?,
+            maintenance_state: row.get(46)?,
+            maintenance_id: row.get(47)?,
         })
     })?;
 
@@ -641,6 +665,13 @@ pub fn export_findings_from_conn(
             coverage,
             admissibility,
             node_unobservable,
+            maintenance: match (r.maintenance_state.as_str(), r.maintenance_id) {
+                ("covered" | "overrun", Some(id)) => Some(MaintenanceExport {
+                    state: r.maintenance_state,
+                    declaration_id: id,
+                }),
+                _ => None,
+            },
         });
     }
 
@@ -699,6 +730,10 @@ struct WarningStateRow {
     // OPERATIONAL_INTENT_DECLARATION_GAP V1 suppression discriminator.
     suppression_kind: Option<String>,
     suppression_declaration_id: Option<String>,
+    // MAINTENANCE_DECLARATION_GAP V1 annotation lane. 'none' / 'covered' /
+    // 'overrun'; declaration_id NULL when state is 'none'.
+    maintenance_state: String,
+    maintenance_id: Option<String>,
 }
 
 /// Build the AdmissibilityExport block from a warning_state row plus an
@@ -2081,5 +2116,93 @@ mod tests {
         assert_eq!(p.streak_length_generations, 50);
         assert_eq!(p.present_ratio_window, 0.95);
         assert_eq!(p.interruption_count, 2);
+    }
+
+    // ------------------------------------------------------------------
+    // MAINTENANCE_DECLARATION V1 — export round-trip
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn maintenance_export_round_trip_covered() {
+        let mut db = make_db();
+        ensure_generation(&db, 1);
+        let esc = crate::publish::EscalationConfig::default();
+
+        // Active declaration covering host-1/log_silence (any subject).
+        db.conn.execute(
+            "INSERT INTO maintenance_declarations
+               (maintenance_id, declared_at, declared_by, start_at, end_at,
+                host, kind, subject, reason)
+             VALUES ('maint_export', '2000-01-01T00:00:00Z', 'test',
+                     '2000-01-01T00:00:00Z', '2099-01-01T00:00:00Z',
+                     'host-1', 'log_silence', NULL, 'export round-trip test')",
+            [],
+        ).unwrap();
+
+        crate::publish::update_warning_state(
+            &mut db, 1,
+            &[make_finding("host-1", "log_silence", "source-X", "Δl")],
+            &esc,
+        ).unwrap();
+
+        let snaps = export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        assert_eq!(snaps.len(), 1);
+        let m = snaps[0].maintenance.as_ref()
+            .expect("covered finding must carry maintenance block");
+        assert_eq!(m.state, "covered");
+        assert_eq!(m.declaration_id, "maint_export");
+    }
+
+    #[test]
+    fn maintenance_export_omits_block_when_state_none() {
+        let mut db = make_db();
+        ensure_generation(&db, 1);
+        let esc = crate::publish::EscalationConfig::default();
+
+        // No declarations; the field should not appear in JSON.
+        crate::publish::update_warning_state(
+            &mut db, 1,
+            &[make_finding("host-1", "disk_pressure", "", "Δg")],
+            &esc,
+        ).unwrap();
+
+        let snaps = export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        assert_eq!(snaps.len(), 1);
+        assert!(snaps[0].maintenance.is_none(),
+            "state='none' must be communicated by absence, not by serialized null");
+
+        // And the JSON must literally not contain a "maintenance" key.
+        let json = serde_json::to_string(&snaps[0]).unwrap();
+        assert!(!json.contains("\"maintenance\""),
+            "maintenance field must skip-serialize when None; got: {json}");
+    }
+
+    #[test]
+    fn maintenance_export_carries_overrun_with_declaration_id() {
+        let mut db = make_db();
+        ensure_generation(&db, 1);
+        let esc = crate::publish::EscalationConfig::default();
+
+        // Expired declaration → finding annotated overrun.
+        db.conn.execute(
+            "INSERT INTO maintenance_declarations
+               (maintenance_id, declared_at, declared_by, start_at, end_at,
+                host, kind, subject, reason)
+             VALUES ('maint_overrun', '2000-01-01T00:00:00Z', 'test',
+                     '2000-01-01T00:00:00Z', '2001-01-01T00:00:00Z',
+                     'host-1', 'log_silence', NULL, 'expired')",
+            [],
+        ).unwrap();
+
+        crate::publish::update_warning_state(
+            &mut db, 1,
+            &[make_finding("host-1", "log_silence", "source-X", "Δl")],
+            &esc,
+        ).unwrap();
+
+        let snaps = export_findings_from_conn(&db.conn, &ExportFilter::default()).unwrap();
+        let m = snaps[0].maintenance.as_ref().expect("overrun carries maintenance block");
+        assert_eq!(m.state, "overrun");
+        assert_eq!(m.declaration_id, "maint_overrun");
     }
 }
