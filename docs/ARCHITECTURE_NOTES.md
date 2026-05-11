@@ -179,6 +179,16 @@ Coherent pressure, resolution still open.
 **Promoted:** 2026-04-27 after `smart_witness_silent` brought the silence-detector count to six and the three-mechanism-shape split (age-threshold / presence-delta / baseline-collapse) became legible.
 **Why kept here:** the spec records the contract; the implementation is still gated on REGISTRY_PROJECTION and MAINTENANCE_DECLARATION_GAP for `silence_expected` to be load-bearing. Until those land, every silence finding's `silence_expected` is `none`.
 
+### WITNESS_COMPOSITION
+
+**Status:** latent
+**Activation trigger:** first multi-witness Prom-backed finding consumed downstream (NS / Governor) where agreement is treated as corroboration without an audited basis-orthogonality story; or a second exporter profile that visibly composes with an existing witness on the same finding.
+**Why it matters:** NQ already ingests Prom exporters, and each finding minted from exporter testimony is implicitly composed — exporter-as-witness, scrape-path-as-transport, relabeling/recording-rules-as-aggregator — without surfacing the composition to consumers. The concerns named in upstream `papers/working/primitives/witness-invariance-composition.md` — shared upstream blindness, aggregator contamination ($D_A$), regime intersection, threshold accumulation — bite the existing Prom adapter as hard as they would any future provenance graph. Operational failure shape: every dashboard green, every metric fresh, every check passing, none of them with standing on the thing that broke.
+**Likely successor artifact:** a focused profile gap (working name `WITNESS_COMPOSITION_PROFILE_GAP`) building on [`DURABLE_ARTIFACT_SUBSTRATE_GAP`](gaps/DURABLE_ARTIFACT_SUBSTRATE_GAP.md) §Upstream theory note. Forcing exporter pinned as **`blackbox_exporter`**: outside-in weak testimony with clean basis/exclusions, high conflict value against internal witnesses (blackbox-red + app-green ⇒ internal lacks standing on external reachability; blackbox-green + app-red ⇒ reachability is not health), low domain-capture risk. Runners-up rejected for V1: `kube-state-metrics` (dangerously attractive — drags Kubernetes doctrine in too early; tiny cathedral seed); `node_exporter` (too direct-substrate to prove the thesis).
+**Dependencies:** none for spec; implementation depends on TESTIMONY_DEPENDENCY (V1 shipped) and on at least one second exporter profile to demonstrate composition.
+**Marked constraint (not yet doctrine):** *a finding is not more qualified than the composition rule that minted it.* Promotion to §Design laws waits until the composition surface actually lands. See [`RELATIONSHIP_TO_PROMETHEUS`](RELATIONSHIP_TO_PROMETHEUS.md#exporters-as-witnesses-forward-note) §Exporters as witnesses for the orientation framing and [`DURABLE_ARTIFACT_SUBSTRATE_GAP`](gaps/DURABLE_ARTIFACT_SUBSTRATE_GAP.md) §Upstream theory note for the upstream-theory pointer.
+**Source:** Design analysis 2026-05-09 of upstream `witness-invariance-composition.md` and `lean/LeanProofs/Admissibility/WitnessInvariance.lean`. Forcing case: the existing Prom adapter, which already does composed-witness ingestion without admitting it.
+
 ---
 
 ## Tripwires

@@ -67,6 +67,25 @@ INSERT INTO metric_history_policy (pattern, mode, notes)
 VALUES ('postgres_connections', 'full', 'Connection count trend');
 ```
 
+### Reading Prom-backed findings
+
+Prom exporters are weak testimony in isolation: each one says only what it can
+see, in the shape it happens to expose, with semantics inferred from metric
+names. NQ treats them as **witnesses**, not raw truth sources — the exporter
+emits testimony, the scrape path is transport, and any relabeling or
+recording rules act as aggregation.
+
+**Do not treat multiple green Prom-backed findings as stronger merely because
+they agree.** If they share an exporter library, scrape path, Kubernetes API
+view, recording rule, relabel config, node, sidecar, or deployment regime,
+the agreement may be shared contamination rather than corroboration.
+
+NQ does not yet implement a full witness-composition profile. See
+[How NQ Relates to Prometheus](RELATIONSHIP_TO_PROMETHEUS.md#exporters-as-witnesses-forward-note)
+for the orientation framing, and
+[`DURABLE_ARTIFACT_SUBSTRATE_GAP`](gaps/DURABLE_ARTIFACT_SUBSTRATE_GAP.md)
+§Upstream theory note for the theory pointer.
+
 ### Querying Prometheus metrics in NQ
 
 ```sql
