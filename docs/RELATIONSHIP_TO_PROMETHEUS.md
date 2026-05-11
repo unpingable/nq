@@ -111,3 +111,44 @@ preserve the operational meaning those systems often lose.
 
 That is the difference. Everything else in this document is a consequence
 of it.
+
+## Exporters as witnesses (forward note)
+
+A subsection that becomes load-bearing once NQ has more than one Prom-backed
+witness feeding the same finding. Prometheus exporters are best read as
+**witnesses**, not as raw truth sources. The exporter emits testimony about
+the substrate it can observe. The scrape path is transport. Relabeling,
+recording rules, alert expressions, and any NQ-side reduction act as
+aggregation layers. A Prom-backed finding should therefore be read as a
+composed claim unless proven otherwise.
+
+Exporter agreement is not automatically corroboration. Multiple green metrics
+may indicate independent confirmation — or shared upstream blindness, shared
+scrape-path failure, relabeling distortion, recording-rule contamination, or
+a regime mismatch. Aggregate standing is separate from component standing.
+
+When adding or consuming a Prom exporter, it is worth informally documenting:
+
+- what substrate the exporter directly observes
+- what claim each metric is allowed to support
+- what the exporter cannot observe
+- whether the scrape path is shared with other witnesses
+- whether relabeling or recording rules transform the claim
+- what regime the metric is valid under
+- how freshness is established
+- what silence means: no data, no scrape, no sample, no target, or no testimony
+
+This is orientation discipline, not schema. NQ does not yet implement a full
+witness-composition profile; until it does, Prom-backed findings should be
+read with the conservative assumption that exporter outputs are weak testimony
+whose composition has not been fully qualified.
+
+Related theory lives upstream in
+`papers/working/primitives/witness-invariance-composition.md`, with formal
+vocabulary in `lean/LeanProofs/Admissibility/WitnessInvariance.lean`. See also
+[`DURABLE_ARTIFACT_SUBSTRATE_GAP`](gaps/DURABLE_ARTIFACT_SUBSTRATE_GAP.md)
+§Upstream theory note.
+
+Marked constraint, not yet doctrine:
+
+> A finding is not more qualified than the composition rule that minted it.
