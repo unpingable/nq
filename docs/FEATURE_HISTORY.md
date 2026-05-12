@@ -20,6 +20,61 @@ The chronological order below is newest-first.
 
 ---
 
+## DURABLE_ARTIFACT_SUBSTRATE V1 (synthetic-producer slice)
+
+**Status:** `partial — shipped (V1)`. Synthetic-producer cash-out per the V1 slice named in the gap doc — admits the substrate class, pins the inbound-testimony pipeline boundary, exercises one composition (`extraction_stale` via SILENCE_UNIFICATION). Real-producer ingestion + PROVENANCE_GRAPH_PROFILE + `dependency_cone_changed` + corpus-shaped subject-identity vocabulary are explicit V1 deferrals. Consumer-alignment dry run (NS reads synthetic-producer output through existing admissibility path) remains the one open V1 acceptance criterion — operationally-driven, James leads.
+
+**Shipped commits:**
+- (this commit, 2026-05-12) — V1: migration 046 (origin envelope + SILENCE_UNIFICATION envelope columns on `warning_state`); `crates/nq-db/src/import.rs` ingestion module (`nq.finding_import.v1` wire shape, `MIN_SCHEMA_FOR_IMPORT`, `ingest_finding_import`); `FindingOrigin` + `SilenceEnvelopeExport` on `FindingSnapshot` with `skip_serializing_if`; `extraction_stale` detector emitting SILENCE_UNIFICATION-shaped findings; refusal mode for malformed / wrong-schema / under-versioned manifests (`inbound_export_unparsable` finding, zero observations ingested, no error to caller); synthetic-producer fixtures + 8 acceptance tests; lifecycle posture **raw passthrough with origin tag** locked in the gap doc.
+
+**Lifecycle posture decision (V1-locked):** *raw passthrough with origin tag.* Native NQ findings emit no `origin` block (skip-when-default); ingested findings emit `origin = { source: "import", producer_id, extraction_run_id, producer_extraction_time, import_contract_version }`. Consumers branch on block presence. The conservative-default reasoning held: boundary cleanliness beats consumer-side branching cost. Revisiting requires a contract-version bump.
+
+**SILENCE_UNIFICATION cross-gap note (load-bearing):** The four shared envelope fields (`silence_scope`, `silence_basis`, `silence_duration_s`, `silence_expected`) ship here as additive optional `FindingSnapshot` fields. **DURABLE_ARTIFACT V1 is the forcing case** that promotes the SILENCE_UNIFICATION contract surface; full migration of the six existing silence detectors (`stale_host`, `stale_service`, `*_witness_silent`, `signal_dropout`, `log_silence`) onto these columns remains under SILENCE_UNIFICATION_GAP's own V1 work. **Consumers must read missing `silence` as "not yet unified", not "not silence".** The legacy detectors keep their ad-hoc shapes until their own migration; the contract surface is opt-in until then. The discipline came from chatty: *"A shared envelope may arrive before all legacy producers migrate. A fake local envelope should not."*
+
+**Evidence:**
+- Schema: `crates/nq-db/migrations/046_durable_artifact_substrate.sql`. ALTER `warning_state` to add: `origin_source TEXT NOT NULL DEFAULT 'nq' CHECK IN ('nq','import')`, `origin_producer_id`, `origin_extraction_run_id`, `origin_producer_extraction_time`, `origin_import_contract_version`, `silence_scope`, `silence_basis CHECK IN ('age_threshold','presence_delta','baseline_collapse')`, `silence_duration_s`, `silence_expected CHECK IN ('none','maintenance','intended_liveness')`. `v_warnings` recreated to expose all nine new columns. `CURRENT_SCHEMA_VERSION` bumped 45 → 46; `MIN_SCHEMA_FOR_EXPORT` bumped 45 → 46.
+- Inbound contract: `crates/nq-db/src/import.rs`. `IMPORT_SCHEMA_ID = "nq.finding_import.v1"`, `IMPORT_CONTRACT_VERSION = 1`, `MIN_SCHEMA_FOR_IMPORT = 46`. `FindingImportManifest { schema, contract_version, producer_id, extraction_run_id, producer_extraction_time, findings }`. Refusal finding kind `inbound_export_unparsable` emitted to `warning_state` with `origin_source='nq'` (NQ's testimony about the refusal, not the producer's). Best-effort partial-parse to extract producer identity for the refusal subject when full parse fails; falls back to `"unknown-producer" / "unparseable"` when JSON itself doesn't parse.
+- Wire shape: `crates/nq-db/src/export.rs`. `FindingOrigin { source, producer_id, extraction_run_id, producer_extraction_time, import_contract_version }` + `SilenceEnvelopeExport { scope, basis, duration_s, expected }`. Both as `Option<...>` with `skip_serializing_if = Option::is_none`. Snapshot construction conditional on `origin_source = 'import'` (origin block) and all four `silence_*` columns being non-NULL (silence block). Partial-origin rows drop to `None` rather than emit a partial lie — the ingest path's all-or-nothing invariant catches this case.
+- Detector composition: `import.rs::maybe_emit_extraction_stale`. Runs as part of the ingest path itself. If `producer_extraction_time` is older than `IngestConfig::extraction_stale_threshold_s` (default 86400s / 24h), emits one `extraction_stale` finding with `origin_source='nq'` (NQ's testimony about the producer's silence) carrying `silence_scope='extraction'`, `silence_basis='age_threshold'`, `silence_duration_s=(now - producer_extraction_time).seconds`, `silence_expected='none'`. Subject identifies the extraction run that triggered the silence.
+- Synthetic-producer fixtures: `crates/nq-db/tests/fixtures/synthetic_producer_*.json` — `import.json` (clean V1 manifest, two findings), `under_versioned.json` (contract_version=99), `wrong_schema.json` (`nq.finding_snapshot.v1` in import slot), `stale.json` (`producer_extraction_time = 2026-01-01`).
+- Acceptance tests (8 in `crates/nq-db/tests/durable_artifact_substrate_v1.rs`):
+  - `clean_ingest_round_trip_preserves_origin_envelope` — fixture → ingest → export → both clocks present, all five `origin.*` fields populated, NQ-clock vs producer-clock fields distinct.
+  - `under_versioned_fixture_refused_with_one_finding` — exactly one `inbound_export_unparsable` finding emitted; zero imported findings; refusal reason names the contract mismatch; refusal finding has `origin_source='nq'`.
+  - `wrong_schema_fixture_refused` — manifest schema `nq.finding_snapshot.v1` refused with reason mentioning the bad schema.
+  - `unparseable_json_refused_with_placeholder_identity` — malformed JSON refused; subject identity falls back to `"unknown-producer" / "unparseable"`.
+  - `extraction_stale_fires_when_producer_is_old` — `producer_extraction_time = 2026-01-01` against `now = 2026-05-12T10:00:30Z` (~131 days) exceeds threshold; emits one `extraction_stale` with `silence_scope='extraction'`, `silence_basis='age_threshold'`, `silence_duration_s > 10M`, `silence_expected='none'`; finding has no `origin` block (it's NQ's testimony, not the producer's).
+  - `extraction_stale_does_not_fire_when_producer_is_fresh` — clean fixture (30s old) below threshold; no `extraction_stale` row.
+  - `legacy_silence_detector_has_no_silence_envelope_on_export` — direct insert of `stale_host`-shaped row with `silence_*` NULL; export emits the row but with no `silence` block. The "not yet unified" semantics.
+  - `inversion_test_shape_allows_downstream_verdict` — JSON serialization contains no verdict verbs (`should_alert`, `page_oncall`, `block_release`, `auto_remediate`, `auto_retract`); `origin` block present on imported findings as the consumer-side discriminator.
+- Full nq-db lib + integration test suite: 290 + 6 + 4 + 10 + 107 + 8 + 13 + 2 = 440 tests green. Full workspace: 546 tests green.
+
+**Known unproven surfaces / V1 explicit deferrals:**
+- **Real-producer ingestion.** V1 ships only the synthetic fixture path. No daemon, no HTTP inbound surface, no file-watcher, no CLI verb. The ingest function `ingest_finding_import` is called from tests; production wiring is the V2+ surface.
+- **PROVENANCE_GRAPH_PROFILE.** The first concrete profile compiling provenance concerns (`provenance.missing_witness`, `provenance.extraction_stale`, `provenance.unreviewed_heuristic`, ...) onto existing primitives plus the candidate-new `dependency_cone_changed`. Deferred until a real producer materializes.
+- **Corpus-shaped subject-identity vocabulary.** V1 reuses the `host` slot for `producer_id` and the `subject` slot for whatever the producer chose. The gap doc flags this as "non-host" and defers the choice to PROVENANCE_GRAPH_PROFILE.
+- **Multi-producer ingestion.** V1 is one synthetic producer. Identity-collision and clock-skew across producers are deferred.
+- **Cross-clock revalidation.** When does NQ-ingest-time staleness supersede producer-extraction-time freshness, or vice versa? V1 leaves both clocks visible to consumers; consumer-side admissibility decides.
+- **Authority / signing for inbound testimony.** V1 accepts any well-formed manifest as truthful. Real-producer multi-host deployment would force the question.
+- **Per-extraction-run finding lifecycle.** V1 treats each ingest as a fresh observation (`consecutive_gens` increments on conflict but does not yet reflect cross-extraction-run persistence semantics on the producer's cadence).
+- **`finding_observations` parallel columns.** V1 only adds the envelope columns to `warning_state`. If observation-level history of producer-clock or silence-envelope state ever becomes required, parallel columns on `finding_observations` are an additive migration.
+
+**Open V1 acceptance criterion (operationally-driven, James leads):**
+- **NS consumer-alignment dry run.** Per gap §V1 step 6: NS reads the synthetic-producer output and either (a) consumes the ingested finding through the same admissibility path as native NQ findings (admission ratified) or (b) refuses with a typed error (admission blocked, gap revisited). Until run, the substrate-class admission is conditional. The wire shape is ready; the dry run is a cross-repo coordination task that doesn't require additional NQ work.
+
+**Unblocks:**
+- Inbound-testimony adapter for non-host substrate (any durable-artifact extractor, when one materializes).
+- PROVENANCE_GRAPH_PROFILE work — the substrate class is now admitted; the profile picks the corpus-shaped subject vocabulary and composition mappings.
+- SILENCE_UNIFICATION_GAP V1 — the shared envelope fields are now in the schema; SU's own V1 work migrates the six legacy silence detectors onto them.
+- Honest treatment of labelwatch's artifact-store substrate beyond the live-host metrics (`wal_bloat` and friends) NQ already covers, once a labelwatch-shaped producer materializes.
+
+**Field notes:**
+- The slice opened with a structural snag — step 3 of the V1 cash-out ("emit a SILENCE_UNIFICATION-shaped finding") couldn't be delivered as written because SILENCE_UNIFICATION_GAP is still `proposed` and its contract fields don't exist. Three honest options: (1) land the shared envelope fields as a precondition with hard scope fence, (2) compose onto the nearest existing primitive shape (`stale_host` etc.), (3) defer step 3 inside V1. Picked (1) per chatty's "shared envelope may arrive before all legacy producers migrate" framing. The dodge would have been (2) — shipping something that *looks* like step 3 but uses pre-composition shape that fossilizes into architecture.
+- The lifecycle-posture decision came down quickly: raw passthrough with origin tag has the cleaner boundary, and consumer-side branching is one block-presence check. NQ-vouched re-emission would mean NQ inherits responsibility for ingested truth — wrong posture when the producer is wrong, and there is currently no producer at all to inherit truth from.
+- `inbound_export_unparsable` is NQ's own finding about the wire-boundary failure, not part of the producer's testimony. `origin_source='nq'` on those rows preserves the boundary — NQ refuses, NQ does not validate the producer's source contract. The placeholder name from the gap doc held; renaming is a profile-level concern.
+- The "narrow after contact, not before contact" rule applied at the right phase here — this was finishing-shaped, not aborting-shaped. The substrate class was already named and ratified; V1 cashes it out at the smallest correct scope.
+
+---
+
 ## MAINTENANCE_DECLARATION V1
 
 **Status:** shipped 2026-05-08. Annotation lane only — V1 emits `none` / `covered` / `overrun` per the frozen 2026-04-27 spec; `late` and `out_of_envelope` are explicit V2+ deferrals. Operator/agent CLI verbs `nq maintenance declare` + `nq maintenance list` ship; the spec's `clear` / `cancel` / `extend` are explicit non-goals (append-only storage).

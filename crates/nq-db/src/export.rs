@@ -52,9 +52,11 @@ pub const CONTRACT_VERSION: u32 = 1;
 /// v1 touches: `warning_state.absent_gens` (migration 020),
 /// `warning_state.failure_class` etc. (027), `warning_state.stability`
 /// (028), `regime_features` (030), the COVERAGE_HONESTY envelope
-/// columns (038), and the MAINTENANCE_DECLARATION annotation columns
-/// (045). The most recent of those is 45; exporter requires `>= 45`.
-pub const MIN_SCHEMA_FOR_EXPORT: u32 = 45;
+/// columns (038), the MAINTENANCE_DECLARATION annotation columns
+/// (045), and the DURABLE_ARTIFACT_SUBSTRATE origin / SILENCE_UNIFICATION
+/// envelope columns (046). The most recent of those is 46; exporter
+/// requires `>= 46`.
+pub const MIN_SCHEMA_FOR_EXPORT: u32 = 46;
 
 // ---------------------------------------------------------------------------
 // Filter — what export_findings accepts.
@@ -122,6 +124,68 @@ pub struct FindingSnapshot {
     /// consumers ignore the field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub maintenance: Option<MaintenanceExport>,
+    /// DURABLE_ARTIFACT_SUBSTRATE_GAP V1 origin envelope. Populated for
+    /// ingested findings (origin_source = "import"); absent (skipped) for
+    /// native NQ findings. Lifecycle posture is **raw passthrough with
+    /// origin tag** (locked in V1): consumers branch on the presence of
+    /// this block to switch to two-clock semantics. Additive on the v1
+    /// contract; older consumers ignore the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<FindingOrigin>,
+    /// SILENCE_UNIFICATION shared envelope (shipped here as
+    /// DURABLE_ARTIFACT_SUBSTRATE V1's forcing case). Populated for
+    /// silence-shaped findings using the unified contract — V1 covers
+    /// only `extraction_stale`. **Absent on the six legacy silence
+    /// detectors** (`stale_host`, `stale_service`, `*_witness_silent`,
+    /// `signal_dropout`, `log_silence`), which keep their ad-hoc shape
+    /// pending their own SILENCE_UNIFICATION_GAP migration. Consumers
+    /// must read missing `silence` as "not yet unified", not
+    /// "not silence". Additive on the v1 contract.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub silence: Option<SilenceEnvelopeExport>,
+}
+
+/// DURABLE_ARTIFACT_SUBSTRATE_GAP V1 wire shape. Present only for findings
+/// ingested via `nq.finding_import.v1`. The block being present is itself
+/// the discriminator — native NQ findings skip the entire `origin` field.
+///
+/// **Two-clock provenance.** `producer_extraction_time` is the producer's
+/// clock — basis recency for window-bearing fields. NQ-side lifecycle
+/// (`first_seen_gen`, `last_seen_gen`) remains on NQ's clock. Consumers
+/// branch on whichever axis they need.
+#[derive(Debug, Clone, Serialize)]
+pub struct FindingOrigin {
+    /// Always `"import"` when this block is present; the `"nq"` value is
+    /// signaled by the parent field being skipped entirely. Carried
+    /// explicitly so consumers can branch on a typed discriminator.
+    pub source: String,
+    pub producer_id: String,
+    pub extraction_run_id: String,
+    /// RFC3339 UTC. Producer's clock.
+    pub producer_extraction_time: String,
+    pub import_contract_version: u32,
+}
+
+/// SILENCE_UNIFICATION shared envelope. V1 covers exactly one detector
+/// (`extraction_stale`); the six legacy silence detectors are not yet
+/// migrated and omit this block entirely. Consumers must read missing
+/// `silence` as **not yet unified**, not **not silence**.
+#[derive(Debug, Clone, Serialize)]
+pub struct SilenceEnvelopeExport {
+    /// What is silent. `extraction` for durable-artifact corpora; future
+    /// scopes (`host`, `service`, `witness`, `metric`, `log`) added as
+    /// legacy detectors migrate.
+    pub scope: String,
+    /// Mechanism shape. One of the three named in SILENCE_UNIFICATION_GAP:
+    /// `age_threshold`, `presence_delta`, `baseline_collapse`.
+    pub basis: String,
+    /// Seconds since silence began. For `scope = extraction`, computed
+    /// against the producer clock (`origin.producer_extraction_time`).
+    pub duration_s: i64,
+    /// Bridge to MAINTENANCE_DECLARATION / intended-liveness. `none` in
+    /// V1; future values (`maintenance`, `intended_liveness`) when
+    /// silence is operator-declared as expected.
+    pub expected: String,
 }
 
 /// MAINTENANCE_DECLARATION_GAP V1 wire shape. Two values plus the
@@ -473,7 +537,10 @@ pub fn export_findings_from_conn(
                 suppression_reason,
                 node_type, cause_candidate, evidence_finding_key, suppressed_descendant_count,
                 suppression_kind, suppression_declaration_id,
-                maintenance_state, maintenance_id
+                maintenance_state, maintenance_id,
+                origin_source, origin_producer_id, origin_extraction_run_id,
+                origin_producer_extraction_time, origin_import_contract_version,
+                silence_scope, silence_basis, silence_duration_s, silence_expected
          FROM warning_state{} ORDER BY host, kind, subject",
         where_clause
     );
@@ -531,6 +598,15 @@ pub fn export_findings_from_conn(
             suppression_declaration_id: row.get(45)?,
             maintenance_state: row.get(46)?,
             maintenance_id: row.get(47)?,
+            origin_source: row.get(48)?,
+            origin_producer_id: row.get(49)?,
+            origin_extraction_run_id: row.get(50)?,
+            origin_producer_extraction_time: row.get(51)?,
+            origin_import_contract_version: row.get(52)?,
+            silence_scope: row.get(53)?,
+            silence_basis: row.get(54)?,
+            silence_duration_s: row.get(55)?,
+            silence_expected: row.get(56)?,
         })
     })?;
 
@@ -672,6 +748,50 @@ pub fn export_findings_from_conn(
                 }),
                 _ => None,
             },
+            // DURABLE_ARTIFACT_SUBSTRATE_GAP V1: origin block present only
+            // when this finding was ingested (origin_source = 'import').
+            // Native NQ findings skip the block entirely (raw passthrough
+            // with origin tag — the V1 lifecycle posture).
+            origin: match r.origin_source.as_str() {
+                "import" => match (
+                    r.origin_producer_id,
+                    r.origin_extraction_run_id,
+                    r.origin_producer_extraction_time,
+                    r.origin_import_contract_version,
+                ) {
+                    (Some(pid), Some(run), Some(pet), Some(icv)) => Some(FindingOrigin {
+                        source: "import".to_string(),
+                        producer_id: pid,
+                        extraction_run_id: run,
+                        producer_extraction_time: pet,
+                        import_contract_version: icv as u32,
+                    }),
+                    // Partial origin block: schema violation (ingest path
+                    // guarantees all-or-nothing). Drop to None rather than
+                    // emit a lie; the ingest invariant catches this case.
+                    _ => None,
+                },
+                _ => None,
+            },
+            // SILENCE_UNIFICATION envelope: present only when all four
+            // fields are populated (V1: extraction_stale). Legacy silence
+            // detectors omit this block until their own migration.
+            silence: match (
+                r.silence_scope,
+                r.silence_basis,
+                r.silence_duration_s,
+                r.silence_expected,
+            ) {
+                (Some(scope), Some(basis), Some(dur), Some(exp)) => {
+                    Some(SilenceEnvelopeExport {
+                        scope,
+                        basis,
+                        duration_s: dur,
+                        expected: exp,
+                    })
+                }
+                _ => None,
+            },
         });
     }
 
@@ -734,6 +854,21 @@ struct WarningStateRow {
     // 'overrun'; declaration_id NULL when state is 'none'.
     maintenance_state: String,
     maintenance_id: Option<String>,
+    // DURABLE_ARTIFACT_SUBSTRATE_GAP V1 origin envelope. `origin_source`
+    // defaults to 'nq' (every existing row); 'import' for ingested findings.
+    // The remaining four fields are populated only when source='import'.
+    origin_source: String,
+    origin_producer_id: Option<String>,
+    origin_extraction_run_id: Option<String>,
+    origin_producer_extraction_time: Option<String>,
+    origin_import_contract_version: Option<i64>,
+    // SILENCE_UNIFICATION shared envelope. All NULL on every non-silence
+    // finding and on the six legacy silence detectors. Populated by V1's
+    // extraction_stale detector.
+    silence_scope: Option<String>,
+    silence_basis: Option<String>,
+    silence_duration_s: Option<i64>,
+    silence_expected: Option<String>,
 }
 
 /// Build the AdmissibilityExport block from a warning_state row plus an

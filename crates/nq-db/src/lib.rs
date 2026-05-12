@@ -4,6 +4,7 @@ pub mod detect;
 pub mod digest;
 pub mod export;
 pub mod finding_meta;
+pub mod import;
 pub mod fleet;
 pub mod liveness;
 pub mod liveness_export;
@@ -19,8 +20,13 @@ pub mod views;
 pub use connect::{open_ro, open_rw, ReadDb, WriteDb};
 pub use export::{
     export_findings, export_findings_from_conn, ExportFilter, ExportMetadata, FindingDiagnosisExport,
-    FindingIdentity, FindingLifecycle, FindingRegimeContext, FindingSnapshot, GenerationContext,
-    ObservationRecord, ObservationsSummary, CONTRACT_VERSION, SCHEMA_ID,
+    FindingIdentity, FindingLifecycle, FindingOrigin, FindingRegimeContext, FindingSnapshot,
+    GenerationContext, ObservationRecord, ObservationsSummary, SilenceEnvelopeExport,
+    CONTRACT_VERSION, SCHEMA_ID,
+};
+pub use import::{
+    ingest_finding_import, FindingImportManifest, ImportedFinding, ImportedFindingIdentity,
+    IngestConfig, IngestResult, IMPORT_CONTRACT_VERSION, IMPORT_SCHEMA_ID, MIN_SCHEMA_FOR_IMPORT,
 };
 pub use detect::{ActionBias, DetectorConfig, FailureClass, Finding, FindingDiagnosis, ServiceImpact, Stability};
 pub use fleet::{

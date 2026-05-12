@@ -1,0 +1,8 @@
+{
+  "schema": "nq.finding_snapshot.v1",
+  "contract_version": 1,
+  "producer_id": "synthetic-corpus-extractor",
+  "extraction_run_id": "run-wrong-schema",
+  "producer_extraction_time": "2026-05-12T10:00:00Z",
+  "findings": []
+}

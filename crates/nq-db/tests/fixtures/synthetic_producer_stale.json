@@ -1,0 +1,20 @@
+{
+  "schema": "nq.finding_import.v1",
+  "contract_version": 1,
+  "producer_id": "stale-corpus-extractor",
+  "extraction_run_id": "run-20260101T000000Z-old",
+  "producer_extraction_time": "2026-01-01T00:00:00Z",
+  "findings": [
+    {
+      "identity": {
+        "host": "stale-corpus-extractor",
+        "detector": "imported_corpus_health",
+        "subject": "claim:lemma-1/should_still_ingest",
+        "rule_hash": null
+      },
+      "severity": "warning",
+      "message": "Producer reports unwitnessed claim, but its own extraction is stale.",
+      "finding_class": "signal"
+    }
+  ]
+}
