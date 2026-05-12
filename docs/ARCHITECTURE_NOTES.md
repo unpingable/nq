@@ -141,6 +141,16 @@ Operational corollary: state-space language is an orientation lens, not a wire f
 
 NQ is knob-facing, not actuator-facing.
 
+### NQ is an implementation frontier, not a successor jurisdiction.
+
+**NQ may carry much of the active implementation work for admissibility and witness/testimony discipline. This does not expand NQ into Agent Governor's jurisdiction.**
+
+NQ's win condition is to produce admissible testimony, preserve witness boundaries, refuse dishonest inference, and export evidence cleanly. It must not make consumer-semantic, authorization, consequence, or governance decisions merely because it has the freshest observations. The gravity well is real — Governor is the constitutional layer NQ occasionally raids for organs (admissibility vocabulary, basis lifecycle posture, witness-position language), but the direction of raid does not reverse. NQ supplies inputs; Governor supplies verdicts; consumers supply consequence.
+
+Sibling discipline to `Knob-facing, not actuator-facing` above: knob-facing names what NQ's *surface* refuses (authorization verbs on findings, receipts in `FindingSnapshot`, executive vocabulary on the wire); this law names what NQ-as-a-project refuses (becoming the metropolis because it's where the active implementation happens to live).
+
+Keeper: **NQ is the current implementation frontier, not Governor-with-probes.**
+
 ### Gap docs are design records, not shipped-state ledgers.
 
 **A gap doc remembers why work exists; `docs/FEATURE_HISTORY.md` remembers whether reality still agrees.** Conflating the two is the rot vector. Three specimens — FINDING_EXPORT, FINDING_DIAGNOSIS, DOMINANCE_PROJECTION — all exhibited the same shape during 2026-04 → 2026-05 reconciliation work: `built, shipped` filed at design time, code landing incrementally over weeks, status never walked back. Each pickup forced a multi-day reconciliation pass that turned up real consumer/test gaps invisible from the front-matter.
