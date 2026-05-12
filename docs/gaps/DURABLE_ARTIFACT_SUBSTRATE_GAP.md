@@ -105,6 +105,12 @@ Live-substrate findings ground subject identity in `host_id` plus a device/path/
 
 The admission gap deliberately does not pick. It flags that the existing host-shaped subject vocabulary cannot be assumed to extend, and defers the choice to PROVENANCE_GRAPH_PROFILE (or whichever profile arrives first). The flag exists so the choice doesn't get made accidentally.
 
+### Remote / online corpora are in scope; remote-witness is a producer family, not a new NQ class
+
+This substrate class is not limited to local artifact stores. A remote URL, package registry record, DNS response, certificate-transparency log entry, public docket, RSS feed, API resource, repository metadata, or similar online corpus may also be corpus-bound and extraction-derived. In those cases, the remote producer is responsible for testifying to access path, snapshot basis, normalization method, dependency health, and anti-claims. **NQ does not acquire a new monitoring surface from this admission.** Remote-substrate producers emit testimony through the existing finding-import / durable-artifact contract, and NQ evaluates the standing of that testimony using the existing coverage, silence, freshness, and admissibility machinery.
+
+The keeper: **remote-substrate witnesses are producer families for corpus-bound, extraction-derived testimony; they do not create a new NQ testimony class.** Producer-family work lives in `nq-witness` (see [`nq-witness/docs/gaps/REMOTE_SUBSTRATE_WITNESS_GAP.md`](https://github.com/unpingable/nq-witness) — candidate stub, not yet built). The bad future this anti-names: *NQ becomes the scraper.* The constitutional sentence still holds — a backend integration may supply observations, but only a conforming witness may supply testimony.
+
 ## Core invariants
 
 1. **Substrate class admission, not position extension.** Durable-artifact substrate is admitted distinct from live host-bound substrate axes. The five existing witness positions are unchanged.
