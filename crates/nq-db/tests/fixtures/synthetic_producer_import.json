@@ -1,0 +1,31 @@
+{
+  "schema": "nq.finding_import.v1",
+  "contract_version": 1,
+  "producer_id": "synthetic-corpus-extractor",
+  "extraction_run_id": "run-20260512T100000Z-abc123",
+  "producer_extraction_time": "2026-05-12T10:00:00Z",
+  "findings": [
+    {
+      "identity": {
+        "host": "synthetic-corpus-extractor",
+        "detector": "imported_corpus_health",
+        "subject": "claim:lemma-42/missing_witness",
+        "rule_hash": null
+      },
+      "severity": "warning",
+      "message": "Lemma 42 lacks a current witness; producer reports unwitnessed status.",
+      "finding_class": "signal"
+    },
+    {
+      "identity": {
+        "host": "synthetic-corpus-extractor",
+        "detector": "imported_corpus_health",
+        "subject": "claim:theorem-7/stale_anchor",
+        "rule_hash": null
+      },
+      "severity": "info",
+      "message": "Theorem 7 anchor predates current extraction.",
+      "finding_class": "signal"
+    }
+  ]
+}

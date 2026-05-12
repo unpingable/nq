@@ -1,0 +1,20 @@
+{
+  "schema": "nq.finding_import.v1",
+  "contract_version": 99,
+  "producer_id": "synthetic-corpus-extractor",
+  "extraction_run_id": "run-future-version",
+  "producer_extraction_time": "2026-05-12T10:00:00Z",
+  "findings": [
+    {
+      "identity": {
+        "host": "synthetic-corpus-extractor",
+        "detector": "imported_corpus_health",
+        "subject": "claim:lemma-99/should_not_ingest",
+        "rule_hash": null
+      },
+      "severity": "warning",
+      "message": "Should never reach warning_state.",
+      "finding_class": "signal"
+    }
+  ]
+}

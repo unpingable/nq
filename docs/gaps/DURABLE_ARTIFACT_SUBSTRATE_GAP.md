@@ -1,7 +1,7 @@
 # Gap: Durable Artifact Substrate — extraction-derived testimony as a witnessable substrate class
 
-**Status:** proposed; admission contingent on (a) consumer-alignment test passing for downstream NS / Governor / AG and (b) a real producer materializing. Synthetic-producer V1 cash-out is permitted before (b) lands.
-**Depends on:** none for spec; V1 implementation depends on FINDING_EXPORT (wire-shape conventions, schema-preflight precedent) and SILENCE_UNIFICATION (silence contract for the V1 detector composition).
+**Status:** `partial — shipped (V1 synthetic-producer slice)` 2026-05-12. See [`FEATURE_HISTORY.md` § DURABLE_ARTIFACT_SUBSTRATE V1](../FEATURE_HISTORY.md#durable_artifact_substrate-v1-synthetic-producer-slice). Substrate-class admission remains conditional on the NS consumer-alignment dry run (one open V1 acceptance criterion, operationally-driven). Real-producer ingestion + PROVENANCE_GRAPH_PROFILE + `dependency_cone_changed` + corpus-shaped subject-identity vocabulary are V2+/profile concerns.
+**Depends on:** none for spec; V1 implementation depended on FINDING_EXPORT (wire-shape conventions, schema-preflight precedent) and was itself the forcing case that promoted the SILENCE_UNIFICATION shared envelope fields (see V1 §Lifecycle posture below and FEATURE_HISTORY § "SILENCE_UNIFICATION cross-gap note").
 **Related:** `docs/SCOPE_AND_WITNESS_MODEL.md` §Core scope (substrate axes today are host-bound), FINDING_EXPORT_GAP (NQ outbound contract; this gap is its inbound mirror), COVERAGE_HONESTY_GAP / TESTIMONY_DEPENDENCY_GAP / OPERATIONAL_INTENT_DECLARATION_GAP / SILENCE_UNIFICATION_GAP (existing primitives this domain composes onto, not parallels), STORAGE_BACKEND_GAP (orthogonal: scaling NQ's own store; this gap is about NQ ingesting testimony about a substrate it does not own).
 **Blocks:** any inbound-testimony adapter for non-host substrate; PROVENANCE_GRAPH_PROFILE (deferred); honest treatment of labelwatch's artifact-store substrate beyond the live-host metrics (`wal_bloat` and friends) NQ already covers.
 **Last updated:** 2026-05-08
@@ -183,6 +183,8 @@ Smallest useful cash-out — admit the substrate class, prove the inbound pipeli
 
 5. **Lifecycle-posture decision.** V1 picks one of `vouched re-emission` or `raw passthrough with origin tag` and writes the choice down in this gap doc. The conservative default is **raw passthrough with origin tag** (cleaner boundary, consumer-side branching is small and explicit), but the V1 author should ratify or deviate explicitly. Once chosen, the choice is locked for the V1 contract; revisiting requires contract-version bump.
 
+   **V1 decision (locked 2026-05-12): raw passthrough with origin tag.** Native NQ findings emit no `origin` block (skip-when-default); ingested findings emit the full block with `source = "import"`. Consumers branch on block presence to switch to two-clock semantics. NQ does not re-emit ingested findings as its own — `origin_source = 'import'` on the storage row, `origin` block present on the wire. Revisiting requires bumping `nq.finding_snapshot.v1` contract version.
+
 6. **Consumer-alignment dry run.** At least one downstream consumer (NS preferred, since it already reads `nq.finding_snapshot.v1` cleanly) reads the synthetic-producer output and either (a) consumes the ingested finding through the same admissibility path it uses for native NQ findings, or (b) refuses with a typed error explaining what doesn't fit. Either result is information; (a) ratifies the domain admission, (b) sends the gap back to "sibling tool" framing.
 
 Deferred out of V1:
@@ -216,7 +218,7 @@ Deferred out of V1:
 
 ## Open questions
 
-1. **Lifecycle posture: vouched re-emission vs raw passthrough with origin tag.** V1 picks one; this gap currently leans raw-passthrough on boundary-cleanliness grounds. Cost: vouched-re-emission means NQ inherits responsibility for ingested truth (problematic when the producer is wrong); raw-passthrough means every `FindingSnapshot` consumer grows an `origin.source` branch (small but real). Verify with NS consumer-side discipline before locking.
+1. ~~**Lifecycle posture: vouched re-emission vs raw passthrough with origin tag.**~~ **Resolved V1 2026-05-12: raw passthrough with origin tag.** See V1 §5 above for the locked decision. Revisiting requires `nq.finding_snapshot.v1` contract-version bump.
 
 2. **Subject-identity vocabulary for corpus-shaped subjects.** Candidates: `repo + path + commit`, `store_id + node_uid + extraction_run_id`, `corpus_uri + artifact_id`. Profile picks; admission gap flags non-host. Open: is the choice forward-compat with multi-producer ingestion, or does the first profile lock the vocabulary in a producer-specific shape?
 
