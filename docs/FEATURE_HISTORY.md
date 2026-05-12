@@ -22,7 +22,7 @@ The chronological order below is newest-first.
 
 ## DURABLE_ARTIFACT_SUBSTRATE V1 (synthetic-producer slice)
 
-**Status:** `partial — shipped (V1)`. Synthetic-producer cash-out per the V1 slice named in the gap doc — admits the substrate class, pins the inbound-testimony pipeline boundary, exercises one composition (`extraction_stale` via SILENCE_UNIFICATION). Real-producer ingestion + PROVENANCE_GRAPH_PROFILE + `dependency_cone_changed` + corpus-shaped subject-identity vocabulary are explicit V1 deferrals. Consumer-alignment dry run (NS reads synthetic-producer output through existing admissibility path) remains the one open V1 acceptance criterion — operationally-driven, James leads.
+**Status:** `shipped (V1)` 2026-05-12. All V1 acceptance criteria satisfied. Synthetic-producer cash-out per the V1 slice named in the gap doc — admits the substrate class, pins the inbound-testimony pipeline boundary, exercises one composition (`extraction_stale` via SILENCE_UNIFICATION). **NS consumer-alignment dry run completed same day, outcome (a)** — NS reads the synthetic-producer output through existing admissibility branching without `NqInadmissible`-shaped refusal. Substrate-class admission ratified. Real-producer ingestion + PROVENANCE_GRAPH_PROFILE + `dependency_cone_changed` + corpus-shaped subject-identity vocabulary remain explicit V1 deferrals.
 
 **Shipped commits:**
 - (this commit, 2026-05-12) — V1: migration 046 (origin envelope + SILENCE_UNIFICATION envelope columns on `warning_state`); `crates/nq-db/src/import.rs` ingestion module (`nq.finding_import.v1` wire shape, `MIN_SCHEMA_FOR_IMPORT`, `ingest_finding_import`); `FindingOrigin` + `SilenceEnvelopeExport` on `FindingSnapshot` with `skip_serializing_if`; `extraction_stale` detector emitting SILENCE_UNIFICATION-shaped findings; refusal mode for malformed / wrong-schema / under-versioned manifests (`inbound_export_unparsable` finding, zero observations ingested, no error to caller); synthetic-producer fixtures + 8 acceptance tests; lifecycle posture **raw passthrough with origin tag** locked in the gap doc.
@@ -58,8 +58,19 @@ The chronological order below is newest-first.
 - **Per-extraction-run finding lifecycle.** V1 treats each ingest as a fresh observation (`consecutive_gens` increments on conflict but does not yet reflect cross-extraction-run persistence semantics on the producer's cadence).
 - **`finding_observations` parallel columns.** V1 only adds the envelope columns to `warning_state`. If observation-level history of producer-clock or silence-envelope state ever becomes required, parallel columns on `finding_observations` are an additive migration.
 
-**Open V1 acceptance criterion (operationally-driven, James leads):**
-- **NS consumer-alignment dry run.** Per gap §V1 step 6: NS reads the synthetic-producer output and either (a) consumes the ingested finding through the same admissibility path as native NQ findings (admission ratified) or (b) refuses with a typed error (admission blocked, gap revisited). Until run, the substrate-class admission is conditional. The wire shape is ready; the dry run is a cross-repo coordination task that doesn't require additional NQ work.
+**NS dry-run ratification (closes the open V1 acceptance criterion):**
+
+Cross-repo dry run completed 2026-05-12 same day as NQ V1 shipped. NS-side captured live NQ export JSONL via a temporary `_capture_for_ns_dryrun.rs` test in `crates/nq-db/tests/` (running through `export_findings_from_conn` — actual wire shape, not hand-assembled), then wrote two NS-side fixtures + 6 acceptance tests in `crates/nightshiftd/tests/durable_artifact_substrate_v1.rs`. All 6 tests pass; full nightshiftd suite green; no regressions.
+
+**Acceptance bar (gap §V1 step 6 / Open Question 7):** *NS V1.x parses the synthetic producer output without `NqInadmissible`-shaped refusal under the existing admissibility branching.* **PASS** — all four V1-substrate export lines admit through NS's observable path. Outcome (a): substrate-class admission ratified.
+
+**Three "NS tolerates but does not consume" seams surfaced by the dry run** (informational; not blocking V1 closure; named here so they don't quietly dissolve under "scope-deferred"):
+
+1. **Two-clock latency.** NS's `captured_at` reflects NQ ingest time even for ingested findings; `origin.producer_extraction_time` is on the wire but invisible to NS. Per gap §"Two-clock provenance is load-bearing" — *"Consumers branch on the axis they need"* — NS doesn't branch today. Maps to gap §"Open questions" §3 (cross-clock revalidation). The seam is documented NS-side in test `captured_at_reflects_nq_ingest_clock_not_producer_extraction_clock`.
+2. **Silence-envelope invisibility.** NS tolerates `silence` block on `extraction_stale` findings but does not read `scope` / `basis` / `duration_s` / `expected`. An `extraction_stale` appears to NS as just another observable active finding — no notification-posture or ack-obligation distinction.
+3. **Origin-envelope invisibility.** NS tolerates `origin.source = "import"` but does not branch. If NS reconciliation should ever distinguish native-NQ vs imported provenance, that's a separate scope decision.
+
+All three are *tolerance without consumption.* V1 admits under the mechanical bar (no refusal); any semantic consumption is downstream roadmap. None warrant a new NQ-side gap doc — the wire shape is ready; consumers grow to consume when they need to.
 
 **Unblocks:**
 - Inbound-testimony adapter for non-host substrate (any durable-artifact extractor, when one materializes).
