@@ -24,6 +24,15 @@ const FIXTURE_UNDER_VERSIONED: &str = include_str!("fixtures/synthetic_producer_
 const FIXTURE_WRONG_SCHEMA: &str = include_str!("fixtures/synthetic_producer_wrong_schema.json");
 const FIXTURE_STALE: &str = include_str!("fixtures/synthetic_producer_stale.json");
 
+// Canonical V1 wire-shape outputs — what NQ emits after ingesting each input
+// fixture. Originally captured 2026-05-12 by the NS consumer-alignment dry
+// run via a temporary _capture_for_ns_dryrun.rs test running through the
+// real export_findings_from_conn path. Copied here as the producer-side
+// canonical record so future consumer dryruns read a stable fixture instead
+// of recapturing.
+const EXPECTED_EXPORT_CLEAN: &str = include_str!("fixtures/expected_export_after_clean_ingest.jsonl");
+const EXPECTED_EXPORT_STALE: &str = include_str!("fixtures/expected_export_after_stale_ingest.jsonl");
+
 fn test_db() -> nq_db::WriteDb {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.into_path().join("test.db");
@@ -362,4 +371,126 @@ fn inversion_test_shape_allows_downstream_verdict() {
     // them what to do.
     assert!(json.contains("\"origin\""));
     assert!(json.contains("\"source\":\"import\""));
+}
+
+// ---------------------------------------------------------------------------
+// Canonical wire-shape contract tests.
+//
+// V1 ratification produced canonical JSONL outputs in
+// `fixtures/expected_export_after_*.jsonl`. These tests assert NQ emits
+// exactly that wire shape under the V1 contract, so future consumer
+// dryruns read the fixture instead of recapturing.
+//
+// One dynamic field exists: `export.exported_at` is `OffsetDateTime::now_utc()`
+// at the moment of export. We normalize it on both sides before comparison.
+// Everything else is deterministic given the seeded generation and the
+// fixed `now_utc_rfc3339` we pass to ingest. The wire shape is the
+// contract; the timestamp is not part of it.
+// ---------------------------------------------------------------------------
+
+/// Compare actual export JSONL against the canonical expected JSONL,
+/// normalizing the `export.exported_at` wall-clock field before comparison.
+/// Fails with a structured diff naming the first divergent snapshot.
+fn assert_export_jsonl_matches(actual: &str, expected: &str) {
+    let actual_lines: Vec<serde_json::Value> = actual
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("actual line is valid JSON"))
+        .collect();
+    let expected_lines: Vec<serde_json::Value> = expected
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("expected fixture line is valid JSON"))
+        .collect();
+
+    assert_eq!(
+        actual_lines.len(),
+        expected_lines.len(),
+        "snapshot count mismatch: actual={} expected={}",
+        actual_lines.len(),
+        expected_lines.len()
+    );
+
+    for (i, (mut actual, mut expected)) in actual_lines
+        .into_iter()
+        .zip(expected_lines.into_iter())
+        .enumerate()
+    {
+        normalize_volatile_fields(&mut actual);
+        normalize_volatile_fields(&mut expected);
+        assert_eq!(
+            actual, expected,
+            "snapshot {} diverges from canonical V1 wire shape", i
+        );
+    }
+}
+
+/// Normalize fields that are dynamic by construction (wall-clock at
+/// export). Kept narrow on purpose: we want exact match on everything
+/// else.
+fn normalize_volatile_fields(snap: &mut serde_json::Value) {
+    if let Some(export) = snap.get_mut("export").and_then(|e| e.as_object_mut()) {
+        export.insert(
+            "exported_at".into(),
+            serde_json::Value::String("<NORMALIZED>".into()),
+        );
+    }
+}
+
+#[test]
+fn clean_ingest_export_matches_canonical_v1_wire_shape() {
+    let db = test_db();
+    let _ = ingest_finding_import(
+        db.conn(),
+        FIXTURE_CLEAN,
+        1,
+        "2026-05-12T10:00:30Z",
+        &IngestConfig::default(),
+    )
+    .unwrap();
+
+    let snapshots = export_findings_from_conn(
+        db.conn(),
+        &ExportFilter {
+            observations_limit: 0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let actual = snapshots
+        .iter()
+        .map(|s| serde_json::to_string(s).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert_export_jsonl_matches(&actual, EXPECTED_EXPORT_CLEAN);
+}
+
+#[test]
+fn stale_ingest_export_matches_canonical_v1_wire_shape() {
+    let db = test_db();
+    let _ = ingest_finding_import(
+        db.conn(),
+        FIXTURE_STALE,
+        1,
+        "2026-05-12T10:00:30Z",
+        &IngestConfig::default(),
+    )
+    .unwrap();
+
+    let snapshots = export_findings_from_conn(
+        db.conn(),
+        &ExportFilter {
+            observations_limit: 0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let actual = snapshots
+        .iter()
+        .map(|s| serde_json::to_string(s).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert_export_jsonl_matches(&actual, EXPECTED_EXPORT_STALE);
 }
