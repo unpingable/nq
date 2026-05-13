@@ -90,11 +90,11 @@ Each supported weaker claim is scoped to the witness's coverage and the observat
 These conclusions must remain refused regardless of how many witnesses light up:
 
 - **Physical disk death.** No combination of pool state, vdev state, SMART attributes, or kernel logs constitutes testimony that a physical drive is *dead*. The witnesses observe symptoms; they do not observe component finality.
-- **Replacement authorization.** Whether to replace a drive is an authority decision, not a witness verdict. (Compatible with `knob_facing`: NQ classifies world-state testimony; it does not authorize consequence.)
+- **Replacement workflow.** "Replace this drive" is not a substrate claim. In some environments it collapses to a human pulling a sled and resilvering; in others it expands into ticket creation, approval / policy check, remote-hands or vendor / RMA dispatch, maintenance-window or break-fix routing, asset / serial validation, and post-replacement closure criteria. Disk-state preflight may support weaker claims that *inform* this workflow, but it must not mint replacement authorization, workflow initiation, workflow skipping, workflow completion, or closure-criteria satisfaction from ZFS / SMART testimony. The "drive is fine to keep" mirror claim sits in the same category — it is also a consequence claim, not a substrate verdict. (Compatible with `knob_facing`: NQ classifies world-state testimony; it does not authorize consequence.)
+- **Physical component identity beyond witness coverage.** ZFS and SMART witnesses can support some identity mapping (pool name, vdev guid, device path, controller / serial when surfaced) but physical replacement commonly needs sled / slot / enclosure / asset-record identity that may not be present in witness output. Disk-state preflight does not mint physical-component identity claims beyond what the witness packet explicitly carries. Asset / custody witnesses, where they exist, are a separate witness family.
 - **Data loss has occurred / data is recoverable / data is unrecoverable.** None of the existing witnesses examine block-level data integrity or recoverability semantics.
 - **Future failure probability.** Reallocated-sector trends and temperature movement are not survival-curve evidence. NQ has no time-to-failure witness.
 - **Incident can be closed.** Closure is a consequence claim; preflight stops at evidence-to-assertion audit.
-- **Drive should be replaced now / drive is fine to keep.** Both are consequence-bearing claims. Both require authority and policy outside witness testimony.
 
 These refusals are constitutional. A preflight result that returns `cannot_testify` on any of them has succeeded.
 
@@ -169,7 +169,7 @@ Expected verdicts against existing finding families:
 | "Pool is degraded"                                  | `admissible_with_scope`      | "ZFS reports pool state DEGRADED at T"                               |
 | "Drive is failing"                                  | `claim_exceeds_testimony`    | "SMART reports rising reallocated sectors and uncorrected errors"    |
 | "Drive is dead"                                     | `cannot_testify`             | (no weaker claim covers component finality)                          |
-| "Replace this drive"                                | `cannot_testify`             | (authority decision; not a witness verdict)                          |
+| "Replace this drive"                                | `cannot_testify`             | (workflow / consequence claim; not a witness verdict)                |
 | "Pool is healthy"                                   | `unsupported_as_stated` or `contradictory_testimony` if witnesses disagree | (depends on witness reports)                |
 | "Drive is fine — SMART says PASSED"                 | `claim_exceeds_testimony` or `contradictory_testimony` (`smart_status_lies` may fire) | "SMART self-reported PASSED at T"      |
 | "Incident may be closed"                            | `cannot_testify`             | (closure is consequence-bearing)                                     |
@@ -200,9 +200,35 @@ Disk-state preflight inherits dependency / invalidation rules from existing NQ m
 
 A drive whose SMART self-test reports `PASSED` while `smart_reallocated_sectors_rising` and `smart_uncorrected_errors_nonzero` are also firing is a `smart_status_lies` exhibit. The preflight verdict for "drive is fine" against this evidence must be `claim_exceeds_testimony` or `contradictory_testimony`, not `admissible`. The existing finding kind `smart_status_lies` functionally prefigures claim-preflight refusal: it detects the misleading inference "SMART says PASSED → drive is fine" before the claim-preflight surface had a name. It is an internal-kernel refusal, not an external claim-preflight verdict — but calling out the kinship explicitly in the projection layer is part of this gap's work.
 
-### Authority laundering
+### Authority and replacement-workflow laundering
 
-"Replace this drive" is an authority claim. No combination of witness testimony — pool faulted, SMART critical, sectors rising, temperature high — mints replacement authority. Disk-state preflight may *inform* the authority decision; it must not be confused with it.
+"Replace this drive" is not a substrate claim. It is a workflow / consequence claim. In a homelab, the chain may collapse to *pull sled, swap disk, resilver, done*. In a NOC or managed environment, the chain expands:
+
+```text
+disk-state evidence
+  ↓
+operator classification
+  ↓
+ticket / incident / work order
+  ↓
+approval or policy check
+  ↓
+datacenter tech / remote hands / vendor / RMA dispatch
+  ↓
+maintenance window or break/fix path
+  ↓
+serial / slot / asset validation
+  ↓
+physical replacement
+  ↓
+resilver / rebuild monitoring
+  ↓
+closure criteria
+```
+
+NQ can testify *into* this chain at multiple steps. It cannot collapse the chain. No combination of witness testimony — pool faulted, SMART critical, sectors rising, temperature high — mints replacement authority, workflow initiation, workflow standing, asset-identity confirmation, replacement-complete state, or closure-criteria satisfaction. Disk-state preflight may *inform* the workflow at every step; it must not mint workflow consequence from substrate evidence.
+
+The mirror failure mode — "drive is fine to keep, no action required" — laundering substrate testimony into a *no-workflow* consequence claim is equally refused.
 
 ### Freshness laundering
 
