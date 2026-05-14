@@ -35,7 +35,7 @@ A weaker form of the claim *is* supported, but the submitted claim is broader th
 
 Example: testimony supports "liveness endpoint has returned 200 for 7 minutes" but the submitted claim is "service recovered". The weaker claim is admissible; the submitted one is not. The verdict says so, and names the weaker claim.
 
-This is the most operationally useful refusal class. It tells the caller: "Here is what you may say instead." Most agentic / CI laundering lands here.
+This is the most operationally useful refusal class. It tells the caller: "Here is what you may say instead." Most agentic / CI laundering lands here. The proxy-shock-as-target-state case (a shock on a proxy channel emitted as a target-state claim) lands here when the witness has not pre-declared the target as `cannot_testify`; the weaker, regime-change claim is the one named. See `WITNESS_PACKET.md` — *Proxy shock is not target state.*
 
 ### `insufficient_coverage`
 
@@ -47,13 +47,13 @@ Distinct from `cannot_testify`: this verdict applies when the witness *could* sp
 
 Testimony exists but its `observed_at` is outside the freshness policy for this claim kind. No admission is granted, even where the testimony would otherwise be sufficient.
 
-Freshness is evaluated against `observed_at`, not `generated_at` or ingest time. See `WITNESS_PACKET.md`.
+Freshness is evaluated against `observed_at`, not `generated_at` or ingest time. Timestamp presence does not constitute live standing; a witness operating on archived, replicated, or replayed evidence must declare vintage standing via `access_path`. See `WITNESS_PACKET.md` — *Timestamped evidence is not live evidence.*
 
 ### `contradictory_testimony`
 
 Two or more witnesses with overlapping coverage support incompatible claims at the same scope and freshness window. Preflight does not adjudicate; it names the contradiction.
 
-Witness diversity is not count diversity: two witnesses traversing the same dependency are not independent. Where preflight can detect a shared dependency, it should flag the contradiction as scope-limited rather than treat it as a tie-break.
+Witness diversity is not count diversity: two witnesses traversing the same dependency are not independent. Where preflight can detect a shared dependency, it should flag the contradiction as scope-limited rather than treat it as a tie-break. See `WITNESS_PACKET.md` — *Replicated observability is not witness diversity.*
 
 ### `cannot_testify`
 
