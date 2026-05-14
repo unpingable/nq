@@ -41,6 +41,45 @@ pub enum Command {
     /// persists). Annotation only — never suppresses or hides findings.
     /// See `docs/gaps/MAINTENANCE_DECLARATION_GAP.md`.
     Maintenance(MaintenanceCmd),
+    /// Claim preflight — bounded verdict against existing NQ testimony for a
+    /// structured claim kind. V1 supports `disk_state`. NQ testifies; NQ does
+    /// not authorize consequence. See `docs/CLAIM_PREFLIGHT.md`.
+    Preflight(PreflightCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct PreflightCmd {
+    #[command(subcommand)]
+    pub action: PreflightAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PreflightAction {
+    /// Preflight a `disk_state` claim against existing ZFS + SMART +
+    /// disk-pressure findings for a host (optionally narrowed to a pool,
+    /// vdev, or device).
+    DiskState(PreflightDiskStateCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct PreflightDiskStateCmd {
+    /// Path to the nq database.
+    #[arg(long)]
+    pub db: PathBuf,
+
+    /// Host the claim is about. Exact match.
+    #[arg(long)]
+    pub host: String,
+
+    /// Optional subject to narrow the preflight: a pool name (e.g. `tank`),
+    /// vdev identity (e.g. `tank/raidz2-0/ata-X`), or device path
+    /// (`/dev/sdX`). When omitted the preflight covers the host.
+    #[arg(long)]
+    pub target: Option<String>,
+
+    /// Output format: `json` (default, pretty-printed) or `jsonl` (single line).
+    #[arg(long, short, default_value = "json")]
+    pub format: String,
 }
 
 #[derive(Debug, Args)]
