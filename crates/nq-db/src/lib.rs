@@ -10,6 +10,7 @@ pub mod liveness;
 pub mod liveness_export;
 pub mod migrate;
 pub mod notify;
+pub mod preflight;
 pub mod publish;
 pub mod query;
 pub mod regime;
@@ -61,4 +62,5 @@ pub use publish::{
 pub use query::{query_read_only, QueryLimits, QueryResult};
 pub use retention::{prune, PruneStats};
 pub use snapshot::create_snapshot;
+pub use preflight::{evaluate_disk_state_preflight, evaluate_disk_state_preflight_from_conn};
 pub use views::{host_detail, host_states, overview, HostDetailVm, HostStateVm, OverviewVm};
