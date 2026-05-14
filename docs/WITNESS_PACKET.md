@@ -58,6 +58,28 @@ These should be siblings in the schema, not a primary field and an afterthought.
 
 A witness whose standing depends on another witness (e.g. a SMART witness that depends on the device being enumerable; a ZFS witness that depends on the pool being importable) must declare that dependency. Existing NQ machinery already enforces suppression-by-ancestor under `TESTIMONY_DEPENDENCY` and `COVERAGE_HONESTY` semantics. Claim preflight consumes these relationships; it does not re-invent them.
 
+## Witness-semantics constraints
+
+Three rules bind what a witness packet may carry, regardless of fields, encoding, or witness kind. They constrain meaning, not implementation. A packet that violates any of the three is laundering, even if every field is syntactically well-formed.
+
+### Proxy shock is not target state
+
+A witness whose `observations` are a shock or anomaly on a proxy channel may testify to *regime change* or *changed conditions*. It may not testify to the hidden target the proxy stands in for. A spike in alert volume, ticket inflow, error rate, CI failure clustering, or saturation graph is witness to *something changed*; it is not witness to *the target degraded*.
+
+A witness emitting shock-on-proxy must scope its `testimony` to regime-change content and place target-state conclusions in `cannot_testify`. Producers that silently emit `service degraded` from `error rate spiked`, or `pool failed` from `IO latency anomaly`, launder shock-on-proxy into target-state testimony — exactly the move preflight exists to refuse. The corresponding verdict for a target-state claim against a shock-on-proxy witness is `claim_exceeds_testimony` (a weaker, regime-change claim is supported) or `cannot_testify` (if the witness has declared the target conclusion off-limits).
+
+### Replicated observability is not witness diversity
+
+Multiple witnesses that share an upstream observability path — same data source, same probe target, same dependency chain, same upstream automation — are *one witness with replicates*, not independent witnesses. Counting them as diverse inflates apparent coverage without adding observability dimensions.
+
+A packet's `dependencies` are how this gets caught. Two packets with overlapping `dependencies` are not independent for the purpose of contradiction adjudication, coverage breadth, or any future aggregation. Witness diversity is observability diversity under preserved standing — *different sensors, different paths, different upstream pipelines* — not packet count. Three SMART readings of the same enclosure over the same controller are one witness, not three. Three Prometheus scrapes that all read from the same exporter are one witness, not three.
+
+### Timestamped evidence is not live evidence
+
+An `observed_at` value attests to *when the substrate was looked at*. It does not attest to *current standing*. Archived snapshots, replicated artifacts, ingested external data, replayed traces, and corpus extracts all carry timestamps; none of them upgrade a vintage observation into live testimony.
+
+Live-extraction standing must be declared explicitly via `access_path` and the dependency chain. Timestamp presence alone does not constitute it. Producers that treat any present `observed_at` as live standing launder vintage into current — the third laundering surface preflight exists to refuse, alongside coverage-claim laundering and proxy-target laundering. When a packet's standing is vintage rather than live, the witness must say so; `access_path` is the appropriate carrier (e.g. `archive_read`, `replay`, `ingest_external` vs `local_command`, `http_probe`, `file_read_live`).
+
 ## What the packet is not
 
 The witness packet is not:
