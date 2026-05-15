@@ -1,41 +1,40 @@
-# Witness Packet (Candidate Shape)
+# Witness Packet
 
-**Status:** candidate / non-binding. Names the minimal shape of admissible witness testimony as consumed by claim preflight. Does not commit a schema, struct, or wire format. No code is authorized by this document.
-**Last updated:** 2026-05-12
+**Status:** doctrinal companion to `docs/architecture/SHARED_SPINE.md`. The wire schema (`nq.witness.v1`) and field list are ratified there and implemented in `crates/nq-core/src/witness.rs`; this document carries the doctrinal reasoning behind the shape, including the three witness-semantics constraints that bind every conforming packet regardless of encoding.
+**Last updated:** 2026-05-15
 
 ## Purpose
 
-Claim preflight consumes testimony. Testimony is not raw observation — it is a conforming witness's structured statement about an observation, including the boundaries of what that observation can and cannot support. This document records the minimum fields such a packet must carry to be preflightable.
-
-This is a **shape**, not a schema. Field names below are illustrative. The internal NQ types (`Finding`, `CoverageEnvelope`, collector status, etc.) are not renamed by this document; this is the projection a preflight surface expects, regardless of how it is materialized.
+Claim preflight consumes testimony. Testimony is not raw observation — it is a conforming witness's structured statement about an observation, including the boundaries of what that observation cannot support. This document records the doctrinal shape that the `nq.witness.v1` wire schema implements.
 
 ## Why the packet shape matters
 
-The packet is where laundering gets stopped. A producer that emits only "what I saw" produces something a dashboard can color green. A producer that also declares **what its observation cannot support** produces something claim preflight can refuse on.
+The packet is where laundering gets stopped. A producer that emits only "what I saw" produces something a dashboard can color green. A producer that also declares **what its observation does not reach** produces something claim preflight can refuse on.
 
 The packet's load-bearing novelty is **both** sides of the boundary:
 
-- `coverage` — what this witness is admitting it can speak to
-- `cannot_testify` — what this witness is explicitly *not* speaking to, even where adjacent
+- `observations` — typed evidence the witness collected (command exit codes, output digests, structured snapshots)
+- `coverage_limits` — what this witness explicitly does not observe
 
-A packet with only `coverage` is an ordinary monitoring payload. A packet with only `cannot_testify` is a refusal note. The combination is what makes preflight possible.
+A packet with only `observations` is an ordinary monitoring payload. A packet with only `coverage_limits` is a refusal note. The combination is what makes preflight possible.
+
+Witnesses **do not name claims.** They report observations and where their observation does not reach; the evaluator maps observations to registered claims (`leaf`, `composite`, `non_mintable` — see `docs/architecture/SHARED_SPINE.md`). A witness that declares `"supports": ["tests_passed"]` or `"cannot_testify": ["safe_to_merge"]` is a costume-specific producer writing kernel vocabulary, which is exactly the laundering surface the kernel exists to prevent. The validator in `crates/nq-core/src/witness.rs` rejects this shape.
 
 ## Minimum fields
 
-| Field             | Meaning                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------ |
-| `witness`         | Name of the conforming witness (not the underlying data source)                                  |
-| `target`          | Identity of the thing testified about, in the witness's namespace                                |
-| `access_path`     | How the observation was obtained (local command, file read, HTTP probe, package query, etc.)     |
-| `observed_at`     | Wall-clock time at which the observation was actually taken                                      |
-| `generated_at`    | Wall-clock time at which this packet was minted from the observation                             |
-| `coverage`        | Declared list of what this witness is admitting it can testify to                                |
-| `cannot_testify`  | Declared list of conclusions explicitly *not* supported by this packet, even adjacent ones       |
-| `observations`    | Raw or near-raw evidence (command output, response body, file content, structured snapshot)      |
-| `testimony`       | Witness-level statements derived from observations, scoped to `coverage`                         |
-| `dependencies`    | Other witnesses or substrate this witness relies on for standing (used for masking / suppression) |
+| Field             | Meaning                                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `schema`          | Wire identifier (`"nq.witness.v1"`).                                                                                    |
+| `witness_type`    | Producer identifier (`pytest`, `git_status`, `zfs`, `smart`, ...). Not the underlying data source.                       |
+| `subject`         | Identity of the observed thing, in the witness's namespace (e.g. `repo:.`, `host:storage01`, `device:/dev/sda`).         |
+| `access_path`     | How the observation was obtained (`local_command`, `file_read_live`, `http_probe`, `archive_read`, `replay`, ...).       |
+| `observed_at`     | Wall-clock time at which the substrate was looked at.                                                                   |
+| `generated_at`    | Wall-clock time at which this packet was minted from the observation.                                                   |
+| `observations`    | Typed evidence (command exit codes, output digests, structured snapshots). Open-typed per `witness_type`.                |
+| `coverage_limits` | Plain-language statements of what this witness explicitly does not observe.                                              |
+| `dependencies`    | Other witnesses or substrate this witness relies on for standing (used for masking / suppression).                       |
 
-Additional fields (provenance keys, content digests, schema version, emission path, regime declarations) are not forbidden but are not minimum. The fields above are the smallest set that supports a preflight verdict.
+Additional fields (provenance keys, content digests, regime declarations) are not forbidden but are not minimum. The fields above are the smallest set that supports a receipt verdict.
 
 ### `observed_at` vs `generated_at`
 
@@ -48,11 +47,13 @@ A packet generated now from a four-hour-old snapshot is not fresh; it is a stale
 
 When a packet is ingested from an external system rather than minted locally, a third clock — *ingest time* — may appear. Ingest time does not upgrade `observed_at`. (See also `FINDING_EXPORT_GAP.md` for the parallel discipline on the export side.)
 
-### `coverage` and `cannot_testify` as siblings
+### `coverage_limits` is constitutional, not error-state
 
-These should be siblings in the schema, not a primary field and an afterthought. A witness that declares broad coverage and an empty `cannot_testify` list is making a much larger claim than a witness that declares narrow coverage and a long `cannot_testify` list — and the preflight verdict ladder reflects that.
+A live, healthy witness with a long `coverage_limits` list is doing exactly what witnesses are supposed to do — naming the boundary of its observation. A witness with an empty `coverage_limits` list is making a much larger implicit claim about what its observation reaches, and the receipt verdict ladder reflects that.
 
-`cannot_testify` is **constitutional**, not error-state. A live, healthy witness with a populated `cannot_testify` list is doing exactly what witnesses are supposed to do. (Compare `gaps/CANNOT_TESTIFY_STATUS.md`, which proposes the same vocabulary at the collector-status layer.)
+`coverage_limits` carries plain-language statements about substrate the witness does not observe ("does not observe production behavior", "does not observe semantic safety"). It is **not** a list of claim names the witness refuses; claim-level refusal is a registry property (`non_mintable` claims) and lives in `docs/architecture/SHARED_SPINE.md`, not on the wire.
+
+(Compare `gaps/CANNOT_TESTIFY_STATUS.md`, which proposes a parallel vocabulary at the collector-status layer for internal NQ collectors. That is internal status, not witness-wire shape.)
 
 ### `dependencies`
 
@@ -66,7 +67,7 @@ Three rules bind what a witness packet may carry, regardless of fields, encoding
 
 A witness whose `observations` are a shock or anomaly on a proxy channel may testify to *regime change* or *changed conditions*. It may not testify to the hidden target the proxy stands in for. A spike in alert volume, ticket inflow, error rate, CI failure clustering, or saturation graph is witness to *something changed*; it is not witness to *the target degraded*.
 
-A witness emitting shock-on-proxy must scope its `testimony` to regime-change content and place target-state conclusions in `cannot_testify`. Producers that silently emit `service degraded` from `error rate spiked`, or `pool failed` from `IO latency anomaly`, launder shock-on-proxy into target-state testimony — exactly the move preflight exists to refuse. The corresponding verdict for a target-state claim against a shock-on-proxy witness is `claim_exceeds_testimony` (a weaker, regime-change claim is supported) or `cannot_testify` (if the witness has declared the target conclusion off-limits).
+A witness emitting shock-on-proxy must keep its `observations` scoped to regime-change content and name target-state substrate in `coverage_limits` ("does not observe target service state", "does not observe pool health"). Producers that silently emit observations a downstream evaluator could read as `service degraded` from `error rate spiked`, or `pool failed` from `IO latency anomaly`, launder shock-on-proxy into target-state testimony — exactly the move preflight exists to refuse. The corresponding receipt status for a target-state claim against a shock-on-proxy witness is `partially_verified` (a weaker, regime-change claim is supported) or `not_verified` with `non_mintable` (if the target claim is registered as non-mintable).
 
 ### Replicated observability is not witness diversity
 
@@ -87,15 +88,16 @@ The witness packet is not:
 - A general telemetry envelope.
 - A unified observability format.
 - A replacement for NQ's internal `Finding` type or detector pipeline.
-- A wire schema authorized for implementation by this document.
+- A carrier of claim names (`tests_passed`, `safe_to_merge`); claim vocabulary lives in the registry, not the witness.
 
-The packet shape is recorded here to pin a load-bearing surface (coverage / cannot_testify / freshness clocks) early. Names, encoding, and validation rules belong to a future ratified change.
+The wire schema (`nq.witness.v1`) and the validator that enforces these constraints are in `crates/nq-core/src/witness.rs`. Internal NQ types (`Finding`, `CoverageEnvelope`, collector status, etc.) are not renamed by this document.
 
 ## Related
 
-- `CLAIM_PREFLIGHT.md` — doctrine for the operator-facing surface that consumes packets.
-- `VERDICTS.md` — verdict vocabulary preflight emits when reading these packets.
-- `gaps/CANNOT_TESTIFY_STATUS.md` — first-class no-standing status at the collector layer; same vocabulary.
+- `architecture/SHARED_SPINE.md` — the wire schema, claim registry, and receipt shape this document's doctrine sits behind.
+- `CLAIM_PREFLIGHT.md` — internal doctrine for the operator-facing surface that consumes packets.
+- `VERDICTS.md` — internal eight-verdict vocabulary; external receipt status is the projection of those verdicts.
+- `gaps/CANNOT_TESTIFY_STATUS.md` — first-class no-standing status at the internal collector layer; parallel vocabulary at a different boundary.
 - `gaps/COVERAGE_HONESTY_GAP.md` — coverage as an axis distinct from liveness and truthfulness.
 - `gaps/FINDING_EXPORT_GAP.md` — discipline for findings crossing the NQ boundary outward.
 - `SCOPE_AND_WITNESS_MODEL.md` — witness positions and substrate scope.
