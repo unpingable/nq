@@ -1,12 +1,12 @@
 //! `nq preflight disk-state` — bounded claim preflight for `disk_state`.
 //!
-//! V1 covers one structured claim kind. No operator-phrase intake; the kind
-//! is selected by subcommand, the target by `--host` (+ optional `--target`).
-//! See `docs/CLAIM_PREFLIGHT.md`, `docs/VERDICTS.md`, and
-//! `docs/gaps/CLAIM_KIND_DISK_STATE_GAP.md`.
+//! Phase 1: evaluator continues to read findings from the NQ DB (Track
+//! A.0), but output is normalized to `nq.receipt.v1` so the shared
+//! receipt spine carries it. See `docs/architecture/SHARED_SPINE.md`
+//! and `docs/PRODUCT_SURFACES.md`.
 
 use crate::cli::{PreflightAction, PreflightCmd, PreflightDiskStateCmd};
-use nq_core::PreflightResult;
+use nq_core::{render_human, render_json, render_jsonl, Receipt};
 use nq_db::{evaluate_disk_state_preflight, open_ro};
 
 pub fn run(cmd: PreflightCmd) -> anyhow::Result<()> {
@@ -18,13 +18,18 @@ pub fn run(cmd: PreflightCmd) -> anyhow::Result<()> {
 fn run_disk_state(cmd: PreflightDiskStateCmd) -> anyhow::Result<()> {
     let db = open_ro(&cmd.db)?;
     let result = evaluate_disk_state_preflight(&db, &cmd.host, cmd.target.as_deref())?;
-    emit(&cmd.format, &result)
+    let receipt: Receipt = result.into();
+    emit(&cmd.format, &receipt)
 }
 
-fn emit(format: &str, result: &PreflightResult) -> anyhow::Result<()> {
+fn emit(format: &str, receipt: &Receipt) -> anyhow::Result<()> {
     match format {
-        "jsonl" => println!("{}", serde_json::to_string(result)?),
-        _ => println!("{}", serde_json::to_string_pretty(result)?),
+        "json" => println!("{}", render_json(receipt)?),
+        "jsonl" => println!("{}", render_jsonl(receipt)?),
+        "human" => print!("{}", render_human(receipt)),
+        other => {
+            anyhow::bail!("unknown --format {other:?}: expected one of human|json|jsonl");
+        }
     }
     Ok(())
 }

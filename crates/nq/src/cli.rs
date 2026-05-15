@@ -45,6 +45,16 @@ pub enum Command {
     /// structured claim kind. V1 supports `disk_state`. NQ testifies; NQ does
     /// not authorize consequence. See `docs/CLAIM_PREFLIGHT.md`.
     Preflight(PreflightCmd),
+    /// Validate a caller-supplied witness packet (`nq.witness.v1`).
+    /// Reads a JSON file, checks the envelope, and reports problems.
+    /// See `docs/architecture/SHARED_SPINE.md`.
+    ValidateWitness(ValidateWitnessCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct ValidateWitnessCmd {
+    /// Path to a witness packet JSON file. Pass `-` to read from stdin.
+    pub path: String,
 }
 
 #[derive(Debug, Args)]
@@ -77,8 +87,10 @@ pub struct PreflightDiskStateCmd {
     #[arg(long)]
     pub target: Option<String>,
 
-    /// Output format: `json` (default, pretty-printed) or `jsonl` (single line).
-    #[arg(long, short, default_value = "json")]
+    /// Output format. `human` is a terminal-friendly receipt rendering.
+    /// `json` and `jsonl` emit an `nq.receipt.v1` document; `jsonl` is a
+    /// single line for log streams. See `docs/architecture/SHARED_SPINE.md`.
+    #[arg(long, short, default_value = "human")]
     pub format: String,
 }
 
