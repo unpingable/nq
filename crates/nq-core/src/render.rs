@@ -94,6 +94,7 @@ fn reason_word(r: StatusReason) -> &'static str {
         StatusReason::AllRequirementsVerified => "all_requirements_verified",
         StatusReason::PartialComposite => "partial_composite",
         StatusReason::MissingRequiredClaim => "missing_required_claim",
+        StatusReason::ClaimConditionFailed => "claim_condition_failed",
         StatusReason::StaleObservation => "stale_observation",
         StatusReason::ContradictoryObservation => "contradictory_observation",
         StatusReason::NonMintable => "non_mintable",

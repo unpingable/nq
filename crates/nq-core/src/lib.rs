@@ -1,4 +1,5 @@
 pub mod batch;
+pub mod claim_registry;
 pub mod config;
 pub mod humanize;
 pub mod preflight;
@@ -21,6 +22,10 @@ pub use preflight::{
     disk_state_cannot_testify, ClaimKind, PreflightCoverage, PreflightExclusion, PreflightResult,
     PreflightSupport, PreflightTarget, Verdict, PREFLIGHT_CONTRACT_VERSION,
     PREFLIGHT_DISK_STATE_SCHEMA,
+};
+pub use claim_registry::{
+    evaluate, ClaimEntry, ClaimRegistry, CompositeClaim, LeafClaim, LeafCondition,
+    NonMintableClaim,
 };
 pub use receipt::{NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef, RECEIPT_SCHEMA};
 pub use render::{render_human, render_json, render_jsonl};

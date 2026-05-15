@@ -28,6 +28,7 @@ pub enum StatusReason {
     AllRequirementsVerified,
     PartialComposite,
     MissingRequiredClaim,
+    ClaimConditionFailed,
     StaleObservation,
     ContradictoryObservation,
     NonMintable,

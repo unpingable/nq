@@ -169,6 +169,7 @@ Initial reason codes:
 | `all_requirements_verified` | Leaf or composite resolved cleanly. Pairs with `status: verified`. |
 | `partial_composite` | Composite where some required claims resolved and some did not. Pairs with `status: partially_verified`. |
 | `missing_required_claim` | A required claim has no witness coverage at all. Pairs with `status: needs_more_evidence`. |
+| `claim_condition_failed` | Witness coverage is present but the leaf's typed condition does not hold (e.g. `pytest exit_code != 0`, working tree not clean). Pairs with `status: not_verified`. |
 | `stale_observation` | Witness `observed_at` falls outside the claim's freshness policy. Pairs with `status: needs_more_evidence`. |
 | `contradictory_observation` | Two witnesses with overlapping coverage support incompatible conclusions. Pairs with `status: not_verified`. |
 | `non_mintable` | Submitted claim is registered as non_mintable; weaker claims may still be in `suggested_weaker_claims`. Pairs with `status: not_verified`. |
