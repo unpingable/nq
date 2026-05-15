@@ -4,6 +4,7 @@
 //! ...) and emits a witness packet to stdout. Witnesses report typed
 //! observations + `coverage_limits`; they do not name claims.
 
+pub mod diff_scope;
 pub mod git_status;
 pub mod pytest;
 
@@ -13,6 +14,7 @@ pub fn run(cmd: WitnessCmd) -> anyhow::Result<()> {
     match cmd.action {
         WitnessAction::GitStatus(c) => git_status::run(c),
         WitnessAction::Pytest(c) => pytest::run(c),
+        WitnessAction::DiffScope(c) => diff_scope::run(c),
     }
 }
 

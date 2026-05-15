@@ -51,6 +51,8 @@ pub enum LeafCondition {
     StringFieldEquals { path: String, expected: String },
     /// Numeric field at JSON path equals the given value.
     NumberFieldEquals { path: String, expected: i64 },
+    /// Boolean field at JSON path is `true`.
+    BoolFieldTrue { path: String },
 }
 
 #[derive(Debug, Clone)]
@@ -117,10 +119,24 @@ impl ClaimRegistry {
             condition: LeafCondition::ExitCodeZero,
             describes: "pytest run exited zero in this checkout".into(),
         }));
+        r.register(ClaimEntry::Leaf(LeafClaim {
+            name: "diff_scope_matches_claim".into(),
+            witness_type: "diff_scope".into(),
+            observation_type: "diff_scope_porcelain".into(),
+            condition: LeafCondition::BoolFieldTrue {
+                path: "matches_declared_scope".into(),
+            },
+            describes: "git diff matched the declared scope".into(),
+        }));
         r.register(ClaimEntry::Composite(CompositeClaim {
             name: "ready_for_review".into(),
-            requires: vec!["repo_clean".into(), "tests_passed".into()],
-            describes: "repo is clean and tests passed".into(),
+            requires: vec![
+                "repo_clean".into(),
+                "tests_passed".into(),
+                "diff_scope_matches_claim".into(),
+            ],
+            describes: "repo is clean, tests passed, and the diff matched the declared scope"
+                .into(),
         }));
         r.register(ClaimEntry::NonMintable(NonMintableClaim {
             name: "safe_to_merge".into(),
@@ -430,6 +446,9 @@ impl LeafCondition {
                 resolve_path(obs, path).and_then(|v| v.as_i64()).map(|n| n == *expected)
                     .unwrap_or(false)
             }
+            LeafCondition::BoolFieldTrue { path } => resolve_path(obs, path)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         }
     }
 
@@ -441,6 +460,9 @@ impl LeafCondition {
             }
             LeafCondition::NumberFieldEquals { path, expected } => {
                 format!("expected {path:?} == {expected}")
+            }
+            LeafCondition::BoolFieldTrue { path } => {
+                format!("expected {path:?} == true")
             }
         }
     }
@@ -577,6 +599,43 @@ mod tests {
             "repo:.",
             vec![serde_json::json!({"type": "git_status_porcelain", "porcelain": ""})],
         );
+        let w_diff = pkt(
+            "diff_scope",
+            "repo:.",
+            vec![serde_json::json!({
+                "type": "diff_scope_porcelain",
+                "declared_scope": "docs-only",
+                "matches_declared_scope": true,
+                "changed_paths": ["README.md"],
+                "non_matching_paths": [],
+            })],
+        );
+        let r = evaluate(
+            &reg,
+            "ready_for_review",
+            "repo:.",
+            &[w_pytest, w_git, w_diff],
+            "2026-05-15T14:00:00Z",
+        );
+        assert_eq!(r.status, Status::Verified);
+        assert!(r.verified.contains(&"repo_clean".to_string()));
+        assert!(r.verified.contains(&"tests_passed".to_string()));
+        assert!(r.verified.contains(&"diff_scope_matches_claim".to_string()));
+    }
+
+    #[test]
+    fn ready_for_review_partial_when_diff_scope_witness_absent() {
+        let reg = ClaimRegistry::track_b_starter();
+        let w_pytest = pkt(
+            "pytest",
+            "repo:.",
+            vec![serde_json::json!({"type": "pytest_run", "exit_code": 0})],
+        );
+        let w_git = pkt(
+            "git_status",
+            "repo:.",
+            vec![serde_json::json!({"type": "git_status_porcelain", "porcelain": ""})],
+        );
         let r = evaluate(
             &reg,
             "ready_for_review",
@@ -584,9 +643,56 @@ mod tests {
             &[w_pytest, w_git],
             "2026-05-15T14:00:00Z",
         );
+        assert_eq!(r.status, Status::PartiallyVerified);
+        assert!(r.not_verified.iter().any(|n| n.claim == "diff_scope_matches_claim"));
+    }
+
+    #[test]
+    fn diff_scope_matches_claim_verifies_when_witness_matches() {
+        let reg = ClaimRegistry::track_b_starter();
+        let w = pkt(
+            "diff_scope",
+            "repo:.",
+            vec![serde_json::json!({
+                "type": "diff_scope_porcelain",
+                "declared_scope": "docs-only",
+                "matches_declared_scope": true,
+                "changed_paths": ["docs/foo.md"],
+            })],
+        );
+        let r = evaluate(
+            &reg,
+            "diff_scope_matches_claim",
+            "repo:.",
+            &[w],
+            "2026-05-15T14:00:00Z",
+        );
         assert_eq!(r.status, Status::Verified);
-        assert!(r.verified.contains(&"repo_clean".to_string()));
-        assert!(r.verified.contains(&"tests_passed".to_string()));
+    }
+
+    #[test]
+    fn diff_scope_matches_claim_fails_when_witness_disagrees() {
+        let reg = ClaimRegistry::track_b_starter();
+        let w = pkt(
+            "diff_scope",
+            "repo:.",
+            vec![serde_json::json!({
+                "type": "diff_scope_porcelain",
+                "declared_scope": "docs-only",
+                "matches_declared_scope": false,
+                "changed_paths": ["src/foo.rs", "docs/bar.md"],
+                "non_matching_paths": ["src/foo.rs"],
+            })],
+        );
+        let r = evaluate(
+            &reg,
+            "diff_scope_matches_claim",
+            "repo:.",
+            &[w],
+            "2026-05-15T14:00:00Z",
+        );
+        assert_eq!(r.status, Status::NotVerified);
+        assert!(r.status_reasons.contains(&StatusReason::ClaimConditionFailed));
     }
 
     #[test]

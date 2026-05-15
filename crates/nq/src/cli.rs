@@ -117,6 +117,9 @@ pub enum WitnessAction {
     /// recording the exit code. Pass the command after `--`, e.g.
     /// `nq witness pytest -- pytest -q`.
     Pytest(WitnessPytestCmd),
+    /// Observe the file paths changed by a git diff and classify them
+    /// against a declared scope. Emits a `diff_scope` witness packet.
+    DiffScope(WitnessDiffScopeCmd),
 }
 
 #[derive(Debug, Args)]
@@ -142,6 +145,25 @@ pub struct WitnessPytestCmd {
     /// omitted, defaults to `pytest`.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub command: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct WitnessDiffScopeCmd {
+    /// Subject name to record. Defaults to `repo:.`.
+    #[arg(long, default_value = "repo:.")]
+    pub subject: String,
+    /// Working directory to run git in.
+    #[arg(long)]
+    pub cwd: Option<PathBuf>,
+    /// The scope the diff is declared to fall within. Phase 2 supports
+    /// `docs-only`; additional scopes land as needed.
+    #[arg(long)]
+    pub declared: String,
+    /// Diff base. If omitted, the producer tries `origin/main`,
+    /// `origin/master`, `main`, `master` in order, and errors if none
+    /// resolve.
+    #[arg(long)]
+    pub base: Option<String>,
 }
 
 #[derive(Debug, Args)]
