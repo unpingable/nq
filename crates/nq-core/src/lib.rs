@@ -2,8 +2,11 @@ pub mod batch;
 pub mod config;
 pub mod humanize;
 pub mod preflight;
+pub mod receipt;
+pub mod render;
 pub mod status;
 pub mod wire;
+pub mod witness;
 
 pub use batch::{
     Batch, CollectorRun, HostRow, MetricRow, MetricSet, ServiceRow, ServiceSet, SmartWitnessRow,
@@ -19,4 +22,7 @@ pub use preflight::{
     PreflightSupport, PreflightTarget, Verdict, PREFLIGHT_CONTRACT_VERSION,
     PREFLIGHT_DISK_STATE_SCHEMA,
 };
+pub use receipt::{NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef, RECEIPT_SCHEMA};
+pub use render::{render_human, render_json, render_jsonl};
 pub use status::{CollectorKind, CollectorStatus, GenerationStatus, ServiceStatus, SourceStatus};
+pub use witness::{WitnessPacket, WitnessValidationError, WITNESS_SCHEMA};
