@@ -11,6 +11,7 @@ use crate::cli::WitnessPytestCmd;
 use crate::cmd::witness::now_rfc3339;
 use anyhow::Context;
 use nq_core::{WitnessPacket, WITNESS_SCHEMA};
+use std::io::Write;
 use std::process::Command;
 
 pub fn run(cmd: WitnessPytestCmd) -> anyhow::Result<()> {
@@ -32,13 +33,18 @@ pub fn run(cmd: WitnessPytestCmd) -> anyhow::Result<()> {
     if let Some(d) = &cmd.cwd {
         c.current_dir(d);
     }
-    // Inherit stdout/stderr so the user sees test output as it runs.
-    // The witness records the exit code only — the test output is
-    // already on the user's terminal.
-    let status = c
-        .status()
+    // Capture child stdout/stderr so they do not collide with the
+    // witness JSON we write to stdout. Forward both streams to the
+    // parent's stderr afterward so the user (or CI log) still sees
+    // pytest output. The witness records only the exit code.
+    let output = c
+        .output()
         .with_context(|| format!("invoking {}", argv.join(" ")))?;
-    let exit_code = status.code().unwrap_or(-1);
+    let stderr = std::io::stderr();
+    let mut stderr = stderr.lock();
+    let _ = stderr.write_all(&output.stdout);
+    let _ = stderr.write_all(&output.stderr);
+    let exit_code = output.status.code().unwrap_or(-1);
     let generated_at = now_rfc3339();
 
     let observation = serde_json::json!({
