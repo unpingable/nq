@@ -79,6 +79,70 @@ pub fn render_jsonl(r: &Receipt) -> Result<String, serde_json::Error> {
     serde_json::to_string(r)
 }
 
+/// GitHub-flavored markdown rendering of a receipt. Suitable for PR
+/// comments and dashboards. Uses the external vocabulary only.
+pub fn render_markdown(r: &Receipt) -> String {
+    let mut out = String::new();
+    out.push_str("## NQ Verification Receipt\n\n");
+    out.push_str(&format!("**Claim:** `{}`  \n", r.claim));
+    out.push_str(&format!("**Subject:** `{}`  \n", r.subject));
+    out.push_str(&format!("**Status:** `{}`\n\n", status_word(r.status)));
+
+    if !r.verified.is_empty() {
+        out.push_str("### Verified\n\n");
+        for v in &r.verified {
+            out.push_str(&format!("- `{v}`\n"));
+        }
+        out.push('\n');
+    }
+
+    if !r.not_verified.is_empty() {
+        out.push_str("### Not verified\n\n");
+        for n in &r.not_verified {
+            match &n.detail {
+                Some(d) => out.push_str(&format!("- `{}` — {} ({})\n", n.claim, n.reason, d)),
+                None => out.push_str(&format!("- `{}` — {}\n", n.claim, n.reason)),
+            }
+        }
+        out.push('\n');
+    }
+
+    if !r.suggested_weaker_claims.is_empty() {
+        out.push_str("### Suggested weaker claims\n\n");
+        for s in &r.suggested_weaker_claims {
+            out.push_str(&format!("- `{s}`\n"));
+        }
+        out.push('\n');
+    }
+
+    if !r.supported_status.is_empty() {
+        out.push_str("### Supported status\n\n");
+        out.push_str(&format!("> {}\n\n", r.supported_status));
+    }
+
+    if !r.witnesses.is_empty() {
+        out.push_str("### Witnesses\n\n");
+        for w in &r.witnesses {
+            match &w.observed_at {
+                Some(t) => out.push_str(&format!("- `{}` (observed `{}`)\n", w.witness_type, t)),
+                None => out.push_str(&format!("- `{}`\n", w.witness_type)),
+            }
+        }
+        out.push('\n');
+    }
+
+    if !r.status_reasons.is_empty() {
+        let reasons: Vec<&str> = r.status_reasons.iter().map(|x| reason_word(*x)).collect();
+        out.push_str(&format!("<sub>Reason codes: {}</sub>  \n", reasons.join(", ")));
+    }
+    out.push_str(&format!(
+        "<sub>Generated `{}` from `{}`.</sub>\n",
+        r.generated_at, r.schema
+    ));
+
+    out
+}
+
 fn status_word(s: Status) -> &'static str {
     match s {
         Status::Verified => "verified",
@@ -159,5 +223,30 @@ mod tests {
     fn jsonl_is_single_line() {
         let s = render_jsonl(&sample()).unwrap();
         assert!(!s.contains('\n'));
+    }
+
+    #[test]
+    fn markdown_uses_external_vocabulary_only() {
+        let s = render_markdown(&sample());
+        assert!(s.contains("Verification Receipt"));
+        assert!(s.contains("not_verified"));
+        assert!(s.contains("`ready_for_review`"));
+        assert!(s.contains("Supported status"));
+        // External vocabulary discipline: doctrine words stay out of
+        // the user-facing markdown body. (They may appear in reason
+        // codes when the user-facing word is present already.)
+        assert!(!s.contains("admissible"));
+        assert!(!s.contains("cannot_testify"));
+        assert!(!s.contains("admissibility"));
+    }
+
+    #[test]
+    fn markdown_omits_empty_sections() {
+        let mut r = sample();
+        r.not_verified.clear();
+        r.suggested_weaker_claims.clear();
+        let s = render_markdown(&r);
+        assert!(!s.contains("Not verified"));
+        assert!(!s.contains("Suggested weaker"));
     }
 }

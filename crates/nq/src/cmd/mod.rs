@@ -7,6 +7,7 @@ pub mod maintenance;
 pub mod preflight;
 pub mod publish;
 pub mod query;
+pub mod receipt;
 pub mod sentinel;
 pub mod serve;
 pub mod validate_witness;
@@ -31,5 +32,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::ValidateWitness(cmd) => validate_witness::run(cmd),
         Command::Verify(cmd) => verify::run(cmd),
         Command::Witness(cmd) => witness::run(cmd),
+        Command::Receipt(cmd) => receipt::run(cmd),
     }
 }
