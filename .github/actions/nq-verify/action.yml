@@ -1,0 +1,149 @@
+name: 'NQ Verification Receipt'
+description: |
+  Add an evidence-backed verification receipt to a pull request.
+  Runs nq witness producers, evaluates a registered claim, and posts (or
+  updates) a single PR comment with what was verified, what was not, and
+  the strongest supported status sentence. Default is comment-only; set
+  `strict: true` to fail the job on a non-verified status.
+
+inputs:
+  claim:
+    description: 'Claim to verify (e.g. ready_for_review, repo_clean, tests_passed, safe_to_merge).'
+    required: false
+    default: 'ready_for_review'
+  subject:
+    description: 'Subject identifier the claim is about. Default: repo:.'
+    required: false
+    default: 'repo:.'
+  declared_scope:
+    description: 'Optional declared scope for the diff-scope witness (e.g. docs-only). When empty, the diff-scope witness is skipped and ready_for_review will be partially_verified.'
+    required: false
+    default: ''
+  base_ref:
+    description: 'Diff base ref for the diff-scope witness. Defaults to the PR base ref when running on pull_request.'
+    required: false
+    default: ''
+  test_command:
+    description: 'Test command to run for the pytest witness. When empty, the pytest witness is skipped.'
+    required: false
+    default: ''
+  nq_bin:
+    description: 'Path to the nq binary. Default: "nq" (assumed on PATH).'
+    required: false
+    default: 'nq'
+  comment:
+    description: 'Post or update a PR comment with the rendered receipt.'
+    required: false
+    default: 'true'
+  strict:
+    description: 'Fail the job when the receipt status is not "verified".'
+    required: false
+    default: 'false'
+
+outputs:
+  status:
+    description: 'The receipt status: verified / partially_verified / needs_more_evidence / not_verified / invalid_evidence.'
+    value: ${{ steps.verify.outputs.status }}
+  receipt_path:
+    description: 'Path to the receipt JSON file inside the workspace.'
+    value: '.nq/receipts/receipt.json'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Prepare workspace
+      shell: bash
+      run: |
+        mkdir -p .nq/witnesses .nq/receipts
+
+    - name: Witness — git status
+      shell: bash
+      run: |
+        "${{ inputs.nq_bin }}" witness git-status --subject '${{ inputs.subject }}' \
+          > .nq/witnesses/git-status.json
+
+    - name: Witness — tests
+      if: inputs.test_command != ''
+      shell: bash
+      run: |
+        # Run the test command. Exit code is captured by the witness;
+        # do not fail the step on non-zero so the receipt can report
+        # tests_passed = not_verified honestly.
+        set +e
+        "${{ inputs.nq_bin }}" witness pytest --subject '${{ inputs.subject }}' \
+          -- ${{ inputs.test_command }} \
+          > .nq/witnesses/pytest.json
+        echo "witness pytest exited $?"
+
+    - name: Witness — diff scope
+      if: inputs.declared_scope != ''
+      shell: bash
+      env:
+        BASE_REF: ${{ inputs.base_ref || github.base_ref }}
+      run: |
+        BASE_ARG=""
+        if [ -n "$BASE_REF" ]; then
+          git fetch --no-tags --depth=50 origin "$BASE_REF" || true
+          BASE_ARG="--base origin/$BASE_REF"
+        fi
+        "${{ inputs.nq_bin }}" witness diff-scope --subject '${{ inputs.subject }}' \
+          --declared '${{ inputs.declared_scope }}' $BASE_ARG \
+          > .nq/witnesses/diff-scope.json
+
+    - name: Verify
+      id: verify
+      shell: bash
+      run: |
+        WITNESSES=$(ls .nq/witnesses/*.json 2>/dev/null || true)
+        if [ -z "$WITNESSES" ]; then
+          echo "::error::no witness packets produced; nothing to verify"
+          exit 1
+        fi
+        "${{ inputs.nq_bin }}" verify \
+          --claim '${{ inputs.claim }}' \
+          --subject '${{ inputs.subject }}' \
+          --witness $WITNESSES \
+          --receipt .nq/receipts/receipt.json \
+          --format human
+        STATUS=$(python3 -c 'import json,sys; print(json.load(open(".nq/receipts/receipt.json"))["status"])')
+        echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+        echo "NQ receipt status: $STATUS"
+
+    - name: Render markdown
+      shell: bash
+      run: |
+        "${{ inputs.nq_bin }}" receipt render .nq/receipts/receipt.json \
+          --format markdown > .nq/receipts/receipt.md
+
+    - name: Post or update PR comment
+      if: inputs.comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        BODY_FILE=.nq/receipts/receipt.md
+        # Find an existing nq comment posted by this action and update
+        # it in place; else post a new one.
+        EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" \
+          --jq '.[] | select(.body | startswith("## NQ Verification Receipt")) | .id' \
+          | head -n1 || true)
+        if [ -n "$EXISTING" ]; then
+          gh api "repos/$REPO/issues/comments/$EXISTING" -X PATCH \
+            -F body=@"$BODY_FILE" >/dev/null
+          echo "updated comment $EXISTING"
+        else
+          gh pr comment "$PR" --body-file "$BODY_FILE"
+          echo "posted new comment"
+        fi
+
+    - name: Strict mode
+      if: inputs.strict == 'true'
+      shell: bash
+      run: |
+        STATUS='${{ steps.verify.outputs.status }}'
+        if [ "$STATUS" != "verified" ]; then
+          echo "::error::nq strict mode: status is '$STATUS' (expected 'verified')"
+          exit 1
+        fi

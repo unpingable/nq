@@ -59,6 +59,36 @@ pub enum Command {
     /// Writes `nq.witness.v1` JSON to stdout by default. Witnesses
     /// report observations; they do not name claims.
     Witness(WitnessCmd),
+    /// Render an existing `nq.receipt.v1` document in a chosen format
+    /// (human, json, markdown). Useful for posting receipts to
+    /// downstream consumers (PR comments, dashboards) without
+    /// re-running verification.
+    Receipt(ReceiptCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct ReceiptCmd {
+    #[command(subcommand)]
+    pub action: ReceiptAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ReceiptAction {
+    /// Render an `nq.receipt.v1` document. Reads from a file (or `-`
+    /// for stdin) and writes to stdout.
+    Render(ReceiptRenderCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct ReceiptRenderCmd {
+    /// Path to an `nq.receipt.v1` JSON document. Pass `-` to read from
+    /// stdin.
+    pub path: String,
+    /// Output format. `human` is the terminal rendering, `markdown` is
+    /// GitHub-flavored (suitable for PR comments), `json`/`jsonl` are
+    /// passthrough.
+    #[arg(long, short, default_value = "human")]
+    pub format: String,
 }
 
 #[derive(Debug, Args)]
