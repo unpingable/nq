@@ -10,6 +10,8 @@ pub mod query;
 pub mod sentinel;
 pub mod serve;
 pub mod validate_witness;
+pub mod verify;
+pub mod witness;
 
 use crate::cli::{Cli, Command};
 
@@ -27,5 +29,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Maintenance(cmd) => maintenance::run(cmd),
         Command::Preflight(cmd) => preflight::run(cmd),
         Command::ValidateWitness(cmd) => validate_witness::run(cmd),
+        Command::Verify(cmd) => verify::run(cmd),
+        Command::Witness(cmd) => witness::run(cmd),
     }
 }

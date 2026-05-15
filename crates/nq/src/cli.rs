@@ -49,12 +49,99 @@ pub enum Command {
     /// Reads a JSON file, checks the envelope, and reports problems.
     /// See `docs/architecture/SHARED_SPINE.md`.
     ValidateWitness(ValidateWitnessCmd),
+    /// Verify a claim against caller-supplied witness packets.
+    /// Reads `nq.witness.v1` files, evaluates against the registered
+    /// claim, and emits an `nq.receipt.v1`. Default posture is
+    /// informational; blocking modes live behind `--strict` /
+    /// `--fail-on STATUS`. See `docs/architecture/SHARED_SPINE.md`.
+    Verify(VerifyCmd),
+    /// Produce a witness packet from a local source (git, pytest, ...).
+    /// Writes `nq.witness.v1` JSON to stdout by default. Witnesses
+    /// report observations; they do not name claims.
+    Witness(WitnessCmd),
 }
 
 #[derive(Debug, Args)]
 pub struct ValidateWitnessCmd {
     /// Path to a witness packet JSON file. Pass `-` to read from stdin.
     pub path: String,
+}
+
+#[derive(Debug, Args)]
+pub struct VerifyCmd {
+    /// Claim to verify. Must be registered in the claim catalog. Use
+    /// `--list-claims` to see what is available.
+    #[arg(long)]
+    pub claim: String,
+    /// Subject the claim is about (e.g. `repo:.`, `host:storage01`).
+    /// Witnesses whose `subject` does not match are ignored.
+    #[arg(long)]
+    pub subject: String,
+    /// Witness packet file(s). Accepts multiple values; shell expansion
+    /// of globs works (e.g. `--witness .nq/*.json`).
+    #[arg(long, num_args = 1.., required = true)]
+    pub witness: Vec<PathBuf>,
+    /// Optional path to write the receipt JSON to (in addition to the
+    /// rendered output sent to stdout).
+    #[arg(long)]
+    pub receipt: Option<PathBuf>,
+    /// Output format. `human` is the terminal rendering. `json`/`jsonl`
+    /// emit `nq.receipt.v1` to stdout.
+    #[arg(long, short, default_value = "human")]
+    pub format: String,
+    /// Treat any status other than `verified` as a failure (exit 1).
+    /// Default posture is informational: receipt is emitted, exit 0
+    /// unless input is malformed.
+    #[arg(long)]
+    pub strict: bool,
+    /// Treat the given status as a failure (exit 1). May be passed
+    /// multiple times. Example: `--fail-on not_verified --fail-on
+    /// needs_more_evidence`. Ignored if `--strict` is set.
+    #[arg(long)]
+    pub fail_on: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct WitnessCmd {
+    #[command(subcommand)]
+    pub action: WitnessAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WitnessAction {
+    /// Observe the local git working tree and emit a `git_status`
+    /// witness packet. Runs `git status --porcelain` and
+    /// `git rev-parse HEAD` in the current directory.
+    GitStatus(WitnessGitStatusCmd),
+    /// Run an external test command and emit a `pytest` witness packet
+    /// recording the exit code. Pass the command after `--`, e.g.
+    /// `nq witness pytest -- pytest -q`.
+    Pytest(WitnessPytestCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct WitnessGitStatusCmd {
+    /// Subject name to record. Defaults to `repo:.` (current directory).
+    #[arg(long, default_value = "repo:.")]
+    pub subject: String,
+    /// Working directory in which to run git. Defaults to the current
+    /// process directory.
+    #[arg(long)]
+    pub cwd: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct WitnessPytestCmd {
+    /// Subject name to record. Defaults to `repo:.`.
+    #[arg(long, default_value = "repo:.")]
+    pub subject: String,
+    /// Working directory to run the command in.
+    #[arg(long)]
+    pub cwd: Option<PathBuf>,
+    /// The test command and its arguments, passed after `--`. If
+    /// omitted, defaults to `pytest`.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub command: Vec<String>,
 }
 
 #[derive(Debug, Args)]
