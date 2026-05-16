@@ -14,12 +14,16 @@ The `nq` binary must be on `PATH` (or pointed at via the `nq_bin` input). The co
 - name: Install nq
   shell: bash
   run: |
+    rm -rf "$RUNNER_TEMP/nq-src"
     git clone --depth 1 --branch main \
       https://github.com/unpingable/nq.git "$RUNNER_TEMP/nq-src"
-    cargo build --manifest-path "$RUNNER_TEMP/nq-src/Cargo.toml" \
+    CARGO_TARGET_DIR="$RUNNER_TEMP/nq-target" cargo build \
+      --manifest-path "$RUNNER_TEMP/nq-src/Cargo.toml" \
       --bin nq --release
-    echo "$RUNNER_TEMP/nq-src/target/release" >> "$GITHUB_PATH"
+    echo "$RUNNER_TEMP/nq-target/release" >> "$GITHUB_PATH"
 ```
+
+If you want to cache the build, cache `$RUNNER_TEMP/nq-target` separately from `nq-src`. Caching anything inside `nq-src` is unsafe: a restored cache will be left behind, and the next `git clone` will fail when the destination is non-empty.
 
 The action itself can then be referenced by repo path, with no separate `actions/checkout` of nq into the workspace:
 
@@ -84,16 +88,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ${{ runner.temp }}/nq-src/target
+            ${{ runner.temp }}/nq-target
           key: ${{ runner.os }}-cargo-nq
 
       - name: Install nq
         run: |
+          rm -rf "$RUNNER_TEMP/nq-src"
           git clone --depth 1 --branch main \
             https://github.com/unpingable/nq.git "$RUNNER_TEMP/nq-src"
-          cargo build --manifest-path "$RUNNER_TEMP/nq-src/Cargo.toml" \
+          CARGO_TARGET_DIR="$RUNNER_TEMP/nq-target" cargo build \
+            --manifest-path "$RUNNER_TEMP/nq-src/Cargo.toml" \
             --bin nq --release
-          echo "$RUNNER_TEMP/nq-src/target/release" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/nq-target/release" >> "$GITHUB_PATH"
 
       - uses: unpingable/nq/.github/actions/nq-verify@main
         with:
