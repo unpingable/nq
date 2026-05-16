@@ -6,21 +6,28 @@ Default posture is **comment-only**. Set `strict: true` to fail the job on a non
 
 ## Requirements
 
-The `nq` binary must be on `PATH` (or pointed at via the `nq_bin` input). The consumer workflow is responsible for installing it — for example by building from this repo:
+The `nq` binary must be on `PATH` (or pointed at via the `nq_bin` input). The consumer workflow is responsible for installing it.
+
+**Install `nq` outside the consumer workspace** so its source tree does not show up as an untracked directory in `git status --porcelain`. If the install lives inside `$GITHUB_WORKSPACE`, the `git_status` witness will see it and `repo_clean` will refuse to verify even on a clean PR. Use `$RUNNER_TEMP`:
 
 ```yaml
-- uses: actions/checkout@v4
-  with:
-    repository: unpingable/nq
-    path: .nq-src
-- name: Build nq
+- name: Install nq
   shell: bash
   run: |
-    cargo build --manifest-path .nq-src/Cargo.toml --bin nq --release
-    echo "$PWD/.nq-src/target/release" >> "$GITHUB_PATH"
+    git clone --depth 1 --branch main \
+      https://github.com/unpingable/nq.git "$RUNNER_TEMP/nq-src"
+    cargo build --manifest-path "$RUNNER_TEMP/nq-src/Cargo.toml" \
+      --bin nq --release
+    echo "$RUNNER_TEMP/nq-src/target/release" >> "$GITHUB_PATH"
 ```
 
-The action calls `git`, `gh` (preinstalled on `ubuntu-latest`), and `python3` (preinstalled). It does not require any third-party action.
+The action itself can then be referenced by repo path, with no separate `actions/checkout` of nq into the workspace:
+
+```yaml
+- uses: unpingable/nq/.github/actions/nq-verify@main
+```
+
+The action calls `git`, `gh` (preinstalled on `ubuntu-latest`), and `python3` (preinstalled). It does not depend on any third-party action.
 
 ## Inputs
 
@@ -40,7 +47,7 @@ The action calls `git`, `gh` (preinstalled on `ubuntu-latest`), and `python3` (p
 | Output | Meaning |
 | --- | --- |
 | `status` | `verified` / `partially_verified` / `needs_more_evidence` / `not_verified` / `invalid_evidence`. |
-| `receipt_path` | Path to the receipt JSON inside the workspace. |
+| `receipt_path` | Path to the receipt JSON inside the workspace (`.nq/receipts/receipt.json`). |
 
 ## Example
 
@@ -58,19 +65,45 @@ jobs:
   nq:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
+      - name: Checkout this repo
+        uses: actions/checkout@v4
         with:
-          repository: unpingable/nq
-          path: .nq-src
-      - name: Build nq
-        shell: bash
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/nq-src/target
+          key: ${{ runner.os }}-cargo-nq
+
+      - name: Install nq
         run: |
-          cargo build --manifest-path .nq-src/Cargo.toml --bin nq --release
-          echo "$PWD/.nq-src/target/release" >> "$GITHUB_PATH"
-      - uses: ./.nq-src/.github/actions/nq-verify
+          git clone --depth 1 --branch main \
+            https://github.com/unpingable/nq.git "$RUNNER_TEMP/nq-src"
+          cargo build --manifest-path "$RUNNER_TEMP/nq-src/Cargo.toml" \
+            --bin nq --release
+          echo "$RUNNER_TEMP/nq-src/target/release" >> "$GITHUB_PATH"
+
+      - uses: unpingable/nq/.github/actions/nq-verify@main
         with:
           claim: ready_for_review
           declared_scope: docs-only
-          test_command: pytest -q
+          test_command: python -m pytest -q
 ```
+
+## Notes
+
+- The action's behavior is intentionally informational by default. Strict mode is an opt-in; do not enable it on the first PR after adoption — let the receipts annoy you usefully first, then ratchet up.
+- The PR comment is "sticky": subsequent runs update the same comment in place rather than producing a new comment each time. The action identifies its own comment by the `## NQ Verification Receipt` header.
+- The `nq_bin` input lets you substitute a different binary (e.g. a pre-built release artifact) once those are published.
