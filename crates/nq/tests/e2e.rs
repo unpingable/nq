@@ -539,3 +539,98 @@ async fn malformed_publisher_parse_fails() {
         "malformed JSON should fail to deserialize as PublisherState"
     );
 }
+
+// ---------------------------------------------------------------------------
+// (e) Preflight HTTP surface: `disk_state` preflight is wired into the
+//     running monitor path, emits the typed PreflightResult DTO, preserves
+//     the constitutional cannot_testify refusal list, and does not launder
+//     weak findings into replacement / recovery / death claims.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn preflight_disk_state_http_emits_bounded_testimony() {
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let resp: serde_json::Value = client
+        .get(format!("{base}/api/preflight/disk-state/test-host"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    // (1) Wire contract preserved: schema, contract_version, claim_kind, target.
+    assert_eq!(resp["schema"], "nq.preflight.disk_state.v1");
+    assert_eq!(resp["contract_version"], 1);
+    assert_eq!(resp["claim_kind"], "disk_state");
+    assert_eq!(resp["target"]["host"], "test-host");
+
+    // (2) Verdict on an empty DB. No substrate testimony exists, so the
+    //     evaluator must report insufficient_coverage (or cannot_testify);
+    //     it must not return an admissible / verified-shaped verdict.
+    let verdict = resp["verdict"].as_str().expect("verdict string");
+    assert!(
+        matches!(verdict, "insufficient_coverage" | "cannot_testify"),
+        "empty DB must not yield a positive verdict; got {verdict:?}"
+    );
+
+    // (3) Constitutional refusal surface is populated regardless of
+    //     substrate state. Per docs/gaps/CLAIM_KIND_DISK_STATE_GAP.md the
+    //     seven non-mintable conclusions live here; spot-check the four
+    //     that name the worst laundering risks for the monitor path.
+    let cannot_testify = resp["cannot_testify"]
+        .as_array()
+        .expect("cannot_testify array");
+    let joined = cannot_testify
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for needle in [
+        "Physical disk death",
+        "Replacement workflow",
+        "Drive is fine to keep",
+        "Data loss",
+    ] {
+        assert!(
+            joined.contains(needle),
+            "cannot_testify must name {needle:?}; got: {joined}"
+        );
+    }
+
+    // (4) Anti-laundering invariant. No support entry may carry a strong
+    //     conclusion the witness layer cannot testify to. Vacuous on the
+    //     empty DB but the assertion is the regression guard once
+    //     substrate is seeded on this surface.
+    let supports = resp["supports"].as_array().expect("supports array");
+    for support in supports {
+        let claim = support["claim"].as_str().unwrap_or("");
+        let lower = claim.to_lowercase();
+        for forbidden in [
+            "drive is dead",
+            "drive is fine",
+            "replace",
+            "recovered",
+            "data loss",
+        ] {
+            assert!(
+                !lower.contains(forbidden),
+                "support claim must not launder into {forbidden:?}; got {claim:?}"
+            );
+        }
+    }
+}
