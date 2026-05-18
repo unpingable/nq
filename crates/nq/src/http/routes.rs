@@ -162,10 +162,25 @@ async fn api_findings(State(db): State<Db>) -> Json<serde_json::Value> {
 async fn api_host(State(db): State<Db>, Path(name): Path<String>) -> Json<serde_json::Value> {
     let db = db.lock().await;
     match host_detail(&db, &name) {
-        Ok(vm) => Json(serde_json::json!({
-            "host": vm.host,
-            "recent_runs": vm.recent_source_runs.len(),
-        })),
+        Ok(vm) => {
+            // Attach bounded disk_state preflight for this host. The
+            // typed PreflightResult is nested rather than flattened so
+            // its `schema` / `contract_version` envelope stays
+            // self-describing alongside any future fields here. On
+            // evaluator error the field is omitted; the rest of the
+            // host response is unaffected.
+            let disk_state_preflight = evaluate_disk_state_preflight(&db, &name, None)
+                .ok()
+                .and_then(|r| serde_json::to_value(&r).ok());
+            let mut body = serde_json::json!({
+                "host": vm.host,
+                "recent_runs": vm.recent_source_runs.len(),
+            });
+            if let Some(p) = disk_state_preflight {
+                body["disk_state_preflight"] = p;
+            }
+            Json(body)
+        }
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),
     }
 }
