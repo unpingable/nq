@@ -107,6 +107,21 @@ pub fn evaluate_disk_state_preflight_from_conn(
         }
     }
 
+    // Observation-window disclosure. Computed only from `supports` —
+    // excludes are findings the witness layer has refused to admit, so
+    // they do not contribute to live testimony's observed window. Mirrors
+    // the bracketing the Receipt boundary already produces.
+    result.observed_at_min = result
+        .supports
+        .iter()
+        .filter_map(|s| s.observed_at.clone())
+        .min();
+    result.observed_at_max = result
+        .supports
+        .iter()
+        .filter_map(|s| s.observed_at.clone())
+        .max();
+
     // Verdict.
     let (verdict, note) = compute_verdict(&substrate, &standing);
     result.verdict = verdict;

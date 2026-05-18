@@ -112,6 +112,17 @@ pub struct PreflightResult {
     pub cannot_testify: Vec<String>,
     pub coverage: Vec<PreflightCoverage>,
     pub generated_at: String,
+    /// Oldest `observed_at` among `supports[]`. `None` when supports is
+    /// empty or no support carries an observed_at. This is evidence-window
+    /// disclosure only — it does not imply validity, freshness policy, or
+    /// any deadline. NQ exposes when testimony was observed; consumers
+    /// decide what to do with that information.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_at_min: Option<String>,
+    /// Newest `observed_at` among `supports[]`. Same semantics as
+    /// `observed_at_min`: window disclosure, no validity claim.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_at_max: Option<String>,
 }
 
 impl PreflightResult {
@@ -138,6 +149,8 @@ impl PreflightResult {
             cannot_testify,
             coverage: Vec::new(),
             generated_at,
+            observed_at_min: None,
+            observed_at_max: None,
         }
     }
 }
