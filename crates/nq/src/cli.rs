@@ -439,6 +439,13 @@ pub struct ServeCmd {
     /// Path to aggregator config file
     #[arg(long, short)]
     pub config: PathBuf,
+
+    /// Bind only the HTTP server. Skip source pull, publish_batch,
+    /// detector runs, notifications, and liveness updates. The DB is
+    /// opened read-only. Use for safe live preflight smoke against a
+    /// running monitor's DB.
+    #[arg(long)]
+    pub http_only: bool,
 }
 
 #[derive(Debug, Args)]
