@@ -15,6 +15,10 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
     let config_text = std::fs::read_to_string(&cmd.config)?;
     let config: Config = serde_json::from_str(&config_text)?;
 
+    if cmd.http_only {
+        return run_http_only(&config).await;
+    }
+
     let db_path = std::path::PathBuf::from(&config.db_path);
 
     // Open writer and migrate
@@ -191,6 +195,18 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
     let read_db = open_ro(&db_path)?;
     info!(bind = %bind_addr, "web UI starting");
     http::serve_with_write(read_db, write_db, &bind_addr).await?;
+    Ok(())
+}
+
+/// `nq serve --http-only` entry point. Opens the DB read-only and binds the
+/// read-only HTTP router. Performs no `open_rw`, no `migrate`, no pull /
+/// publish / detector / notification work, and writes no liveness file.
+/// Intended for safe live preflight smoke against a running monitor's DB.
+async fn run_http_only(config: &Config) -> anyhow::Result<()> {
+    let db_path = std::path::PathBuf::from(&config.db_path);
+    let read_db = open_ro(&db_path)?;
+    info!(bind = %config.bind_addr, "web UI starting (http-only)");
+    http::serve_read_only(read_db, &config.bind_addr).await?;
     Ok(())
 }
 

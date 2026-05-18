@@ -800,3 +800,138 @@ async fn preflight_disk_state_http_seeded_faulted_emits_bounded_testimony() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// (g) `nq serve --http-only` is actually read-only.
+//
+//     Spawns the real binary, points it at a migrated tempdir DB with a
+//     dead-source config, hits the preflight route over HTTP, then verifies
+//     that no generation row, no warning_state row, and no liveness file
+//     were written. The live smoke that motivated this slice wrote one
+//     failed generation row on startup; the --http-only branch must not.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, Eq)]
+struct RowCounts {
+    generations: i64,
+    warning_state: i64,
+}
+
+fn count_write_rows(db_path: &std::path::Path) -> RowCounts {
+    let db = open_ro(db_path).unwrap();
+    let conn = db.conn();
+    let generations: i64 = conn
+        .query_row("SELECT COUNT(*) FROM generations", [], |r| r.get(0))
+        .unwrap();
+    let warning_state: i64 = conn
+        .query_row("SELECT COUNT(*) FROM warning_state", [], |r| r.get(0))
+        .unwrap();
+    RowCounts {
+        generations,
+        warning_state,
+    }
+}
+
+async fn pick_free_port() -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    port
+}
+
+#[tokio::test]
+async fn serve_http_only_does_not_write_to_db() {
+    use std::process::{Command, Stdio};
+
+    let (_dir, db_path) = temp_db();
+    let baseline = count_write_rows(&db_path);
+
+    let cfg_dir = TempDir::new().unwrap();
+    let cfg_path = cfg_dir.path().join("aggregator.json");
+    let liveness_path = cfg_dir.path().join("liveness.json");
+
+    let port = pick_free_port().await;
+    let bind_addr = format!("127.0.0.1:{port}");
+
+    let cfg = serde_json::json!({
+        // interval long enough that even normal mode wouldn't fire a cycle
+        // within the test's lifetime; this is just a paranoia belt — the
+        // --http-only branch should never spawn the pull loop in the first
+        // place.
+        "interval_s": 3600,
+        "db_path": db_path.to_str().unwrap(),
+        "sources": [
+            {
+                "name": "noop",
+                "base_url": "http://127.0.0.1:1",
+                "timeout_ms": 100
+            }
+        ],
+        "retention": { "max_generations": 100, "prune_every_n_cycles": 60 },
+        "disk_budget": { "db_max_size_mb": 200, "warn_at_pct": 80 },
+        "bind_addr": bind_addr.clone(),
+        "notifications": { "channels": [], "min_severity": "warning" },
+        "liveness": {
+            "path": liveness_path.to_str().unwrap(),
+            "instance_id": "http-only-test"
+        }
+    });
+    std::fs::write(&cfg_path, cfg.to_string()).unwrap();
+
+    let nq_bin = env!("CARGO_BIN_EXE_nq");
+    let mut child = Command::new(nq_bin)
+        .args([
+            "serve",
+            "--http-only",
+            "-c",
+            cfg_path.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn nq serve --http-only");
+
+    // Wait for the HTTP server to come up. ~5s budget.
+    let base = format!("http://{bind_addr}");
+    let probe_url = format!("{base}/api/preflight/disk-state/probe-host");
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(500))
+        .build()
+        .unwrap();
+    let mut probe_resp: Option<serde_json::Value> = None;
+    for _ in 0..50 {
+        if let Ok(r) = client.get(&probe_url).send().await {
+            if let Ok(v) = r.json::<serde_json::Value>().await {
+                probe_resp = Some(v);
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    // Always kill the child, even on assertion failure.
+    let kill_result = (|| {
+        let resp = probe_resp.expect("http-only server should respond on the preflight route");
+        assert_eq!(
+            resp["schema"], "nq.preflight.disk_state.v1",
+            "wrong schema from http-only server: {resp:?}"
+        );
+        assert_eq!(resp["contract_version"], 1);
+    })();
+    let _ = kill_result; // suppress unused warning if all asserts pass
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    // Now the load-bearing claim: --http-only must have written nothing.
+    let after = count_write_rows(&db_path);
+    assert_eq!(
+        baseline, after,
+        "http-only must not write to generations or warning_state: \
+         baseline={baseline:?}, after={after:?}"
+    );
+    assert!(
+        !liveness_path.exists(),
+        "http-only must not write the liveness file at {liveness_path:?}"
+    );
+}
