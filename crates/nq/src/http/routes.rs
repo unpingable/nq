@@ -4,7 +4,7 @@ use axum::{
     routing::{get, post, delete},
     Json, Router,
 };
-use nq_db::{overview, host_detail, query_read_only, QueryLimits, ReadDb, WriteDb};
+use nq_db::{overview, host_detail, query_read_only, evaluate_disk_state_preflight, QueryLimits, ReadDb, WriteDb};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -83,6 +83,7 @@ pub fn router(db: Db) -> Router {
         .route("/api/host/{name}", get(api_host))
         .route("/api/host/{name}/history", get(api_host_history))
         .route("/api/query", get(api_query))
+        .route("/api/preflight/disk-state/{host}", get(api_preflight_disk_state))
         .route("/finding/{kind}/{host}", get(finding_detail))
         .route("/finding/{kind}/{host}/{subject}", get(finding_detail_with_subject))
         .with_state(db)
@@ -748,6 +749,33 @@ async fn api_query(State(db): State<Db>, Query(params): Query<QueryParams>) -> J
             "rows": result.rows,
             "truncated": result.truncated,
         })),
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct PreflightDiskStateQuery {
+    target: Option<String>,
+}
+
+/// Bounded `disk_state` preflight surfaced over the monitor HTTP path.
+///
+/// Emits the typed `PreflightResult` DTO (`nq.preflight.disk_state.v1`),
+/// not the Receipt-wrapped shape used by the CLI: the constitutional
+/// `cannot_testify` list is preserved on the wire so that monitor-mode
+/// consumers can see the refusal surface, not just the supported weaker
+/// claims. See `docs/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md` §Non-goals.
+async fn api_preflight_disk_state(
+    State(db): State<Db>,
+    Path(host): Path<String>,
+    Query(params): Query<PreflightDiskStateQuery>,
+) -> Json<serde_json::Value> {
+    let db = db.lock().await;
+    match evaluate_disk_state_preflight(&db, &host, params.target.as_deref()) {
+        Ok(result) => match serde_json::to_value(&result) {
+            Ok(v) => Json(v),
+            Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+        },
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),
     }
 }
