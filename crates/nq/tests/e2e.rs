@@ -633,6 +633,21 @@ async fn preflight_disk_state_http_emits_bounded_testimony() {
             );
         }
     }
+
+    // (5) Observation window: with no supports, both envelope bracket
+    //     fields must be absent. Absent testimony must not advertise a
+    //     window. `skip_serializing_if = "Option::is_none"` collapses
+    //     these out of the JSON entirely.
+    assert!(
+        resp.get("observed_at_min").is_none(),
+        "observed_at_min must be absent when supports is empty; got {:?}",
+        resp.get("observed_at_min")
+    );
+    assert!(
+        resp.get("observed_at_max").is_none(),
+        "observed_at_max must be absent when supports is empty; got {:?}",
+        resp.get("observed_at_max")
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -776,7 +791,33 @@ async fn preflight_disk_state_http_seeded_faulted_emits_bounded_testimony() {
         );
     }
 
-    // (5) Constitutional refusal surface remains populated even when
+    // (5) Observation window: envelope must expose the bracket of support
+    //     observed_at values so a consumer of the typed JSON can see
+    //     evidence age without iterating supports. observed_at_min and
+    //     observed_at_max must be present and must bracket every
+    //     supports[].observed_at. Pure window disclosure — no validity
+    //     claim, no horizon. See docs/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md
+    //     surface discipline rule 4.
+    let observed_min = resp["observed_at_min"]
+        .as_str()
+        .expect("observed_at_min must be present when supports are non-empty");
+    let observed_max = resp["observed_at_max"]
+        .as_str()
+        .expect("observed_at_max must be present when supports are non-empty");
+    assert!(
+        observed_min <= observed_max,
+        "observed_at_min ({observed_min}) must not exceed observed_at_max ({observed_max})"
+    );
+    for support in supports {
+        if let Some(obs) = support["observed_at"].as_str() {
+            assert!(
+                observed_min <= obs && obs <= observed_max,
+                "support observed_at {obs:?} falls outside envelope bracket [{observed_min}, {observed_max}]"
+            );
+        }
+    }
+
+    // (6) Constitutional refusal surface remains populated even when
     //     substrate testifies. Live substrate must not displace the
     //     refusal list.
     let cannot_testify = resp["cannot_testify"]
