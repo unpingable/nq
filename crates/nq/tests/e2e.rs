@@ -634,3 +634,169 @@ async fn preflight_disk_state_http_emits_bounded_testimony() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// (f) Preflight HTTP surface against seeded substrate: the production route
+//     emits bounded testimony when real FAULTED/DEGRADED disk-state findings
+//     are present, and still refuses consequence vocabulary in supports
+//     while keeping the constitutional cannot_testify surface intact.
+//
+//     Substrate shape mirrors the `lil-nas-x` forcing case used by the
+//     evaluator test `faulted_pool_and_degraded_state_admit_only_scoped_
+//     substrate_claims` in crates/nq-db/src/preflight.rs — pool DEGRADED +
+//     vdev FAULTED + SMART reallocated rising + uncorrected errors.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn preflight_disk_state_http_seeded_faulted_emits_bounded_testimony() {
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    let host = "lil-nas-x";
+
+    // Seed the same forcing-case substrate the nq-db evaluator test covers.
+    // Raw SQL is matched to the existing internal helper in
+    // crates/nq-db/src/preflight.rs (tests::insert_finding / ensure_generation)
+    // because nq-db deliberately does not expose a public seed helper, and
+    // the HTTP layer is exercised over the public DB read path regardless.
+    {
+        let write_db = open_rw(&db_path).unwrap();
+        let conn = write_db.conn();
+        conn.execute(
+            "INSERT OR IGNORE INTO generations
+               (generation_id, started_at, completed_at, status,
+                sources_expected, sources_ok, sources_failed, duration_ms)
+             VALUES (100, '2026-05-14T00:00:00Z', '2026-05-14T00:00:00Z',
+                     'complete', 1, 1, 0, 0)",
+            [],
+        )
+        .unwrap();
+        for (kind, subject) in [
+            ("zfs_pool_degraded", "tank"),
+            ("zfs_vdev_faulted", "tank/raidz2-0/ata-X"),
+            ("smart_reallocated_sectors_rising", "/dev/sdX"),
+            ("smart_uncorrected_errors_nonzero", "/dev/sdX"),
+        ] {
+            conn.execute(
+                "INSERT INTO warning_state
+                   (host, kind, subject, domain, message, severity,
+                    first_seen_gen, first_seen_at, last_seen_gen, last_seen_at,
+                    consecutive_gens, finding_class, absent_gens, visibility_state,
+                    failure_class, service_impact, action_bias, synopsis, why_care)
+                 VALUES (?1, ?2, ?3, 'Δg', 'test', 'warning',
+                         1, '2026-05-01T00:00:00Z', 100, '2026-05-14T00:00:00Z',
+                         5, 'signal', 0, 'observed',
+                         'Accumulation', 'NoneCurrent',
+                         'InvestigateBusinessHours', 'test', 'test')",
+                [host, kind, subject],
+            )
+            .unwrap();
+        }
+        drop(write_db);
+    }
+
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let resp: serde_json::Value = client
+        .get(format!("{base}/api/preflight/disk-state/{host}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    // (1) Wire contract preserved alongside live substrate.
+    assert_eq!(resp["schema"], "nq.preflight.disk_state.v1");
+    assert_eq!(resp["contract_version"], 1);
+    assert_eq!(resp["claim_kind"], "disk_state");
+    assert_eq!(resp["target"]["host"], host);
+
+    // (2) Bounded verdict. Per the evaluator's own test for this substrate
+    //     shape, the verdict must be admissible_with_scope — substrate is
+    //     real and admissible, but only at the scoped weaker-claim level.
+    //     A stronger verdict (admissible bare) would mean the HTTP path
+    //     promoted scoped substrate testimony into an unscoped strong claim.
+    assert_eq!(
+        resp["verdict"].as_str().expect("verdict string"),
+        "admissible_with_scope",
+        "seeded FAULTED/DEGRADED substrate must yield admissible_with_scope; \
+         got {:?}",
+        resp["verdict"]
+    );
+
+    // (3) Supports populated. The four seeded findings must reach the wire.
+    let supports = resp["supports"].as_array().expect("supports array");
+    assert_eq!(
+        supports.len(),
+        4,
+        "all four seeded findings must surface as supports; got {} entries: {supports:?}",
+        supports.len()
+    );
+
+    // (4) Anti-laundering invariant on supports — substrate testimony must
+    //     stay scoped, never compressing into replacement / death / recovery
+    //     / fine-to-keep / data-loss vocabulary. This is the load-bearing
+    //     assertion: live substrate is exactly when laundering tries to
+    //     promote into consequence claims.
+    for support in supports {
+        let claim = support["claim"].as_str().unwrap_or("");
+        let lower = claim.to_lowercase();
+        for forbidden in [
+            "replacement workflow",
+            "physical disk death",
+            "recovered reliability",
+            "recovered",
+            "fine to keep",
+            "drive is fine",
+            "data loss",
+            "drive is dead",
+            "replace",
+        ] {
+            assert!(
+                !lower.contains(forbidden),
+                "support claim laundered consequence vocabulary {forbidden:?}: {claim:?}"
+            );
+        }
+        // Scoped substrate testimony must carry observed_at, matching the
+        // evaluator-side regression in crates/nq-db/src/preflight.rs.
+        assert!(
+            claim.contains("observed_at"),
+            "support claim missing observed_at scope: {claim:?}"
+        );
+    }
+
+    // (5) Constitutional refusal surface remains populated even when
+    //     substrate testifies. Live substrate must not displace the
+    //     refusal list.
+    let cannot_testify = resp["cannot_testify"]
+        .as_array()
+        .expect("cannot_testify array");
+    let joined = cannot_testify
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for needle in [
+        "Physical disk death",
+        "Replacement workflow",
+        "Drive is fine to keep",
+        "Data loss",
+        "Incident closure",
+    ] {
+        assert!(
+            joined.contains(needle),
+            "cannot_testify must name {needle:?} alongside live substrate; got: {joined}"
+        );
+    }
+}
