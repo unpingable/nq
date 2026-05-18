@@ -1187,7 +1187,7 @@ fn zfs_error_count_increased_silent_on_reset_event() {
 fn zfs_error_count_increased_silent_on_reset_and_rise() {
     // Counters reset and a new rise begins. The rise is real but the
     // comparison is to a stale pre-reset baseline; detector should skip
-    // per chatty: "any counter decreasing → identity weirdness → skip."
+    // per ChatGPT: "any counter decreasing → identity weirdness → skip."
     let mut db = test_db();
     let t = now();
     let config = DetectorConfig::default();

@@ -249,7 +249,7 @@ Listed for the same reason every other gap doc carries non-goals: the temptation
 ## Provenance
 
 - 2026-05-12 reconnaissance pass on `~/git/lean` after the DURABLE_ARTIFACT_SUBSTRATE V1 commit (`24af098`).
-- Initial draft was a relationship doc (where the roads touch). Rewritten as roadmap-pressure memo (which roads now have traffic obligations) after operator + chatty review caught the shape mismatch.
+- Initial draft was a relationship doc (where the roads touch). Rewritten as roadmap-pressure memo (which roads now have traffic obligations) after operator + ChatGPT review caught the shape mismatch.
 - Reconciliation pass (2026-05-12) against existing gap docs caught two real errors in the first roadmap-pressure draft:
   - The TaxonomyGraph entry initially proposed mirroring the Lean 14 directly; corrected after finding that OBSERVER_DISTORTION_GAP and PORTABILITY_GAP already establish NQ's canon as a *designed superset* (Δq is NQ-side; `portability` is future non-Δ first-class). Roadmap pressure is governance of the NQ canon, not narrowing to Lean's.
   - The OpsMasking entry initially proposed new admissibility-state names (`unobservable_under_projection`, `redundant_under_composition`). Corrected after finding that TESTIMONY_DEPENDENCY V1's wire shape already reserves `cannot_testify` for the structural-inability case, with CANNOT_TESTIFY_STATUS_GAP owning the cash-out. The discipline is about not collapsing the distinction set, not about new state names.

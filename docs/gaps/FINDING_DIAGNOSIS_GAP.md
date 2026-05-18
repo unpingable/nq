@@ -290,7 +290,7 @@ The model:
 - The detector's baseline is what gets stored in `warning_state.action_bias` and `finding_observations.action_bias`. The projected/elevated value lives in the dominance projection's output (whatever that table ends up being called).
 - **Renderers display the elevated value when present, the detector baseline otherwise.**
 
-This separation is what prevents the fake-precision failure mode chatty named: `wal_bloat` on a dev box should NOT carry `InterveneNow` just because some other host's `wal_bloat` does. The detector says what it sees; the projection says what to do about it in context.
+This separation is what prevents the fake-precision failure mode ChatGPT named: `wal_bloat` on a dev box should NOT carry `InterveneNow` just because some other host's `wal_bloat` does. The detector says what it sees; the projection says what to do about it in context.
 
 For v1 of this gap, only the detector baseline exists. Renderers fall through directly to it. The elevation pass is `DOMINANCE_PROJECTION_GAP`'s job. This gap MUST NOT try to do context-aware action_bias selection from inside the detector loop — that's exactly the failure mode this constraint exists to prevent.
 
@@ -472,7 +472,7 @@ This is also a prerequisite for `DOMINANCE_PROJECTION_GAP`, which needs typed sh
 
 This gap explicitly does NOT include:
 
-- **`Mechanism`** — the second-order classification (retirement_lag, allocation_pressure, etc.). Useful eventually but not load-bearing for v1 legibility. The full diagnosis schema chatty sketched is the destination; this is the floor.
+- **`Mechanism`** — the second-order classification (retirement_lag, allocation_pressure, etc.). Useful eventually but not load-bearing for v1 legibility. The full diagnosis schema ChatGPT sketched is the destination; this is the floor.
 - **`Trajectory.direction`** — improving/stable/worsening. Requires comparing current to previous values across generations. Real value but a real new computation pass. Separate gap.
 - **`Runway`** — time-to-exhaustion estimates. Depends on `FORECASTING_GAP`.
 - **`RelatedFinding` graph** — the explicit cause/contribution links between findings. Defer until the dominance projection work needs it.
@@ -536,4 +536,4 @@ This is the largest single gap in the structural prep series by a meaningful mar
 - crates/nq-db/src/finding_meta.rs (the per-kind static layer this complements)
 - crates/nq-db/src/detect.rs (the producer side that needs to learn the new contract)
 - memory/project_notification_roadmap.md
-- The chatty design conversation that produced the full schema sketch (preserved in session history; this gap is a slice of that)
+- The ChatGPT design conversation that produced the full schema sketch (preserved in session history; this gap is a slice of that)

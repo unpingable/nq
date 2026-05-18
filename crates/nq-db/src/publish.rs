@@ -1592,7 +1592,7 @@ fn validate_coverage_composition(
     // Walk health_claim_misleading findings, dedupe orphans by (host, ref).
     // Map value records the first child finding_key encountered for the
     // pair so the hygiene finding can carry the child reference per
-    // chatty's tightening ("orphan relative to what?").
+    // ChatGPT's tightening ("orphan relative to what?").
     let mut orphans: HashMap<(String, String), String> = HashMap::new();
     for f in findings {
         if f.kind != "health_claim_misleading" {
@@ -2362,7 +2362,7 @@ mod tests {
 
     #[test]
     fn persistence_count_survives_suppression_round_trip() {
-        // Chatty's subtle trap: after suppression round-trip, the finding
+        // ChatGPT's subtle trap: after suppression round-trip, the finding
         // must NOT look like a brand-new identity. consecutive_gens and
         // first_seen_at should be preserved across the suppression.
         let mut db = test_db();
@@ -2719,7 +2719,7 @@ mod tests {
 
     #[test]
     fn observation_failure_rolls_back_lifecycle() {
-        // Chatty's required atomicity test: if the observation insert fails
+        // ChatGPT's required atomicity test: if the observation insert fails
         // mid-transaction (here: pre-existing collision on UNIQUE constraint),
         // the warning_state changes for that generation must also roll back.
         // This proves the transaction wrapping is real, not aspirational.
