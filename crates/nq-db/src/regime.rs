@@ -2456,7 +2456,7 @@ mod tests {
     fn recovery_scope_includes_currently_absent_findings_with_history() {
         // A finding that has NO current warning_state row but HAS history in
         // finding_observations must still get a recovery feature emitted.
-        // This is the chatty-flagged failure mode — "observed only" would miss it.
+        // This is the ChatGPT-flagged failure mode — "observed only" would miss it.
         let mut db = make_db();
         let fk = crate::publish::compute_finding_key("local", "host-1", "past_issue", "");
         // No warning_state row. Just historical observations forming a closed cycle.
@@ -2490,7 +2490,7 @@ mod tests {
         assert_eq!(p.prior_cycles_observed, 1);
     }
 
-    /// Regression test for chatty's 2026-04-15 median-pollution concern:
+    /// Regression test for ChatGPT's 2026-04-15 median-pollution concern:
     /// when the last (possibly pathological) cycle is allowed to contribute
     /// to its own baseline median, its outlier-ness is dampened and it may
     /// misclassify as slow or normal. The split_last rule prevents that.

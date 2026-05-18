@@ -155,7 +155,7 @@ None of these are ratified. None should be built until a recurrent failure mode 
 
 ## Provenance
 
-Filed 2026-05-07 during a session in which the operator returned from a parallel doctrinal probe (with `chatty`/ChatGPT) where the AG sibling `GOV_GAP_SEALED_OUTCOME_BOUNDARY_001` had just been filed (2026-05-06) after an Ada probe via the `standing_spark` package. The Ada probe's keeper — *"Authority observable, not constructible"* — translated to NQ as *"Testimony observable, not constructible"*, and the operator returned with the audit question:
+Filed 2026-05-07 during a session in which the operator returned from a parallel doctrinal probe (with ChatGPT) where the AG sibling `GOV_GAP_SEALED_OUTCOME_BOUNDARY_001` had just been filed (2026-05-06) after an Ada probe via the `standing_spark` package. The Ada probe's keeper — *"Authority observable, not constructible"* — translated to NQ as *"Testimony observable, not constructible"*, and the operator returned with the audit question:
 
 > Can NQ consumers construct or upgrade "findings/testimony" directly, or can they only observe testimony emitted by a conforming witness/export path?
 

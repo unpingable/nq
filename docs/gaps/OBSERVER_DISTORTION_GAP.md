@@ -144,11 +144,11 @@ A `Δq` entry added to the domain enum used in `warning_state.domain`.
 
 These are real and important; v1 defers them deliberately so the self-audit discipline ships first.
 
-- **Pinned-reader on-host detector.** Enumerate `/proc/*/fd/` looking for holders of monitored substrate files. Emit `observer_pinned_reader` findings with pid / process_name / open_age. Requires `observer_handles` table per Chatty's proposal. Generalizable beyond SQLite to any file-substrate.
+- **Pinned-reader on-host detector.** Enumerate `/proc/*/fd/` looking for holders of monitored substrate files. Emit `observer_pinned_reader` findings with pid / process_name / open_age. Requires `observer_handles` table per ChatGPT's proposal. Generalizable beyond SQLite to any file-substrate.
 - **Amplification detector.** Observer-generated writes/reads exceed monitored event volume by a configurable ratio.
 - **Stale freshness detector.** Pipeline silence masquerading as healthy state (last successful gen age ≫ expected).
 - **Dependency loop detector.** Observer depends on the degraded substrate it is diagnosing (e.g. NQ reads DB to report DB pressure while DB is under that pressure).
-- **`observer_handles` and `observer_health` tables** (per Chatty's schema proposal).
+- **`observer_handles` and `observer_health` tables** (per ChatGPT's schema proposal).
 - **Δq regime features.** `observer_tipping_load` (marginal substrate + observer contribution → regime hint), `observer_self_consumption_class` (transient / persistent / entrenched self-consumption), composed with existing trajectory/persistence features.
 - **Host-wide observer audit** across *all* processes, not just NQ's own. Requires a careful argument for why NQ is entitled to comment on other tools' observer behavior; out of scope for v1.
 
