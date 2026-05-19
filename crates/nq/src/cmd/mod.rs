@@ -10,6 +10,7 @@ pub mod query;
 pub mod receipt;
 pub mod sentinel;
 pub mod serve;
+pub mod smoke;
 pub mod validate_witness;
 pub mod verify;
 pub mod witness;
@@ -33,5 +34,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Verify(cmd) => verify::run(cmd),
         Command::Witness(cmd) => witness::run(cmd),
         Command::Receipt(cmd) => receipt::run(cmd),
+        Command::Smoke(cmd) => smoke::run(cmd),
     }
 }

@@ -64,6 +64,43 @@ pub enum Command {
     /// downstream consumers (PR comments, dashboards) without
     /// re-running verification.
     Receipt(ReceiptCmd),
+    /// Operator-facing contract smokes against a running monitor's
+    /// HTTP API. Verifies the operator-facing surface honors its
+    /// contract; safe to run repeatedly against production. Exits
+    /// zero on contract success regardless of the verdict NQ minted;
+    /// honest refusals (`cannot_testify`, `contradictory_testimony`)
+    /// are not smoke failures.
+    Smoke(SmokeCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct SmokeCmd {
+    #[command(subcommand)]
+    pub action: SmokeAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SmokeAction {
+    /// Smoke the disk_state preflight surface for a host. Hits
+    /// `<url>/api/host/<host>` on the running monitor, parses the
+    /// nested `disk_state_preflight` envelope, and validates it
+    /// against the `nq.preflight.disk_state.v1` contract.
+    PreflightDiskState(SmokePreflightDiskStateCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct SmokePreflightDiskStateCmd {
+    /// Base URL of the running monitor (e.g. `http://127.0.0.1:9848`).
+    /// Trailing slash is tolerated.
+    #[arg(long)]
+    pub url: String,
+    /// Host the preflight is for. The endpoint hit is
+    /// `<url>/api/host/<host>`.
+    #[arg(long)]
+    pub host: String,
+    /// Per-request timeout in seconds.
+    #[arg(long, default_value_t = 5)]
+    pub timeout_seconds: u64,
 }
 
 #[derive(Debug, Args)]

@@ -1140,3 +1140,172 @@ async fn api_host_includes_bounded_disk_state_preflight() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// `nq smoke preflight-disk-state` against the live HTTP route. The smoke
+// validator must pass on a real envelope produced by the seeded
+// forcing-case substrate (proving the contract the smoke checks matches
+// the contract the route emits) and on an unseeded host (proving honest
+// `cannot_testify`/`insufficient_coverage` outcomes do not fail smoke).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn smoke_disk_state_passes_on_seeded_forcing_case() {
+    use nq::http::routes::router;
+    use nq::smoke::validate_disk_state_envelope;
+
+    let (_dir, db_path) = temp_db();
+    let host = "lil-nas-x";
+
+    {
+        let write_db = open_rw(&db_path).unwrap();
+        let conn = write_db.conn();
+        conn.execute(
+            "INSERT OR IGNORE INTO generations
+               (generation_id, started_at, completed_at, status,
+                sources_expected, sources_ok, sources_failed, duration_ms)
+             VALUES (100, '2026-05-14T00:00:00Z', '2026-05-14T00:00:00Z',
+                     'complete', 1, 1, 0, 0)",
+            [],
+        )
+        .unwrap();
+        for (kind, subject) in [
+            ("zfs_pool_degraded", "tank"),
+            ("zfs_vdev_faulted", "tank/raidz2-0/ata-X"),
+            ("smart_reallocated_sectors_rising", "/dev/sdX"),
+            ("smart_uncorrected_errors_nonzero", "/dev/sdX"),
+        ] {
+            conn.execute(
+                "INSERT INTO warning_state
+                   (host, kind, subject, domain, message, severity,
+                    first_seen_gen, first_seen_at, last_seen_gen, last_seen_at,
+                    consecutive_gens, finding_class, absent_gens, visibility_state,
+                    failure_class, service_impact, action_bias, synopsis, why_care)
+                 VALUES (?1, ?2, ?3, 'Δg', 'test', 'warning',
+                         1, '2026-05-01T00:00:00Z', 100, '2026-05-14T00:00:00Z',
+                         5, 'signal', 0, 'observed',
+                         'Accumulation', 'NoneCurrent',
+                         'InvestigateBusinessHours', 'test', 'test')",
+                [host, kind, subject],
+            )
+            .unwrap();
+        }
+        drop(write_db);
+    }
+
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let resp: serde_json::Value = client
+        .get(format!("{base}/api/host/{host}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    // The smoke validator must accept the live envelope. This is the
+    // load-bearing assertion: it proves the contract checked by the
+    // smoke command matches the contract emitted by the actual HTTP
+    // route, not a handcrafted JSON in a unit test.
+    let envelope = resp
+        .get("disk_state_preflight")
+        .expect("live envelope must be attached to operator host JSON");
+    let report = validate_disk_state_envelope(envelope)
+        .expect("seeded forcing-case substrate must pass smoke contract");
+
+    assert_eq!(
+        report.verdict, "admissible_with_scope",
+        "seeded forcing case must surface as admissible_with_scope"
+    );
+    assert!(
+        report.supports_count >= 1,
+        "supports must reach the smoke validator"
+    );
+    assert!(
+        report.cannot_testify_count >= 1,
+        "constitutional refusal surface must be populated"
+    );
+}
+
+#[tokio::test]
+async fn smoke_disk_state_passes_on_unseeded_host_with_honest_refusal() {
+    use nq::http::routes::router;
+    use nq::smoke::validate_disk_state_envelope;
+
+    // No findings inserted; host has no substrate testimony at all. The
+    // operator-facing surface emits an honest verdict (insufficient_coverage
+    // or cannot_testify) and the smoke must accept it as contract-shaped.
+    let (_dir, db_path) = temp_db();
+    let host = "quiet-host";
+
+    {
+        let write_db = open_rw(&db_path).unwrap();
+        let conn = write_db.conn();
+        conn.execute(
+            "INSERT OR IGNORE INTO generations
+               (generation_id, started_at, completed_at, status,
+                sources_expected, sources_ok, sources_failed, duration_ms)
+             VALUES (100, '2026-05-14T00:00:00Z', '2026-05-14T00:00:00Z',
+                     'complete', 1, 1, 0, 0)",
+            [],
+        )
+        .unwrap();
+        drop(write_db);
+    }
+
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let resp: serde_json::Value = client
+        .get(format!("{base}/api/host/{host}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let envelope = resp
+        .get("disk_state_preflight")
+        .expect("envelope must be present even for hosts without substrate");
+    let report = validate_disk_state_envelope(envelope)
+        .expect("honest refusal verdict must still pass the contract smoke");
+
+    // Whatever the unseeded host surfaces (insufficient_coverage is
+    // expected per the in-process evaluator's test), it must not be
+    // verified / admissible — that would imply testimony from nothing.
+    assert!(
+        report.verdict == "insufficient_coverage"
+            || report.verdict == "cannot_testify",
+        "unseeded host must surface as a refusal, got {:?}",
+        report.verdict
+    );
+    assert_eq!(
+        report.supports_count, 0,
+        "unseeded host has no substrate; supports must be empty"
+    );
+    assert!(
+        report.cannot_testify_count >= 1,
+        "constitutional refusal surface must be populated even with no substrate"
+    );
+}
