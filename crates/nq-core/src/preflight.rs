@@ -36,6 +36,82 @@ pub enum ClaimKind {
     IngestState,
 }
 
+/// Kind of response observed for a single DNS query against a single
+/// resolver from a single vantage. Closed enum; new variants require a
+/// ratified change. The negative-answer taxonomy (`Nodata`, `Nxdomain`,
+/// `Servfail`, `Refused`, `Timeout`, `TransportError`) is the
+/// load-bearing DNS-specific witness contribution — conflating them is
+/// the bug `dns_state` exists to refuse. See
+/// `docs/gaps/DNS_WITNESS_FAMILY_GAP.md` for verdict mapping and
+/// constitutional refusals.
+///
+/// `ValidationFailure` is reserved for a future DNSSEC-validating
+/// probe; V0 collectors never emit it. The slot exists so adding
+/// validation later is not a wire-breaking change.
+///
+/// "No row exists for this tuple" is **not** a `ResponseKind` — that
+/// case belongs to the evaluator layer (`insufficient_coverage`
+/// verdict). Persisting a sentinel for absence would launder absence
+/// into testimony.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseKind {
+    Success,
+    Nodata,
+    Nxdomain,
+    Servfail,
+    Refused,
+    Timeout,
+    TransportError,
+    ValidationFailure,
+}
+
+impl ResponseKind {
+    /// Snake-case string form. Must match the JSON serialization above
+    /// and the values in the `dns_observations.response_kind` CHECK
+    /// constraint (migration 047).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Nodata => "nodata",
+            Self::Nxdomain => "nxdomain",
+            Self::Servfail => "servfail",
+            Self::Refused => "refused",
+            Self::Timeout => "timeout",
+            Self::TransportError => "transport_error",
+            Self::ValidationFailure => "validation_failure",
+        }
+    }
+}
+
+impl std::str::FromStr for ResponseKind {
+    type Err = UnknownResponseKind;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "success" => Ok(Self::Success),
+            "nodata" => Ok(Self::Nodata),
+            "nxdomain" => Ok(Self::Nxdomain),
+            "servfail" => Ok(Self::Servfail),
+            "refused" => Ok(Self::Refused),
+            "timeout" => Ok(Self::Timeout),
+            "transport_error" => Ok(Self::TransportError),
+            "validation_failure" => Ok(Self::ValidationFailure),
+            other => Err(UnknownResponseKind(other.to_string())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownResponseKind(pub String);
+
+impl std::fmt::Display for UnknownResponseKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown dns response_kind: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for UnknownResponseKind {}
+
 /// The eight verdicts from `docs/VERDICTS.md`. Non-overlapping in primary
 /// trigger; the more-specific one wins when two could apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,6 +324,57 @@ mod tests {
         let k = ClaimKind::IngestState;
         let s = serde_json::to_string(&k).unwrap();
         assert_eq!(s, "\"ingest_state\"");
+    }
+
+    #[test]
+    fn response_kind_serializes_snake_case() {
+        // The JSON form must match dns_observations.response_kind values
+        // exactly — the migration's CHECK constraint enforces the same set.
+        let cases = [
+            (ResponseKind::Success, "\"success\""),
+            (ResponseKind::Nodata, "\"nodata\""),
+            (ResponseKind::Nxdomain, "\"nxdomain\""),
+            (ResponseKind::Servfail, "\"servfail\""),
+            (ResponseKind::Refused, "\"refused\""),
+            (ResponseKind::Timeout, "\"timeout\""),
+            (ResponseKind::TransportError, "\"transport_error\""),
+            (ResponseKind::ValidationFailure, "\"validation_failure\""),
+        ];
+        for (k, expected) in cases {
+            assert_eq!(serde_json::to_string(&k).unwrap(), expected, "{k:?}");
+        }
+    }
+
+    #[test]
+    fn response_kind_round_trips_through_as_str_and_from_str() {
+        use std::str::FromStr;
+        for k in [
+            ResponseKind::Success,
+            ResponseKind::Nodata,
+            ResponseKind::Nxdomain,
+            ResponseKind::Servfail,
+            ResponseKind::Refused,
+            ResponseKind::Timeout,
+            ResponseKind::TransportError,
+            ResponseKind::ValidationFailure,
+        ] {
+            let s = k.as_str();
+            let parsed = ResponseKind::from_str(s).unwrap();
+            assert_eq!(parsed, k, "round-trip {k:?} via {s:?}");
+            // The string form also matches the JSON serialization (minus quotes).
+            assert_eq!(format!("\"{s}\""), serde_json::to_string(&k).unwrap());
+        }
+    }
+
+    #[test]
+    fn response_kind_unknown_text_errors() {
+        use std::str::FromStr;
+        let err = ResponseKind::from_str("DNSSEC_PASSED").unwrap_err();
+        assert_eq!(err.0, "DNSSEC_PASSED");
+        // Display formatting names the bad value so a future migration
+        // mistake fingerprints itself in logs.
+        let msg = format!("{err}");
+        assert!(msg.contains("DNSSEC_PASSED"), "display must name the bad value: {msg}");
     }
 
     #[test]
