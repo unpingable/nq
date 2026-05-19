@@ -15,15 +15,25 @@ use serde::{Deserialize, Serialize};
 /// Wire schema identifier for `disk_state` preflight results.
 pub const PREFLIGHT_DISK_STATE_SCHEMA: &str = "nq.preflight.disk_state.v1";
 
+/// Wire schema identifier for `ingest_state` preflight results. NQ
+/// testifies about its own ingest pulse structure (the aggregator's
+/// `generations` and `source_runs` rows). It does **not** testify
+/// about upstream source substrate or about its own overall health.
+pub const PREFLIGHT_INGEST_STATE_SCHEMA: &str = "nq.preflight.ingest_state.v1";
+
 /// Contract version for the preflight wire shape. Bumps on breaking change.
 pub const PREFLIGHT_CONTRACT_VERSION: u32 = 1;
 
-/// Structured claim kind. V1 only carries `DiskState`. New kinds require a
-/// separate ratified change.
+/// Structured claim kind. V2 covers `DiskState` and `IngestState`. New
+/// kinds require a separate ratified change. The bespoke per-kind
+/// pattern stands until the third claim kind creates a concrete
+/// pressure point for registry generalization (see
+/// `docs/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimKind {
     DiskState,
+    IngestState,
 }
 
 /// The eight verdicts from `docs/VERDICTS.md`. Non-overlapping in primary
@@ -136,6 +146,10 @@ impl PreflightResult {
                 PREFLIGHT_DISK_STATE_SCHEMA.to_string(),
                 disk_state_cannot_testify(),
             ),
+            ClaimKind::IngestState => (
+                PREFLIGHT_INGEST_STATE_SCHEMA.to_string(),
+                ingest_state_cannot_testify(),
+            ),
         };
         Self {
             schema,
@@ -153,6 +167,27 @@ impl PreflightResult {
             observed_at_max: None,
         }
     }
+}
+
+/// Constitutional refusal surface for `ingest_state`. Each entry
+/// corresponds to a conclusion the `generations` / `source_runs`
+/// substrate does not license, regardless of which generation rows
+/// are present. NQ testifies that its own pull cycle ran (or
+/// failed); it does not testify about upstream substrate, semantic
+/// content, or its own overall health. The "NQ itself is healthy"
+/// refusal is the self-witness firewall: a witness about itself is
+/// circular, and `ingest_state` is one channel among many that a
+/// downstream system might (separately) read.
+pub fn ingest_state_cannot_testify() -> Vec<String> {
+    vec![
+        "Upstream source substrate health (NQ observed its own pull attempt; the source's actual state is upstream and beyond witness)".to_string(),
+        "Future ingest success or failure".to_string(),
+        "Semantic correctness of ingested data (the pull cycle's structural state is testifiable; the content's truth is not)".to_string(),
+        "Network connectivity health".to_string(),
+        "Whether to restart, reconfigure, or deactivate a failing source (consequence claim)".to_string(),
+        "NQ's own overall health (the witness cannot be its own complete audit)".to_string(),
+        "Whether ingest will recover from the current failure shape (future-state claim)".to_string(),
+    ]
 }
 
 /// Constitutional refusal surface for `disk_state`. Each entry corresponds to
@@ -210,5 +245,42 @@ mod tests {
         let k = ClaimKind::DiskState;
         let s = serde_json::to_string(&k).unwrap();
         assert_eq!(s, "\"disk_state\"");
+        let k = ClaimKind::IngestState;
+        let s = serde_json::to_string(&k).unwrap();
+        assert_eq!(s, "\"ingest_state\"");
+    }
+
+    #[test]
+    fn ingest_state_skeleton_has_constitutional_refusals() {
+        let target = PreflightTarget {
+            host: "monitor".into(),
+            scope: "ingest".into(),
+            id: None,
+        };
+        let r = PreflightResult::skeleton(
+            ClaimKind::IngestState,
+            target,
+            "2026-05-19T00:00:00Z".into(),
+        );
+        assert_eq!(r.schema, PREFLIGHT_INGEST_STATE_SCHEMA);
+        assert_eq!(r.contract_version, PREFLIGHT_CONTRACT_VERSION);
+        // The self-witness firewall and upstream-substrate refusal must be
+        // present — they are the constitutional shape of this claim kind.
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("Upstream source substrate")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("NQ's own overall health")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("Future ingest")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("Semantic correctness")));
     }
 }

@@ -4,7 +4,7 @@ use axum::{
     routing::{get, post, delete},
     Json, Router,
 };
-use nq_db::{overview, host_detail, query_read_only, evaluate_disk_state_preflight, QueryLimits, ReadDb, WriteDb};
+use nq_db::{overview, host_detail, query_read_only, evaluate_disk_state_preflight, evaluate_ingest_state_preflight, QueryLimits, ReadDb, WriteDb};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -84,6 +84,7 @@ pub fn router(db: Db) -> Router {
         .route("/api/host/{name}/history", get(api_host_history))
         .route("/api/query", get(api_query))
         .route("/api/preflight/disk-state/{host}", get(api_preflight_disk_state))
+        .route("/api/preflight/ingest-state", get(api_preflight_ingest_state))
         .route("/finding/{kind}/{host}", get(finding_detail))
         .route("/finding/{kind}/{host}/{subject}", get(finding_detail_with_subject))
         .with_state(db)
@@ -787,6 +788,25 @@ async fn api_preflight_disk_state(
 ) -> Json<serde_json::Value> {
     let db = db.lock().await;
     match evaluate_disk_state_preflight(&db, &host, params.target.as_deref()) {
+        Ok(result) => match serde_json::to_value(&result) {
+            Ok(v) => Json(v),
+            Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+        },
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+/// Bounded `ingest_state` preflight surfaced over the monitor HTTP path.
+///
+/// Emits the typed `PreflightResult` DTO (`nq.preflight.ingest_state.v1`).
+/// The route is not host-scoped: the witness is the monitor itself
+/// (the aggregator's own `generations` / `source_runs` rows), and NQ
+/// runs one aggregator per DB. NQ testifies about its own pull-cycle
+/// structure here; it does not testify about upstream source substrate,
+/// network state, or its own overall health.
+async fn api_preflight_ingest_state(State(db): State<Db>) -> Json<serde_json::Value> {
+    let db = db.lock().await;
+    match evaluate_ingest_state_preflight(&db) {
         Ok(result) => match serde_json::to_value(&result) {
             Ok(v) => Json(v),
             Err(e) => Json(serde_json::json!({"error": e.to_string()})),
