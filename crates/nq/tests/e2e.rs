@@ -106,6 +106,65 @@ fn temp_db() -> (TempDir, std::path::PathBuf) {
     (dir, db_path)
 }
 
+/// Seed the `generations` row required for any finding insert. Uses
+/// generation_id=100 as the convention shared across e2e tests; the
+/// timestamps mirror the substrate dates the preflight tests assert
+/// against.
+fn seed_generation(conn: &rusqlite::Connection) {
+    conn.execute(
+        "INSERT OR IGNORE INTO generations
+           (generation_id, started_at, completed_at, status,
+            sources_expected, sources_ok, sources_failed, duration_ms)
+         VALUES (100, '2026-05-14T00:00:00Z', '2026-05-14T00:00:00Z',
+                 'complete', 1, 1, 0, 0)",
+        [],
+    )
+    .unwrap();
+}
+
+/// Insert one observed warning finding with sensible defaults for a
+/// "currently firing" lifecycle. Mirrors the internal helper in
+/// `crates/nq-db/src/preflight.rs::tests::insert_finding`, which is
+/// intentionally not exported as a public API — the duplication is
+/// the cost of nq-db keeping its test fixtures private.
+fn insert_observed_finding(
+    conn: &rusqlite::Connection,
+    host: &str,
+    kind: &str,
+    subject: &str,
+) {
+    conn.execute(
+        "INSERT INTO warning_state
+           (host, kind, subject, domain, message, severity,
+            first_seen_gen, first_seen_at, last_seen_gen, last_seen_at,
+            consecutive_gens, finding_class, absent_gens, visibility_state,
+            failure_class, service_impact, action_bias, synopsis, why_care)
+         VALUES (?1, ?2, ?3, 'Δg', 'test', 'warning',
+                 1, '2026-05-01T00:00:00Z', 100, '2026-05-14T00:00:00Z',
+                 5, 'signal', 0, 'observed',
+                 'Accumulation', 'NoneCurrent',
+                 'InvestigateBusinessHours', 'test', 'test')",
+        [host, kind, subject],
+    )
+    .unwrap();
+}
+
+/// Seed the canonical `lil-nas-x` forcing case: pool DEGRADED, vdev
+/// FAULTED, SMART reallocated-sectors rising, SMART uncorrected
+/// counters nonzero. Shared exhibit across the disk_state preflight
+/// surface tests. See `docs/gaps/CLAIM_KIND_DISK_STATE_GAP.md`
+/// §"Forcing-case shape".
+fn seed_disk_state_forcing_case(conn: &rusqlite::Connection, host: &str) {
+    for (kind, subject) in [
+        ("zfs_pool_degraded", "tank"),
+        ("zfs_vdev_faulted", "tank/raidz2-0/ata-X"),
+        ("smart_reallocated_sectors_rising", "/dev/sdX"),
+        ("smart_uncorrected_errors_nonzero", "/dev/sdX"),
+    ] {
+        insert_observed_finding(conn, host, kind, subject);
+    }
+}
+
 /// Parse a PublisherState and build a Batch from it, using the given
 /// canonical host name (same logic as pull_one in crate::pull).
 fn state_to_batch(state: &PublisherState, canonical_host: &str) -> Batch {
@@ -670,43 +729,10 @@ async fn preflight_disk_state_http_seeded_faulted_emits_bounded_testimony() {
     let host = "lil-nas-x";
 
     // Seed the same forcing-case substrate the nq-db evaluator test covers.
-    // Raw SQL is matched to the existing internal helper in
-    // crates/nq-db/src/preflight.rs (tests::insert_finding / ensure_generation)
-    // because nq-db deliberately does not expose a public seed helper, and
-    // the HTTP layer is exercised over the public DB read path regardless.
     {
         let write_db = open_rw(&db_path).unwrap();
-        let conn = write_db.conn();
-        conn.execute(
-            "INSERT OR IGNORE INTO generations
-               (generation_id, started_at, completed_at, status,
-                sources_expected, sources_ok, sources_failed, duration_ms)
-             VALUES (100, '2026-05-14T00:00:00Z', '2026-05-14T00:00:00Z',
-                     'complete', 1, 1, 0, 0)",
-            [],
-        )
-        .unwrap();
-        for (kind, subject) in [
-            ("zfs_pool_degraded", "tank"),
-            ("zfs_vdev_faulted", "tank/raidz2-0/ata-X"),
-            ("smart_reallocated_sectors_rising", "/dev/sdX"),
-            ("smart_uncorrected_errors_nonzero", "/dev/sdX"),
-        ] {
-            conn.execute(
-                "INSERT INTO warning_state
-                   (host, kind, subject, domain, message, severity,
-                    first_seen_gen, first_seen_at, last_seen_gen, last_seen_at,
-                    consecutive_gens, finding_class, absent_gens, visibility_state,
-                    failure_class, service_impact, action_bias, synopsis, why_care)
-                 VALUES (?1, ?2, ?3, 'Δg', 'test', 'warning',
-                         1, '2026-05-01T00:00:00Z', 100, '2026-05-14T00:00:00Z',
-                         5, 'signal', 0, 'observed',
-                         'Accumulation', 'NoneCurrent',
-                         'InvestigateBusinessHours', 'test', 'test')",
-                [host, kind, subject],
-            )
-            .unwrap();
-        }
+        seed_generation(write_db.conn());
+        seed_disk_state_forcing_case(write_db.conn(), host);
         drop(write_db);
     }
 
@@ -997,37 +1023,8 @@ async fn api_host_includes_bounded_disk_state_preflight() {
 
     {
         let write_db = open_rw(&db_path).unwrap();
-        let conn = write_db.conn();
-        conn.execute(
-            "INSERT OR IGNORE INTO generations
-               (generation_id, started_at, completed_at, status,
-                sources_expected, sources_ok, sources_failed, duration_ms)
-             VALUES (100, '2026-05-14T00:00:00Z', '2026-05-14T00:00:00Z',
-                     'complete', 1, 1, 0, 0)",
-            [],
-        )
-        .unwrap();
-        for (kind, subject) in [
-            ("zfs_pool_degraded", "tank"),
-            ("zfs_vdev_faulted", "tank/raidz2-0/ata-X"),
-            ("smart_reallocated_sectors_rising", "/dev/sdX"),
-            ("smart_uncorrected_errors_nonzero", "/dev/sdX"),
-        ] {
-            conn.execute(
-                "INSERT INTO warning_state
-                   (host, kind, subject, domain, message, severity,
-                    first_seen_gen, first_seen_at, last_seen_gen, last_seen_at,
-                    consecutive_gens, finding_class, absent_gens, visibility_state,
-                    failure_class, service_impact, action_bias, synopsis, why_care)
-                 VALUES (?1, ?2, ?3, 'Δg', 'test', 'warning',
-                         1, '2026-05-01T00:00:00Z', 100, '2026-05-14T00:00:00Z',
-                         5, 'signal', 0, 'observed',
-                         'Accumulation', 'NoneCurrent',
-                         'InvestigateBusinessHours', 'test', 'test')",
-                [host, kind, subject],
-            )
-            .unwrap();
-        }
+        seed_generation(write_db.conn());
+        seed_disk_state_forcing_case(write_db.conn(), host);
         drop(write_db);
     }
 
@@ -1159,37 +1156,8 @@ async fn smoke_disk_state_passes_on_seeded_forcing_case() {
 
     {
         let write_db = open_rw(&db_path).unwrap();
-        let conn = write_db.conn();
-        conn.execute(
-            "INSERT OR IGNORE INTO generations
-               (generation_id, started_at, completed_at, status,
-                sources_expected, sources_ok, sources_failed, duration_ms)
-             VALUES (100, '2026-05-14T00:00:00Z', '2026-05-14T00:00:00Z',
-                     'complete', 1, 1, 0, 0)",
-            [],
-        )
-        .unwrap();
-        for (kind, subject) in [
-            ("zfs_pool_degraded", "tank"),
-            ("zfs_vdev_faulted", "tank/raidz2-0/ata-X"),
-            ("smart_reallocated_sectors_rising", "/dev/sdX"),
-            ("smart_uncorrected_errors_nonzero", "/dev/sdX"),
-        ] {
-            conn.execute(
-                "INSERT INTO warning_state
-                   (host, kind, subject, domain, message, severity,
-                    first_seen_gen, first_seen_at, last_seen_gen, last_seen_at,
-                    consecutive_gens, finding_class, absent_gens, visibility_state,
-                    failure_class, service_impact, action_bias, synopsis, why_care)
-                 VALUES (?1, ?2, ?3, 'Δg', 'test', 'warning',
-                         1, '2026-05-01T00:00:00Z', 100, '2026-05-14T00:00:00Z',
-                         5, 'signal', 0, 'observed',
-                         'Accumulation', 'NoneCurrent',
-                         'InvestigateBusinessHours', 'test', 'test')",
-                [host, kind, subject],
-            )
-            .unwrap();
-        }
+        seed_generation(write_db.conn());
+        seed_disk_state_forcing_case(write_db.conn(), host);
         drop(write_db);
     }
 
@@ -1251,16 +1219,7 @@ async fn smoke_disk_state_passes_on_unseeded_host_with_honest_refusal() {
 
     {
         let write_db = open_rw(&db_path).unwrap();
-        let conn = write_db.conn();
-        conn.execute(
-            "INSERT OR IGNORE INTO generations
-               (generation_id, started_at, completed_at, status,
-                sources_expected, sources_ok, sources_failed, duration_ms)
-             VALUES (100, '2026-05-14T00:00:00Z', '2026-05-14T00:00:00Z',
-                     'complete', 1, 1, 0, 0)",
-            [],
-        )
-        .unwrap();
+        seed_generation(write_db.conn());
         drop(write_db);
     }
 
