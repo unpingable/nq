@@ -2,6 +2,7 @@ pub mod connect;
 pub mod declarations;
 pub mod detect;
 pub mod digest;
+pub mod dns;
 pub mod export;
 pub mod finding_meta;
 pub mod import;
@@ -65,5 +66,10 @@ pub use snapshot::create_snapshot;
 pub use preflight::{
     evaluate_disk_state_preflight, evaluate_disk_state_preflight_from_conn,
     evaluate_ingest_state_preflight, evaluate_ingest_state_preflight_from_conn,
+};
+pub use dns::{
+    insert_observation as insert_dns_observation,
+    latest_observation_for_tuple as latest_dns_observation_for_tuple, DnsObservation,
+    DnsObservationTuple,
 };
 pub use views::{host_detail, host_states, overview, HostDetailVm, HostStateVm, OverviewVm};
