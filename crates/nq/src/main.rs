@@ -3,6 +3,7 @@ mod cmd;
 mod collect;
 mod http;
 mod pull;
+mod smoke;
 
 use clap::Parser;
 
