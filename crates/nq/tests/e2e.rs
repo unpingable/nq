@@ -149,6 +149,39 @@ fn insert_observed_finding(
     .unwrap();
 }
 
+/// Insert a generation row with `completed_at` set to now, so the
+/// `ingest_state` evaluator reads it as fresh. The shared
+/// `seed_generation` helper uses a fixed past timestamp that matches
+/// the disk_state tests' finding seed dates; that is intentional for
+/// disk_state but would always read as stale for ingest_state.
+fn seed_fresh_generation(
+    conn: &rusqlite::Connection,
+    gen_id: i64,
+    status: &str,
+    sources_ok: i64,
+    sources_failed: i64,
+) {
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let sources_expected = sources_ok + sources_failed;
+    conn.execute(
+        "INSERT INTO generations
+           (generation_id, started_at, completed_at, status,
+            sources_expected, sources_ok, sources_failed, duration_ms)
+         VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, 0)",
+        rusqlite::params![
+            gen_id,
+            now,
+            status,
+            sources_expected,
+            sources_ok,
+            sources_failed,
+        ],
+    )
+    .unwrap();
+}
+
 /// Seed the canonical `lil-nas-x` forcing case: pool DEGRADED, vdev
 /// FAULTED, SMART reallocated-sectors rising, SMART uncorrected
 /// counters nonzero. Shared exhibit across the disk_state preflight
@@ -1136,6 +1169,187 @@ async fn api_host_includes_bounded_disk_state_preflight() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// `ingest_state` preflight surfaced over the monitor HTTP path. NQ
+// testifies about its own pull-cycle structure (the aggregator's own
+// `generations` / `source_runs` rows); it does not testify about
+// upstream substrate, network state, or its own overall health. The
+// constitutional refusal surface rides the wire regardless of verdict.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn ingest_state_http_emits_admissible_with_scope_on_fresh_clean_generation() {
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+
+    {
+        let write_db = open_rw(&db_path).unwrap();
+        seed_fresh_generation(write_db.conn(), 100, "complete", 2, 0);
+        drop(write_db);
+    }
+
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let resp: serde_json::Value = client
+        .get(format!("{base}/api/preflight/ingest-state"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    // Wire contract.
+    assert_eq!(resp["schema"], "nq.preflight.ingest_state.v1");
+    assert_eq!(resp["contract_version"], 1);
+    assert_eq!(resp["claim_kind"], "ingest_state");
+    // Target shape: not host-scoped — the witness is the monitor itself.
+    assert_eq!(resp["target"]["host"], "monitor");
+    assert_eq!(resp["target"]["scope"], "ingest");
+
+    // Verdict: fresh clean generation → admissible_with_scope.
+    assert_eq!(
+        resp["verdict"].as_str().expect("verdict"),
+        "admissible_with_scope",
+        "fresh complete generation must surface as admissible_with_scope; got {:?}",
+        resp["verdict"]
+    );
+
+    // Supports: one pulse-level support naming generation 100.
+    let supports = resp["supports"].as_array().expect("supports array");
+    assert!(!supports.is_empty(), "supports[] must reach the wire");
+    assert_eq!(supports[0]["subject"], "generation:100");
+    assert_eq!(supports[0]["finding_kind"], "ingest_generation_complete");
+
+    // Constitutional refusal surface: present alongside live testimony.
+    let cannot_testify = resp["cannot_testify"]
+        .as_array()
+        .expect("cannot_testify array");
+    let joined = cannot_testify
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for needle in [
+        "Upstream source substrate",
+        "NQ's own overall health",
+        "Future ingest",
+        "Semantic correctness",
+    ] {
+        assert!(
+            joined.contains(needle),
+            "cannot_testify must name {needle:?}; got: {joined}"
+        );
+    }
+
+    // Coverage: pulse witness has standing.
+    let coverage = resp["coverage"].as_array().expect("coverage array");
+    let pulse = coverage
+        .iter()
+        .find(|c| c["witness"] == "ingest_pulse")
+        .expect("ingest_pulse coverage entry");
+    assert_eq!(pulse["standing"], "observable");
+
+    // Observation window: present (supports is non-empty).
+    assert!(
+        resp.get("observed_at_min").is_some(),
+        "observed_at_min must be present when supports is non-empty"
+    );
+    assert!(
+        resp.get("observed_at_max").is_some(),
+        "observed_at_max must be present when supports is non-empty"
+    );
+
+    // Anti-laundering at the wire: supports must not promote into
+    // upstream-substrate or consequence vocabulary even when a source
+    // failed. (Vacuous on the clean case here; the assertion is the
+    // regression guard once a failure shape is seeded.)
+    for support in supports {
+        let claim = support["claim"].as_str().unwrap_or("");
+        let lower = claim.to_lowercase();
+        for forbidden in [
+            "source is down",
+            "source is unhealthy",
+            "upstream is down",
+            "network is down",
+            "restart",
+            "reconfigure",
+        ] {
+            assert!(
+                !lower.contains(forbidden),
+                "support claim laundered upstream vocabulary ({forbidden:?}): {claim:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn ingest_state_http_emits_insufficient_coverage_on_empty_db() {
+    use nq::http::routes::router;
+
+    // Empty generations table: no ingest pulses recorded at all. The
+    // operator-facing surface must emit insufficient_coverage with the
+    // constitutional refusal surface still populated.
+    let (_dir, db_path) = temp_db();
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let resp: serde_json::Value = client
+        .get(format!("{base}/api/preflight/ingest-state"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(resp["schema"], "nq.preflight.ingest_state.v1");
+    assert_eq!(resp["verdict"], "insufficient_coverage");
+
+    let supports = resp["supports"].as_array().expect("supports array");
+    assert!(supports.is_empty(), "no generations → no supports");
+
+    let cannot_testify = resp["cannot_testify"]
+        .as_array()
+        .expect("cannot_testify array");
+    assert!(
+        !cannot_testify.is_empty(),
+        "constitutional refusal surface must be populated even on empty DB"
+    );
+
+    // Observation window absent when supports is empty.
+    assert!(resp.get("observed_at_min").is_none());
+    assert!(resp.get("observed_at_max").is_none());
+
+    // Coverage: pulse witness recorded as absent.
+    let coverage = resp["coverage"].as_array().expect("coverage array");
+    let pulse = coverage
+        .iter()
+        .find(|c| c["witness"] == "ingest_pulse")
+        .expect("ingest_pulse coverage entry");
+    assert_eq!(pulse["standing"], "absent");
 }
 
 // ---------------------------------------------------------------------------

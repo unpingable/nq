@@ -16,6 +16,13 @@ use nq_core::preflight::{
     PreflightTarget, Verdict,
 };
 
+/// Staleness threshold for the latest generation's `completed_at`, in
+/// seconds. The aggregator's default pull interval is 60s; 300s (5×) is
+/// a heuristic — large enough to absorb a missed cycle, small enough
+/// that two consecutive misses are testifiable as stale. Bespoke for
+/// V2; a future ratified change may make this configurable.
+const INGEST_STATE_STALE_THRESHOLD_SECONDS: i64 = 300;
+
 /// Detectors whose findings constitute disk-state substrate testimony.
 /// `smart_status_lies` is included here even though it triggers a
 /// `ContradictoryTestimony` verdict — the underlying observation is real
@@ -387,6 +394,235 @@ fn scoped_claim_text(detector: &str, subject: &str, observed_at: &str) -> String
 }
 
 // ---------------------------------------------------------------------------
+// `ingest_state` evaluator. NQ testifies about its own pull-cycle
+// structure — the generations + source_runs rows the aggregator writes
+// when it commits a publish transaction. It does **not** testify about
+// upstream substrate, semantic content, network connectivity, or its
+// own overall health. The constitutional refusal surface lives in
+// `nq_core::preflight::ingest_state_cannot_testify`.
+// ---------------------------------------------------------------------------
+
+/// Entry point. Returns a `PreflightResult` for `ingest_state` against
+/// the latest generation recorded on this DB.
+pub fn evaluate_ingest_state_preflight(db: &ReadDb) -> anyhow::Result<PreflightResult> {
+    evaluate_ingest_state_preflight_from_conn(db.conn())
+}
+
+/// Variant that accepts a raw `Connection`. Used by tests and by the
+/// HTTP route layer; the public API is the `ReadDb` form above.
+pub fn evaluate_ingest_state_preflight_from_conn(
+    conn: &rusqlite::Connection,
+) -> anyhow::Result<PreflightResult> {
+    let generated_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| String::new());
+
+    let target = PreflightTarget {
+        host: "monitor".to_string(),
+        scope: "ingest".to_string(),
+        id: None,
+    };
+    let mut result = PreflightResult::skeleton(ClaimKind::IngestState, target, generated_at);
+
+    let latest = load_latest_generation(conn)?;
+
+    let Some(gen) = latest else {
+        // Absent evidence: the generations table is empty. NQ has
+        // recorded no ingest pulse at all on this DB. The constitutional
+        // refusal surface still rides this verdict; absence of pulses
+        // is not affirmative testimony of healthy ingest.
+        result.verdict = Verdict::InsufficientCoverage;
+        result.verdict_note = Some(
+            "No generations recorded; NQ has no ingest pulse evidence on this DB. Absence of pulses is not affirmative testimony of healthy ingest."
+                .to_string(),
+        );
+        result.coverage.push(PreflightCoverage {
+            witness: "ingest_pulse".to_string(),
+            standing: "absent".to_string(),
+            note: Some("generations table is empty".to_string()),
+        });
+        return Ok(result);
+    };
+
+    // The pulse witness has standing iff at least one generation row
+    // exists. Failed sources still constitute observable testimony at
+    // the pulse-structure layer.
+    result.coverage.push(PreflightCoverage {
+        witness: "ingest_pulse".to_string(),
+        standing: "observable".to_string(),
+        note: None,
+    });
+
+    // Generation-level support. The `finding_kind` is synthetic — there
+    // is no detector for generation status; the wire field just labels
+    // the support's source row class so consumers can distinguish the
+    // pulse-level support from per-source supports below.
+    result.supports.push(PreflightSupport {
+        claim: format!(
+            "NQ recorded generation {} as {} at observed_at {} (sources_ok={}/{}, sources_failed={})",
+            gen.generation_id,
+            gen.status,
+            gen.completed_at,
+            gen.sources_ok,
+            gen.sources_expected,
+            gen.sources_failed,
+        ),
+        finding_kind: format!("ingest_generation_{}", gen.status),
+        subject: format!("generation:{}", gen.generation_id),
+        observed_at: Some(gen.completed_at.clone()),
+        freshness: None,
+        admissibility_state: Some("observable".to_string()),
+    });
+
+    // Source-level supports for failed sources within this generation.
+    // Successful sources are aggregated into the generation-level
+    // support; surfacing them individually would be noise.
+    let failed_sources = load_failed_source_runs(conn, gen.generation_id)?;
+    for src in &failed_sources {
+        let err_note = src
+            .error_message
+            .as_deref()
+            .map(|e| format!(" — error: {e}"))
+            .unwrap_or_default();
+        result.supports.push(PreflightSupport {
+            claim: format!(
+                "Source '{}' reported status {} at received_at {}{}",
+                src.source, src.status, src.received_at, err_note
+            ),
+            finding_kind: format!("ingest_source_{}", src.status),
+            subject: format!("source:{}", src.source),
+            observed_at: Some(src.received_at.clone()),
+            freshness: None,
+            admissibility_state: Some("observable".to_string()),
+        });
+    }
+
+    // Observation-window disclosure. Computed only over supports[],
+    // mirroring the disk_state path. Absent supports already produced
+    // an early return above, so we always have at least the generation
+    // support here.
+    result.observed_at_min = result
+        .supports
+        .iter()
+        .filter_map(|s| s.observed_at.clone())
+        .min();
+    result.observed_at_max = result
+        .supports
+        .iter()
+        .filter_map(|s| s.observed_at.clone())
+        .max();
+
+    // Verdict.
+    let now = time::OffsetDateTime::now_utc();
+    let completed_parsed = time::OffsetDateTime::parse(
+        &gen.completed_at,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .ok();
+    let age_seconds = completed_parsed.map(|t| (now - t).whole_seconds());
+
+    let stale = matches!(age_seconds, Some(age) if age > INGEST_STATE_STALE_THRESHOLD_SECONDS);
+
+    let (verdict, note) = if stale {
+        let age = age_seconds.unwrap_or_default();
+        (
+            Verdict::StaleTestimony,
+            Some(format!(
+                "Latest generation completed at {} is {}s old (> {}s threshold); ingest pulse evidence is stale.",
+                gen.completed_at, age, INGEST_STATE_STALE_THRESHOLD_SECONDS
+            )),
+        )
+    } else if gen.sources_failed > 0 || gen.status == "failed" || gen.status == "partial" {
+        (
+            Verdict::AdmissibleWithScope,
+            Some(format!(
+                "Latest generation reports {} source(s) failed (status={}); admissible only at witness scope — upstream substrate state remains beyond witness.",
+                gen.sources_failed, gen.status
+            )),
+        )
+    } else {
+        (
+            Verdict::AdmissibleWithScope,
+            Some(
+                "Latest generation completed cleanly; admissible as evidence of NQ's own pull cycle, not of upstream substrate health.".to_string(),
+            ),
+        )
+    };
+    result.verdict = verdict;
+    result.verdict_note = note;
+
+    Ok(result)
+}
+
+#[derive(Debug)]
+struct LatestGeneration {
+    generation_id: i64,
+    completed_at: String,
+    status: String,
+    sources_expected: i64,
+    sources_ok: i64,
+    sources_failed: i64,
+}
+
+fn load_latest_generation(
+    conn: &rusqlite::Connection,
+) -> anyhow::Result<Option<LatestGeneration>> {
+    let row = conn
+        .query_row(
+            "SELECT generation_id, completed_at, status, sources_expected, sources_ok, sources_failed
+             FROM generations
+             ORDER BY completed_at DESC
+             LIMIT 1",
+            [],
+            |r| {
+                Ok(LatestGeneration {
+                    generation_id: r.get(0)?,
+                    completed_at: r.get(1)?,
+                    status: r.get(2)?,
+                    sources_expected: r.get(3)?,
+                    sources_ok: r.get(4)?,
+                    sources_failed: r.get(5)?,
+                })
+            },
+        )
+        .ok();
+    Ok(row)
+}
+
+#[derive(Debug)]
+struct FailedSourceRun {
+    source: String,
+    status: String,
+    received_at: String,
+    error_message: Option<String>,
+}
+
+fn load_failed_source_runs(
+    conn: &rusqlite::Connection,
+    generation_id: i64,
+) -> anyhow::Result<Vec<FailedSourceRun>> {
+    let mut stmt = conn.prepare(
+        "SELECT source, status, received_at, error_message
+         FROM source_runs
+         WHERE generation_id = ?1 AND status != 'ok'
+         ORDER BY source",
+    )?;
+    let rows = stmt.query_map([generation_id], |r| {
+        Ok(FailedSourceRun {
+            source: r.get(0)?,
+            status: r.get(1)?,
+            received_at: r.get(2)?,
+            error_message: r.get(3)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -592,5 +828,321 @@ mod tests {
         let r = evaluate_disk_state_preflight_from_conn(&db.conn, "lil-nas-x", None).unwrap();
         assert_eq!(r.schema, nq_core::preflight::PREFLIGHT_DISK_STATE_SCHEMA);
         assert_eq!(r.contract_version, nq_core::preflight::PREFLIGHT_CONTRACT_VERSION);
+    }
+
+    // -----------------------------------------------------------------------
+    // ingest_state evaluator tests
+    // -----------------------------------------------------------------------
+
+    /// Insert a generation row with an explicit `completed_at` so tests
+    /// can control the staleness window. The existing `ensure_generation`
+    /// helper pins to a fixed past date, which is fine for findings but
+    /// will always read as stale for ingest_state — these helpers cover
+    /// both the fresh and the stale cases.
+    fn insert_generation(
+        db: &crate::WriteDb,
+        gen_id: i64,
+        completed_at: &str,
+        status: &str,
+        sources_expected: i64,
+        sources_ok: i64,
+        sources_failed: i64,
+    ) {
+        db.conn
+            .execute(
+                "INSERT OR IGNORE INTO generations
+                   (generation_id, started_at, completed_at, status,
+                    sources_expected, sources_ok, sources_failed, duration_ms)
+                 VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, 0)",
+                rusqlite::params![
+                    gen_id,
+                    completed_at,
+                    status,
+                    sources_expected,
+                    sources_ok,
+                    sources_failed,
+                ],
+            )
+            .unwrap();
+    }
+
+    fn insert_source_run(
+        db: &crate::WriteDb,
+        gen_id: i64,
+        source: &str,
+        status: &str,
+        received_at: &str,
+        error_message: Option<&str>,
+    ) {
+        db.conn
+            .execute(
+                "INSERT INTO source_runs
+                   (generation_id, source, status, received_at, error_message)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![gen_id, source, status, received_at, error_message],
+            )
+            .unwrap();
+    }
+
+    /// Return an RFC3339 timestamp `offset_seconds` in the past (negative)
+    /// or future (positive) relative to now. Used to seed fresh-or-stale
+    /// generation timestamps deterministically against the evaluator's
+    /// wall clock.
+    fn rfc3339_at_offset(offset_seconds: i64) -> String {
+        let t = time::OffsetDateTime::now_utc()
+            + time::Duration::seconds(offset_seconds);
+        t.format(&time::format_description::well_known::Rfc3339)
+            .unwrap()
+    }
+
+    #[test]
+    fn ingest_state_empty_db_returns_insufficient_coverage() {
+        let db = make_db();
+        let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        assert_eq!(r.verdict, Verdict::InsufficientCoverage);
+        assert!(r.supports.is_empty(), "no generations → no supports");
+        // Constitutional refusal surface still populated.
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("Upstream source substrate")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("NQ's own overall health")));
+        // Coverage records the witness as absent.
+        let pulse = r
+            .coverage
+            .iter()
+            .find(|c| c.witness == "ingest_pulse")
+            .expect("ingest_pulse coverage entry");
+        assert_eq!(pulse.standing, "absent");
+        // Observation window absent: no supports, no testimony to bracket.
+        assert!(r.observed_at_min.is_none());
+        assert!(r.observed_at_max.is_none());
+    }
+
+    #[test]
+    fn ingest_state_recent_clean_generation_is_admissible_with_scope() {
+        let db = make_db();
+        let completed = rfc3339_at_offset(-30); // 30s ago, well within freshness
+        insert_generation(&db, 100, &completed, "complete", 2, 2, 0);
+
+        let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
+        assert_eq!(r.supports.len(), 1, "clean gen → one pulse-level support");
+        assert_eq!(r.supports[0].finding_kind, "ingest_generation_complete");
+        assert_eq!(r.supports[0].subject, "generation:100");
+        assert_eq!(r.supports[0].observed_at.as_deref(), Some(completed.as_str()));
+        assert_eq!(r.observed_at_min.as_deref(), Some(completed.as_str()));
+        assert_eq!(r.observed_at_max.as_deref(), Some(completed.as_str()));
+        // Constitutional refusal surface still populated alongside live testimony.
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("Future ingest")));
+    }
+
+    #[test]
+    fn ingest_state_partial_generation_surfaces_failed_source_supports() {
+        let db = make_db();
+        let completed = rfc3339_at_offset(-60);
+        let earlier = rfc3339_at_offset(-65);
+        insert_generation(&db, 200, &completed, "partial", 3, 1, 2);
+        insert_source_run(&db, 200, "good_source", "ok", &completed, None);
+        insert_source_run(
+            &db,
+            200,
+            "bad_source",
+            "error",
+            &earlier,
+            Some("connection refused"),
+        );
+        insert_source_run(
+            &db,
+            200,
+            "slow_source",
+            "timeout",
+            &earlier,
+            Some("exceeded 5s budget"),
+        );
+
+        let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
+        // 1 pulse support + 2 failed source supports (the ok source is
+        // aggregated into the pulse support, not surfaced separately).
+        assert_eq!(r.supports.len(), 3);
+
+        let pulse = r
+            .supports
+            .iter()
+            .find(|s| s.finding_kind == "ingest_generation_partial")
+            .expect("pulse support");
+        assert_eq!(pulse.subject, "generation:200");
+        assert!(pulse.claim.contains("sources_failed=2"));
+
+        let bad = r
+            .supports
+            .iter()
+            .find(|s| s.finding_kind == "ingest_source_error")
+            .expect("error source support");
+        assert_eq!(bad.subject, "source:bad_source");
+        assert!(bad.claim.contains("connection refused"));
+
+        let slow = r
+            .supports
+            .iter()
+            .find(|s| s.finding_kind == "ingest_source_timeout")
+            .expect("timeout source support");
+        assert_eq!(slow.subject, "source:slow_source");
+        assert!(slow.claim.contains("exceeded 5s budget"));
+
+        // verdict_note must name the failure shape so a casual reader sees
+        // that the verdict is admissible *with* qualification.
+        assert!(r
+            .verdict_note
+            .as_deref()
+            .unwrap_or("")
+            .contains("2 source(s) failed"));
+
+        // Observation window brackets supports[].observed_at.
+        let min = r.observed_at_min.as_deref().unwrap();
+        let max = r.observed_at_max.as_deref().unwrap();
+        assert!(min <= max, "observed_at_min must not exceed observed_at_max");
+    }
+
+    #[test]
+    fn ingest_state_stale_generation_yields_stale_testimony() {
+        let db = make_db();
+        // Far past — much older than the 300s threshold.
+        insert_generation(&db, 50, "2020-01-01T00:00:00Z", "complete", 1, 1, 0);
+
+        let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        assert_eq!(r.verdict, Verdict::StaleTestimony);
+        assert!(r
+            .verdict_note
+            .as_deref()
+            .unwrap_or("")
+            .contains("stale"));
+        // The constitutional refusal surface must remain regardless of
+        // verdict — staleness is testimony about freshness, not a license
+        // to drop the refusals.
+        assert!(!r.cannot_testify.is_empty());
+    }
+
+    #[test]
+    fn ingest_state_failed_generation_with_no_ok_sources_is_admissible_at_scope() {
+        let db = make_db();
+        let completed = rfc3339_at_offset(-30);
+        insert_generation(&db, 300, &completed, "failed", 2, 0, 2);
+        insert_source_run(
+            &db,
+            300,
+            "a",
+            "error",
+            &completed,
+            Some("network unreachable"),
+        );
+        insert_source_run(
+            &db,
+            300,
+            "b",
+            "error",
+            &completed,
+            Some("dns lookup failed"),
+        );
+
+        let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        // Even a generation where every source failed is testifiable: NQ
+        // observed that its own pull cycle ran and produced no ok sources.
+        // That is admissible_with_scope, not cannot_testify — the verdict
+        // reflects what NQ can honestly say. What NQ cannot say (upstream
+        // health, network state, recovery prediction) is still on the
+        // cannot_testify list.
+        assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
+        assert!(r
+            .verdict_note
+            .as_deref()
+            .unwrap_or("")
+            .contains("status=failed"));
+        assert_eq!(r.supports.len(), 3, "1 pulse + 2 error source supports");
+    }
+
+    #[test]
+    fn ingest_state_latest_generation_wins_when_multiple_exist() {
+        let db = make_db();
+        let old = rfc3339_at_offset(-200);
+        let newer = rfc3339_at_offset(-30);
+        insert_generation(&db, 1, &old, "failed", 1, 0, 1);
+        insert_generation(&db, 2, &newer, "complete", 1, 1, 0);
+
+        let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
+        // Latest generation by completed_at is the clean one; verdict_note
+        // must reflect the clean outcome.
+        assert!(r
+            .verdict_note
+            .as_deref()
+            .unwrap_or("")
+            .contains("completed cleanly"));
+        assert_eq!(r.supports[0].subject, "generation:2");
+    }
+
+    #[test]
+    fn ingest_state_schema_and_contract_version_are_set() {
+        let db = make_db();
+        let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        assert_eq!(
+            r.schema,
+            nq_core::preflight::PREFLIGHT_INGEST_STATE_SCHEMA
+        );
+        assert_eq!(
+            r.contract_version,
+            nq_core::preflight::PREFLIGHT_CONTRACT_VERSION
+        );
+        // Target shape: not host-scoped; the witness is the monitor itself.
+        assert_eq!(r.target.host, "monitor");
+        assert_eq!(r.target.scope, "ingest");
+        assert!(r.target.id.is_none());
+    }
+
+    #[test]
+    fn ingest_state_supports_dont_launder_upstream_substrate_vocabulary() {
+        // Anti-laundering at the support layer: a source error must not
+        // promote into a claim about upstream substrate health. The
+        // support claim wording reports what NQ observed about its own
+        // pull attempt; it does not assert anything about the source's
+        // internal state.
+        let db = make_db();
+        let completed = rfc3339_at_offset(-30);
+        insert_generation(&db, 400, &completed, "partial", 1, 0, 1);
+        insert_source_run(
+            &db,
+            400,
+            "labelwatch",
+            "error",
+            &completed,
+            Some("HTTP 500"),
+        );
+
+        let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        for support in &r.supports {
+            let lower = support.claim.to_ascii_lowercase();
+            for forbidden in [
+                "source is down",
+                "source is dead",
+                "source is unhealthy",
+                "upstream is down",
+                "network is down",
+                "restart",
+                "reconfigure",
+            ] {
+                assert!(
+                    !lower.contains(forbidden),
+                    "support claim laundered upstream-substrate vocabulary ({forbidden:?}): {:?}",
+                    support.claim
+                );
+            }
+        }
     }
 }

@@ -62,5 +62,8 @@ pub use publish::{
 pub use query::{query_read_only, QueryLimits, QueryResult};
 pub use retention::{prune, PruneStats};
 pub use snapshot::create_snapshot;
-pub use preflight::{evaluate_disk_state_preflight, evaluate_disk_state_preflight_from_conn};
+pub use preflight::{
+    evaluate_disk_state_preflight, evaluate_disk_state_preflight_from_conn,
+    evaluate_ingest_state_preflight, evaluate_ingest_state_preflight_from_conn,
+};
 pub use views::{host_detail, host_states, overview, HostDetailVm, HostStateVm, OverviewVm};
