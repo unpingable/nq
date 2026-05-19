@@ -45,6 +45,8 @@ The action calls `git`, `gh` (preinstalled on `ubuntu-latest`), and `python3` (p
 | `nq_bin` | `nq` | Path to the `nq` binary. |
 | `comment` | `true` | Post or update a PR comment. |
 | `strict` | `false` | Fail the job when status is not `verified`. |
+| `upload_artifact` | `true` | Upload `.nq/receipts/` (receipt JSON + rendered markdown) as a workflow artifact. Runs even when `strict` is going to fail the job, so the receipt is downloadable from the failing run. |
+| `artifact_name` | _(empty)_ | Override the artifact name. Must be unique per workflow run when calling this action more than once. Default: `nq-receipt-<claim>`. |
 
 ## Outputs
 
@@ -113,3 +115,4 @@ jobs:
 - The action's behavior is intentionally informational by default. Strict mode is an opt-in; do not enable it on the first PR after adoption — let the receipts annoy you usefully first, then ratchet up.
 - The PR comment is "sticky": subsequent runs update the same comment in place rather than producing a new comment each time. The action identifies its own comment by the `## NQ Verification Receipt` header.
 - The `nq_bin` input lets you substitute a different binary (e.g. a pre-built release artifact) once those are published.
+- The receipt artifact is uploaded with `if: always()`, so a strict-mode failure does not skip the upload. The receipt JSON that caused the strict failure is downloadable from the failing run. Set `upload_artifact: false` to skip the upload (e.g. when the consumer workflow already uploads `.nq/receipts/` itself).

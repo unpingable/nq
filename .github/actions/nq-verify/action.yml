@@ -39,6 +39,14 @@ inputs:
     description: 'Fail the job when the receipt status is not "verified".'
     required: false
     default: 'false'
+  upload_artifact:
+    description: 'Upload `.nq/receipts/` (receipt JSON + rendered markdown) as a workflow artifact for download and post-hoc forensics. Runs even when the job is going to fail in strict mode.'
+    required: false
+    default: 'true'
+  artifact_name:
+    description: 'Artifact name. Must be unique within a single workflow run, so override when calling this action more than once. Default: `nq-receipt-<claim>`.'
+    required: false
+    default: ''
 
 outputs:
   status:
@@ -114,6 +122,14 @@ runs:
       run: |
         "${{ inputs.nq_bin }}" receipt render .nq/receipts/receipt.json \
           --format markdown > .nq/receipts/receipt.md
+
+    - name: Upload receipt artifact
+      if: always() && inputs.upload_artifact == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact_name || format('nq-receipt-{0}', inputs.claim) }}
+        path: .nq/receipts/
+        if-no-files-found: warn
 
     - name: Post or update PR comment
       if: inputs.comment == 'true' && github.event_name == 'pull_request'
