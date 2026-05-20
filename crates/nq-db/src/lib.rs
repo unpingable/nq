@@ -68,8 +68,9 @@ pub use preflight::{
     evaluate_ingest_state_preflight, evaluate_ingest_state_preflight_from_conn,
 };
 pub use dns::{
+    evaluate_dns_state_preflight, evaluate_dns_state_preflight_from_conn,
     insert_observation as insert_dns_observation,
     latest_observation_for_tuple as latest_dns_observation_for_tuple, DnsObservation,
-    DnsObservationTuple,
+    DnsObservationTuple, DNS_STATE_STALE_THRESHOLD_SECONDS,
 };
 pub use views::{host_detail, host_states, overview, HostDetailVm, HostStateVm, OverviewVm};

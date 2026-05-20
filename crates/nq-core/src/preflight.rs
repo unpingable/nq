@@ -21,19 +21,29 @@ pub const PREFLIGHT_DISK_STATE_SCHEMA: &str = "nq.preflight.disk_state.v1";
 /// about upstream source substrate or about its own overall health.
 pub const PREFLIGHT_INGEST_STATE_SCHEMA: &str = "nq.preflight.ingest_state.v1";
 
+/// Wire schema identifier for `dns_state` preflight results. One envelope
+/// per `(vantage_host, resolver, query_name, query_type)` tuple. NQ
+/// testifies to what the resolver said from one vantage at one instant.
+/// It does **not** testify to endpoint reachability, service health,
+/// global DNS truth, future resolution, or registrar/account status.
+pub const PREFLIGHT_DNS_STATE_SCHEMA: &str = "nq.preflight.dns_state.v1";
+
 /// Contract version for the preflight wire shape. Bumps on breaking change.
 pub const PREFLIGHT_CONTRACT_VERSION: u32 = 1;
 
-/// Structured claim kind. V2 covers `DiskState` and `IngestState`. New
-/// kinds require a separate ratified change. The bespoke per-kind
-/// pattern stands until the third claim kind creates a concrete
-/// pressure point for registry generalization (see
-/// `docs/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`).
+/// Structured claim kind. V3 covers `DiskState`, `IngestState`, and
+/// `DnsState`. New kinds require a separate ratified change. The
+/// bespoke per-kind pattern stands; the four concrete registry-pressure
+/// points named in `docs/gaps/DNS_WITNESS_FAMILY_GAP.md` move the
+/// forcing case to kind 4 (see also
+/// `docs/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md` for the eight
+/// guardrails that govern the registry shape when it does land).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimKind {
     DiskState,
     IngestState,
+    DnsState,
 }
 
 /// Kind of response observed for a single DNS query against a single
@@ -226,6 +236,10 @@ impl PreflightResult {
                 PREFLIGHT_INGEST_STATE_SCHEMA.to_string(),
                 ingest_state_cannot_testify(),
             ),
+            ClaimKind::DnsState => (
+                PREFLIGHT_DNS_STATE_SCHEMA.to_string(),
+                dns_state_cannot_testify(),
+            ),
         };
         Self {
             schema,
@@ -263,6 +277,31 @@ pub fn ingest_state_cannot_testify() -> Vec<String> {
         "Whether to restart, reconfigure, or deactivate a failing source (consequence claim)".to_string(),
         "NQ's own overall health (the witness cannot be its own complete audit)".to_string(),
         "Whether ingest will recover from the current failure shape (future-state claim)".to_string(),
+    ]
+}
+
+/// Constitutional refusal surface for `dns_state`. Each entry
+/// corresponds to a conclusion no `response_kind` row licenses,
+/// regardless of which kind was observed or how many tuples were
+/// probed. Mirrors the `cannot_testify` enumeration in
+/// `docs/gaps/DNS_WITNESS_FAMILY_GAP.md`. The last entry is the
+/// `feedback_knob_facing` boundary preserved: `dns_state` classifies
+/// world-state testimony; consequence stays downstream.
+pub fn dns_state_cannot_testify() -> Vec<String> {
+    vec![
+        "Endpoint reachability for the resolved name (DNS is not TCP)".to_string(),
+        "Service health at any address returned (DNS is not the service)".to_string(),
+        "User-visible availability (anycast / split horizon / per-network views unobserved)".to_string(),
+        "Global DNS truth for this name (one vantage, one resolver — not the world)".to_string(),
+        "Authoritative-zone correctness (V0 likely reads recursive/cached answers; authority is upstream)".to_string(),
+        "Future resolution (TTL is a hint, not a contract)".to_string(),
+        "Permanence of negative answers (NXDOMAIN now ≠ NXDOMAIN forever; cached denial is dated)".to_string(),
+        "Reverse mapping (address → name) for any A/AAAA result (PTR is a separate query)".to_string(),
+        "Registrar / account / ownership status (DNS responses do not testify to custody)".to_string(),
+        "DNSSEC validation outcome (V0 does not validate; reserve refusal slot for when it does)".to_string(),
+        "Resolver-internal substrate health (SERVFAIL is testimony about the resolver, not about the name)".to_string(),
+        "Recovery prediction for any error-class response (future-state claim)".to_string(),
+        "Whether to repoint, fail over, retry, or page (consequence claim)".to_string(),
     ]
 }
 
@@ -324,6 +363,49 @@ mod tests {
         let k = ClaimKind::IngestState;
         let s = serde_json::to_string(&k).unwrap();
         assert_eq!(s, "\"ingest_state\"");
+        let k = ClaimKind::DnsState;
+        let s = serde_json::to_string(&k).unwrap();
+        assert_eq!(s, "\"dns_state\"");
+    }
+
+    #[test]
+    fn dns_state_skeleton_has_constitutional_refusals() {
+        let target = PreflightTarget {
+            host: "sushi-k".into(),
+            scope: "dns_query".into(),
+            id: Some("resolver=8.8.8.8;name=nq.neutral.zone;type=A".into()),
+        };
+        let r = PreflightResult::skeleton(
+            ClaimKind::DnsState,
+            target,
+            "2026-05-20T00:00:00Z".into(),
+        );
+        assert_eq!(r.schema, PREFLIGHT_DNS_STATE_SCHEMA);
+        assert_eq!(r.contract_version, PREFLIGHT_CONTRACT_VERSION);
+        // Sample the load-bearing refusals — endpoint reachability and
+        // global DNS truth are the most common laundering targets; DNSSEC
+        // and registrar/account are the most common scope-expansion
+        // attempts.
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("Endpoint reachability")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("Global DNS truth")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("DNSSEC validation outcome")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("Registrar / account")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.starts_with("Whether to repoint")));
     }
 
     #[test]
