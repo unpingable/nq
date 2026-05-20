@@ -573,11 +573,70 @@ pub struct ProbeDnsCmd {
     pub name: String,
 
     /// Query type. V0 accepts: A, AAAA, NS, CNAME, MX, TXT, SOA, PTR,
-    /// SRV. Defaults to A.
-    #[arg(long, default_value = "A")]
+    /// SRV. Defaults to A. Flag name is `--type` (the field is
+    /// `query_type` only because `type` is a Rust keyword); this
+    /// matches the wire-side `?type=` query parameter on the HTTP
+    /// route, so operators only have to learn one vocabulary.
+    #[arg(long = "type", default_value = "A")]
     pub query_type: String,
 
     /// Per-query UDP read timeout in seconds.
     #[arg(long, default_value_t = 5)]
     pub timeout_seconds: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// `nq probe dns` must accept `--type`, matching the wire-side
+    /// `?type=` query-parameter on `/api/preflight/dns-state`. The
+    /// struct field is `query_type` only because `type` is a Rust
+    /// keyword; the flag must NOT be `--query-type`. Caught by the
+    /// 2026-05-20 live smoke when the operator-typed `--type A`
+    /// hit a clap "unexpected argument" error.
+    #[test]
+    fn probe_dns_accepts_type_flag_matching_wire_vocabulary() {
+        let cli = Cli::try_parse_from([
+            "nq", "probe", "dns",
+            "--db", "/tmp/x.db",
+            "--vantage", "sushi-k",
+            "--resolver", "8.8.8.8",
+            "--name", "nq.neutral.zone",
+            "--type", "AAAA",
+        ])
+        .expect("--type must parse");
+        match cli.command {
+            Command::Probe(p) => match p.action {
+                ProbeAction::Dns(d) => {
+                    assert_eq!(d.query_type, "AAAA");
+                    assert_eq!(d.vantage, "sushi-k");
+                    assert_eq!(d.resolver, "8.8.8.8");
+                    assert_eq!(d.name, "nq.neutral.zone");
+                }
+            },
+            other => panic!("expected Probe(Dns(_)), got {other:?}"),
+        }
+    }
+
+    /// The legacy `--query-type` flag must NOT silently coexist with
+    /// `--type` — single source of truth at the CLI surface.
+    #[test]
+    fn probe_dns_rejects_query_type_legacy_flag() {
+        let err = Cli::try_parse_from([
+            "nq", "probe", "dns",
+            "--db", "/tmp/x.db",
+            "--vantage", "v",
+            "--resolver", "8.8.8.8",
+            "--name", "example.com",
+            "--query-type", "A",
+        ])
+        .expect_err("--query-type must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--query-type") || msg.contains("unexpected"),
+            "error must name the unexpected flag: {msg}"
+        );
+    }
 }
