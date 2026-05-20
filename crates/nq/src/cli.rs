@@ -71,6 +71,12 @@ pub enum Command {
     /// honest refusals (`cannot_testify`, `contradictory_testimony`)
     /// are not smoke failures.
     Smoke(SmokeCmd),
+    /// Probe an external substrate and write the observation into NQ's
+    /// DB. V0 supports `dns` — one DNS query per invocation, writing
+    /// one `dns_observations` row. See `docs/gaps/DNS_WITNESS_FAMILY_GAP.md`.
+    /// Decoupled from the aggregator publish transaction; the row is
+    /// recorded in the latest existing generation context.
+    Probe(ProbeCmd),
 }
 
 #[derive(Debug, Args)]
@@ -526,4 +532,52 @@ pub struct SentinelCmd {
     /// Path to sentinel config file (JSON)
     #[arg(long, short)]
     pub config: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct ProbeCmd {
+    #[command(subcommand)]
+    pub action: ProbeAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProbeAction {
+    /// Probe one DNS tuple and write a `dns_observations` row. One
+    /// query per invocation. The `--vantage` flag is required and
+    /// never inferred — NQ does not guess what vantage it is running
+    /// on.
+    Dns(ProbeDnsCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct ProbeDnsCmd {
+    /// Path to the nq database.
+    #[arg(long)]
+    pub db: PathBuf,
+
+    /// Vantage host to record on the observation. Required; NQ does
+    /// not infer this from `gethostname()` or similar — `dns_state`
+    /// testimony is scoped to who asked, and "who" must be declared.
+    #[arg(long)]
+    pub vantage: String,
+
+    /// Resolver IP literal. IPv4 (`8.8.8.8`), IPv4:port (`8.8.8.8:53`),
+    /// IPv6 (`2001:4860:4860::8888`), or [IPv6]:port. Hostname
+    /// resolvers are rejected — resolving the resolver's name would
+    /// force a recursive lookup on the same vantage.
+    #[arg(long)]
+    pub resolver: String,
+
+    /// Query name (e.g. `nq.neutral.zone`). Trailing dot tolerated.
+    #[arg(long)]
+    pub name: String,
+
+    /// Query type. V0 accepts: A, AAAA, NS, CNAME, MX, TXT, SOA, PTR,
+    /// SRV. Defaults to A.
+    #[arg(long, default_value = "A")]
+    pub query_type: String,
+
+    /// Per-query UDP read timeout in seconds.
+    #[arg(long, default_value_t = 5)]
+    pub timeout_seconds: u64,
 }

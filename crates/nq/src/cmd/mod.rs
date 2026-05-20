@@ -5,6 +5,7 @@ pub mod fleet;
 pub mod liveness;
 pub mod maintenance;
 pub mod preflight;
+pub mod probe;
 pub mod publish;
 pub mod query;
 pub mod receipt;
@@ -35,5 +36,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Witness(cmd) => witness::run(cmd),
         Command::Receipt(cmd) => receipt::run(cmd),
         Command::Smoke(cmd) => smoke::run(cmd),
+        Command::Probe(cmd) => probe::run(cmd),
     }
 }
