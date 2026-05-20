@@ -4,7 +4,7 @@ use axum::{
     routing::{get, post, delete},
     Json, Router,
 };
-use nq_db::{overview, host_detail, query_read_only, evaluate_disk_state_preflight, evaluate_ingest_state_preflight, QueryLimits, ReadDb, WriteDb};
+use nq_db::{overview, host_detail, query_read_only, evaluate_disk_state_preflight, evaluate_dns_state_preflight, evaluate_ingest_state_preflight, DnsObservationTuple, QueryLimits, ReadDb, WriteDb};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -85,6 +85,7 @@ pub fn router(db: Db) -> Router {
         .route("/api/query", get(api_query))
         .route("/api/preflight/disk-state/{host}", get(api_preflight_disk_state))
         .route("/api/preflight/ingest-state", get(api_preflight_ingest_state))
+        .route("/api/preflight/dns-state", get(api_preflight_dns_state))
         .route("/finding/{kind}/{host}", get(finding_detail))
         .route("/finding/{kind}/{host}/{subject}", get(finding_detail_with_subject))
         .with_state(db)
@@ -807,6 +808,54 @@ async fn api_preflight_disk_state(
 async fn api_preflight_ingest_state(State(db): State<Db>) -> Json<serde_json::Value> {
     let db = db.lock().await;
     match evaluate_ingest_state_preflight(&db) {
+        Ok(result) => match serde_json::to_value(&result) {
+            Ok(v) => Json(v),
+            Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+        },
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+/// Required query params for the `dns_state` route. All four fields are
+/// load-bearing for the witness identity — the tuple shape is the
+/// registry-pressure point named in `DNS_WITNESS_FAMILY_GAP.md` (the
+/// ugly stringly-typed identity stays visible here, deliberately, until
+/// a fourth claim kind forces consolidation).
+///
+/// `query_type` is exposed on the wire as `type` (a Rust keyword).
+#[derive(Debug, serde::Deserialize)]
+struct PreflightDnsStateQuery {
+    vantage: String,
+    resolver: String,
+    name: String,
+    #[serde(rename = "type")]
+    query_type: String,
+}
+
+/// Bounded `dns_state` preflight surfaced over the monitor HTTP path.
+///
+/// Emits the typed `PreflightResult` DTO (`nq.preflight.dns_state.v1`).
+/// One envelope per (vantage, resolver, name, type) tuple — the route
+/// is intentionally NOT attached to `/api/host/{name}` because DNS
+/// target identity is the tuple, not just a host. Missing query params
+/// fall through to axum's default 400 response with a deserialization
+/// error in the body.
+///
+/// V0 reads only existing `dns_observations` rows; the HTTP path does
+/// no probing of its own. The probe (`nq probe dns`) is the writer;
+/// this surface is the reader.
+async fn api_preflight_dns_state(
+    State(db): State<Db>,
+    Query(params): Query<PreflightDnsStateQuery>,
+) -> Json<serde_json::Value> {
+    let db = db.lock().await;
+    let tuple = DnsObservationTuple {
+        vantage_host: &params.vantage,
+        resolver: &params.resolver,
+        query_name: &params.name,
+        query_type: &params.query_type,
+    };
+    match evaluate_dns_state_preflight(&db, &tuple) {
         Ok(result) => match serde_json::to_value(&result) {
             Ok(v) => Json(v),
             Err(e) => Json(serde_json::json!({"error": e.to_string()})),

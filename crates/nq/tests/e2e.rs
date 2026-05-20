@@ -1482,3 +1482,325 @@ async fn smoke_disk_state_passes_on_unseeded_host_with_honest_refusal() {
         "constitutional refusal surface must be populated even with no substrate"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `dns_state` preflight surfaced over the monitor HTTP path. One
+// envelope per (vantage, resolver, query_name, query_type) tuple —
+// the route intentionally exposes the stringly-typed tuple identity
+// in the URL because DNS witness shape genuinely is a tuple, not just
+// a host. The route is NOT attached to /api/host/{name}; that would
+// collapse the tuple identity. The closed response-kind taxonomy is
+// preserved at the wire — NXDOMAIN says "returned NXDOMAIN", not
+// "confirmed".
+// ---------------------------------------------------------------------------
+
+/// Seed one dns_observations row via the public substrate API.
+fn seed_dns_observation(
+    conn: &rusqlite::Connection,
+    gen_id: i64,
+    vantage: &str,
+    resolver: &str,
+    name: &str,
+    qtype: &str,
+    kind: nq_core::preflight::ResponseKind,
+    observed_at: &str,
+    answer_summary: Option<&str>,
+    min_ttl_seconds: Option<i64>,
+) {
+    let obs = nq_db::DnsObservation {
+        observation_id: None,
+        generation_id: gen_id,
+        vantage_host: vantage.to_string(),
+        resolver: resolver.to_string(),
+        query_name: name.to_string(),
+        query_type: qtype.to_string(),
+        response_kind: kind,
+        rcode: None,
+        answer_summary: answer_summary.map(str::to_string),
+        min_ttl_seconds,
+        duration_ms: 12,
+        observed_at: observed_at.to_string(),
+        error_detail: None,
+    };
+    nq_db::insert_dns_observation(conn, &obs).unwrap();
+}
+
+/// Phrases that must never appear in any support claim or verdict_note
+/// emitted by dns_state. Same scan the in-process evaluator tests use,
+/// repeated here at the wire boundary so that a future regression
+/// inside the route or any rendering layer between the evaluator and
+/// the response body trips a test.
+const DNS_FORBIDDEN_PHRASES: &[&str] = &[
+    "endpoint reachable",
+    "endpoint is reachable",
+    "service healthy",
+    "service is healthy",
+    "service alive",
+    "globally resolves",
+    "global dns",
+    "registrar",
+    "account status",
+    "dnssec validated",
+    "dnssec passed",
+    "will recover",
+    "recovery imminent",
+    "name resolves to",
+    "ptr",
+    "confirmed",
+];
+
+fn assert_dns_response_bounded(resp: &serde_json::Value) {
+    let supports = resp["supports"].as_array().expect("supports array");
+    for support in supports {
+        let claim = support["claim"].as_str().unwrap_or("");
+        let lower = claim.to_ascii_lowercase();
+        for forbidden in DNS_FORBIDDEN_PHRASES {
+            assert!(
+                !lower.contains(forbidden),
+                "wire support claim laundered forbidden vocabulary ({forbidden:?}): {claim:?}"
+            );
+        }
+    }
+    if let Some(note) = resp["verdict_note"].as_str() {
+        let lower = note.to_ascii_lowercase();
+        for forbidden in DNS_FORBIDDEN_PHRASES {
+            assert!(
+                !lower.contains(forbidden),
+                "wire verdict_note laundered forbidden vocabulary ({forbidden:?}): {note:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn dns_state_http_nxdomain_emits_admissible_with_scope_with_bounded_wording() {
+    // The production router is the unit under test. NOT a local
+    // hand-rolled axum app — `nq::http::routes::router` is what
+    // `nq serve` ships.
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    {
+        let write_db = open_rw(&db_path).unwrap();
+        seed_fresh_generation(write_db.conn(), 100, "complete", 1, 0);
+        let observed_at = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        seed_dns_observation(
+            write_db.conn(),
+            100,
+            "sushi-k",
+            "8.8.8.8",
+            "nq.invalid.example",
+            "A",
+            nq_core::preflight::ResponseKind::Nxdomain,
+            &observed_at,
+            None,
+            None,
+        );
+        drop(write_db);
+    }
+
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let url = format!(
+        "{base}/api/preflight/dns-state\
+         ?vantage=sushi-k&resolver=8.8.8.8&name=nq.invalid.example&type=A"
+    );
+    let http_resp = client.get(&url).send().await.unwrap();
+    assert_eq!(http_resp.status(), reqwest::StatusCode::OK);
+    let resp: serde_json::Value = http_resp.json().await.unwrap();
+
+    // Wire contract.
+    assert_eq!(resp["schema"], "nq.preflight.dns_state.v1");
+    assert_eq!(resp["contract_version"], 1);
+    assert_eq!(resp["claim_kind"], "dns_state");
+    // Target shape: the tuple stays visible on the wire — this is the
+    // registry-pressure point named in DNS_WITNESS_FAMILY_GAP.md.
+    assert_eq!(resp["target"]["host"], "sushi-k");
+    assert_eq!(resp["target"]["scope"], "dns_query");
+    assert_eq!(
+        resp["target"]["id"],
+        "resolver=8.8.8.8;name=nq.invalid.example;type=A"
+    );
+
+    // Verdict: NXDOMAIN is real testimony, not cannot_testify.
+    assert_eq!(resp["verdict"], "admissible_with_scope");
+
+    let supports = resp["supports"].as_array().expect("supports array");
+    assert_eq!(supports.len(), 1, "one NXDOMAIN row → one support");
+    let claim = supports[0]["claim"].as_str().expect("support claim");
+    assert!(
+        claim.contains("returned NXDOMAIN"),
+        "wording must be 'returned NXDOMAIN', not 'confirmed': {claim}"
+    );
+    assert!(
+        claim.contains("cached denial"),
+        "NXDOMAIN must name itself as a cached denial, not eternal nonexistence: {claim}"
+    );
+    assert_eq!(supports[0]["finding_kind"], "dns_nxdomain");
+
+    // Constitutional refusal surface: present alongside live testimony.
+    let cannot_testify = resp["cannot_testify"]
+        .as_array()
+        .expect("cannot_testify array");
+    let joined = cannot_testify
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for needle in [
+        "Endpoint reachability",
+        "Service health",
+        "Global DNS truth",
+        "DNSSEC validation outcome",
+        "Registrar / account",
+        "Whether to repoint",
+    ] {
+        assert!(
+            joined.contains(needle),
+            "cannot_testify must name {needle:?}; got: {joined}"
+        );
+    }
+
+    // Observation window: present (supports is non-empty).
+    assert!(
+        resp.get("observed_at_min").is_some(),
+        "observed_at_min must be present when supports is non-empty"
+    );
+    assert!(
+        resp.get("observed_at_max").is_some(),
+        "observed_at_max must be present when supports is non-empty"
+    );
+
+    // Anti-laundering at the wire layer.
+    assert_dns_response_bounded(&resp);
+}
+
+#[tokio::test]
+async fn dns_state_http_no_row_emits_insufficient_coverage() {
+    use nq::http::routes::router;
+
+    // Seed a generation but no observation for the asked tuple. The
+    // evaluator must report insufficient_coverage with `absent`
+    // standing and the full constitutional refusal surface.
+    let (_dir, db_path) = temp_db();
+    {
+        let write_db = open_rw(&db_path).unwrap();
+        seed_fresh_generation(write_db.conn(), 100, "complete", 1, 0);
+        drop(write_db);
+    }
+
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let url = format!(
+        "{base}/api/preflight/dns-state\
+         ?vantage=sushi-k&resolver=8.8.8.8&name=nq.neutral.zone&type=A"
+    );
+    let http_resp = client.get(&url).send().await.unwrap();
+    assert_eq!(http_resp.status(), reqwest::StatusCode::OK);
+    let resp: serde_json::Value = http_resp.json().await.unwrap();
+
+    assert_eq!(resp["schema"], "nq.preflight.dns_state.v1");
+    assert_eq!(resp["verdict"], "insufficient_coverage");
+
+    let supports = resp["supports"].as_array().expect("supports array");
+    assert!(supports.is_empty(), "no observation → no supports");
+    assert!(resp.get("observed_at_min").is_none());
+    assert!(resp.get("observed_at_max").is_none());
+
+    // Coverage names the witness as absent.
+    let coverage = resp["coverage"].as_array().expect("coverage array");
+    let dns = coverage
+        .iter()
+        .find(|c| c["witness"] == "dns_resolver")
+        .expect("dns_resolver coverage entry");
+    assert_eq!(dns["standing"], "absent");
+
+    // Constitutional refusal surface present even with no live testimony.
+    let cannot_testify = resp["cannot_testify"]
+        .as_array()
+        .expect("cannot_testify array");
+    assert!(
+        !cannot_testify.is_empty(),
+        "cannot_testify must be populated even with no observation row"
+    );
+
+    assert_dns_response_bounded(&resp);
+}
+
+#[tokio::test]
+async fn dns_state_http_missing_query_params_returns_client_error() {
+    use nq::http::routes::router;
+
+    // The route requires vantage, resolver, name, and type. Axum's
+    // Query<T> extractor returns 400 Bad Request on missing/malformed
+    // fields. Omitting `type` must produce a 4xx, not silently
+    // default — DNS target identity is the full tuple.
+    let (_dir, db_path) = temp_db();
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+
+    // All four params missing: 4xx.
+    let resp_none = client
+        .get(format!("{base}/api/preflight/dns-state"))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        resp_none.status().is_client_error(),
+        "missing all params must be 4xx; got {}",
+        resp_none.status()
+    );
+
+    // Three of four present (no `type`): also 4xx.
+    let resp_partial = client
+        .get(format!(
+            "{base}/api/preflight/dns-state\
+             ?vantage=sushi-k&resolver=8.8.8.8&name=nq.neutral.zone"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        resp_partial.status().is_client_error(),
+        "missing one param must be 4xx; got {}",
+        resp_partial.status()
+    );
+
+    // And one for the empty-string case — axum's Query<String> WILL
+    // accept "" as a valid value, which propagates as a tuple of
+    // empty strings. The evaluator handles this as a normal lookup
+    // (no row matches), returning insufficient_coverage. That is
+    // honest behavior — there is nothing "malformed" about asking
+    // about an empty-name tuple; the operator just gets a refusal.
+    // No assertion here; documented as accepted behavior.
+}
