@@ -287,6 +287,7 @@ mod tests {
 
     #[test]
     fn conforming_report_is_accepted() {
+        let _lock = super::super::test_support::subprocess_lock();
         let tmp = tempfile::tempdir().unwrap();
         let body = format!(
             "#!/bin/sh\ncat <<'EOF'\n{}\nEOF\n",
@@ -303,6 +304,7 @@ mod tests {
 
     #[test]
     fn schema_mismatch_is_rejected() {
+        let _lock = super::super::test_support::subprocess_lock();
         let tmp = tempfile::tempdir().unwrap();
         let bad = CONFORMING_REPORT.replace("nq.witness.v0", "nq.witness.v99");
         let body = format!("#!/bin/sh\ncat <<'EOF'\n{}\nEOF\n", bad);
@@ -317,6 +319,7 @@ mod tests {
 
     #[test]
     fn profile_mismatch_is_rejected() {
+        let _lock = super::super::test_support::subprocess_lock();
         let tmp = tempfile::tempdir().unwrap();
         let bad = CONFORMING_REPORT.replace("nq.witness.smart.v0", "nq.witness.smart.v99");
         let body = format!("#!/bin/sh\ncat <<'EOF'\n{}\nEOF\n", bad);
@@ -331,12 +334,16 @@ mod tests {
 
     #[test]
     fn helper_missing_is_rejected() {
+        // No subprocess lock: spawn fails fast on a nonexistent path
+        // without forking a helper, so there is no fork window to
+        // serialize.
         let payload = collect(&cfg("/nonexistent/path/nq-smart-witness".into(), 2000));
         assert_eq!(payload.status, CollectorStatus::Error);
     }
 
     #[test]
     fn slow_helper_times_out() {
+        let _lock = super::super::test_support::subprocess_lock();
         let tmp = tempfile::tempdir().unwrap();
         let body = "#!/bin/sh\nsleep 5\necho '{}'\n";
         let script = write_script(&tmp, "nq-smart-witness", body);
