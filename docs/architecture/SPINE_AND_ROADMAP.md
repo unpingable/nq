@@ -223,6 +223,24 @@ Each phase has an **exit condition**: a boring, testable state that unlocks the 
 |---|---|
 | A mutation class where semantic authorization says "governed" but effect observation suggests escape | Either the effect witness finds a real delta, or the idea goes back in the jar |
 
+## Future branches (parallel, not sequential)
+
+The six phases above are sequential consolidation work on the mainline spine. NQ also has parallel hardening branches that may activate independently when a forcing case names them. Listing them here so they exist as named candidate handles, not so they get built.
+
+### Witness-path assurance
+
+**Question:** *why should this observation be admissible testimony?*
+
+Mainline NQ asks "given this observation, what may we claim?" Witness-path assurance asks one layer earlier — how much standing the evidence path itself has, independent of what's claimed from it. The branch covers a six-level ladder: declared / bound / checked / corroborated / attested / formally-bounded witness paths.
+
+**Status:** candidate, parked. Current NQ sits ~partial Level 2 with a complete Level 1 floor. Phase 2 (receipt durability) closes Level 2 as a side effect; Level 3 and beyond are unstarted.
+
+**Keeper:** *NQ does not prove reality; it grades the admissibility of testimony and refuses claims beyond the witness path.*
+
+**Warning label:** do not build until a real claim family needs stronger testimony than today's packets provide. Candidate first forcing cases (none active): DNS multi-vantage disagreement, imported findings with stale producer basis, CI witness packets where provenance is weak, Nightshift consumption distinguishing native vs imported freshness, effect-boundary witness with specimen.
+
+See `../gaps/WITNESS_PATH_ASSURANCE_GAP.md` for the full ladder, current-level audit, and composition rules with the existing phases.
+
 ## Roadmap rules (anti-sprawl)
 
 1. **No new layer without an exit condition.**
