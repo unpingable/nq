@@ -399,8 +399,37 @@ pub fn parse_response(buf: &[u8], expected_id: u16, qtype: u16) -> WireOutcome {
             detail: "response truncated (TC bit set); V0 has no TCP fallback".to_string(),
         };
     }
+    let qdcount = u16::from_be_bytes([buf[4], buf[5]]);
+    if qdcount != 1 {
+        // V0 always asks one question; a response with a different
+        // QDCOUNT cannot be parsed safely (the answer section would
+        // begin at an unknown offset).
+        return WireOutcome::TransportError {
+            detail: format!(
+                "unexpected QDCOUNT={qdcount}; V0 only handles single-question responses"
+            ),
+        };
+    }
     let rcode = (buf[3] & 0x0F) as i64;
     let ancount = u16::from_be_bytes([buf[6], buf[7]]);
+
+    // Always validate the question section parses before trusting any
+    // header-claimed outcome. A truncated or malformed question makes
+    // the header's rcode/ancount uncorroborable — categorizing such
+    // a packet as Nodata / Nxdomain / etc. would launder a malformed
+    // datagram into testimony.
+    let mut pos = 12;
+    let Some(p) = skip_name(buf, pos) else {
+        return WireOutcome::TransportError {
+            detail: "malformed question name".to_string(),
+        };
+    };
+    if p + 4 > buf.len() {
+        return WireOutcome::TransportError {
+            detail: "question QTYPE/QCLASS truncated".to_string(),
+        };
+    }
+    pos = p + 4;
 
     match rcode {
         3 => return WireOutcome::Negative { kind: NegativeKind::Nxdomain, rcode },
@@ -416,15 +445,6 @@ pub fn parse_response(buf: &[u8], expected_id: u16, qtype: u16) -> WireOutcome {
     if ancount == 0 {
         return WireOutcome::Negative { kind: NegativeKind::Nodata, rcode };
     }
-
-    // Skip the question section.
-    let mut pos = 12;
-    let Some(p) = skip_name(buf, pos) else {
-        return WireOutcome::TransportError {
-            detail: "malformed question name".to_string(),
-        };
-    };
-    pos = p + 4; // QTYPE + QCLASS
 
     let mut summaries: Vec<String> = Vec::new();
     let mut min_ttl: Option<u32> = None;
@@ -833,6 +853,360 @@ mod tests {
                 rcode: 4
             }
         );
+    }
+
+    // -------------------- parse_response: hostile inputs --------------------
+    //
+    // The V0 parser is hand-rolled, so malformed UDP datagrams must
+    // produce boring outcomes: never panic, never loop, never classify
+    // garbled bytes as a categorized answer. Each test below names the
+    // hostile shape it exercises; the expected behavior is always
+    // either a bounded `WireOutcome::TransportError` or a bounded
+    // `Negative` outcome derived from a *well-formed* header.
+
+    #[test]
+    fn parse_response_empty_buffer_is_transport_error() {
+        // Zero-byte packet: less than the 12-byte header.
+        let out = parse_response(&[], 0x1234, 1);
+        match out {
+            WireOutcome::TransportError { detail } => {
+                assert!(detail.contains("12-byte header"), "{detail}");
+            }
+            other => panic!("expected TransportError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_sub_header_lengths_are_all_transport_error() {
+        // Every length 1..12 must reject without panic.
+        for n in 1..12 {
+            let buf = vec![0u8; n];
+            match parse_response(&buf, 0x1234, 1) {
+                WireOutcome::TransportError { .. } => {}
+                other => panic!("len={n} yielded {other:?} instead of TransportError"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_response_header_only_with_rcode_zero_is_transport_error_not_nodata() {
+        // Before hardening, a 12-byte header with rcode=0 and ancount=0
+        // returned Nodata without checking that a question even
+        // existed. The parser must refuse to corroborate the header's
+        // claim from a packet with no question section.
+        let pkt = header(0x1234, 0x8180, 0); // QR=1, RA=1, RCODE=0
+        match parse_response(&pkt, 0x1234, 1) {
+            WireOutcome::TransportError { .. } => {}
+            other => panic!("expected TransportError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_header_only_with_rcode_nxdomain_is_transport_error_not_nxdomain() {
+        // The same hardening must apply to error rcodes: a truncated
+        // NXDOMAIN response is malformed, not authoritative testimony.
+        let pkt = header(0x1234, 0x8183, 0); // RCODE=3
+        match parse_response(&pkt, 0x1234, 1) {
+            WireOutcome::TransportError { .. } => {}
+            other => panic!("expected TransportError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_qdcount_not_one_is_transport_error() {
+        // V0 always asks one question; a response that claims a
+        // different QDCOUNT is non-standard and cannot be parsed
+        // safely (we would misjudge where the answer section begins).
+        let mut zero_q = header(0x1234, 0x8180, 0);
+        zero_q[4..6].copy_from_slice(&0u16.to_be_bytes());
+        zero_q.extend(question("example.com", 1));
+        match parse_response(&zero_q, 0x1234, 1) {
+            WireOutcome::TransportError { detail } => {
+                assert!(detail.contains("QDCOUNT"), "{detail}");
+            }
+            other => panic!("QDCOUNT=0: expected TransportError, got {other:?}"),
+        }
+
+        let mut two_q = header(0x1234, 0x8180, 0);
+        two_q[4..6].copy_from_slice(&2u16.to_be_bytes());
+        two_q.extend(question("example.com", 1));
+        two_q.extend(question("example.org", 1));
+        match parse_response(&two_q, 0x1234, 1) {
+            WireOutcome::TransportError { detail } => {
+                assert!(detail.contains("QDCOUNT"), "{detail}");
+            }
+            other => panic!("QDCOUNT=2: expected TransportError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_truncated_question_name_is_transport_error() {
+        // Header says QDCOUNT=1 but the question name is interrupted
+        // mid-label (length byte says 7, but only 3 bytes follow).
+        let mut pkt = header(0x1234, 0x8180, 0);
+        pkt.push(7); // length byte
+        pkt.extend_from_slice(b"abc"); // only 3 of 7 promised bytes
+        match parse_response(&pkt, 0x1234, 1) {
+            WireOutcome::TransportError { .. } => {}
+            other => panic!("expected TransportError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_truncated_question_qtype_qclass_is_transport_error() {
+        // Question name parses, but QTYPE/QCLASS bytes are missing.
+        let mut pkt = header(0x1234, 0x8180, 0);
+        pkt.extend(encode_name_no_compression("example.com"));
+        // Add only 2 of the 4 trailing question bytes.
+        pkt.extend_from_slice(&[0x00, 0x01]);
+        match parse_response(&pkt, 0x1234, 1) {
+            WireOutcome::TransportError { detail } => {
+                assert!(detail.contains("QTYPE") || detail.contains("truncated"), "{detail}");
+            }
+            other => panic!("expected TransportError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_truncated_answer_name_is_transport_error() {
+        let mut pkt = header(0x1234, 0x8180, 1);
+        pkt.extend(question("example.com", 1));
+        // Answer name interrupted: length=5 then EOF.
+        pkt.push(5);
+        match parse_response(&pkt, 0x1234, 1) {
+            WireOutcome::TransportError { .. } => {}
+            other => panic!("expected TransportError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_truncated_answer_rr_header_is_transport_error() {
+        let mut pkt = header(0x1234, 0x8180, 1);
+        pkt.extend(question("example.com", 1));
+        // Valid pointer to question name, then only 5 of the 10 RR
+        // header bytes (TYPE+CLASS+TTL+RDLENGTH) follow.
+        pkt.extend_from_slice(&[0xC0, 0x0C]);
+        pkt.extend_from_slice(&[0x00, 0x01, 0x00, 0x01, 0x00]);
+        match parse_response(&pkt, 0x1234, 1) {
+            WireOutcome::TransportError { detail } => {
+                assert!(detail.contains("truncated"), "{detail}");
+            }
+            other => panic!("expected TransportError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_truncated_answer_rdata_is_transport_error() {
+        let mut pkt = header(0x1234, 0x8180, 1);
+        pkt.extend(question("example.com", 1));
+        // Valid pointer + RR header claiming RDLENGTH=10, then only
+        // 3 RDATA bytes provided.
+        pkt.extend_from_slice(&[0xC0, 0x0C]);
+        pkt.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
+        pkt.extend_from_slice(&300u32.to_be_bytes());
+        pkt.extend_from_slice(&[0x00, 0x0A]); // RDLENGTH=10
+        pkt.extend_from_slice(&[1, 2, 3]); // only 3 bytes
+        match parse_response(&pkt, 0x1234, 1) {
+            WireOutcome::TransportError { detail } => {
+                assert!(detail.contains("RDATA") || detail.contains("truncated"), "{detail}");
+            }
+            other => panic!("expected TransportError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_ancount_claims_more_answers_than_present_is_transport_error() {
+        // Header promises 3 answers; only 1 is present. The for loop
+        // must fail bounds-checking on the second iteration and yield
+        // TransportError — never a partial Answer with bogus content.
+        let mut pkt = header(0x1234, 0x8180, 3);
+        pkt.extend(question("example.com", 1));
+        // One valid A record:
+        pkt.extend_from_slice(&[0xC0, 0x0C]);
+        pkt.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
+        pkt.extend_from_slice(&300u32.to_be_bytes());
+        pkt.extend_from_slice(&[0x00, 0x04]);
+        pkt.extend_from_slice(&[1, 2, 3, 4]);
+        // Then EOF — answers 2 and 3 missing.
+        match parse_response(&pkt, 0x1234, 1) {
+            WireOutcome::TransportError { .. } => {}
+            other => panic!("expected TransportError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_compression_pointer_at_end_of_buffer_is_transport_error() {
+        // Answer name is a pointer's first byte (0xC0) with the
+        // second (offset) byte missing — pointer is out of bounds
+        // because the buffer ends before the pointer is complete.
+        let mut pkt = header(0x1234, 0x8180, 1);
+        pkt.extend(question("example.com", 1));
+        pkt.push(0xC0); // pointer byte 1; byte 2 (offset) missing
+        match parse_response(&pkt, 0x1234, 1) {
+            WireOutcome::TransportError { .. } => {}
+            other => panic!("expected TransportError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_compression_pointer_offset_far_past_buffer_is_handled() {
+        // The pointer's offset byte points way past the end of the
+        // buffer. V0 does not follow pointers (only skips past them),
+        // so this case must not panic. The pointer itself is 2 bytes
+        // and is treated as a valid name skip; the parser then
+        // continues with the RR header. Since no RR header follows,
+        // truncation detection kicks in.
+        let mut pkt = header(0x1234, 0x8180, 1);
+        pkt.extend(question("example.com", 1));
+        pkt.extend_from_slice(&[0xC0, 0xFF]); // pointer to offset 255 — past buffer
+        // No RR header bytes after the pointer.
+        match parse_response(&pkt, 0x1234, 1) {
+            WireOutcome::TransportError { .. } => {}
+            other => panic!("expected TransportError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_compression_pointer_self_loop_does_not_loop_or_panic() {
+        // Pointer at offset N references offset N (itself). A parser
+        // that followed pointers would loop forever; V0's parser only
+        // *skips* past pointers (returns Some(pos+2)), so self-loops
+        // are impossible by construction. This test pins that
+        // invariant: the parser must terminate cleanly. The pointer
+        // counts as a valid name skip; the parser then tries to read
+        // the RR header from positions after the pointer, which is
+        // also a self-referencing pattern — bounded by buffer length.
+        let mut pkt = header(0x1234, 0x8180, 1);
+        pkt.extend(question("example.com", 1));
+        let answer_start = pkt.len();
+        // 0xC0 with offset = answer_start = self-reference.
+        pkt.push(0xC0);
+        pkt.push(answer_start as u8);
+        // Provide a partial RR header so the parser proceeds past
+        // the pointer skip but fails bounds-check on truncation —
+        // whatever outcome it produces, it must be deterministic and
+        // not a panic / infinite loop.
+        pkt.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
+        let _ = parse_response(&pkt, 0x1234, 1);
+        // No assertion on outcome other than "the call returned" —
+        // this test is a tripwire for infinite-loop / panic regressions.
+    }
+
+    #[test]
+    fn parse_response_pointer_chain_in_consecutive_answers_terminates() {
+        // Two answer records, each with a pointer name. Even if a
+        // pointer-following parser would chain through them, V0 only
+        // skips past each pointer and reads the RR header
+        // immediately after. The full ANCOUNT loop must terminate.
+        let mut pkt = header(0x1234, 0x8180, 2);
+        pkt.extend(question("example.com", 1));
+        for _ in 0..2 {
+            pkt.extend_from_slice(&[0xC0, 0x0C]); // pointer to question
+            pkt.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
+            pkt.extend_from_slice(&60u32.to_be_bytes());
+            pkt.extend_from_slice(&[0x00, 0x04]);
+            pkt.extend_from_slice(&[1, 2, 3, 4]);
+        }
+        match parse_response(&pkt, 0x1234, 1) {
+            WireOutcome::Answer { answer_summary, .. } => {
+                // Both A records decode to 1.2.3.4; sorted-joined.
+                assert_eq!(answer_summary, "1.2.3.4,1.2.3.4");
+            }
+            other => panic!("expected Answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_invalid_label_high_bits_is_transport_error() {
+        // The 01 and 10 prefixes on the length byte are EDNS /
+        // reserved label types we do not parse. Encountering one in
+        // a question or answer name must yield TransportError, not
+        // a wild advance into the next field.
+        let mut pkt = header(0x1234, 0x8180, 0);
+        pkt.push(0x40); // 01-prefixed; invalid for V0
+        pkt.push(0x00);
+        match parse_response(&pkt, 0x1234, 1) {
+            WireOutcome::TransportError { .. } => {}
+            other => panic!("expected TransportError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_all_sixteen_rcodes_are_deterministic_and_bounded() {
+        // RCODE is 4 bits, values 0..16. Every value must map
+        // deterministically to a single bounded outcome — no panic,
+        // no Answer, no surprise. The closed taxonomy folds unknown
+        // codes into Servfail with the raw rcode preserved on the
+        // observation row.
+        for rcode in 0u8..16 {
+            let flags = 0x8180u16 | rcode as u16;
+            let mut pkt = header(0x1234, flags, 0);
+            pkt.extend(question("example.com", 1));
+            let out = parse_response(&pkt, 0x1234, 1);
+            match (rcode, &out) {
+                (0, WireOutcome::Negative { kind: NegativeKind::Nodata, rcode: 0 }) => {}
+                (2, WireOutcome::Negative { kind: NegativeKind::Servfail, rcode: 2 }) => {}
+                (3, WireOutcome::Negative { kind: NegativeKind::Nxdomain, rcode: 3 }) => {}
+                (5, WireOutcome::Negative { kind: NegativeKind::Refused, rcode: 5 }) => {}
+                (
+                    r,
+                    WireOutcome::Negative {
+                        kind: NegativeKind::Servfail,
+                        rcode: rr,
+                    },
+                ) if *rr == r as i64 => {}
+                _ => panic!("rcode={rcode}: unexpected outcome {out:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_response_arbitrary_short_garbage_does_not_panic() {
+        // Deterministic-pseudo-random short buffers; never panic,
+        // never classify as Answer. The parser is the unsupervised
+        // surface for hostile-resolver bytes — must stay boring.
+        let mut state: u32 = 0xACE5_F00D;
+        for _ in 0..2_000 {
+            // Tiny LCG (Numerical Recipes) — no external dep.
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let len = (state >> 16) as usize % 64; // 0..64
+            let mut buf = Vec::with_capacity(len);
+            let mut s = state;
+            for _ in 0..len {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                buf.push((s >> 16) as u8);
+            }
+            let out = parse_response(&buf, 0x1234, 1);
+            // The parser must never claim Answer for arbitrary bytes
+            // unless the bytes happen to perfectly encode one. The
+            // probability of a random 0..64-byte buffer parsing as a
+            // valid full Answer with id=0x1234, QR=1, TC=0, QDCOUNT=1,
+            // ANCOUNT>=1, a valid question, and a complete answer
+            // record is vanishingly small — but we don't gamble:
+            // assert the outcome is one of the closed variants and
+            // move on (the goal is "doesn't panic / doesn't loop").
+            match out {
+                WireOutcome::Answer { .. }
+                | WireOutcome::Negative { .. }
+                | WireOutcome::Timeout
+                | WireOutcome::TransportError { .. } => {}
+            }
+        }
+    }
+
+    #[test]
+    fn parse_response_garbage_after_valid_header_does_not_panic() {
+        // Valid header + arbitrary trailing bytes of varying length.
+        // Forces the question/answer parser onto hostile bytes.
+        let mut state: u32 = 0xBEEF_CAFE;
+        for len in 0..200 {
+            let mut pkt = header(0x1234, 0x8180, ((len % 5) + 1) as u16);
+            for _ in 0..len {
+                state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                pkt.push((state >> 16) as u8);
+            }
+            let _ = parse_response(&pkt, 0x1234, 1);
+        }
     }
 
     // -------------------- build_query --------------------
