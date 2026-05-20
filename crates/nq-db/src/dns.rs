@@ -1,22 +1,36 @@
-//! `dns_observations` substrate for the `dns_state` preflight witness
-//! family (V0, substrate-only).
+//! `dns_observations` substrate + `dns_state` preflight evaluator
+//! (V0, third bespoke claim kind).
 //!
 //! See `docs/gaps/DNS_WITNESS_FAMILY_GAP.md`. This module owns the
 //! insert and latest-per-tuple load paths against the
-//! `dns_observations` table (migration 047). No evaluator, no probe,
-//! no HTTP, no registry — those are later slices, each requiring its
-//! own go-ahead.
+//! `dns_observations` table (migration 047) and the bespoke evaluator
+//! that maps those rows into a bounded `PreflightResult`. No probe, no
+//! HTTP route, no registry — those remain later slices, each requiring
+//! its own go-ahead.
 //!
-//! Wording discipline: NXDOMAIN/NODATA are stored as substrate facts
-//! (`ResponseKind::Nxdomain`, `ResponseKind::Nodata`). Any operator-
-//! facing wording the future evaluator produces must say "resolver
-//! returned/reported", not "confirmed" — the witness is the resolver
-//! response from one vantage at one instant, not global DNS truth.
+//! Wording discipline: support text for NODATA/NXDOMAIN says "resolver
+//! returned" or "resolver reported", never "confirmed". The witness is
+//! the resolver response from one vantage at one instant, not global
+//! DNS truth. The closed `ResponseKind` taxonomy is preserved through
+//! the evaluator — NXDOMAIN, NODATA, SERVFAIL, REFUSED, timeout, and
+//! transport_error are six distinct verdicts and must not collapse into
+//! a generic "DNS failed."
 
+use crate::ReadDb;
 use anyhow::Context;
-use nq_core::preflight::ResponseKind;
+use nq_core::preflight::{
+    ClaimKind, PreflightCoverage, PreflightResult, PreflightSupport, PreflightTarget,
+    ResponseKind, Verdict,
+};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::str::FromStr;
+
+/// Staleness threshold for the latest dns_observations row for a tuple,
+/// in seconds. Default matches `ingest_state`'s 300s heuristic — 5× a
+/// 60s probe interval, large enough to absorb a missed cycle, small
+/// enough that two consecutive misses are testifiable as stale. Bespoke
+/// for V0; per-tuple tuning is a later slice if it forces.
+pub const DNS_STATE_STALE_THRESHOLD_SECONDS: i64 = 300;
 
 /// One DNS observation row.
 ///
@@ -142,6 +156,294 @@ fn row_to_observation(r: &Row<'_>) -> rusqlite::Result<DnsObservation> {
         observed_at: r.get(11)?,
         error_detail: r.get(12)?,
     })
+}
+
+// ---------------------------------------------------------------------------
+// `dns_state` evaluator. Reads the latest observation for one
+// (vantage_host, resolver, query_name, query_type) tuple and projects
+// it into a bounded `PreflightResult`. Verdicts:
+//
+//   success / nodata / nxdomain / servfail / refused  → AdmissibleWithScope
+//   timeout                                           → InsufficientCoverage
+//   transport_error                                   → CannotTestify
+//   no row                                            → InsufficientCoverage
+//   any row older than DNS_STATE_STALE_THRESHOLD_SECONDS → StaleTestimony
+//   validation_failure (reserved; V0 never emits)     → ContradictoryTestimony
+//
+// Constitutional `cannot_testify` (preloaded by skeleton) is always
+// populated regardless of verdict. The closed taxonomy is preserved —
+// the six error/negative kinds must not collapse into a generic
+// "DNS failed."
+// ---------------------------------------------------------------------------
+
+/// Public entry point. Returns a `PreflightResult` for `dns_state`
+/// against the latest dns_observations row matching `key`.
+pub fn evaluate_dns_state_preflight(
+    db: &ReadDb,
+    key: &DnsObservationTuple<'_>,
+) -> anyhow::Result<PreflightResult> {
+    evaluate_dns_state_preflight_from_conn(db.conn(), key)
+}
+
+/// Variant that accepts a raw `Connection`. Used by tests and by the
+/// HTTP route layer (later slice); the public API is the `ReadDb` form
+/// above.
+pub fn evaluate_dns_state_preflight_from_conn(
+    conn: &Connection,
+    key: &DnsObservationTuple<'_>,
+) -> anyhow::Result<PreflightResult> {
+    let generated_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| String::new());
+
+    let target = PreflightTarget {
+        host: key.vantage_host.to_string(),
+        scope: "dns_query".to_string(),
+        id: Some(format!(
+            "resolver={};name={};type={}",
+            key.resolver, key.query_name, key.query_type
+        )),
+    };
+    let mut result = PreflightResult::skeleton(ClaimKind::DnsState, target, generated_at);
+
+    let Some(obs) = latest_observation_for_tuple(conn, key)? else {
+        // No row exists for this tuple. The prober has not run for it
+        // (or the row aged out via generation cascade). This is **not**
+        // a synthetic substrate state — absence is read as
+        // insufficient_coverage at the evaluator layer.
+        result.verdict = Verdict::InsufficientCoverage;
+        result.verdict_note = Some(format!(
+            "No dns_observations row exists for (vantage={}, resolver={}, name={}, type={}); \
+             the prober has not run for this tuple. Absence of observation is not affirmative \
+             testimony of healthy resolution.",
+            key.vantage_host, key.resolver, key.query_name, key.query_type
+        ));
+        result.coverage.push(PreflightCoverage {
+            witness: "dns_resolver".to_string(),
+            standing: "absent".to_string(),
+            note: Some(format!("no observation row for resolver {}", key.resolver)),
+        });
+        return Ok(result);
+    };
+
+    // Freshness check first. A stale row's response_kind still informs
+    // the support text — what the resolver said at that observation
+    // time is real evidence — but the verdict is stale_testimony, not
+    // the kind-specific verdict. Conflating the two would let a six-
+    // hour-old success row pose as live resolution testimony.
+    let now = time::OffsetDateTime::now_utc();
+    let parsed = time::OffsetDateTime::parse(
+        &obs.observed_at,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .ok();
+    let age_seconds = parsed.map(|t| (now - t).whole_seconds());
+    let stale = matches!(age_seconds, Some(age) if age > DNS_STATE_STALE_THRESHOLD_SECONDS);
+
+    if stale {
+        let support = make_support(&obs);
+        result.observed_at_min = Some(obs.observed_at.clone());
+        result.observed_at_max = Some(obs.observed_at.clone());
+        result.supports.push(support);
+        result.coverage.push(PreflightCoverage {
+            witness: "dns_resolver".to_string(),
+            standing: "stale".to_string(),
+            note: Some(format!(
+                "most recent observation from resolver {} is older than {}s",
+                obs.resolver, DNS_STATE_STALE_THRESHOLD_SECONDS
+            )),
+        });
+        result.verdict = Verdict::StaleTestimony;
+        result.verdict_note = Some(format!(
+            "Latest dns_observations row at observed_at {} is {}s old (> {}s threshold); \
+             dns_state testimony is stale.",
+            obs.observed_at,
+            age_seconds.unwrap_or_default(),
+            DNS_STATE_STALE_THRESHOLD_SECONDS
+        ));
+        return Ok(result);
+    }
+
+    // Fresh row. Dispatch on response_kind.
+    match obs.response_kind {
+        ResponseKind::Success
+        | ResponseKind::Nodata
+        | ResponseKind::Nxdomain
+        | ResponseKind::Servfail
+        | ResponseKind::Refused => {
+            let support = make_support(&obs);
+            result.observed_at_min = Some(obs.observed_at.clone());
+            result.observed_at_max = Some(obs.observed_at.clone());
+            result.supports.push(support);
+            result.coverage.push(PreflightCoverage {
+                witness: "dns_resolver".to_string(),
+                standing: "observable".to_string(),
+                note: Some(format!(
+                    "resolver {} answered within budget for ({}, {})",
+                    obs.resolver, obs.query_name, obs.query_type
+                )),
+            });
+            result.verdict = Verdict::AdmissibleWithScope;
+            result.verdict_note = Some(format!(
+                "Resolver {} returned a {} response from vantage {}; admissible only at witness \
+                 scope. Consequence claims remain refused (see cannot_testify).",
+                obs.resolver,
+                obs.response_kind.as_str(),
+                obs.vantage_host
+            ));
+        }
+        ResponseKind::Timeout => {
+            // The resolver did not answer within budget. No row is
+            // promoted into a support; there is no observed answer-
+            // shape to admit. coverage records the silence.
+            result.coverage.push(PreflightCoverage {
+                witness: "dns_resolver".to_string(),
+                standing: "silent".to_string(),
+                note: Some(format!(
+                    "resolver {} did not respond within budget at observed_at {}",
+                    obs.resolver, obs.observed_at
+                )),
+            });
+            result.verdict = Verdict::InsufficientCoverage;
+            result.verdict_note = Some(format!(
+                "Resolver {} did not answer (timeout) for ({}, {}) at observed_at {}; no \
+                 answer-shape testimony to admit. Silence is not affirmative testimony.",
+                obs.resolver, obs.query_name, obs.query_type, obs.observed_at
+            ));
+        }
+        ResponseKind::TransportError => {
+            // The vantage could not reach the resolver. The unknown is
+            // the vantage's network stack, not the queried name. No
+            // support; this is a witness-standing refusal, not a
+            // negative answer.
+            let detail = obs
+                .error_detail
+                .as_deref()
+                .map(|e| format!(" — {e}"))
+                .unwrap_or_default();
+            result.coverage.push(PreflightCoverage {
+                witness: "dns_resolver".to_string(),
+                standing: "unreachable".to_string(),
+                note: Some(format!(
+                    "vantage {} could not reach resolver {} at observed_at {}{}",
+                    obs.vantage_host, obs.resolver, obs.observed_at, detail
+                )),
+            });
+            result.verdict = Verdict::CannotTestify;
+            result.verdict_note = Some(format!(
+                "Vantage {} could not reach resolver {} for ({}, {}) at observed_at {}{}; the \
+                 unknown is the vantage's path to the resolver, not the queried name.",
+                obs.vantage_host,
+                obs.resolver,
+                obs.query_name,
+                obs.query_type,
+                obs.observed_at,
+                detail
+            ));
+        }
+        ResponseKind::ValidationFailure => {
+            // Reserved slot per the gap doc; V0 collectors never emit
+            // this. If a future probe writes one, route to
+            // contradictory_testimony: a DNSSEC validation failure is
+            // testimony that the answer cannot honestly be trusted
+            // *or* discarded — admitting either is laundering.
+            let support = make_support(&obs);
+            result.observed_at_min = Some(obs.observed_at.clone());
+            result.observed_at_max = Some(obs.observed_at.clone());
+            result.supports.push(support);
+            result.coverage.push(PreflightCoverage {
+                witness: "dns_resolver".to_string(),
+                standing: "observable".to_string(),
+                note: Some(format!(
+                    "resolver {} returned an answer that failed DNSSEC validation",
+                    obs.resolver
+                )),
+            });
+            result.verdict = Verdict::ContradictoryTestimony;
+            result.verdict_note = Some(
+                "Resolver returned an answer that failed DNSSEC validation; admitting either \
+                 the answer or its absence as live truth is laundering. V0 collectors do not \
+                 validate, so encountering this verdict means a later slice's row is being read."
+                    .to_string(),
+            );
+        }
+    }
+
+    Ok(result)
+}
+
+/// Map a dns_observation row to the operator-facing weaker claim. The
+/// claim text carries witness, subject, and observed_at — a consumer
+/// that quotes only the `claim` field cannot launder the scope away.
+///
+/// Wording discipline: NODATA / NXDOMAIN say "resolver returned",
+/// SERVFAIL says "resolver reported", REFUSED says "resolver refused".
+/// No kind says "confirmed" — the witness is the resolver, not global
+/// DNS truth.
+fn make_support(obs: &DnsObservation) -> PreflightSupport {
+    let claim = match obs.response_kind {
+        ResponseKind::Success => format!(
+            "Resolver {} returned an answer for ({}, {}) with summary {}, min_ttl {}, at observed_at {}",
+            obs.resolver,
+            obs.query_name,
+            obs.query_type,
+            obs.answer_summary.as_deref().unwrap_or("(none)"),
+            obs.min_ttl_seconds
+                .map(|t| format!("{t}s"))
+                .unwrap_or_else(|| "unknown".to_string()),
+            obs.observed_at,
+        ),
+        ResponseKind::Nodata => format!(
+            "Resolver {} returned NODATA for ({}, {}) at observed_at {} — name exists per this \
+             resolver; no records of type {}",
+            obs.resolver, obs.query_name, obs.query_type, obs.observed_at, obs.query_type
+        ),
+        ResponseKind::Nxdomain => format!(
+            "Resolver {} returned NXDOMAIN for ({}) at observed_at {} — cached denial, not \
+             eternal nonexistence",
+            obs.resolver, obs.query_name, obs.observed_at
+        ),
+        ResponseKind::Servfail => format!(
+            "Resolver {} reported SERVFAIL for ({}, {}) at observed_at {} — testimony about the \
+             resolver, not about {}",
+            obs.resolver, obs.query_name, obs.query_type, obs.observed_at, obs.query_name
+        ),
+        ResponseKind::Refused => format!(
+            "Resolver {} refused query for ({}, {}) at observed_at {} — testimony about resolver \
+             policy, not about {}",
+            obs.resolver, obs.query_name, obs.query_type, obs.observed_at, obs.query_name
+        ),
+        ResponseKind::ValidationFailure => format!(
+            "Resolver {} returned an answer for ({}, {}) at observed_at {} that failed DNSSEC \
+             validation; this row is reserved for a future validating probe and is not emitted \
+             by V0",
+            obs.resolver, obs.query_name, obs.query_type, obs.observed_at
+        ),
+        ResponseKind::Timeout | ResponseKind::TransportError => {
+            // These kinds reach make_support only via the stale path,
+            // where carrying the most-recent row preserves what we
+            // observed at the (now-stale) time.
+            format!(
+                "Resolver {} produced no answer ({}) for ({}, {}) at observed_at {}",
+                obs.resolver,
+                obs.response_kind.as_str(),
+                obs.query_name,
+                obs.query_type,
+                obs.observed_at,
+            )
+        }
+    };
+    PreflightSupport {
+        claim,
+        finding_kind: format!("dns_{}", obs.response_kind.as_str()),
+        subject: format!(
+            "resolver={};name={};type={}",
+            obs.resolver, obs.query_name, obs.query_type
+        ),
+        observed_at: Some(obs.observed_at.clone()),
+        freshness: None,
+        admissibility_state: Some("observable".to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -542,5 +844,478 @@ mod tests {
             msg.contains("dnssec_passed"),
             "load error must fingerprint the bad value: {msg}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // `dns_state` evaluator tests.
+    // -----------------------------------------------------------------------
+    //
+    // Phrases that must NEVER appear in any support claim or verdict_note,
+    // by claim-kind constitution (see dns_state_cannot_testify and the
+    // wording discipline in the gap doc).
+    const FORBIDDEN_PHRASES: &[&str] = &[
+        "endpoint reachable",
+        "endpoint is reachable",
+        "service healthy",
+        "service is healthy",
+        "service alive",
+        "globally resolves",
+        "global dns",
+        "registrar",
+        "account status",
+        "dnssec validated",
+        "dnssec passed",
+        "will recover",
+        "recovery imminent",
+        "name resolves to",
+        "ptr",
+        // The user-named wording boundary: NXDOMAIN/NODATA must not be
+        // narrated as `confirmed`.
+        "confirmed",
+    ];
+
+    fn assert_supports_are_bounded(r: &PreflightResult) {
+        for support in &r.supports {
+            let lower = support.claim.to_ascii_lowercase();
+            for forbidden in FORBIDDEN_PHRASES {
+                assert!(
+                    !lower.contains(forbidden),
+                    "support claim laundered forbidden vocabulary ({forbidden:?}): {:?}",
+                    support.claim
+                );
+            }
+        }
+        if let Some(note) = &r.verdict_note {
+            let lower = note.to_ascii_lowercase();
+            for forbidden in FORBIDDEN_PHRASES {
+                assert!(
+                    !lower.contains(forbidden),
+                    "verdict_note laundered forbidden vocabulary ({forbidden:?}): {note:?}"
+                );
+            }
+        }
+    }
+
+    fn rfc3339_at_offset(offset_seconds: i64) -> String {
+        let t = time::OffsetDateTime::now_utc() + time::Duration::seconds(offset_seconds);
+        t.format(&time::format_description::well_known::Rfc3339)
+            .unwrap()
+    }
+
+    fn seed_observation(db: &crate::WriteDb, gen_id: i64, kind: ResponseKind) -> DnsObservation {
+        ensure_generation(&db.conn, gen_id);
+        let observed_at = rfc3339_at_offset(-30); // fresh
+        let mut row = obs(
+            gen_id,
+            "sushi-k",
+            "8.8.8.8",
+            "nq.neutral.zone",
+            "A",
+            kind,
+            &observed_at,
+        );
+        if matches!(kind, ResponseKind::Success) {
+            row.rcode = Some(0);
+            row.answer_summary = Some("23.92.30.41".into());
+            row.min_ttl_seconds = Some(300);
+        }
+        if matches!(kind, ResponseKind::TransportError) {
+            row.error_detail = Some("connection refused".into());
+        }
+        insert_observation(&db.conn, &row).unwrap();
+        row
+    }
+
+    fn default_tuple() -> DnsObservationTuple<'static> {
+        DnsObservationTuple {
+            vantage_host: "sushi-k",
+            resolver: "8.8.8.8",
+            query_name: "nq.neutral.zone",
+            query_type: "A",
+        }
+    }
+
+    #[test]
+    fn evaluator_schema_and_target_shape_match_the_gap_doc() {
+        let db = make_db();
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.schema, nq_core::preflight::PREFLIGHT_DNS_STATE_SCHEMA);
+        assert_eq!(r.contract_version, nq_core::preflight::PREFLIGHT_CONTRACT_VERSION);
+        assert_eq!(r.target.host, "sushi-k");
+        assert_eq!(r.target.scope, "dns_query");
+        assert_eq!(
+            r.target.id.as_deref(),
+            Some("resolver=8.8.8.8;name=nq.neutral.zone;type=A")
+        );
+    }
+
+    #[test]
+    fn evaluator_no_row_is_insufficient_coverage_with_absent_coverage() {
+        let db = make_db();
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.verdict, Verdict::InsufficientCoverage);
+        assert!(r.supports.is_empty(), "no row → no supports");
+        assert!(r.observed_at_min.is_none());
+        assert!(r.observed_at_max.is_none());
+        let cov = r
+            .coverage
+            .iter()
+            .find(|c| c.witness == "dns_resolver")
+            .expect("dns_resolver coverage entry");
+        assert_eq!(cov.standing, "absent");
+        // Constitutional refusal surface is always populated.
+        assert!(!r.cannot_testify.is_empty());
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("Endpoint reachability")));
+        assert_supports_are_bounded(&r);
+    }
+
+    #[test]
+    fn evaluator_success_is_admissible_with_scope() {
+        let db = make_db();
+        let row = seed_observation(&db, 100, ResponseKind::Success);
+
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
+        assert_eq!(r.supports.len(), 1);
+        let s = &r.supports[0];
+        assert_eq!(s.finding_kind, "dns_success");
+        assert_eq!(s.observed_at.as_deref(), Some(row.observed_at.as_str()));
+        assert!(s.claim.contains("Resolver 8.8.8.8 returned an answer"));
+        assert!(s.claim.contains("min_ttl 300s"));
+        assert!(s.claim.contains("23.92.30.41"));
+        // Observation window mirrors the support row.
+        assert_eq!(r.observed_at_min, Some(row.observed_at.clone()));
+        assert_eq!(r.observed_at_max, Some(row.observed_at));
+        assert_supports_are_bounded(&r);
+    }
+
+    #[test]
+    fn evaluator_nodata_is_admissible_with_scope_and_uses_returned_not_confirmed() {
+        let db = make_db();
+        seed_observation(&db, 100, ResponseKind::Nodata);
+
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
+        let claim = &r.supports[0].claim;
+        assert!(claim.contains("returned NODATA"), "wording: {claim}");
+        assert!(
+            !claim.to_ascii_lowercase().contains("confirmed"),
+            "NODATA must not be narrated as `confirmed`: {claim}"
+        );
+        assert_supports_are_bounded(&r);
+    }
+
+    #[test]
+    fn evaluator_nxdomain_is_admissible_with_scope_and_names_cached_denial() {
+        let db = make_db();
+        seed_observation(&db, 100, ResponseKind::Nxdomain);
+
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
+        let claim = &r.supports[0].claim;
+        assert!(claim.contains("returned NXDOMAIN"), "wording: {claim}");
+        assert!(
+            claim.contains("cached denial"),
+            "must name NXDOMAIN as cached denial, not eternal nonexistence: {claim}"
+        );
+        assert!(
+            !claim.to_ascii_lowercase().contains("confirmed"),
+            "NXDOMAIN must not be narrated as `confirmed`: {claim}"
+        );
+        assert_supports_are_bounded(&r);
+    }
+
+    #[test]
+    fn evaluator_servfail_is_admissible_with_scope_about_resolver_not_name() {
+        let db = make_db();
+        seed_observation(&db, 100, ResponseKind::Servfail);
+
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
+        let claim = &r.supports[0].claim;
+        assert!(claim.contains("reported SERVFAIL"), "wording: {claim}");
+        assert!(
+            claim.contains("about the resolver, not about"),
+            "must scope SERVFAIL to the resolver, not the queried name: {claim}"
+        );
+        assert_supports_are_bounded(&r);
+    }
+
+    #[test]
+    fn evaluator_refused_is_admissible_with_scope_about_resolver_policy_not_name() {
+        let db = make_db();
+        seed_observation(&db, 100, ResponseKind::Refused);
+
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
+        let claim = &r.supports[0].claim;
+        assert!(claim.contains("refused query"), "wording: {claim}");
+        assert!(
+            claim.contains("resolver policy"),
+            "REFUSED must testify about resolver policy, not the queried name: {claim}"
+        );
+        assert_supports_are_bounded(&r);
+    }
+
+    #[test]
+    fn evaluator_timeout_is_insufficient_coverage_no_support() {
+        let db = make_db();
+        seed_observation(&db, 100, ResponseKind::Timeout);
+
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.verdict, Verdict::InsufficientCoverage);
+        assert!(
+            r.supports.is_empty(),
+            "timeout fresh row has no admitted support; silence is not affirmative testimony"
+        );
+        assert!(r.observed_at_min.is_none());
+        assert!(r.observed_at_max.is_none());
+        let cov = r
+            .coverage
+            .iter()
+            .find(|c| c.witness == "dns_resolver")
+            .expect("dns_resolver coverage entry");
+        assert_eq!(cov.standing, "silent");
+        assert_supports_are_bounded(&r);
+    }
+
+    #[test]
+    fn evaluator_transport_error_is_cannot_testify_no_support() {
+        let db = make_db();
+        seed_observation(&db, 100, ResponseKind::TransportError);
+
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.verdict, Verdict::CannotTestify);
+        assert!(
+            r.supports.is_empty(),
+            "transport_error fresh row has no admitted support; the unknown is the vantage path"
+        );
+        assert!(r.observed_at_min.is_none());
+        assert!(r.observed_at_max.is_none());
+        let cov = r
+            .coverage
+            .iter()
+            .find(|c| c.witness == "dns_resolver")
+            .expect("dns_resolver coverage entry");
+        assert_eq!(cov.standing, "unreachable");
+        assert!(
+            cov.note
+                .as_deref()
+                .unwrap_or("")
+                .contains("connection refused"),
+            "coverage note must surface the underlying error detail"
+        );
+        // verdict_note must name the vantage path as the unknown, not
+        // the queried name — preserves the witness-standing refusal.
+        assert!(
+            r.verdict_note
+                .as_deref()
+                .unwrap_or("")
+                .contains("path to the resolver"),
+            "verdict_note must scope the unknown to the vantage path"
+        );
+        assert_supports_are_bounded(&r);
+    }
+
+    #[test]
+    fn evaluator_validation_failure_reserved_routes_to_contradictory_testimony() {
+        // V0 collectors do not emit `validation_failure`. The slot is
+        // reserved so a later DNSSEC-validating probe is not a wire-
+        // breaking change. If a row of this kind appears, the
+        // evaluator must route to contradictory_testimony per the gap
+        // doc, not silently coerce.
+        let db = make_db();
+        seed_observation(&db, 100, ResponseKind::ValidationFailure);
+
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.verdict, Verdict::ContradictoryTestimony);
+        assert_eq!(r.supports.len(), 1);
+        let s = &r.supports[0];
+        assert_eq!(s.finding_kind, "dns_validation_failure");
+        assert!(
+            r.verdict_note
+                .as_deref()
+                .unwrap_or("")
+                .contains("laundering"),
+            "verdict_note must name the laundering risk"
+        );
+        // cannot_testify still pins DNSSEC as out-of-scope for V0.
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("DNSSEC validation outcome")));
+        assert_supports_are_bounded(&r);
+    }
+
+    #[test]
+    fn evaluator_stale_row_yields_stale_testimony_with_age_in_note() {
+        // A success row from far in the past must surface as
+        // stale_testimony, not as a fresh AdmissibleWithScope. The
+        // support is still carried so the operator sees what was
+        // observed — but the verdict says it's stale.
+        let db = make_db();
+        ensure_generation(&db.conn, 100);
+        let stale_at = "2020-01-01T00:00:00Z"; // far older than 300s
+        let mut row = obs(
+            100,
+            "sushi-k",
+            "8.8.8.8",
+            "nq.neutral.zone",
+            "A",
+            ResponseKind::Success,
+            stale_at,
+        );
+        row.answer_summary = Some("198.51.100.7".into());
+        row.min_ttl_seconds = Some(60);
+        insert_observation(&db.conn, &row).unwrap();
+
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.verdict, Verdict::StaleTestimony);
+        assert_eq!(r.supports.len(), 1, "stale row is carried as support");
+        assert_eq!(r.observed_at_min.as_deref(), Some(stale_at));
+        assert_eq!(r.observed_at_max.as_deref(), Some(stale_at));
+        let cov = r
+            .coverage
+            .iter()
+            .find(|c| c.witness == "dns_resolver")
+            .expect("dns_resolver coverage entry");
+        assert_eq!(cov.standing, "stale");
+        let note = r.verdict_note.as_deref().unwrap_or("");
+        assert!(
+            note.contains("stale") && note.contains("threshold"),
+            "verdict_note must name staleness and threshold: {note}"
+        );
+        assert_supports_are_bounded(&r);
+    }
+
+    #[test]
+    fn evaluator_cannot_testify_is_populated_across_all_verdicts() {
+        // Constitutional refusals must remain regardless of verdict.
+        // Spot-check across the full taxonomy: no row, success, every
+        // negative kind, both error kinds, validation_failure, and the
+        // stale path. Each must carry the same constitutional surface.
+        let cases: &[(&str, fn(&crate::WriteDb, i64))] = &[
+            ("no_row", |_db, _id| {}),
+            ("success", |db, id| {
+                seed_observation(db, id, ResponseKind::Success);
+            }),
+            ("nodata", |db, id| {
+                seed_observation(db, id, ResponseKind::Nodata);
+            }),
+            ("nxdomain", |db, id| {
+                seed_observation(db, id, ResponseKind::Nxdomain);
+            }),
+            ("servfail", |db, id| {
+                seed_observation(db, id, ResponseKind::Servfail);
+            }),
+            ("refused", |db, id| {
+                seed_observation(db, id, ResponseKind::Refused);
+            }),
+            ("timeout", |db, id| {
+                seed_observation(db, id, ResponseKind::Timeout);
+            }),
+            ("transport_error", |db, id| {
+                seed_observation(db, id, ResponseKind::TransportError);
+            }),
+            ("validation_failure", |db, id| {
+                seed_observation(db, id, ResponseKind::ValidationFailure);
+            }),
+            ("stale", |db, id| {
+                ensure_generation(&db.conn, id);
+                let row = obs(
+                    id,
+                    "sushi-k",
+                    "8.8.8.8",
+                    "nq.neutral.zone",
+                    "A",
+                    ResponseKind::Success,
+                    "2020-01-01T00:00:00Z",
+                );
+                insert_observation(&db.conn, &row).unwrap();
+            }),
+        ];
+
+        for (label, seed) in cases {
+            let db = make_db();
+            seed(&db, 100);
+            let r = evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple())
+                .unwrap_or_else(|e| panic!("{label}: {e:#}"));
+            assert!(
+                r.cannot_testify
+                    .iter()
+                    .any(|s| s.contains("Endpoint reachability")),
+                "{label}: endpoint reachability refusal must be present"
+            );
+            assert!(
+                r.cannot_testify
+                    .iter()
+                    .any(|s| s.contains("Global DNS truth")),
+                "{label}: global DNS truth refusal must be present"
+            );
+            assert!(
+                r.cannot_testify
+                    .iter()
+                    .any(|s| s.contains("Registrar / account")),
+                "{label}: registrar/account refusal must be present"
+            );
+            assert!(
+                r.cannot_testify
+                    .iter()
+                    .any(|s| s.contains("DNSSEC validation outcome")),
+                "{label}: DNSSEC refusal must be present"
+            );
+            assert!(
+                r.cannot_testify
+                    .iter()
+                    .any(|s| s.starts_with("Whether to repoint")),
+                "{label}: consequence-claim refusal must be present"
+            );
+            assert_supports_are_bounded(&r);
+        }
+    }
+
+    #[test]
+    fn evaluator_reads_only_the_asked_tuple_not_a_sibling() {
+        // The evaluator must never mistake testimony from another
+        // tuple for testimony about the asked tuple — that would
+        // launder a sibling probe's verdict into this one.
+        let db = make_db();
+        ensure_generation(&db.conn, 100);
+
+        // Asked tuple has no observation; sibling tuple (different
+        // resolver) has a fresh Nxdomain.
+        let sibling = obs(
+            100,
+            "sushi-k",
+            "1.1.1.1",
+            "nq.neutral.zone",
+            "A",
+            ResponseKind::Nxdomain,
+            &rfc3339_at_offset(-30),
+        );
+        insert_observation(&db.conn, &sibling).unwrap();
+
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(
+            r.verdict,
+            Verdict::InsufficientCoverage,
+            "asked tuple has no row; sibling tuple must not leak in"
+        );
+        assert!(r.supports.is_empty());
     }
 }
