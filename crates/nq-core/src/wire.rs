@@ -129,6 +129,17 @@ pub struct LogExample {
 }
 
 /// A single metric sample scraped from a Prometheus exporter.
+///
+/// The `scrape_target_*` fields preserve **target provenance** — which
+/// configured scrape target produced this sample. Without these fields
+/// two exporters emitting the same metric name (e.g. `probe_success`
+/// from a blackbox exporter probing two different endpoints) become
+/// indistinguishable in storage. The scrape pipeline stamps every
+/// successful sample after parsing; parsing itself stays pure.
+///
+/// Stamping happens at the struct level, NOT by injecting `nq_*`
+/// labels, so exporter-emitted labels are never clobbered. Provenance
+/// lives outside the metric's own label namespace by design.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricSample {
     pub name: String,
@@ -137,6 +148,15 @@ pub struct MetricSample {
     /// gauge, counter, histogram, summary, untyped
     #[serde(default)]
     pub metric_type: Option<String>,
+    /// Configured name of the scrape target that produced this sample
+    /// (e.g. "blackbox_labelwatch_health"). Additive; older payloads
+    /// without this field deserialize cleanly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scrape_target_name: Option<String>,
+    /// URL the scraper hit to obtain this sample (e.g. the blackbox
+    /// exporter `/probe?module=...&target=...` URL). Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scrape_target_url: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
