@@ -3,7 +3,7 @@
 **Status:** `proposed` — drafted 2026-05-21 from clock_skew framing in `docs/coverage/traditional-monitoring-coverage-audit.md` (the audit's `clock_skew` detail block names this as the load-bearing half of a two-layer slice; the witness-side profile is the other half, deferred). Calibration record only. Does not authorize implementation, evaluator change, registry expansion, schema work, notification path, dashboard surface, or any code.
 **Depends on:** `../CLAIM_PREFLIGHT.md` (ladder + refusal vocabulary), `../VERDICTS.md` (closed eight-verdict set), `../WITNESS_PACKET.md` (freshness discipline), `../architecture/SHARED_SPINE.md` (where a future ratified mechanism would land), `../coverage/traditional-monitoring-coverage-audit.md` (the audit row that named this gap)
 **Related:** `PREMISE_DEGRADED_GAP.md` (sibling refusal family at premise altitude; time-basis poisoning is structurally a premise-decay variant where the rotting premise is "the timestamps on this testimony are accurate"), `COVERAGE_HONESTY_GAP.md` (liveness / coverage / truthfulness as three axes — temporal integrity is a fourth or a meta-axis), `CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md` (registry-shape guardrails for any new ClaimKind), `CANNOT_TESTIFY_STATUS.md`, `WITNESS_PATH_ASSURANCE_GAP.md` (parked future branch — signed timestamps / TSA integration belongs there, not here)
-**Blocks:** witness-side `clock_skew` profile in nq-witness. The witness profile is deliberately deferred until the claim-side adjudication shape is settled, because the witness must not conclude "therefore packet freshness is invalid" — that conclusion is the claim layer's, not the witness's. Building the external collector before the adjudication seam invites exactly the laundering this gap exists to refuse.
+**Blocks:** *semantic consumption* of any nq-witness `clock_skew` profile as freshness authority. The witness profile may be prototyped or drafted as inert testimony — collectors emit, NQ does not yet read them as basis for freshness decisions — but NQ must not consume the witness's offset/sync state as adjudication input until the seam this gap defines exists. The witness must not conclude "therefore packet freshness is invalid"; that conclusion is the claim layer's, not the witness's. The brake is on semantic consumption, not collector drafting. The failure mode this gap refuses is the witness laundering observation into authority, not the witness existing.
 **Last updated:** 2026-05-21
 
 ## Keeper
@@ -14,7 +14,11 @@ Operational translation:
 
 > **Inodes break filesystems. Clock skew breaks testimony.**
 
-The witness reports offset and sync state. **NQ decides whether that poisons standing.** This boundary is the gap's whole load-bearing claim.
+Architectural restatement:
+
+> **Clock skew should not become a monitor. It should become a standing contaminant.**
+
+The witness reports offset and sync state. **NQ decides whether that poisons standing.** This boundary is the gap's whole load-bearing claim. Time-basis machinery is not a new monitoring surface — it is a modifier on the admissibility of *other* testimony.
 
 ## Summary
 
@@ -67,6 +71,45 @@ Build order:
 
 The audit's `time-basis poisoning` row (claim-side, gap) and `clock_skew` row (witness-side, gap) reflect this split. The audit's detail block on `clock_skew` records the rule explicitly: *"Build the adjudication seam before the external collector. Kerberos is the forcing case: time drift is authority drift."*
 
+## Default posture — unknown is not poisoned
+
+Absence of time-basis testimony is **unknown**, not **suspect**. Routine claims with no corroborating time-basis evidence are admitted with their existing verdict and may carry an annotation that names the unknown state explicitly. Refusal or downgrade fires only when:
+
+- the claim kind itself declares it requires corroborated time (e.g. a future authentication-state claim that quotes Kerberos windows or signed-replay windows), or
+- an internal sanity check (see next section) actively fires a suspicion against this specific testimony, or
+- the assurance mode is high enough that absence of corroboration is treated as poison by policy (out of scope for V1).
+
+Without this posture, a default of "unknown ⇒ poisoned" would universally degrade every freshness-keyed claim NQ ever evaluates, converting the discipline into a self-DOS dressed up as epistemic rigor. The posture distinction is constitutional: `unknown` and `suspect` are different annotations carrying different consequences. Conflating them is the bug this section refuses.
+
+## Timestamp roles
+
+The poisoning question is different per clock. Naming them separately keeps later analysis honest and the receipt annotation precise:
+
+| Role | What it is | Poisoning means |
+|---|---|---|
+| `witness_observed_at` | Time the witness recorded when it observed the substrate | The witness's local clock was wrong at observation time; observations from that witness in that window are timestamped with drift |
+| `witness_generated_at` | Time the witness recorded when it emitted the packet | Same risk as `observed_at`, applied to packet metadata rather than observation metadata |
+| `aggregator_received_at` | Time NQ's aggregator recorded when it took delivery of a packet | NQ's own clock was wrong at intake; downstream staleness adjudication is poisoned, not the witness |
+| `evaluator_now` | Time the preflight evaluator runs against | NQ's clock at evaluation time; affects freshness-window enforcement and receiver-side sanity checks |
+| `time_peer_observed_at` (optional) | Time a corroborating witness (NTP peer, future `clock_skew` profile) recorded | Affects whether NQ has corroboration at all; not all deployments have this |
+
+A bad **witness** clock poisons `observed_at`. A bad **aggregator** clock poisons staleness adjudication. A bad **peer** clock poisons corroboration. Same family, different blast radius. The receipt annotation, when minted, must make clear which clock the suspicion attaches to.
+
+## Internal sanity checks (no external witness required)
+
+The first implementation surface does **not** depend on an nq-witness `clock_skew` profile. NQ already has the timestamps it needs — every support carries `observed_at`, the aggregator records `received_at`, the evaluator runs with its own `now`. The first claim-side adjudication is **receiver-side sanity** over imported packets:
+
+- `witness_observed_at` is implausibly in the future relative to `aggregator_received_at` (witness clock ahead of receiver beyond reasonable transit delay).
+- `witness_observed_at` regresses sharply for the same host / witness stream across cycles (witness clock jumped backwards).
+- Packet ordering violates expected monotonicity for a given stream.
+- `witness_observed_at` is fresh by witness time but stale by receiver time (witness clock ahead, receiver-side staleness window violated despite witness self-reporting fresh).
+- Wall-clock jump detected across successive packets from the same witness.
+- Boot identifier / restart sentinel changed and time-sync state is unknown post-reboot.
+
+These checks read NQ's own state — testimony already in flight — and require no external skew authority. They define a **time-basis sanity preflight**, not a NTP monitor. The first internal slice should land one or two of these checks, not all six; the rest queue as the model demands more.
+
+External corroboration (a future `clock_skew` witness profile in nq-witness, or `time_peer_observed_at` from a peer host) becomes a separate input feeding the same adjudication pipeline. It is not a precondition for the first slice. The witness profile, when it lands, augments the sanity surface; it does not replace it.
+
 ## Refusal / downgrade shape
 
 The verdict, when minted, lives within the closed eight-verdict set. No new verdict is introduced. The candidate shapes operate at the existing verdict altitude:
@@ -108,7 +151,7 @@ These are the same anti-laundering rules `CLAIM_PREFLIGHT.md` already states for
 
 Five candidate landing shapes exist for `TIME_BASIS_POISONING` when (and if) it is ratified for implementation. **This gap does not pick between them.**
 
-- **A. New ClaimKind in the registry.** `ClaimKind::TimeBasisState` joins `DiskState` / `IngestState` / `DnsState` as a fourth bespoke kind. This is the third-claim-kind registry-pressure threshold per `CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md` — adding this kind forces the registry-shape decision (consolidate to a typed registry, or carry a fourth bespoke evaluator). The kind would not be a claim *about* time basis so much as a claim that NQ adjudicates time-basis state of imported testimony.
+- **A. New ClaimKind in the registry.** `ClaimKind::TimeBasisState` joins `DiskState` / `IngestState` / `DnsState` as a fourth bespoke kind. This is the third-claim-kind registry-pressure threshold per `CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md` — adding this kind forces the registry-shape decision (consolidate to a typed registry, or carry a fourth bespoke evaluator). **Disfavored unless forced.** Time-basis poisoning is cross-cutting — it modifies the admissibility of *other* claims; it is not naturally a sibling alongside `DiskState` / `IngestState` / `DnsState`. Option A would place a `TimeBasisState` ClaimKind in a position structurally unlike its peers (a ClaimKind whose job is to modify the verdict of other ClaimKinds) and would cross the registry-pressure threshold without commensurate operational gain. The likely landing is some combination of B / C / D, preserving the intuition: this is not "a claim about the clock," it is "a claim's time premise is suspect." Option A stays in the deferred-mechanism enumeration so that future forcing cases (e.g. a future authentication-state claim that genuinely needs a peer time-witness testimony surface) can name it explicitly; it is not the default.
 - **B. Refusal subclass beneath `non_mintable`.** `TIME_BASIS_POISONED` is a tagged variant of the existing non-mintable category, with `suggested_weaker_claims` carrying the time-basis-stripped versions of the original claim where they exist. No new ClaimKind, smaller registry surface. Mirrors `PREMISE_DEGRADED_GAP.md` Option B.
 - **C. Pre-evaluation modifier inside the existing preflight pipeline.** Every `PreflightResult` is post-processed by a time-basis adjudication pass that may downgrade or refuse the verdict based on the testimony's time basis. No new ClaimKind, no new refusal subclass; the adjudication is an evaluator-stage filter that fires across all kinds. Tightest scope, broadest reach.
 - **D. Sidecar receipt annotation.** A `time_basis` block lives alongside the receipt envelope, carrying observed offset / suspicion kind / affected predicates. The verdict itself is unchanged; downstream consumers read the sidecar and apply their own posture rules. NQ contributes diagnosis; downstream owns consequence. Minimum-mechanism option.
@@ -130,7 +173,7 @@ The mechanism is deferred until a forcing case names the requirement concretely 
 - No signed timestamps / TSA integration. Timestamping Authority and signed-witness-packet work belongs to the `WITNESS_PATH_ASSURANCE` parked future branch (Level 5: attested), not here.
 - No notification path. A `TIME_BASIS_POISONED` annotation does not authorize a paging surface, dashboard widget, or operator alert. Whether and how downstream consumers surface time-basis receipts is their decision.
 - No dashboard or UI work.
-- No retroactive re-classification of historical receipts. Receipts emitted before the gap closes stay as recorded.
+- No retroactive **mutation** of historical receipts. Receipts emitted before the gap closes stay as recorded; their bytes are not rewritten. NQ MAY later mint a separate **audit receipt** declaring that prior receipts from host H during window W are now known to have suspect time basis. That move follows the constellation-wide primitive in `LATER_AUDIT_RECEIPTS_GAP.md` — receipts are immutable, standing is revisitable — and the discipline lives there, not here. This gap reuses the primitive when it becomes the basis for NQ's first concrete later-audit use case.
 - No coupling to A.1 shared-spine cut-over. That gap covers the disk_state evaluator's path to the shared spine; it is substrate-pipeline work at a different altitude. `TIME_BASIS_POISONING` lands wherever the registry is at the time the forcing case arrives.
 - No claim that `TIME_BASIS_POISONING` should land before any other work. This gap captures shape; ordering is a separate call.
 
