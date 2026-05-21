@@ -52,14 +52,19 @@ The `cannot testify` and `inadmissible claims` lines are the load-bearing parts.
 | disk capacity (bytes) | `fs_capacity` | gap | verified 2026-05-21: no fs-capacity collector in tree. `disk_state` covers SMART/ZFS disk health, not byte capacity — distinct axis |
 | inode exhaustion | `fs_inode` | covered | profile at `nq-witness/profiles/fs_inode.md`; observation kinds `fs_inode_state` + `fs_mount_scope`; first witness family driven from this audit |
 | mount state (ro/remount/missing) | `mount_state` | gap | |
+| block I/O pressure | `block_io_pressure` | gap | latency, queue depth, await / service time, I/O error counters from the block layer — "disk isn't full, disk isn't dead, but everything is molasses" |
+| kernel filesystem errors | `kernel_fs_errors` | gap | kernel/journal evidence (ext4 errors, XFS shutdown, remount-ro breadcrumbs); distinct from `mount_state` which reports current ro/rw state |
 | filesystem scope declaration | `fs_coverage` | gap | coverage-honesty composition |
 | clock skew / NTP failure | `clock_skew` | gap | also a freshness-poison risk for NQ itself |
 | OOM / memory pressure events | `memory_pressure` | gap | events are pointlike, not states |
 | CPU saturation / scheduler pressure | `cpu_saturation` | gap | |
 | process presence | `process_presence` | gap | famous laundering surface |
 | listener presence | `listener_presence` | gap | famous laundering surface |
+| file descriptor exhaustion | `fd_exhaustion` | gap | per-process + system-wide open file descriptors near limit; "too many open files" still wins fights in alleys |
+| PID / process table pressure | `pid_process_table_pressure` | gap | PID exhaustion, fork failures, process-count pressure, zombie accumulation |
 | TLS certificate expiry | `tls_cert_expiry` | gap | observation half; preflight half elsewhere |
 | network interface errors / drops | `iface_errors` | gap | |
+| conntrack / socket table pressure | `conntrack_pressure` | gap | Linux conntrack table full, ephemeral port exhaustion, socket-state explosion — local state exhaustion that looks like "network is down" |
 | reboot / unexpected uptime reset | `reboot_uptime` | gap | discrete state transition |
 | log pattern observed | `log_pattern` | gap (boundary risk) | likely belongs to claim-preflight, not substrate |
 | package / restart-required state | `kernel_update_pending` | candidate / possibly out-of-scope | policy-adjacent |
@@ -309,3 +314,16 @@ The original `near-covered` statuses were inferred from memory and adjacent mach
 - `dns_state` → upgraded to `covered` (also discovered during the same pass; `ClaimKind::DnsState` shipped per `SPINE_AND_ROADMAP.md`).
 
 Future audit additions should be grep-verified at time of authoring; `near-covered` claims without a pointer should not stand.
+
+### Second-pass substrate additions (2026-05-21)
+
+Five classical-monitoring rows added in a follow-up pass to close embarrassing omissions from the first cut: `block_io_pressure`, `kernel_fs_errors`, `fd_exhaustion`, `pid_process_table_pressure`, `conntrack_pressure`. Each is named-not-built per the use rule (inventory breadth ≠ implementation commitment; table order ≠ sequencing; `gap` ≠ ticket). No detail blocks were written for these tonight; each row gets a one-line note in the index table. Detail blocks land if and when a forcing case or operator pain justifies it.
+
+Other second-pass candidates considered but **not added tonight** (parked for a later pass):
+
+- `swap_thrashing`, `cgroup_container_limits`, `scheduled_job_freshness`, `backup_age` / `restore_evidence`, `log_rotation_pressure`, `local_resolver_state`, `cloud_instance_metadata_state` — all real, none added without forcing case.
+- `entropy_pool`, `security_event_counts`, `firewall_rules_state`, `package_version_drift` — flagged for "maybe don't add yet" because each drags NQ toward an adjacent discipline (security, policy) that wants its own corpus pass.
+
+Composed claims that consume multiple witness families live as refusal-family gap docs at a higher altitude: [`PREMISE_DEGRADED_GAP`](../gaps/PREMISE_DEGRADED_GAP.md), [`TIME_BASIS_POISONING_GAP`](../gaps/TIME_BASIS_POISONING_GAP.md), [`COVERAGE_HONESTY_GAP`](../gaps/COVERAGE_HONESTY_GAP.md), [`LATER_AUDIT_RECEIPTS_GAP`](../gaps/LATER_AUDIT_RECEIPTS_GAP.md). Concrete cross-table correlations operators can run against the NQ database today live in the sibling SQL-composition workbench: [`sql-composed-checks.md`](sql-composed-checks.md). Three altitudes, three artifacts:
+
+> Raw witnesses observe facts. SQL composes suspicions. Claim preflight decides what those suspicions are allowed to mean.
