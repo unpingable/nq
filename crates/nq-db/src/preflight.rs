@@ -134,6 +134,7 @@ pub fn evaluate_disk_state_preflight_from_conn(
     result.verdict = verdict;
     result.verdict_note = note;
 
+    result.compute_time_basis();
     Ok(result)
 }
 
@@ -441,6 +442,7 @@ pub fn evaluate_ingest_state_preflight_from_conn(
             standing: "absent".to_string(),
             note: Some("generations table is empty".to_string()),
         });
+        result.compute_time_basis();
         return Ok(result);
     };
 
@@ -551,6 +553,7 @@ pub fn evaluate_ingest_state_preflight_from_conn(
     result.verdict = verdict;
     result.verdict_note = note;
 
+    result.compute_time_basis();
     Ok(result)
 }
 

@@ -223,6 +223,7 @@ pub fn evaluate_dns_state_preflight_from_conn(
             standing: "absent".to_string(),
             note: Some(format!("no observation row for resolver {}", key.resolver)),
         });
+        result.compute_time_basis();
         return Ok(result);
     };
 
@@ -261,6 +262,7 @@ pub fn evaluate_dns_state_preflight_from_conn(
             age_seconds.unwrap_or_default(),
             DNS_STATE_STALE_THRESHOLD_SECONDS
         ));
+        result.compute_time_basis();
         return Ok(result);
     }
 
@@ -369,6 +371,7 @@ pub fn evaluate_dns_state_preflight_from_conn(
         }
     }
 
+    result.compute_time_basis();
     Ok(result)
 }
 
