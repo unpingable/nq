@@ -31,6 +31,16 @@ pub const PREFLIGHT_DNS_STATE_SCHEMA: &str = "nq.preflight.dns_state.v1";
 /// Contract version for the preflight wire shape. Bumps on breaking change.
 pub const PREFLIGHT_CONTRACT_VERSION: u32 = 1;
 
+/// Threshold (milliseconds) for the V1 receiver-side time-basis sanity
+/// check `observed_at_future_of_evaluator`. A support whose `observed_at`
+/// exceeds the evaluator's `generated_at` by more than this many
+/// milliseconds is flagged as suspect. The default (300_000 ms = 5
+/// minutes) mirrors the Kerberos clock-skew tolerance — large enough to
+/// absorb ordinary network and clock-update jitter, small enough to
+/// catch gross drift. See `docs/gaps/TIME_BASIS_POISONING_GAP.md` §
+/// "Internal sanity checks" for the discipline.
+pub const TIME_BASIS_DRIFT_THRESHOLD_MS: i64 = 300_000;
+
 /// Structured claim kind. V3 covers `DiskState`, `IngestState`, and
 /// `DnsState`. New kinds require a separate ratified change. The
 /// bespoke per-kind pattern stands; the four concrete registry-pressure
@@ -137,6 +147,51 @@ pub enum Verdict {
     CannotTestify,
 }
 
+/// Status of receiver-side time-basis sanity over the supports in a
+/// `PreflightResult`. Per `docs/gaps/TIME_BASIS_POISONING_GAP.md` §
+/// "Default posture": **`Unknown` is not poisoned.** Absence of an
+/// active suspicion does not constitute a clean bill of time-basis
+/// health; it is silence about the question. Refusal or downgrade
+/// fires only when an active suspicion is recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeBasisStatus {
+    /// No active suspicion. Either no sanity check fired, or no
+    /// observable time-basis evidence was available (e.g. supports
+    /// carry no `observed_at`). Default posture for routine claims
+    /// without corroborating time-basis evidence.
+    Unknown,
+    /// One or more receiver-side sanity checks fired. The annotation
+    /// names which checks; the consumer applies its own posture.
+    Suspect,
+}
+
+/// Receiver-side time-basis annotation attached to a `PreflightResult`.
+/// Populated by `PreflightResult::compute_time_basis`. The annotation
+/// is testimony about the standing of *other* testimony; per the
+/// anti-laundering rules in `TIME_BASIS_POISONING_GAP.md`, it does not
+/// authorize discarding affected receipts, forcing a clock correction,
+/// or any other consequence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeBasisAnnotation {
+    pub status: TimeBasisStatus,
+    /// Controlled-vocabulary identifiers for the sanity checks that
+    /// fired. Empty when `status` is `Unknown`. V1 vocabulary:
+    /// - `observed_at_future_of_evaluator` — a support's `observed_at`
+    ///   is more than `threshold_ms` in the future of `generated_at`.
+    pub suspicion_kinds: Vec<String>,
+    /// The largest `observed_at - generated_at` across supports, in
+    /// signed milliseconds (positive = observed_at in the future of
+    /// generated_at). `None` when no support carried an `observed_at`.
+    /// Negative values are recorded as 0 in V1 (the only check is
+    /// future-of-evaluator); the field is reserved for symmetric checks
+    /// in future versions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_observation_delta_ms: Option<i64>,
+    /// Threshold used for the future-of-evaluator check, in milliseconds.
+    pub threshold_ms: i64,
+}
+
 /// What the preflight is being asked to evaluate. `scope` is the granularity
 /// of the target identity; `id` is the specific subject when scope is finer
 /// than host.
@@ -219,6 +274,13 @@ pub struct PreflightResult {
     /// `observed_at_min`: window disclosure, no validity claim.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observed_at_max: Option<String>,
+    /// Receiver-side time-basis sanity annotation, populated by
+    /// `compute_time_basis`. `None` when no time-basis check has run;
+    /// `Some(Unknown)` when checks ran and found nothing to flag (this
+    /// is NOT a clean bill of time-basis health — see the default-
+    /// posture rule in `TIME_BASIS_POISONING_GAP.md`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_basis: Option<TimeBasisAnnotation>,
 }
 
 impl PreflightResult {
@@ -255,8 +317,75 @@ impl PreflightResult {
             generated_at,
             observed_at_min: None,
             observed_at_max: None,
+            time_basis: None,
         }
     }
+
+    /// Run receiver-side time-basis sanity checks over `self.supports`
+    /// and set `self.time_basis` accordingly. See
+    /// `docs/gaps/TIME_BASIS_POISONING_GAP.md` § "Internal sanity checks"
+    /// for the discipline.
+    ///
+    /// V1 implements one check: `observed_at_future_of_evaluator`. A
+    /// support whose `observed_at` is more than
+    /// `TIME_BASIS_DRIFT_THRESHOLD_MS` in the future of
+    /// `self.generated_at` fires the check and the annotation becomes
+    /// `Suspect`. Otherwise the annotation is `Unknown` — per the
+    /// default-posture rule, that is *silence about time basis*, not a
+    /// clean bill of health.
+    ///
+    /// The annotation is testimony about the standing of *other*
+    /// testimony; the verdict itself is NOT changed by this method. A
+    /// future slice may add verdict downgrade behavior; V1 is
+    /// additive-annotation only.
+    pub fn compute_time_basis(&mut self) {
+        let now = match parse_rfc3339(&self.generated_at) {
+            Some(t) => t,
+            None => {
+                self.time_basis = None;
+                return;
+            }
+        };
+
+        let mut max_future_delta_ms: i64 = 0;
+        let mut had_any_observed_at = false;
+        for s in &self.supports {
+            let obs = match s.observed_at.as_deref().and_then(parse_rfc3339) {
+                Some(t) => t,
+                None => continue,
+            };
+            had_any_observed_at = true;
+            let delta_ms = (obs - now).whole_milliseconds() as i64;
+            if delta_ms > max_future_delta_ms {
+                max_future_delta_ms = delta_ms;
+            }
+        }
+
+        let threshold_ms = TIME_BASIS_DRIFT_THRESHOLD_MS;
+        let (status, suspicion_kinds) = if max_future_delta_ms > threshold_ms {
+            (
+                TimeBasisStatus::Suspect,
+                vec!["observed_at_future_of_evaluator".to_string()],
+            )
+        } else {
+            (TimeBasisStatus::Unknown, Vec::new())
+        };
+
+        self.time_basis = Some(TimeBasisAnnotation {
+            status,
+            suspicion_kinds,
+            max_observation_delta_ms: if had_any_observed_at {
+                Some(max_future_delta_ms)
+            } else {
+                None
+            },
+            threshold_ms,
+        });
+    }
+}
+
+fn parse_rfc3339(s: &str) -> Option<time::OffsetDateTime> {
+    time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
 }
 
 /// Constitutional refusal surface for `ingest_state`. Each entry
@@ -491,5 +620,197 @@ mod tests {
             .cannot_testify
             .iter()
             .any(|s| s.contains("Semantic correctness")));
+    }
+
+    #[test]
+    fn compute_time_basis_unknown_when_no_supports() {
+        let target = PreflightTarget {
+            host: "h".into(),
+            scope: "host".into(),
+            id: None,
+        };
+        let mut r = PreflightResult::skeleton(
+            ClaimKind::DiskState,
+            target,
+            "2026-05-21T12:00:00Z".into(),
+        );
+        r.compute_time_basis();
+        let tb = r.time_basis.as_ref().expect("time_basis populated by compute");
+        assert_eq!(tb.status, TimeBasisStatus::Unknown);
+        assert!(tb.suspicion_kinds.is_empty());
+        // No support carried observed_at, so the delta field is absent.
+        assert!(tb.max_observation_delta_ms.is_none());
+        assert_eq!(tb.threshold_ms, TIME_BASIS_DRIFT_THRESHOLD_MS);
+    }
+
+    #[test]
+    fn compute_time_basis_unknown_when_observed_at_within_threshold() {
+        let target = PreflightTarget {
+            host: "h".into(),
+            scope: "host".into(),
+            id: None,
+        };
+        let mut r = PreflightResult::skeleton(
+            ClaimKind::DiskState,
+            target,
+            "2026-05-21T12:00:00Z".into(),
+        );
+        // Observed 2 minutes in the future of generated_at — under the
+        // 5-minute drift threshold, so Unknown (silence about time basis,
+        // NOT a clean bill of health per the default-posture rule).
+        r.supports.push(PreflightSupport {
+            claim: "claim".into(),
+            finding_kind: "k".into(),
+            subject: "s".into(),
+            observed_at: Some("2026-05-21T12:02:00Z".into()),
+            freshness: None,
+            admissibility_state: None,
+        });
+        r.compute_time_basis();
+        let tb = r.time_basis.as_ref().expect("time_basis populated");
+        assert_eq!(tb.status, TimeBasisStatus::Unknown);
+        assert!(tb.suspicion_kinds.is_empty());
+        assert_eq!(tb.max_observation_delta_ms, Some(120_000));
+    }
+
+    #[test]
+    fn compute_time_basis_suspect_when_observed_at_far_future() {
+        let target = PreflightTarget {
+            host: "h".into(),
+            scope: "host".into(),
+            id: None,
+        };
+        let mut r = PreflightResult::skeleton(
+            ClaimKind::DiskState,
+            target,
+            "2026-05-21T12:00:00Z".into(),
+        );
+        // Observed 10 minutes in the future — exceeds the 5-minute drift
+        // threshold; the receiver-side sanity check fires.
+        r.supports.push(PreflightSupport {
+            claim: "claim".into(),
+            finding_kind: "k".into(),
+            subject: "s".into(),
+            observed_at: Some("2026-05-21T12:10:00Z".into()),
+            freshness: None,
+            admissibility_state: None,
+        });
+        r.compute_time_basis();
+        let tb = r.time_basis.as_ref().expect("time_basis populated");
+        assert_eq!(tb.status, TimeBasisStatus::Suspect);
+        assert!(tb
+            .suspicion_kinds
+            .iter()
+            .any(|k| k == "observed_at_future_of_evaluator"));
+        assert_eq!(tb.max_observation_delta_ms, Some(600_000));
+        assert_eq!(tb.threshold_ms, TIME_BASIS_DRIFT_THRESHOLD_MS);
+    }
+
+    #[test]
+    fn compute_time_basis_worst_case_across_supports() {
+        let target = PreflightTarget {
+            host: "h".into(),
+            scope: "host".into(),
+            id: None,
+        };
+        let mut r = PreflightResult::skeleton(
+            ClaimKind::DiskState,
+            target,
+            "2026-05-21T12:00:00Z".into(),
+        );
+        // First support within threshold; second support 30 minutes ahead
+        // (suspect). The worst-case delta wins; the result is Suspect.
+        r.supports.push(PreflightSupport {
+            claim: "a".into(),
+            finding_kind: "k".into(),
+            subject: "s1".into(),
+            observed_at: Some("2026-05-21T12:01:00Z".into()),
+            freshness: None,
+            admissibility_state: None,
+        });
+        r.supports.push(PreflightSupport {
+            claim: "b".into(),
+            finding_kind: "k".into(),
+            subject: "s2".into(),
+            observed_at: Some("2026-05-21T12:30:00Z".into()),
+            freshness: None,
+            admissibility_state: None,
+        });
+        r.compute_time_basis();
+        let tb = r.time_basis.as_ref().expect("time_basis populated");
+        assert_eq!(tb.status, TimeBasisStatus::Suspect);
+        assert_eq!(tb.max_observation_delta_ms, Some(1_800_000));
+    }
+
+    #[test]
+    fn compute_time_basis_skipped_when_generated_at_unparseable() {
+        let target = PreflightTarget {
+            host: "h".into(),
+            scope: "host".into(),
+            id: None,
+        };
+        let mut r = PreflightResult::skeleton(
+            ClaimKind::DiskState,
+            target,
+            "not-an-rfc3339-timestamp".into(),
+        );
+        r.compute_time_basis();
+        assert!(
+            r.time_basis.is_none(),
+            "unparseable generated_at must leave time_basis None, not a fabricated annotation"
+        );
+    }
+
+    #[test]
+    fn time_basis_omitted_from_json_when_none() {
+        let target = PreflightTarget {
+            host: "h".into(),
+            scope: "host".into(),
+            id: None,
+        };
+        let r = PreflightResult::skeleton(
+            ClaimKind::DiskState,
+            target,
+            "2026-05-21T12:00:00Z".into(),
+        );
+        // Skeleton has time_basis: None — the wire shape skips the field.
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(
+            !json.contains("time_basis"),
+            "time_basis field must be omitted when None: {json}"
+        );
+    }
+
+    #[test]
+    fn time_basis_round_trips_when_present() {
+        let target = PreflightTarget {
+            host: "h".into(),
+            scope: "host".into(),
+            id: None,
+        };
+        let mut r = PreflightResult::skeleton(
+            ClaimKind::DiskState,
+            target,
+            "2026-05-21T12:00:00Z".into(),
+        );
+        r.compute_time_basis();
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"time_basis\""), "time_basis present when computed");
+        assert!(
+            json.contains("\"status\":\"unknown\""),
+            "default status serializes as unknown"
+        );
+        let r2: PreflightResult = serde_json::from_str(&json).unwrap();
+        let tb = r2.time_basis.as_ref().expect("round-tripped");
+        assert_eq!(tb.status, TimeBasisStatus::Unknown);
+        assert_eq!(tb.threshold_ms, TIME_BASIS_DRIFT_THRESHOLD_MS);
+    }
+
+    #[test]
+    fn time_basis_status_serializes_snake_case() {
+        let s = serde_json::to_string(&TimeBasisStatus::Unknown).unwrap();
+        assert_eq!(s, "\"unknown\"");
+        let s = serde_json::to_string(&TimeBasisStatus::Suspect).unwrap();
+        assert_eq!(s, "\"suspect\"");
     }
 }
