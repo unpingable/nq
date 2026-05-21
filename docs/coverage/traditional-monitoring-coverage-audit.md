@@ -50,7 +50,7 @@ The `cannot testify` and `inadmissible claims` lines are the load-bearing parts.
 | Family | Witness profile | Status | Notes |
 |---|---|---|---|
 | disk capacity (bytes) | `fs_capacity` | gap | verified 2026-05-21: no fs-capacity collector in tree. `disk_state` covers SMART/ZFS disk health, not byte capacity — distinct axis |
-| inode exhaustion | `fs_inode_state` | gap | distinct failure axis from bytes |
+| inode exhaustion | `fs_inode` | covered | profile at `nq-witness/profiles/fs_inode.md`; observation kinds `fs_inode_state` + `fs_mount_scope`; first witness family driven from this audit |
 | mount state (ro/remount/missing) | `mount_state` | gap | |
 | filesystem scope declaration | `fs_coverage` | gap | coverage-honesty composition |
 | clock skew / NTP failure | `clock_skew` | gap | also a freshness-poison risk for NQ itself |
@@ -92,25 +92,30 @@ Status legend:
 
 Detail blocks justify the discipline. Not every family in the index needs a block on first pass; blocks are added when a family is being considered for implementation or when its testimony boundary is non-obvious enough to be worth recording up front.
 
-### `fs_inode_state`
+### `fs_inode`
+
+**Profile:** `nq-witness/profiles/fs_inode.md` (`nq.witness.fs_inode.v0`). Observation kinds: `fs_inode_state` (one per inspected mount) + `fs_mount_scope` (one per report, declares scope honestly).
 
 **Operational signal:** filesystems run out of inodes before they run out of bytes — small-file workloads, accidental fork bombs into a tempdir, package caches, mail spools. Distinct failure axis from byte capacity.
 
 **Can testify:**
-- "Inode usage for mount M observed at time T: used=U, free=F."
-- "Inode pressure for mount M exceeds configured threshold at time T."
+- "Inode usage for mount M observed at time T: used=U, free=F, total=N."
+- "Mount M is in scope this cycle / mount M is excluded by config / mount M is present but uninspected."
+- "Mount M has `inode_model: unbounded`" (ZFS-style filesystems with no fixed inode cap).
 
 **Cannot testify:**
 - "Filesystem M is healthy / unhealthy."
 - "Application Y is broken."
 - "The host is unrecoverable."
 - "Condition has cleared" without a follow-up observation. Witness silence ≠ recovery.
+- "Inode pressure is rising" from a single snapshot — trend is a multi-generation consumer concern.
 
 **Inadmissible claims:**
 - "Disk is full" — conflates bytes and inodes (two distinct failure modes).
 - "Filesystem healthy" — not supportable from inode data alone.
+- "Byte capacity" — explicitly inadmissible standing per the profile; a separate `fs_capacity` profile would be required.
 
-**Status:** gap.
+**Status:** covered — `nq-witness/profiles/fs_inode.md` v0. First witness family driven from this audit rather than from an existing substrate scar.
 
 ### `clock_skew`
 
