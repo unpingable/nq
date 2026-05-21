@@ -49,7 +49,7 @@ The `cannot testify` and `inadmissible claims` lines are the load-bearing parts.
 
 | Family | Witness profile | Status | Notes |
 |---|---|---|---|
-| disk capacity (bytes) | `fs_capacity` | near-covered | host-side collector landed; profile pending |
+| disk capacity (bytes) | `fs_capacity` | gap | verified 2026-05-21: no fs-capacity collector in tree. `disk_state` covers SMART/ZFS disk health, not byte capacity — distinct axis |
 | inode exhaustion | `fs_inode_state` | gap | distinct failure axis from bytes |
 | mount state (ro/remount/missing) | `mount_state` | gap | |
 | filesystem scope declaration | `fs_coverage` | gap | coverage-honesty composition |
@@ -63,21 +63,22 @@ The `cannot testify` and `inadmissible claims` lines are the load-bearing parts.
 | reboot / unexpected uptime reset | `reboot_uptime` | gap | discrete state transition |
 | log pattern observed | `log_pattern` | gap (boundary risk) | likely belongs to claim-preflight, not substrate |
 | package / restart-required state | `kernel_update_pending` | candidate / possibly out-of-scope | policy-adjacent |
-| DNS state | `dns_state` | parked candidate | see candidate memo |
-| TLS handshake state | `tls_handshake` | near-covered | probe-tls in tree |
+| DNS state | `dns_state` | covered | `ClaimKind::DnsState`, `nq.preflight.dns_state.v1`, `probe-dns` CLI, `nq-db/src/dns.rs`, migration 047 |
+| TLS handshake state | `tls_handshake` | gap | verified 2026-05-21: no probe-tls in tree. Only `probe-dns` exists today |
 | SMTP state | `smtp_state` | parked candidate | adjacent protocol audit backlog |
-| HTTP probe | `http_probe` | near-covered | probe in tree |
+| HTTP probe | `http_probe` | gap | verified 2026-05-21: no external HTTP probe in tree. HTTP refs in code are NQ's own surface routes, not probes |
 | witness silence | (claim-side) | covered | NQ-side claim kind, not a witness family |
 | stale findings | (claim-side) | covered | NQ-side claim kind |
 | ingest state | (claim-side) | covered | NQ-side claim kind |
-| SQLite WAL pressure | `sqlite_wal` | near-covered | host collector exists; profile pending |
-| SQLite freelist pressure | `sqlite_freelist` | near-covered | host collector exists; profile pending |
+| SQLite WAL pressure | `sqlite_wal` | near-covered | collector at `crates/nq/src/collect/sqlite_health.rs`; nq-witness profile not yet authored |
+| SQLite freelist pressure | `sqlite_freelist` | near-covered | collector at `crates/nq/src/collect/sqlite_health.rs`; nq-witness profile not yet authored |
 | DB lock contention | `db_lock_pressure` | gap | |
 | DB replication lag | `db_replication_lag` | gap | |
 | DB vacuum / autovacuum debt | `db_vacuum_debt` | gap | |
 | ZFS pool / vdev state | `zfs_pool_state` | covered | nq-witness `profiles/zfs.md` |
-| SMART device state | `smart_state` | near-covered | example witness in nq-witness/examples |
+| SMART device state | `smart_state` | covered | collector at `crates/nq/src/collect/smart.rs`, profile at `nq-witness/profiles/smart.md`, fixtures in `nq-witness/examples/`, migration 037 |
 | coverage honesty (operational vs declared) | (claim-side) | covered (doctrine) | see `docs/gaps/COVERAGE_HONESTY_GAP.md` |
+| time-basis poisoning | (claim-side) | gap | claim-side adjudication of suspect time basis; pairs with `clock_skew` witness as belt + suspenders. Kerberos-style forcing case: time drift is authority drift |
 
 Status legend:
 
@@ -113,7 +114,7 @@ Detail blocks justify the discipline. Not every family in the index needs a bloc
 
 ### `clock_skew`
 
-**Operational signal:** time drift desynchronizes logs, breaks token validation, corrupts certificate-chain freshness, and silently poisons freshness windows in NQ's own testimony. This family has a cross-cutting effect on every other witness's freshness claim.
+**Operational signal:** time drift breaks every freshness-dependent predicate at once. Skew breaks `not_before` ("not yet valid"), `not_after` ("expired"), signed-request replay windows, cross-host trust requiring time coherence, certificate-chain validity, token expiry, log-correlation across hosts, and silently poisons freshness windows in NQ's own testimony. This family has a cross-cutting effect on every other witness's standing — not "another boring host check" but a structural-freshness primitive.
 
 **Can testify:**
 - "Local clock offset from configured NTP peer at time T: O milliseconds."
@@ -127,8 +128,17 @@ Detail blocks justify the discipline. Not every family in the index needs a bloc
 **Inadmissible claims:**
 - "Time is correct" — relative to what?
 - "Cluster is synchronized" — requires multi-vantage testimony.
+- "Therefore packet freshness is invalid" — this conclusion is **not** the witness's to make. The witness reports offset/sync state; the claim layer decides whether that poisons standing.
 
-**Status:** gap. Also a structural concern: testimony emitted under degraded clock should be flagged at the claim layer.
+**Two-layer slice (when authorized to build):**
+- **NQ-internal adjudication layer (probably sooner).** A claim-side preflight check over imported testimony: "this packet's time basis is suspect; any claim depending on freshness must be downgraded, refused, or marked poisoned." Lives in `nq`, not `nq-witness`. Belongs to the same surface as `stale_testimony` / `insufficient_coverage` — adjudication of standing, not collection of measurement. See the "time-basis poisoning" claim-side row above.
+- **nq-witness layer (optional, later).** External per-host profile: "Host H's clock offset from peer P was O ms at observed_at T." Ordinary boring host testimony, fits the corpus. Build when an external collector becomes worth the operational cost — or never, if the internal adjudication is enough.
+
+Build the adjudication seam before the external collector. Kerberos is the forcing case: time drift is authority drift.
+
+**Status:** gap. Two-layer; claim-side adjudication is the load-bearing half.
+
+> Inodes break filesystems. Clock skew breaks testimony.
 
 ### `memory_pressure` (incl. OOM events)
 
@@ -279,5 +289,18 @@ The next family to build is chosen at sequencing time, not at audit time. The au
 - Decide whether `log_pattern` belongs as a witness family at all, or whether it's a claim-preflight concern layered over an external log collector.
 - Decide whether `kernel_update_pending` is in-scope substrate or out-of-scope policy.
 - Cross-reference each row with the nq-witness `OPEN_ISSUES.md` queue when applicable.
-- Confirm and tighten the `near-covered` rows (verify which collectors and profiles actually exist today, vs. inferred from adjacent machinery).
 - Add corpora beyond Zabbix as they are reviewed (node_exporter, Nagios, smartmontools, operator memoirs).
+
+### Verification pass 2026-05-21
+
+The original `near-covered` statuses were inferred from memory and adjacent machinery. A grep pass against both `nq` and `nq-witness` discharged the verification debt for the six rows initially marked `near-covered`:
+
+- `fs_capacity` → `gap` (no collector; `disk_state` is a different axis).
+- `sqlite_wal` → kept `near-covered`, pointer added (`crates/nq/src/collect/sqlite_health.rs`).
+- `sqlite_freelist` → kept `near-covered`, pointer added (same collector).
+- `http_probe` → `gap` (no probe in tree; HTTP code references are NQ's own surface routes).
+- `tls_handshake` → `gap` (no probe-tls in tree; only `probe-dns` exists today).
+- `smart` → upgraded to `covered` (collector + nq-witness profile + fixtures + migration).
+- `dns_state` → upgraded to `covered` (also discovered during the same pass; `ClaimKind::DnsState` shipped per `SPINE_AND_ROADMAP.md`).
+
+Future audit additions should be grep-verified at time of authoring; `near-covered` claims without a pointer should not stand.
