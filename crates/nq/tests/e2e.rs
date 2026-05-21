@@ -1804,3 +1804,294 @@ async fn dns_state_http_missing_query_params_returns_client_error() {
     // about an empty-name tuple; the operator just gets a refusal.
     // No assertion here; documented as accepted behavior.
 }
+
+// ---------------------------------------------------------------------------
+// Time-basis sanity (TIME_BASIS_POISONING_GAP V1) — route-level proof that
+// `compute_time_basis()` is wired into all three live evaluators and that
+// the annotation surfaces on the HTTP wire shape.
+//
+// The default-posture rule from the gap doc — "unknown is not poisoned" —
+// is pinned by three near-identical tests, one per evaluator, that assert
+// `time_basis.status == "unknown"` on a normal request. A fourth test
+// proves the receiver-side sanity check actually fires when a finding's
+// observed_at lands far in the future of the evaluator's `generated_at`.
+// ---------------------------------------------------------------------------
+
+/// Insert a finding whose `last_seen_at` is in the far future. The
+/// disk_state evaluator builds support `observed_at` from this column;
+/// a future value triggers `observed_at_future_of_evaluator` in
+/// `compute_time_basis`. Year 2099 is well past any plausible test
+/// machine clock and well past the 5-minute drift threshold.
+fn insert_finding_with_future_observed_at(
+    conn: &rusqlite::Connection,
+    host: &str,
+    kind: &str,
+    subject: &str,
+) {
+    conn.execute(
+        "INSERT INTO warning_state
+           (host, kind, subject, domain, message, severity,
+            first_seen_gen, first_seen_at, last_seen_gen, last_seen_at,
+            consecutive_gens, finding_class, absent_gens, visibility_state,
+            failure_class, service_impact, action_bias, synopsis, why_care)
+         VALUES (?1, ?2, ?3, 'Δg', 'test', 'warning',
+                 1, '2099-01-01T00:00:00Z', 100, '2099-01-01T00:00:00Z',
+                 5, 'signal', 0, 'observed',
+                 'Accumulation', 'NoneCurrent',
+                 'InvestigateBusinessHours', 'test', 'test')",
+        [host, kind, subject],
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn preflight_disk_state_http_carries_time_basis_unknown_default() {
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let resp: serde_json::Value = client
+        .get(format!("{base}/api/preflight/disk-state/test-host"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    // (1) The annotation field MUST be present on the wire shape — that
+    //     proves compute_time_basis() was called by the disk_state
+    //     evaluator (Option C wiring per TIME_BASIS_POISONING_GAP).
+    let tb = resp.get("time_basis").expect(
+        "time_basis annotation must be present on the wire; \
+         compute_time_basis() wiring missing from disk_state evaluator?",
+    );
+
+    // (2) Default status is `unknown` — per the gap's default-posture
+    //     rule, absence of observed_at testimony is NOT poison.
+    assert_eq!(
+        tb["status"].as_str().expect("status string"),
+        "unknown",
+        "default status on empty DB must be unknown, not suspect: {tb:?}"
+    );
+
+    // (3) No suspicions fired.
+    assert_eq!(
+        tb["suspicion_kinds"]
+            .as_array()
+            .expect("suspicion_kinds array")
+            .len(),
+        0,
+        "no checks should fire on empty DB: {tb:?}"
+    );
+
+    // (4) Threshold disclosed so consumers know the configured bar.
+    assert_eq!(
+        tb["threshold_ms"].as_i64(),
+        Some(300_000),
+        "threshold_ms must equal the 5-minute drift bound: {tb:?}"
+    );
+
+    // (5) max_observation_delta_ms must be absent when no support
+    //     carried observed_at (Option::None collapses via skip_serializing_if).
+    assert!(
+        tb.get("max_observation_delta_ms").is_none(),
+        "delta field must be absent when no supports carry observed_at: {tb:?}"
+    );
+}
+
+#[tokio::test]
+async fn preflight_ingest_state_http_carries_time_basis_unknown_default() {
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let resp: serde_json::Value = client
+        .get(format!("{base}/api/preflight/ingest-state"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    // The ingest_state evaluator wires compute_time_basis() the same way
+    // disk_state does; the empty DB takes the early-return path (no
+    // generations) which still calls compute_time_basis before returning.
+    let tb = resp.get("time_basis").expect(
+        "time_basis annotation must be present on ingest_state wire shape; \
+         compute_time_basis() wiring missing from ingest_state evaluator?",
+    );
+    assert_eq!(
+        tb["status"].as_str().expect("status string"),
+        "unknown",
+        "ingest_state default on empty DB must be unknown: {tb:?}"
+    );
+}
+
+#[tokio::test]
+async fn preflight_dns_state_http_carries_time_basis_unknown_default() {
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let resp: serde_json::Value = client
+        .get(format!(
+            "{base}/api/preflight/dns-state\
+             ?vantage=sushi-k&resolver=8.8.8.8&name=nq.neutral.zone&type=A"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    // The dns_state evaluator hits the no-observation early-return path on
+    // an empty DB; compute_time_basis is called before that return.
+    let tb = resp.get("time_basis").expect(
+        "time_basis annotation must be present on dns_state wire shape; \
+         compute_time_basis() wiring missing from dns_state evaluator?",
+    );
+    assert_eq!(
+        tb["status"].as_str().expect("status string"),
+        "unknown",
+        "dns_state default on empty DB must be unknown: {tb:?}"
+    );
+}
+
+#[tokio::test]
+async fn preflight_disk_state_http_time_basis_suspect_when_observed_at_in_far_future() {
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    let host = "future-host";
+
+    // Seed substrate with a finding whose observed_at lands in 2099.
+    // The disk_state evaluator builds supports from this row; the
+    // resulting support carries observed_at = "2099-01-01T00:00:00Z",
+    // which is far past the 5-minute drift threshold relative to the
+    // evaluator's `generated_at` (= now). The receiver-side sanity
+    // check `observed_at_future_of_evaluator` MUST fire.
+    {
+        let write_db = open_rw(&db_path).unwrap();
+        seed_generation(write_db.conn());
+        insert_finding_with_future_observed_at(
+            write_db.conn(),
+            host,
+            "zfs_pool_degraded",
+            "tank",
+        );
+        drop(write_db);
+    }
+
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let resp: serde_json::Value = client
+        .get(format!("{base}/api/preflight/disk-state/{host}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let tb = resp
+        .get("time_basis")
+        .expect("time_basis annotation must be present");
+
+    // (1) Status flipped from default Unknown to active Suspect — the
+    //     receiver-side sanity check fired on the future observed_at.
+    assert_eq!(
+        tb["status"].as_str().expect("status string"),
+        "suspect",
+        "future-dated observed_at must surface as suspect on the wire: {tb:?}"
+    );
+
+    // (2) The controlled-vocabulary identifier names which check fired.
+    let kinds: Vec<String> = tb["suspicion_kinds"]
+        .as_array()
+        .expect("suspicion_kinds array")
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+    assert!(
+        kinds.iter().any(|k| k == "observed_at_future_of_evaluator"),
+        "suspicion_kinds must name the check that fired: {kinds:?}"
+    );
+
+    // (3) Delta is large (multiple decades). We assert the lower bound,
+    //     not an exact value, because the evaluator's `generated_at`
+    //     is set at evaluation time.
+    let delta_ms = tb["max_observation_delta_ms"]
+        .as_i64()
+        .expect("max_observation_delta_ms must be present when supports carry observed_at");
+    assert!(
+        delta_ms > 300_000,
+        "delta_ms ({delta_ms}) must exceed the 5-minute threshold"
+    );
+
+    // (4) Verdict is unchanged by the annotation. V1 is additive-only;
+    //     the eight-verdict set stands. The annotation testifies about
+    //     the standing of the testimony, NOT about the verdict.
+    let verdict = resp["verdict"].as_str().expect("verdict string");
+    assert!(
+        matches!(
+            verdict,
+            "admissible"
+                | "admissible_with_scope"
+                | "insufficient_coverage"
+                | "stale_testimony"
+                | "cannot_testify"
+                | "unsupported_as_stated"
+                | "claim_exceeds_testimony"
+                | "contradictory_testimony"
+        ),
+        "verdict must still be a member of the closed eight-verdict set; \
+         time_basis annotation is additive and must not introduce a ninth \
+         verdict: got {verdict:?}"
+    );
+}
