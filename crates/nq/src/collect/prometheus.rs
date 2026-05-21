@@ -58,7 +58,24 @@ fn scrape_target(target: &nq_core::config::PrometheusTarget) -> anyhow::Result<V
         .build()?;
 
     let body = client.get(&target.url).send()?.text()?;
-    Ok(parse_exposition(&body))
+    Ok(stamp_with_target(parse_exposition(&body), target))
+}
+
+/// Stamp parsed samples with their scrape-target provenance. Called
+/// after `parse_exposition` so parsing itself stays pure; the function
+/// that knows which target the body came from is the one that records
+/// it on each sample. See `MetricSample` docs for the discipline (no
+/// `nq_*` label injection — provenance lives on the struct, outside
+/// the exporter's label namespace).
+fn stamp_with_target(
+    mut samples: Vec<MetricSample>,
+    target: &nq_core::config::PrometheusTarget,
+) -> Vec<MetricSample> {
+    for sample in &mut samples {
+        sample.scrape_target_name = Some(target.name.clone());
+        sample.scrape_target_url = Some(target.url.clone());
+    }
+    samples
 }
 
 /// Parse Prometheus exposition format text into metric samples.
@@ -148,6 +165,10 @@ fn parse_sample_line(
         labels,
         value,
         metric_type: mt,
+        // Parsing stays pure — provenance is stamped by
+        // `stamp_with_target` after parse completes.
+        scrape_target_name: None,
+        scrape_target_url: None,
     })
 }
 
@@ -265,5 +286,92 @@ http_duration_seconds_count 144320
         let samples = parse_exposition(text);
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].labels["path"], "/foo\"bar");
+    }
+
+    #[test]
+    fn samples_from_two_targets_remain_distinguishable() {
+        // Two scrape targets that both emit `probe_success` from a
+        // single blackbox exporter — different `target=` query
+        // parameters but identical metric name and labels. Without
+        // target-provenance stamping, the parsed samples would be
+        // indistinguishable in storage. With it, each sample carries
+        // its source target's name and URL.
+        let target_a = nq_core::config::PrometheusTarget {
+            name: "blackbox_labelwatch_health".to_string(),
+            url: "http://127.0.0.1:9115/probe?module=http_2xx&target=https://labelwatch/health"
+                .to_string(),
+            timeout_ms: 5000,
+        };
+        let target_b = nq_core::config::PrometheusTarget {
+            name: "blackbox_neutralzone_home".to_string(),
+            url: "http://127.0.0.1:9115/probe?module=http_2xx&target=https://nq.neutral.zone/"
+                .to_string(),
+            timeout_ms: 5000,
+        };
+        let body = "# TYPE probe_success gauge\nprobe_success 1\n";
+
+        let samples_a = stamp_with_target(parse_exposition(body), &target_a);
+        let samples_b = stamp_with_target(parse_exposition(body), &target_b);
+
+        assert_eq!(samples_a.len(), 1);
+        assert_eq!(samples_b.len(), 1);
+
+        // Each sample names its source target.
+        assert_eq!(
+            samples_a[0].scrape_target_name.as_deref(),
+            Some("blackbox_labelwatch_health")
+        );
+        assert_eq!(
+            samples_b[0].scrape_target_name.as_deref(),
+            Some("blackbox_neutralzone_home")
+        );
+
+        // The two samples are now distinguishable in storage even
+        // though metric name and labels are identical.
+        assert_ne!(samples_a[0].scrape_target_name, samples_b[0].scrape_target_name);
+        assert_ne!(samples_a[0].scrape_target_url, samples_b[0].scrape_target_url);
+
+        // Exporter-emitted content stays untouched — no nq_* label
+        // injection, no clobbering. Both samples still carry the same
+        // metric name and (here empty) label set.
+        assert_eq!(samples_a[0].name, samples_b[0].name);
+        assert_eq!(samples_a[0].labels, samples_b[0].labels);
+        assert_eq!(samples_a[0].value, samples_b[0].value);
+    }
+
+    #[test]
+    fn parsed_samples_without_stamping_have_none_provenance() {
+        // parse_exposition stays pure — it doesn't know about targets.
+        // Provenance is None until stamp_with_target sets it. This pins
+        // the invariant that parsing and stamping are separate stages.
+        let body = "# TYPE probe_success gauge\nprobe_success 1\n";
+        let samples = parse_exposition(body);
+        assert_eq!(samples.len(), 1);
+        assert!(samples[0].scrape_target_name.is_none());
+        assert!(samples[0].scrape_target_url.is_none());
+    }
+
+    #[test]
+    fn provenance_fields_skip_serialization_when_none() {
+        // Additive-and-optional contract: an unstamped sample
+        // (legacy-shaped payload) must serialize without the new
+        // provenance keys at all, so older readers see no change.
+        let sample = MetricSample {
+            name: "probe_success".to_string(),
+            labels: BTreeMap::new(),
+            value: 1.0,
+            metric_type: Some("gauge".to_string()),
+            scrape_target_name: None,
+            scrape_target_url: None,
+        };
+        let json = serde_json::to_string(&sample).unwrap();
+        assert!(
+            !json.contains("scrape_target_name"),
+            "unstamped sample must omit scrape_target_name from JSON: {json}"
+        );
+        assert!(
+            !json.contains("scrape_target_url"),
+            "unstamped sample must omit scrape_target_url from JSON: {json}"
+        );
     }
 }
