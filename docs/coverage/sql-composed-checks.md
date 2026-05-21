@@ -113,6 +113,8 @@ Each candidate names its inputs, a single bounded "can testify" line, and the in
 
 A candidate that proves repeatedly useful as a correlation MAY later be promoted to a composed claim family — gaining a refusal-family gap doc, possibly an evaluator, possibly an output kind. That promotion is a separate decision, not implied by inclusion in this document. The default fate of a candidate here is: remain a correlation workbench query, indefinitely.
 
+An **intermediate promotion path** is named in [`../gaps/SQL_DERIVED_FINDINGS_GAP.md`](../gaps/SQL_DERIVED_FINDINGS_GAP.md): a workbench candidate may be promoted to a saved SQL check that produces *derived findings* — lifecycle, receipts, dependency-freshness discipline, and refusal boundaries, without becoming a full composed claim family. That gap pins the rules and the hinge ("the danger is not arbitrary SQL — the danger is arbitrary SQL gaining lifecycle without declared dependency freshness"). Promotion from this workbench to a derived finding is the executable path; promotion further into a composed claim family is a separate ratified decision on top of that.
+
 A candidate that proves to have no operational signal MAY be removed. The default is to leave it named so the failure to compose is itself a small piece of operator-visible evidence.
 
 ## Related
