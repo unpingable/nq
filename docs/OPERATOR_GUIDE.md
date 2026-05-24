@@ -242,11 +242,16 @@ Schema migrations run automatically on startup. If the new binary requires a sch
 After upgrade, verify:
 
 ```bash
-curl -s http://127.0.0.1:9848/api/overview | jq .schema_version
-curl -s http://127.0.0.1:9848/api/overview | jq .latest_generation_id
+# 1. Schema version on disk matches what the new binary expects.
+sqlite3 -readonly /var/lib/nq/nq.db "PRAGMA user_version"
+
+# 2. Generations are still advancing.
+curl -s http://127.0.0.1:9848/api/overview | jq .generation_id
+sleep 65
+curl -s http://127.0.0.1:9848/api/overview | jq .generation_id   # higher
 ```
 
-If `latest_generation_id` is advancing, the aggregator is healthy.
+If `generation_id` advances between the two calls (separated by more than one `interval_s`), the aggregator is collecting and writing.
 
 ---
 
