@@ -8,7 +8,7 @@ NQ is a 2-month-old solo project (226 commits, ~28k LOC Rust, 540+ tests, 47 SQL
 
 The project already has a ratified roadmap: `docs/architecture/SPINE_AND_ROADMAP.md` lays out Phases 0–5. That doc is authoritative for sequencing. This memo answers a sharper question: **which subset of that roadmap + which non-roadmap work constitutes a 1.0 the author could hand to a stranger**, vs. continue carrying as personal infrastructure.
 
-The frame matters because nightshift is downstream: Phase 3 ("Nightshift consumption") is gated on Phase 2 ("Receipt discipline") shipping. So NQ's path to 1.0 is also the unblocker on the nightshift→NQ integration. Time spent on Phase 2 is not orthogonal to nightshift; it is the prerequisite.
+The frame matters less than it once seemed. The 2026-05-24 nightshift audit narrowed the cross-project claim: **Phase 2 unblocks future receipt-discipline consumption and optional Nightshift enrichments. Current Nightshift MVP work consumes finding/liveness wires and is not blocked on NQ receipt discipline.** NQ's path to 1.0 is therefore a single-project concern; the constellation does not need Phase 2 to clear before Nightshift can ship its MVP.
 
 ## Prior question: is 1.0 the right shape at all?
 
@@ -156,7 +156,7 @@ Edges to read:
 - **I (service_recovered) is parallel to A.** It can land anytime; it may trigger K (registry shape generalization) but K is not gating 1.0.
 - **Docs (L/N/O) and op hardening (S) are parallel to everything**, but they need at least Phase 2 to be settled before they can describe stable contracts.
 - **Q (second consumer) is the integration test** for whether 1.0 actually works for non-authors.
-- **Dashed edge P3 is post-1.0.** Phase 2's exit unblocks nightshift work; nightshift doesn't gate 1.0.
+- **Dashed edge P3 is post-1.0.** Phase 2's exit unblocks future receipt-discipline consumption (including optional Nightshift enrichments); current Nightshift MVP work runs on the finding/liveness wires and is not blocked on NQ receipt discipline. Nightshift does not gate 1.0.
 
 ## Slices (in dependency order, each ~1–2 focused sessions)
 
@@ -208,12 +208,9 @@ Exit: rough-edge log exists, top items addressed, 1.0 tag lands.
 
 ## Cross-project ordering implication
 
-The phase that unblocks nightshift consumption is Phase 2 (Slice 1 above). That changes the time-allocation calculus:
+The 2026-05-24 nightshift audit answered the question this section used to leave open: **current Nightshift MVP work consumes finding/liveness wires and is not blocked on NQ receipt discipline.** Phase 2 unblocks future receipt-discipline consumption and optional Nightshift enrichments, not the MVP.
 
-- **If nightshift is currently waiting on NQ**: Slice 1 is the highest-leverage NQ work because finishing it unblocks two projects, not one.
-- **If nightshift is not waiting on NQ**: NQ's 1.0 still benefits from Slice 1 first (mainline durability), and the "carry slack until forcing case" rule applies to nightshift integration just like it does to other downstream consumers.
-
-In either case, the cross-project shape is: **Slice 1 is the single piece of NQ work where shipping has compound effects across the constellation**. Slices 2–6 only affect NQ.
+The implication for time allocation: NQ's 1.0 is a single-project concern. Slice 1 still benefits NQ's own mainline durability, but it does not carry constellation-scale urgency. The "carry slack until forcing case" rule applies to nightshift integration just like it does to other downstream consumers.
 
 ## Minimum 1.0 cut
 
