@@ -44,6 +44,32 @@ pub struct NotVerifiedEntry {
     pub detail: Option<String>,
 }
 
+/// Reference to a witness consulted while evaluating a claim.
+///
+/// `digest` carries the JCS-canonicalized SHA-256 of the source witness
+/// packet (`sha256:<hex>`) when one is available. Two cases populate the
+/// slot today:
+///
+/// - **Track B** (`nq verify`-shape, evaluator reads caller-supplied
+///   `WitnessPacket` envelopes): digest is computed via
+///   `WitnessPacket::digest()` and populated. Receipts from this path
+///   are anchored to the exact packet envelopes that produced them.
+/// - **Track A** (operational preflight: `disk_state`, `ingest_state`,
+///   `dns_state`): digest is left absent. The evaluator builds its
+///   `PreflightCoverage` entries from finding state in the database,
+///   not from retained witness packets — there is no envelope to hash
+///   at receipt time. Slice 2 of `docs/architecture/PATH_TO_1_0.md`
+///   (`DISK_STATE_CUTOVER_TO_SHARED_SPINE`) reshapes Track A around
+///   witness packets and is the natural point at which Track A
+///   receipts gain digests.
+///
+/// **Absence of `digest` is not a verification result.** A missing
+/// digest means "this WitnessRef is not anchored to a specific packet
+/// envelope" — typically because the receipt was produced via Track A,
+/// or because JCS canonicalization itself failed for the source packet.
+/// It does *not* mean "verification false" and is not implicitly
+/// "verification ok." Verification is `nq receipt check` territory
+/// (Slice 1d).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WitnessRef {
     pub witness_type: String,
@@ -140,6 +166,11 @@ impl From<PreflightResult> for Receipt {
             })
             .collect();
 
+        // Track A leaves `digest` absent: PreflightCoverage entries are
+        // derived from finding state, not from retained witness packet
+        // envelopes. See the doc comment on `WitnessRef` and Slice 2 in
+        // `docs/architecture/PATH_TO_1_0.md`
+        // (`DISK_STATE_CUTOVER_TO_SHARED_SPINE`).
         let witnesses: Vec<WitnessRef> = pr
             .coverage
             .iter()

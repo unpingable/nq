@@ -170,11 +170,17 @@ pub fn evaluate(
     let applicable: Vec<&WitnessPacket> =
         witnesses.iter().filter(|w| w.subject == subject).collect();
 
+    // Populate `digest` on each WitnessRef with the JCS-canonicalized
+    // SHA-256 of the matching packet. `digest()` only fails for values
+    // JCS itself rejects (non-finite numbers smuggled past validation);
+    // on that path we leave digest absent rather than failing the whole
+    // evaluation. Absence of digest is not a verification result — see
+    // the doc comment on `WitnessRef`.
     let witness_refs: Vec<WitnessRef> = applicable
         .iter()
         .map(|w| WitnessRef {
             witness_type: w.witness_type.clone(),
-            digest: None,
+            digest: w.digest().ok(),
             observed_at: Some(w.observed_at.clone()),
         })
         .collect();
@@ -731,5 +737,80 @@ mod tests {
         assert!(r.status_reasons.contains(&StatusReason::NonMintable));
         // No weaker claim verified, so suggested list stays empty.
         assert!(r.suggested_weaker_claims.is_empty());
+    }
+
+    // -------------------------------------------------------------------
+    // Track B witness-ref digest end-to-end (Slice 1a — see
+    // docs/architecture/PATH_TO_1_0.md). Receipts produced by Track B
+    // must carry the JCS+SHA-256 digest of each consulted witness
+    // packet, matching what `WitnessPacket::digest()` returns directly.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn track_b_receipt_carries_packet_digest_on_each_witness_ref() {
+        let reg = ClaimRegistry::track_b_starter();
+        let w = pkt(
+            "pytest",
+            "repo:.",
+            vec![serde_json::json!({"type": "pytest_run", "exit_code": 0})],
+        );
+        let expected_digest = w.digest().expect("digest computes for ok packet");
+
+        let r = evaluate(&reg, "tests_passed", "repo:.", &[w], "2026-05-15T14:00:00Z");
+        assert_eq!(r.status, Status::Verified);
+        assert_eq!(r.witnesses.len(), 1);
+        let wref = &r.witnesses[0];
+        assert_eq!(wref.witness_type, "pytest");
+        assert_eq!(
+            wref.digest.as_deref(),
+            Some(expected_digest.as_str()),
+            "WitnessRef.digest must match WitnessPacket::digest() output exactly"
+        );
+        assert!(wref.digest.as_deref().unwrap().starts_with("sha256:"));
+    }
+
+    #[test]
+    fn track_b_composite_carries_digest_per_witness_packet() {
+        let reg = ClaimRegistry::track_b_starter();
+        let w_pytest = pkt(
+            "pytest",
+            "repo:.",
+            vec![serde_json::json!({"type": "pytest_run", "exit_code": 0})],
+        );
+        let w_git = pkt(
+            "git_status",
+            "repo:.",
+            vec![serde_json::json!({"type": "git_status_porcelain", "porcelain": ""})],
+        );
+        let w_diff = pkt(
+            "diff_scope",
+            "repo:.",
+            vec![serde_json::json!({
+                "type": "diff_scope_porcelain",
+                "matches_declared_scope": true
+            })],
+        );
+        let expected_digests: Vec<String> = [&w_pytest, &w_git, &w_diff]
+            .iter()
+            .map(|p| p.digest().expect("digest computes for ok packet"))
+            .collect();
+
+        let r = evaluate(
+            &reg,
+            "ready_for_review",
+            "repo:.",
+            &[w_pytest, w_git, w_diff],
+            "2026-05-15T14:00:00Z",
+        );
+
+        assert_eq!(r.witnesses.len(), 3);
+        let got_digests: Vec<&str> =
+            r.witnesses.iter().filter_map(|w| w.digest.as_deref()).collect();
+        for expected in &expected_digests {
+            assert!(
+                got_digests.contains(&expected.as_str()),
+                "expected digest {expected} should appear on a WitnessRef; got {got_digests:?}"
+            );
+        }
     }
 }
