@@ -193,6 +193,9 @@ These map to a broader [15-domain failure taxonomy](docs/failure-domains.md) fro
 
 ## Docs
 
+- [Operator Guide](docs/OPERATOR_GUIDE.md) — install, deploy, configure, troubleshoot
+- [Claim Catalog](docs/CLAIM_CATALOG.md) — every shipped claim, required witnesses, what each refuses
+- [Refusal Examples](docs/REFUSAL_EXAMPLES.md) — worked examples of NQ refusing stronger claims
 - [Quickstart](docs/quickstart.md) — monitoring a host in 5 minutes
 - [Failure Domains](docs/failure-domains.md) — the four domains and every detector
 - [SQL Cookbook](docs/sql-cookbook.md) — 30+ ready-to-use queries

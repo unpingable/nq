@@ -1,0 +1,456 @@
+# NQ Operator Guide
+
+For operators who want to run NQ against real systems. Covers install, the two ways NQ is used, the configuration you actually have to write, and the operational concerns (backup, upgrade, reverse proxy, troubleshooting) that aren't covered by the [Quickstart](quickstart.md).
+
+This guide is the recommended starting point if you have just downloaded the binary and want to get NQ working without reading 50 architecture docs.
+
+## What NQ does, in one paragraph
+
+NQ runs as a single statically-linked binary on Linux. There are two distinct uses, and you can pick either, both, or neither:
+
+- **Operational monitor.** `nq publish` runs on each host you want to monitor; `nq serve` runs centrally, pulls from each publisher, runs detectors, stores findings in SQLite, exposes a web UI and an HTTP API, and sends notifications when findings escalate.
+- **Claim verifier (CI).** `nq verify` reads witness-packet files (produced by `nq witness git-status`, `nq witness pytest`, `nq witness diff-scope`, or your own producer) and emits an `nq.receipt.v1` document recording whether the named claim is supported. Usable from CI without any aggregator running.
+
+These two surfaces share a kernel but you do not have to deploy both. Most operators start with the monitor. CI integration is independent and can be added later.
+
+## Invariants the operator can rely on
+
+NQ holds these regardless of how you deploy it:
+
+- **Finding ≠ claim.** Findings are NQ-minted diagnostics. Claims are things external systems want to say ("clean", "ready", "recovered"). NQ preflights claims against findings; it does not promote findings into claims.
+- **Witnesses observe; they do not promote.** A witness that exit-zero'd a test attests to that; it does not attest to "the system is healthy."
+- **Receipts attest; they do not authorize mutation.** A `verified` receipt records what testimony supported; it is not a deploy token, merge token, or paging signal.
+- **NQ preflights assertions; it does not operate the system.** NQ has no `nq restart`, `nq replace`, or `nq merge` verbs. Consequence is downstream.
+
+Worked examples of how this comes out in practice live in [REFUSAL_EXAMPLES.md](REFUSAL_EXAMPLES.md).
+
+---
+
+## Install
+
+Download a static binary from [GitHub Releases](https://github.com/unpingable/nq/releases/latest):
+
+```bash
+curl -sSL https://github.com/unpingable/nq/releases/latest/download/nq-linux-amd64 -o nq
+chmod +x nq
+sudo mv nq /usr/local/bin/
+nq --help
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/unpingable/nq.git
+cd nq
+cargo build --release
+sudo install -m 0755 target/release/nq /usr/local/bin/
+```
+
+Static-linked musl builds are available for `linux-amd64` and `linux-arm64`. There are no runtime dependencies beyond a recent Linux kernel.
+
+---
+
+## Use 1: operational monitor
+
+The [Quickstart](quickstart.md) walks the smallest possible install end-to-end. This section adds the parts a real deployment usually needs.
+
+### Minimum viable deployment
+
+Two processes:
+
+- A **publisher** on every host you want to monitor. It serves a JSON state document at `http://<host>:9847/state`.
+- An **aggregator** on a central host. It pulls each publisher, runs detectors, stores findings, and exposes the web UI and API.
+
+For a one-host install both can run on the same machine.
+
+#### Publisher (`publisher.json`)
+
+```json
+{
+  "bind_addr": "127.0.0.1:9847",
+  "service_health_urls": [
+    { "name": "docker", "check_type": "systemd", "unit": "docker" }
+  ],
+  "prometheus_targets": [
+    { "name": "node", "url": "http://localhost:9100/metrics" }
+  ],
+  "sqlite_paths": []
+}
+```
+
+Run it:
+
+```bash
+nq publish -c publisher.json
+```
+
+You should see periodic log lines and `curl http://127.0.0.1:9847/state` should return JSON.
+
+#### Aggregator (`aggregator.json`)
+
+```json
+{
+  "interval_s": 60,
+  "db_path": "/var/lib/nq/nq.db",
+  "bind_addr": "127.0.0.1:9848",
+  "sources": [
+    { "name": "my-host", "base_url": "http://127.0.0.1:9847", "timeout_ms": 5000 }
+  ]
+}
+```
+
+Run it:
+
+```bash
+mkdir -p /var/lib/nq
+nq serve -c aggregator.json
+```
+
+Open `http://127.0.0.1:9848` in a browser.
+
+### Running under systemd
+
+Example unit files live in [`deploy/examples/`](../deploy/examples/). Install paths:
+
+```
+/etc/systemd/system/nq-publish.service
+/etc/systemd/system/nq-serve.service
+/etc/nq/publisher.json
+/etc/nq/aggregator.json
+```
+
+After installing:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now nq-publish nq-serve
+sudo systemctl status nq-publish nq-serve
+journalctl -u nq-serve -f
+```
+
+### Adding more hosts
+
+Deploy the publisher on each new host. Append a source to the aggregator's `sources` list:
+
+```json
+"sources": [
+  { "name": "host-1", "base_url": "http://host-1:9847" },
+  { "name": "host-2", "base_url": "http://host-2:9847" }
+]
+```
+
+Restart `nq-serve`. The new host appears in the next generation (default 60s).
+
+### Notifications
+
+Add a `notifications` block to `aggregator.json`:
+
+```json
+{
+  "notifications": {
+    "channels": [
+      { "type": "slack",   "webhook_url": "https://hooks.slack.com/services/..." },
+      { "type": "discord", "webhook_url": "https://discord.com/api/webhooks/..." },
+      { "type": "webhook", "url": "https://example.com/hook" }
+    ],
+    "min_severity": "warning"
+  }
+}
+```
+
+Behavior:
+
+- Notifications fire on severity escalation (`info → warning → critical`), not every generation.
+- A condition that resolves and recurs is labeled `(recurring)`, not `(new)`. Same-severity re-notifications are suppressed within a 24-hour cooldown.
+- Genuine escalations always notify, even if the cooldown is active.
+
+### Reverse proxy and authentication
+
+NQ does not implement authentication, TLS termination, OAuth, multi-tenancy, or CORS hardening. `nq serve` is designed to run on a private network or behind a reverse proxy that handles those concerns.
+
+Minimal Caddy example:
+
+```caddyfile
+nq.example.internal {
+    reverse_proxy 127.0.0.1:9848
+    basicauth {
+        opsuser $2a$14$BcryptHashHere
+    }
+}
+```
+
+Minimal nginx example:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name nq.example.internal;
+
+    auth_basic           "nq";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    location / {
+        proxy_pass http://127.0.0.1:9848;
+        proxy_set_header Host $host;
+    }
+}
+```
+
+If you expose `nq serve` to the public internet without a reverse proxy in front, the web UI and SQL console are reachable by anyone who can route to the bind address. The SQL console is read-only against NQ's database, but it does expose findings, host state, and any queries you have saved.
+
+### Storage, backup, upgrade
+
+#### Where data lives
+
+Single SQLite database at `db_path`. Nothing else is durable. WAL files appear in the same directory.
+
+#### Backup
+
+A live `nq serve` can be backed up safely with SQLite's `VACUUM INTO`:
+
+```bash
+sqlite3 /var/lib/nq/nq.db "VACUUM INTO '/var/backups/nq.db.$(date -u +%Y%m%d)'"
+```
+
+`cp` against a running database is **not** safe; use `VACUUM INTO` or stop the service first. To verify a backup, open it read-only and run a smoke query:
+
+```bash
+sqlite3 -readonly /var/backups/nq.db.20260524 \
+  "SELECT count(*) FROM v_warnings; SELECT max(generation_id) FROM generations;"
+```
+
+#### Disk budget
+
+The database grows with history. Default settings keep enough history for trend detection without unbounded growth, but if disk pressure is a concern, monitor `db_path`'s size with the host's own disk metrics (NQ will also surface this as `disk_pressure` if the publisher reports it).
+
+#### Upgrade
+
+```bash
+# stop
+sudo systemctl stop nq-serve nq-publish
+
+# replace
+sudo install -m 0755 ./nq /usr/local/bin/nq
+
+# restart
+sudo systemctl start nq-publish nq-serve
+journalctl -u nq-serve -n 50
+```
+
+Schema migrations run automatically on startup. If the new binary requires a schema version newer than the on-disk DB, the migration log appears in the first few lines of `nq serve` output. There is no manual migration step.
+
+After upgrade, verify:
+
+```bash
+curl -s http://127.0.0.1:9848/api/overview | jq .schema_version
+curl -s http://127.0.0.1:9848/api/overview | jq .latest_generation_id
+```
+
+If `latest_generation_id` is advancing, the aggregator is healthy.
+
+---
+
+## Use 2: CI claim verification
+
+`nq verify` takes one or more witness-packet files and a claim name, evaluates the claim, and emits an `nq.receipt.v1` document. It does not require any aggregator or database.
+
+### Smallest possible example
+
+Verify `repo_clean` against a fresh `git status` witness:
+
+```bash
+nq witness git-status --subject repo:. > /tmp/git.json
+nq verify \
+  --claim repo_clean \
+  --subject repo:. \
+  --witness /tmp/git.json
+```
+
+Output:
+
+- A human-readable receipt to stdout.
+- Exit 0 on a well-formed run regardless of verdict (informational by default).
+
+### CI: fail on weak verdicts
+
+Two posture flags promote informational receipts to gating:
+
+```bash
+nq verify --claim ready_for_review --subject repo:. \
+  --witness .nq/git.json \
+  --witness .nq/pytest.json \
+  --witness .nq/diff.json \
+  --strict
+```
+
+`--strict` exits non-zero on any status other than `verified`. For finer control, use `--fail-on STATUS` (repeatable).
+
+### Available claims
+
+See [CLAIM_CATALOG.md](CLAIM_CATALOG.md) for the full list, required witnesses, and what each claim refuses to testify to. Today the catalog ships:
+
+- Track A (operational, against running monitor): `disk_state`, `ingest_state`, `dns_state` — preflighted via `/api/preflight/*` HTTP routes against the aggregator's DB.
+- Track B (CI, against caller-supplied witnesses): `repo_clean`, `tests_passed`, `diff_scope_matches_claim`, `ready_for_review`, `safe_to_merge` (non-mintable by design).
+
+### Receipt format and rendering
+
+`nq verify --format json` emits the canonical `nq.receipt.v1` JSON. Render an existing receipt for a PR comment:
+
+```bash
+nq receipt render path/to/receipt.json --format markdown
+```
+
+Formats: `human` (default), `markdown`, `json`, `jsonl`.
+
+### GitHub Actions
+
+A starter action lives at the repo root (`.github/workflows/`). See the [SHARED_SPINE](architecture/SHARED_SPINE.md) doc for the full contract.
+
+---
+
+## Common operator workflows
+
+### "What is wrong right now?"
+
+```bash
+nq query --remote http://127.0.0.1:9848 \
+  "SELECT severity, domain, kind, host, message FROM v_warnings \
+   ORDER BY severity DESC, consecutive_gens DESC"
+```
+
+Or open the web UI and scan the active findings list.
+
+### "Why did this finding fire?"
+
+The web UI shows each finding's four-part proof (Observed / Contradiction / Diagnosis / Next checks). Click into the finding for the full evidence record.
+
+From the CLI:
+
+```bash
+nq query --db /var/lib/nq/nq.db \
+  "SELECT * FROM v_finding_evidence WHERE kind='wal_bloat' AND host='my-host'"
+```
+
+### "I'm doing maintenance, don't alert"
+
+Declare a maintenance window before the maintenance starts. NQ rejects past-dated declarations on purpose — declaration must precede effect.
+
+```bash
+nq maintenance declare \
+  --db /var/lib/nq/nq.db \
+  --host my-host \
+  --kind log_silence \
+  --start "now+5m" \
+  --end "now+2h" \
+  --reason "deploying new pipeline" \
+  --declared-by "ops"
+```
+
+Maintenance annotates findings (`covered` while in window, `overrun` if they persist past `end`); it does not delete them.
+
+### "Is NQ itself still running?"
+
+```bash
+nq liveness export --artifact /var/lib/nq/liveness.json \
+  --stale-threshold-seconds 180
+```
+
+If `freshness.fresh` is `false`, NQ has stopped publishing generations. Use `nq sentinel` (run from outside the same host) for external liveness monitoring.
+
+### "I run NQ on more than one host"
+
+`nq fleet status` renders one row per declared target by reading each target's liveness artifact. No merged authority, no synthetic fleet rollup — each target speaks for itself.
+
+```bash
+nq fleet status --manifest ~/.config/nq-fleet/targets.json
+```
+
+### "I want to know what NQ refuses to say"
+
+See [REFUSAL_EXAMPLES.md](REFUSAL_EXAMPLES.md). The refusals are constitutional: they ship on the wire (`cannot_testify` on every HTTP preflight result) and are part of how NQ keeps stronger claims from being inferred from weaker testimony.
+
+---
+
+## Troubleshooting
+
+### Publisher unreachable
+
+Symptom: aggregator logs `source_error`, `nq fleet status` shows a stale target.
+
+Check:
+
+```bash
+# from the aggregator host
+curl -sS --max-time 5 http://<publisher>:9847/state | head -c 200
+```
+
+If this fails, the publisher is down or the network blocks the path. Verify:
+
+```bash
+systemctl status nq-publish
+journalctl -u nq-publish -n 50
+ss -ltnp | grep 9847
+```
+
+### "Stale host" everywhere right after upgrade
+
+Generations are produced on the aggregator's `interval_s` schedule (default 60s). After restart, allow one full interval before declaring something wrong. If after two intervals findings are still suppressed, check `journalctl -u nq-serve` for migration or DB errors.
+
+### Web UI loads but findings list is empty
+
+Either: no publishers are reporting yet, or every finding is currently `cleared`. Run:
+
+```bash
+nq query --remote http://127.0.0.1:9848 \
+  "SELECT count(*), max(generation_id) FROM generations"
+```
+
+If `max(generation_id)` is advancing, the aggregator is collecting data — the system being monitored may just be quiet.
+
+### `nq verify` says `needs_more_evidence`
+
+You did not pass a witness packet whose `subject` matches the `--subject` argument. Witness packets are filtered by exact subject. Verify with:
+
+```bash
+jq .subject /tmp/git.json
+```
+
+Subjects must match exactly (`repo:.`, `host:my-host`, etc).
+
+### `nq verify` says `invalid_evidence`
+
+A witness packet failed envelope validation. The most common cause is a hand-edited packet missing a required field. Re-emit via `nq witness <kind>` or validate explicitly:
+
+```bash
+nq validate-witness /tmp/git.json
+```
+
+### Preflight returns `cannot_testify`
+
+This is not an error. NQ has declined to issue a claim that no available testimony can support. The HTTP response will include the refusal text. See [REFUSAL_EXAMPLES.md](REFUSAL_EXAMPLES.md) for what to do with each refusal kind — often the right move is to submit the weaker claim NQ suggests, not to argue with the verdict.
+
+### Database is large
+
+Run a vacuum out-of-band:
+
+```bash
+sqlite3 /var/lib/nq/nq.db "VACUUM INTO '/var/lib/nq/nq.db.compacted'"
+sudo systemctl stop nq-serve
+mv /var/lib/nq/nq.db.compacted /var/lib/nq/nq.db
+sudo systemctl start nq-serve
+```
+
+History compaction policy is documented in [docs/architecture/SPINE_AND_ROADMAP.md](architecture/SPINE_AND_ROADMAP.md); aggressive retention tuning is a separate operator decision.
+
+---
+
+## Where to look next
+
+- [CLAIM_CATALOG.md](CLAIM_CATALOG.md) — every shipped claim, its required witnesses, what it can say, what it refuses.
+- [REFUSAL_EXAMPLES.md](REFUSAL_EXAMPLES.md) — worked operator-facing examples of NQ refusing a stronger claim and pointing to the weaker admissible one.
+- [Quickstart](quickstart.md) — the tightest possible install path.
+- [SQL Cookbook](sql-cookbook.md) — ready-to-use queries against NQ's tables and views.
+- [Integrations](integrations.md) — Prometheus, Telegraf, systemd, Docker, webhooks.
+- [Failure Domains](failure-domains.md) — the four failure-domain taxonomy and every shipped detector.
+- [VERDICTS.md](VERDICTS.md) — the eight preflight verdicts and how they differ.
+- [Architecture](architecture.md), [SHARED_SPINE.md](architecture/SHARED_SPINE.md), [SPINE_AND_ROADMAP.md](architecture/SPINE_AND_ROADMAP.md) — internals, if you want them.
