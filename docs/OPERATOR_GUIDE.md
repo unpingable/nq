@@ -445,7 +445,7 @@ mv /var/lib/nq/nq.db.compacted /var/lib/nq/nq.db
 sudo systemctl start nq-serve
 ```
 
-History compaction policy is documented in [docs/architecture/SPINE_AND_ROADMAP.md](architecture/SPINE_AND_ROADMAP.md); aggressive retention tuning is a separate operator decision.
+Generation-count retention runs periodically (see `RetentionConfig.prune_every_n_cycles` in `aggregator.json`); byte-budget enforcement of `db_max_size_mb` is **not** implemented today even though the config field exists. See [docs/gaps/DISK_BUDGET_ENFORCEMENT_GAP.md](gaps/DISK_BUDGET_ENFORCEMENT_GAP.md) for the gap and [docs/gaps/HISTORY_COMPACTION_GAP.md](gaps/HISTORY_COMPACTION_GAP.md) for the orthogonal storage-efficiency direction.
 
 ---
 

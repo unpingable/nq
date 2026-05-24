@@ -338,6 +338,13 @@ impl Default for RetentionConfig {
     }
 }
 
+/// Disk-budget configuration. **Declarative only as of 2026-05-24.** No
+/// runtime code path reads these fields; the design intent in
+/// `DESIGN.md` §6 "Disk Budget Strategy" (warn → aggressive retention →
+/// stop writing history) is not implemented. The fields are kept so the
+/// future enforcement implementation does not have to re-add them. See
+/// `docs/gaps/DISK_BUDGET_ENFORCEMENT_GAP.md` for the decision space a
+/// ratified implementation must pin first.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiskBudgetConfig {
     #[serde(default = "default_db_max_size_mb")]
