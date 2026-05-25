@@ -323,7 +323,7 @@ fn make_projection_refusal_exclusion(
 /// Absence of digest is not a verification result. Per the doc comment
 /// on `WitnessRef`, `digest: None` means "this WitnessRef is not
 /// anchored to a specific packet envelope," not "verification false."
-fn packet_identity(packet: &WitnessPacket) -> Option<SupportingWitnessPacket> {
+pub(crate) fn packet_identity(packet: &WitnessPacket) -> Option<SupportingWitnessPacket> {
     let digest = packet.digest().ok()?;
     Some(SupportingWitnessPacket {
         witness_type: packet.witness_type.clone(),
