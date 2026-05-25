@@ -194,6 +194,7 @@ These map to a broader [15-domain failure taxonomy](docs/failure-domains.md) fro
 ## Docs
 
 - [Operator Guide](docs/OPERATOR_GUIDE.md) — install, deploy, configure, troubleshoot
+- [Receipts](docs/RECEIPTS.md) — `nq receipt check` and `nq receipt replay`, failure taxonomy, worked examples
 - [Claim Catalog](docs/CLAIM_CATALOG.md) — every shipped claim, required witnesses, what each refuses
 - [Refusal Examples](docs/REFUSAL_EXAMPLES.md) — worked examples of NQ refusing stronger claims
 - [Quickstart](docs/quickstart.md) — monitoring a host in 5 minutes

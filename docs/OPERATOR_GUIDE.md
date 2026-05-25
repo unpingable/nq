@@ -307,6 +307,41 @@ nq receipt render path/to/receipt.json --format markdown
 
 Formats: `human` (default), `markdown`, `json`, `jsonl`.
 
+### Working with old receipts: `check` and `replay`
+
+A receipt is an artifact — once emitted, two later operations work over it. They answer **different questions** and you should pick deliberately.
+
+```text
+nq verify / preflight   = what may we claim now?
+nq receipt check        = has this receipt been tampered with?
+nq receipt replay       = does the same evaluator + same packets reproduce the same decision?
+fresh preflight         = is the claim admissible right now?
+authority layer         = may anyone act on it?
+```
+
+The quick chooser:
+
+| Need | Command |
+|---|---|
+| Did this receipt get tampered with? | `nq receipt check` |
+| Do I still have the packets it cites? | `nq receipt check` (with `--witness`) or `nq receipt replay` |
+| Does the old decision reproduce from those packets? | `nq receipt replay` |
+| Is this claim fresh now? | `nq receipt check --fresh` / `nq receipt replay --fresh` |
+| What does the system claim about this subject *today*? | `nq verify` / `nq preflight` (fresh evaluation) |
+| Should automation act on this? | Not NQ alone — `nq` produces evidence; consequence belongs to a separate authority layer. |
+
+Both `check` and `replay` take `--receipt`, repeatable `--witness PATH`, plus `--strict`, `--fresh`, `--as-of RFC3339`, and `--json`.
+
+`check` verifies structure (content_hash, witness digests, schema, optional freshness). `replay` re-runs a compatible evaluator over supplied packets and compares the *semantic decision* — verdict, supported claims, witness set — to what the receipt recorded. Track A receipts (operational `disk_state` / `ingest_state` / `dns_state`) return `REPLAY_NOT_APPLICABLE` from `replay` because their evaluators do not retain witness packet envelopes today; use `check` on them for tamper-evidence and freshness.
+
+Keepers:
+
+> A stale receipt is not a forged receipt. A forged receipt is not a stale receipt.
+>
+> Replay failure is not forgery. Replay success is not fresh authorization.
+
+See [RECEIPTS.md](RECEIPTS.md) for the full failure taxonomy and worked examples, and [architecture/RECEIPT_REPLAY.md](architecture/RECEIPT_REPLAY.md) for the kernel-side semantics.
+
 ### GitHub Actions
 
 A starter action lives at the repo root (`.github/workflows/`). See the [SHARED_SPINE](architecture/SHARED_SPINE.md) doc for the full contract.
@@ -451,6 +486,7 @@ Generation-count retention runs periodically (see `RetentionConfig.prune_every_n
 
 ## Where to look next
 
+- [RECEIPTS.md](RECEIPTS.md) — `nq receipt check` and `nq receipt replay`: tamper-evidence, decision reproducibility, and the failure taxonomy.
 - [CLAIM_CATALOG.md](CLAIM_CATALOG.md) — every shipped claim, its required witnesses, what it can say, what it refuses.
 - [REFUSAL_EXAMPLES.md](REFUSAL_EXAMPLES.md) — worked operator-facing examples of NQ refusing a stronger claim and pointing to the weaker admissible one.
 - [Quickstart](quickstart.md) — the tightest possible install path.
