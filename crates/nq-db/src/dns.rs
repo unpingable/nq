@@ -16,11 +16,13 @@
 //! transport_error are six distinct verdicts and must not collapse into
 //! a generic "DNS failed."
 
+use crate::dns_state_witness_projection::project_dns_observation;
+use crate::preflight::packet_identity;
 use crate::ReadDb;
 use anyhow::Context;
 use nq_core::preflight::{
-    freshness_horizon_from, ClaimKind, PreflightCoverage, PreflightResult, PreflightSupport,
-    PreflightTarget, ResponseKind, Verdict,
+    freshness_horizon_from, ClaimKind, PreflightCoverage, PreflightExclusion, PreflightResult,
+    PreflightSupport, PreflightTarget, ResponseKind, Verdict,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::str::FromStr;
@@ -204,7 +206,7 @@ pub fn evaluate_dns_state_preflight_from_conn(
             key.resolver, key.query_name, key.query_type
         )),
     };
-    let mut result = PreflightResult::skeleton(ClaimKind::DnsState, target, generated_at);
+    let mut result = PreflightResult::skeleton(ClaimKind::DnsState, target, generated_at.clone());
 
     let Some(obs) = latest_observation_for_tuple(conn, key)? else {
         // No row exists for this tuple. The prober has not run for it
@@ -241,8 +243,65 @@ pub fn evaluate_dns_state_preflight_from_conn(
     let age_seconds = parsed.map(|t| (now - t).whole_seconds());
     let stale = matches!(age_seconds, Some(age) if age > DNS_STATE_STALE_THRESHOLD_SECONDS);
 
+    // Slice 2 cut-over: six of the eight ResponseKind paths produce
+    // supports (the five admissible-with-scope answer kinds plus
+    // ValidationFailure), as do all stale rows regardless of kind.
+    // Project once before admitting; if the projector refuses, the row
+    // exists but its custody cannot anchor admissible testimony —
+    // degrade to InsufficientCoverage with a PreflightExclusion that
+    // names the custody constraint. Timeout and TransportError do not
+    // produce supports today (silence is not affirmative testimony;
+    // unreachable vantage is a witness-standing refusal), so no
+    // projection is attempted on those paths. See
+    // docs/architecture/DNS_STATE_WITNESS_PACKET_CUTOVER.md.
+    let produces_support = stale
+        || matches!(
+            obs.response_kind,
+            ResponseKind::Success
+                | ResponseKind::Nodata
+                | ResponseKind::Nxdomain
+                | ResponseKind::Servfail
+                | ResponseKind::Refused
+                | ResponseKind::ValidationFailure
+        );
+    let projected_packet = if produces_support {
+        match project_dns_observation(&obs, &generated_at) {
+            Ok(packet) => Some(packet),
+            Err(refusal) => {
+                result.excludes.push(PreflightExclusion {
+                    finding_kind: format!("dns_{}", obs.response_kind.as_str()),
+                    subject: format!(
+                        "resolver={};name={};type={}",
+                        obs.resolver, obs.query_name, obs.query_type
+                    ),
+                    reason: format!("Witness packet projection refused: {}", refusal.reason),
+                    detail: None,
+                });
+                result.coverage.push(PreflightCoverage {
+                    witness: "dns_resolver".to_string(),
+                    standing: "observable".to_string(),
+                    note: Some(
+                        "latest dns_observations row refused projection — see excludes for the custody constraint"
+                            .to_string(),
+                    ),
+                });
+                result.verdict = Verdict::InsufficientCoverage;
+                result.verdict_note = Some(
+                    "Latest dns_observations row could not be projected into an admissible \
+                     witness packet; dns_state evidence is in custody refusal."
+                        .to_string(),
+                );
+                result.compute_time_basis();
+                return Ok(result);
+            }
+        }
+    } else {
+        None
+    };
+
     if stale {
-        let support = make_support(&obs);
+        let mut support = make_support(&obs);
+        support.witness_packet = projected_packet.as_ref().and_then(packet_identity);
         result.observed_at_min = Some(obs.observed_at.clone());
         result.observed_at_max = Some(obs.observed_at.clone());
         result.freshness_horizon = freshness_horizon_from(
@@ -277,7 +336,8 @@ pub fn evaluate_dns_state_preflight_from_conn(
         | ResponseKind::Nxdomain
         | ResponseKind::Servfail
         | ResponseKind::Refused => {
-            let support = make_support(&obs);
+            let mut support = make_support(&obs);
+            support.witness_packet = projected_packet.as_ref().and_then(packet_identity);
             result.observed_at_min = Some(obs.observed_at.clone());
             result.observed_at_max = Some(obs.observed_at.clone());
             result.freshness_horizon = freshness_horizon_from(
@@ -357,7 +417,8 @@ pub fn evaluate_dns_state_preflight_from_conn(
             // contradictory_testimony: a DNSSEC validation failure is
             // testimony that the answer cannot honestly be trusted
             // *or* discarded — admitting either is laundering.
-            let support = make_support(&obs);
+            let mut support = make_support(&obs);
+            support.witness_packet = projected_packet.as_ref().and_then(packet_identity);
             result.observed_at_min = Some(obs.observed_at.clone());
             result.observed_at_max = Some(obs.observed_at.clone());
             result.freshness_horizon = freshness_horizon_from(
@@ -458,8 +519,9 @@ fn make_support(obs: &DnsObservation) -> PreflightSupport {
         observed_at: Some(obs.observed_at.clone()),
         freshness: None,
         admissibility_state: Some("observable".to_string()),
-        // dns_state has not yet cut over to witness packets; see
-        // docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md.
+        // Caller stamps witness_packet from the projector output. Left
+        // None here so a future use of make_support outside the
+        // evaluator does not accidentally inherit a stale packet.
         witness_packet: None,
     }
 }
@@ -969,48 +1031,134 @@ mod tests {
     }
 
     #[test]
-    fn dns_state_supports_do_not_carry_projected_packet_identity_pre_cutover() {
-        // dns_state has not yet cut over to witness packets. Every
-        // support must leave witness_packet absent so receipts continue
-        // to emit coverage-derived WitnessRefs with digest: None and
-        // custody_basis: None.
-        //
-        // This regression guard replaces the equivalent pin that ingest_state
-        // used to carry. When dns_state's own cut-over lands (the third
-        // evaluator, the forcing case for claim-registry generalization
-        // per CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md), this test must be
-        // explicitly updated, not silently drift.
+    fn dns_state_supports_carry_projected_packet_identity_post_cutover() {
+        // After the dns_state cut-over, every admitted support carries
+        // the projected witness packet's wire identity. Replaces the
+        // pre-cut-over pin that previously asserted the opposite.
+        // dns_state was the third Track A evaluator to cut over; with
+        // this slice landed there are no remaining pre-cut-over Track A
+        // evaluators to pin.
+        use nq_core::witness::CUSTODY_BASIS_LEGACY_PROJECTION;
+
         let db = make_db();
         let _row = seed_observation(&db, 100, ResponseKind::Success);
 
         let r =
             evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
-        for s in &r.supports {
-            assert!(
-                s.witness_packet.is_none(),
-                "dns_state support unexpectedly carries witness_packet: {:?}",
-                s.witness_packet
-            );
-        }
+        assert_eq!(r.supports.len(), 1, "fresh success → one support");
+        let wp = r.supports[0]
+            .witness_packet
+            .as_ref()
+            .expect("post-cut-over dns_state support must carry its packet identity");
+        assert_eq!(wp.witness_type, "dns_resolver_legacy_projection");
+        assert!(wp.digest.starts_with("sha256:"));
+        assert_eq!(wp.digest.len(), "sha256:".len() + 64);
+        assert_eq!(
+            wp.custody_basis.as_deref(),
+            Some(CUSTODY_BASIS_LEGACY_PROJECTION)
+        );
+    }
 
+    #[test]
+    fn dns_state_receipt_anchors_witness_refs_to_projected_packets_post_cutover() {
+        // The cross-evaluator gate in From<PreflightResult> flips to the
+        // packet-anchored path as soon as any support carries
+        // witness_packet. After the dns_state cut-over, every receipt
+        // from a support-bearing observation row carries digest-stamped,
+        // basis-declared WitnessRefs.
         use nq_core::receipt::Receipt;
-        let receipt: Receipt = r.into();
-        // Coverage-derived WitnessRefs survive on the pre-cut-over path.
+        use nq_core::witness::CUSTODY_BASIS_LEGACY_PROJECTION;
+
+        let db = make_db();
+        let _row = seed_observation(&db, 100, ResponseKind::Nxdomain);
+
+        let pr =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        let receipt: Receipt = pr.into();
         assert!(!receipt.witnesses.is_empty());
         for w in &receipt.witnesses {
             assert!(
-                w.digest.is_none(),
-                "dns_state WitnessRef must remain digest-absent pre-cut-over: {} -> {:?}",
-                w.witness_type,
-                w.digest
+                w.witness_type.ends_with("_legacy_projection"),
+                "WitnessRef must reflect projected-packet provenance: {}",
+                w.witness_type
             );
             assert!(
-                w.custody_basis.is_none(),
-                "dns_state WitnessRef must not declare a custody_basis pre-cut-over: {} -> {:?}",
-                w.witness_type,
+                w.digest.as_deref().unwrap_or("").starts_with("sha256:"),
+                "WitnessRef must carry a digest: {:?}",
+                w.digest
+            );
+            assert_eq!(
+                w.custody_basis.as_deref(),
+                Some(CUSTODY_BASIS_LEGACY_PROJECTION),
+                "WitnessRef must declare legacy_projection basis: {:?}",
                 w.custody_basis
             );
         }
+    }
+
+    #[test]
+    fn dns_state_projection_refusal_forces_insufficient_coverage_and_excludes_the_row() {
+        // The latest dns_observations row is load-bearing for a tuple
+        // evaluation — if it cannot be projected (empty / unparseable
+        // observed_at), no admissible substrate remains. Verdict must
+        // be InsufficientCoverage; the refusal must surface as a
+        // PreflightExclusion; supports must be empty; coverage stays
+        // observable (the row is present) with a note that points at
+        // the exclude.
+        let db = make_db();
+        ensure_generation(&db.conn, 100);
+        // Slip a non-RFC3339 observed_at past the NOT NULL constraint.
+        db.conn
+            .execute(
+                "INSERT INTO dns_observations
+                    (generation_id, vantage_host, resolver, query_name, query_type,
+                     response_kind, duration_ms, observed_at)
+                 VALUES (100, 'sushi-k', '8.8.8.8', 'nq.neutral.zone', 'A',
+                         'success', 1, 'not-a-timestamp')",
+                [],
+            )
+            .unwrap();
+
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.verdict, Verdict::InsufficientCoverage);
+        assert!(r.supports.is_empty(), "refused row → no supports");
+
+        let refusal = r
+            .excludes
+            .iter()
+            .find(|e| e.reason.contains("projection refused"))
+            .expect("projection refusal must appear as a PreflightExclusion");
+        assert_eq!(refusal.finding_kind, "dns_success");
+        assert_eq!(
+            refusal.subject,
+            "resolver=8.8.8.8;name=nq.neutral.zone;type=A"
+        );
+        assert!(
+            refusal.reason.contains("RFC3339"),
+            "exclude must name the substrate-time refusal reason: {:?}",
+            refusal.reason
+        );
+
+        let cov = r
+            .coverage
+            .iter()
+            .find(|c| c.witness == "dns_resolver")
+            .expect("dns_resolver coverage entry");
+        assert_eq!(
+            cov.standing, "observable",
+            "the row is present; only its custody failed"
+        );
+        assert!(cov
+            .note
+            .as_deref()
+            .unwrap_or("")
+            .contains("refused projection"));
+
+        // No witness_packet to stamp on a non-existent support.
+        assert!(r.observed_at_min.is_none());
+        assert!(r.observed_at_max.is_none());
+        assert!(r.freshness_horizon.is_none());
     }
 
     #[test]
