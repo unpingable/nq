@@ -3,6 +3,7 @@ pub mod declarations;
 pub mod detect;
 pub mod digest;
 pub mod disk_state_witness_projection;
+pub mod ingest_state_witness_projection;
 pub mod dns;
 pub mod export;
 pub mod finding_meta;
