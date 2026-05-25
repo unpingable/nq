@@ -616,6 +616,7 @@ mod tests {
             witness_type: "pytest".into(),
             digest: Some(digest.clone()),
             observed_at: Some("2026-05-15T14:00:00Z".into()),
+            custody_basis: None,
         }];
         r.seal(EvaluatorBinding {
             evaluator: "claim_registry".into(),
@@ -645,6 +646,7 @@ mod tests {
             witness_type: "pytest".into(),
             digest: Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
             observed_at: None,
+            custody_basis: None,
         }];
         // Re-seal so content_hash matches the witness vec.
         r.seal(EvaluatorBinding {
@@ -671,6 +673,7 @@ mod tests {
             witness_type: "pytest".into(),
             digest: None,
             observed_at: None,
+            custody_basis: None,
         }];
         r.seal(EvaluatorBinding {
             evaluator: "claim_registry".into(),
@@ -711,6 +714,7 @@ mod tests {
             witness_type: "pytest".into(),
             digest: Some("not-a-digest".into()),
             observed_at: None,
+            custody_basis: None,
         }];
         r.seal(EvaluatorBinding {
             evaluator: "claim_registry".into(),
@@ -735,6 +739,7 @@ mod tests {
             witness_type: "pytest".into(),
             digest: Some("blake3:cafebabe".into()),
             observed_at: None,
+            custody_basis: None,
         }];
         r.seal(EvaluatorBinding {
             evaluator: "claim_registry".into(),
@@ -884,6 +889,7 @@ mod tests {
             witness_type: "pytest".into(),
             digest: None,
             observed_at: None,
+            custody_basis: None,
         }];
         // Intentionally NOT sealed — receipt is unanchored too.
         let report = check_receipt(&r, &[], &opts_strict());

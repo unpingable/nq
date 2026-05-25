@@ -313,6 +313,7 @@ fn packet_identity(packet: &WitnessPacket) -> Option<SupportingWitnessPacket> {
         witness_type: packet.witness_type.clone(),
         digest,
         observed_at: packet.observed_at.clone(),
+        custody_basis: packet.custody_basis.clone(),
     })
 }
 
@@ -1096,6 +1097,57 @@ mod tests {
     }
 
     #[test]
+    fn disk_state_witness_refs_carry_legacy_projection_custody_basis() {
+        // Q2 follow-up: WitnessRef.custody_basis surfaces the projected
+        // packet's basis. After Slice 2 cut-over, every disk_state
+        // WitnessRef anchored to a projected packet carries
+        // custody_basis == "legacy_projection". Consumers can now
+        // distinguish projection from native or coverage-derived refs
+        // without reading the witness_type suffix.
+        use nq_core::receipt::Receipt;
+        use nq_core::witness::CUSTODY_BASIS_LEGACY_PROJECTION;
+
+        let db = make_db();
+        ensure_generation(&db, 100);
+        insert_finding(&db, "lil-nas-x", "zfs_pool_degraded", "tank", "observed");
+
+        let pr = evaluate_disk_state_preflight_from_conn(&db.conn, "lil-nas-x", None).unwrap();
+        let receipt: Receipt = pr.into();
+
+        assert_eq!(receipt.witnesses.len(), 1);
+        assert_eq!(
+            receipt.witnesses[0].custody_basis.as_deref(),
+            Some(CUSTODY_BASIS_LEGACY_PROJECTION),
+            "post-cut-over disk_state WitnessRef must declare legacy_projection custody",
+        );
+    }
+
+    #[test]
+    fn disk_state_supports_carry_packet_custody_basis() {
+        // The chain from packet → SupportingWitnessPacket. The
+        // evaluator commit (commit 3) retained packets; the receipt-
+        // stamping commit (commit 4) threaded their digests; this Q2
+        // follow-up threads their custody_basis. The SupportingWitness-
+        // Packet now mirrors the packet's basis declaration end-to-end.
+        use nq_core::witness::CUSTODY_BASIS_LEGACY_PROJECTION;
+
+        let db = make_db();
+        ensure_generation(&db, 100);
+        insert_finding(&db, "lil-nas-x", "zfs_pool_degraded", "tank", "observed");
+
+        let pr = evaluate_disk_state_preflight_from_conn(&db.conn, "lil-nas-x", None).unwrap();
+        assert_eq!(pr.supports.len(), 1);
+        let wp = pr.supports[0]
+            .witness_packet
+            .as_ref()
+            .expect("support must carry projected packet identity");
+        assert_eq!(
+            wp.custody_basis.as_deref(),
+            Some(CUSTODY_BASIS_LEGACY_PROJECTION)
+        );
+    }
+
+    #[test]
     fn disk_state_receipt_with_no_supports_falls_back_to_coverage_witnesses() {
         // When no substrate findings are admitted (clean host, or all
         // findings refused projection), the receipt still emits the
@@ -1118,6 +1170,12 @@ mod tests {
                 "coverage-derived WitnessRef must not carry a digest: {} -> {:?}",
                 w.witness_type,
                 w.digest
+            );
+            assert!(
+                w.custody_basis.is_none(),
+                "coverage-derived WitnessRef must not declare a custody_basis: {} -> {:?}",
+                w.witness_type,
+                w.custody_basis
             );
         }
         let names: Vec<&str> = receipt.witnesses.iter().map(|w| w.witness_type.as_str()).collect();
@@ -1269,6 +1327,12 @@ mod tests {
                 "ingest_state WitnessRef must remain digest-absent pre-cut-over: {} -> {:?}",
                 w.witness_type,
                 w.digest
+            );
+            assert!(
+                w.custody_basis.is_none(),
+                "ingest_state WitnessRef must not declare a custody_basis pre-cut-over: {} -> {:?}",
+                w.witness_type,
+                w.custody_basis
             );
         }
     }

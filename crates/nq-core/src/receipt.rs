@@ -70,29 +70,45 @@ pub struct NotVerifiedEntry {
 /// Reference to a witness consulted while evaluating a claim.
 ///
 /// `digest` carries the JCS-canonicalized SHA-256 of the source witness
-/// packet (`sha256:<hex>`) when one is available. Two cases populate the
-/// slot today:
+/// packet (`sha256:<hex>`) when one is available. Three cases populate
+/// the slot today:
 ///
 /// - **Track B** (`nq verify`-shape, evaluator reads caller-supplied
 ///   `WitnessPacket` envelopes): digest is computed via
 ///   `WitnessPacket::digest()` and populated. Receipts from this path
 ///   are anchored to the exact packet envelopes that produced them.
-/// - **Track A** (operational preflight: `disk_state`, `ingest_state`,
-///   `dns_state`): digest is left absent. The evaluator builds its
-///   `PreflightCoverage` entries from finding state in the database,
-///   not from retained witness packets — there is no envelope to hash
-///   at receipt time. Slice 2 of `docs/architecture/PATH_TO_1_0.md`
-///   (`DISK_STATE_CUTOVER_TO_SHARED_SPINE`) reshapes Track A around
-///   witness packets and is the natural point at which Track A
-///   receipts gain digests.
+/// - **Track A, cut over** (today: `disk_state` after Slice 2): the
+///   evaluator projects each admitted finding into a
+///   `legacy_projection` witness packet and stamps that packet's digest
+///   here. One WitnessRef per admitted support.
+/// - **Track A, not yet cut over** (today: `ingest_state`, `dns_state`):
+///   digest is left absent. The evaluator builds `PreflightCoverage`
+///   entries from finding state in the database; there is no envelope
+///   to hash at receipt time.
+///
+/// `custody_basis` discriminates the second and third cases, and
+/// further distinguishes native observation from transitional
+/// projection within Track A's cut-over path:
+///
+/// - `Some("native_observation")` — the packet anchors its own
+///   substrate observation. Today emitted only by Track B producers
+///   that explicitly declare it.
+/// - `Some("legacy_projection")` — the packet is a transitional
+///   projection from legacy finding state (`disk_state` post-cut-over).
+/// - `None` — the WitnessRef predates the Slice 2 cut-over distinction.
+///   Today emitted on Track B WitnessRefs from packets without an
+///   explicit basis, and on Track A coverage-derived WitnessRefs from
+///   evaluators that have not yet cut over.
+///
+/// See `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md`.
 ///
 /// **Absence of `digest` is not a verification result.** A missing
 /// digest means "this WitnessRef is not anchored to a specific packet
-/// envelope" — typically because the receipt was produced via Track A,
-/// or because JCS canonicalization itself failed for the source packet.
-/// It does *not* mean "verification false" and is not implicitly
-/// "verification ok." Verification is `nq receipt check` territory
-/// (Slice 1d).
+/// envelope" — typically because the receipt was produced via a
+/// pre-cut-over Track A evaluator, or because JCS canonicalization
+/// itself failed for the source packet. It does *not* mean
+/// "verification false" and is not implicitly "verification ok."
+/// Verification is `nq receipt check` territory (Slice 1d).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WitnessRef {
     pub witness_type: String,
@@ -100,6 +116,12 @@ pub struct WitnessRef {
     pub digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observed_at: Option<String>,
+    /// Custody basis of the underlying packet, when known. See the type
+    /// doc-comment for the three cases. Additive on the Receipt wire
+    /// shape — pre-Slice-2 receipts omit this field, and consumers must
+    /// read absence as "basis not declared," not as "native by default."
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custody_basis: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -319,6 +341,7 @@ impl From<PreflightResult> for Receipt {
                         witness_type: wp.witness_type.clone(),
                         digest: Some(wp.digest.clone()),
                         observed_at: Some(wp.observed_at.clone()),
+                        custody_basis: wp.custody_basis.clone(),
                     })
                 })
                 .collect()
@@ -329,6 +352,7 @@ impl From<PreflightResult> for Receipt {
                     witness_type: c.witness.clone(),
                     digest: None,
                     observed_at: None,
+                    custody_basis: None,
                 })
                 .collect()
         };
@@ -722,11 +746,13 @@ mod tests {
             witness_type: "pytest".into(),
             digest: Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
             observed_at: Some("2026-05-15T14:00:00Z".into()),
+            custody_basis: None,
         }];
         b.witnesses = vec![WitnessRef {
             witness_type: "pytest".into(),
             digest: Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into()),
             observed_at: Some("2026-05-15T14:00:00Z".into()),
+            custody_basis: None,
         }];
         let bind = EvaluatorBinding {
             evaluator: "claim_registry".into(),

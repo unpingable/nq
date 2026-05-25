@@ -667,6 +667,7 @@ mod tests {
             witness_type: "pytest".into(),
             digest: Some(p.digest().unwrap()),
             observed_at: Some("2026-05-15T14:00:00Z".into()),
+            custody_basis: None,
         }];
         // Intentionally do not seal.
         let report = replay_receipt(&r, &[p], &opts());
