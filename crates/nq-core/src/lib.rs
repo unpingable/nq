@@ -4,6 +4,7 @@ pub mod config;
 pub mod humanize;
 pub mod preflight;
 pub mod receipt;
+pub mod receipt_check;
 pub mod render;
 pub mod status;
 pub mod wire;
