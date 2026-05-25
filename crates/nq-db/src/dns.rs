@@ -458,6 +458,9 @@ fn make_support(obs: &DnsObservation) -> PreflightSupport {
         observed_at: Some(obs.observed_at.clone()),
         freshness: None,
         admissibility_state: Some("observable".to_string()),
+        // dns_state has not yet cut over to witness packets; see
+        // docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md.
+        witness_packet: None,
     }
 }
 

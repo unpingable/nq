@@ -217,6 +217,24 @@ pub struct PreflightTarget {
     pub id: Option<String>,
 }
 
+/// Identity of the witness packet a support is anchored to.
+///
+/// Populated on `disk_state` supports under the Slice 2 cut-over: the
+/// evaluator projects each admitted finding into a legacy-projection
+/// witness packet, retains the packet's wire identity (witness type,
+/// JCS+SHA-256 digest, substrate-time observed_at), and stamps it here
+/// so `From<PreflightResult>` can build one `WitnessRef` per admitted
+/// support. Absent on supports from evaluators that have not yet cut
+/// over (today: `ingest_state`, `dns_state`); those receipts continue
+/// to carry coverage-derived WitnessRefs. See
+/// `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupportingWitnessPacket {
+    pub witness_type: String,
+    pub digest: String,
+    pub observed_at: String,
+}
+
 /// One admissible weaker claim, with provenance back to the underlying
 /// finding. The `claim` text is scoped — it carries witness, subject, and
 /// observed_at — so a consumer that quotes only the `claim` field cannot
@@ -232,6 +250,11 @@ pub struct PreflightSupport {
     pub freshness: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub admissibility_state: Option<String>,
+    /// Slice 2 cut-over: the projected witness packet identity behind
+    /// this support. Populated on `disk_state` supports after Slice 2;
+    /// absent on supports from pre-cut-over evaluators.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub witness_packet: Option<SupportingWitnessPacket>,
 }
 
 /// A finding that exists for the target but is not being admitted as a
@@ -717,6 +740,7 @@ mod tests {
             observed_at: Some("2026-05-21T12:02:00Z".into()),
             freshness: None,
             admissibility_state: None,
+            witness_packet: None,
         });
         r.compute_time_basis();
         let tb = r.time_basis.as_ref().expect("time_basis populated");
@@ -746,6 +770,7 @@ mod tests {
             observed_at: Some("2026-05-21T12:10:00Z".into()),
             freshness: None,
             admissibility_state: None,
+            witness_packet: None,
         });
         r.compute_time_basis();
         let tb = r.time_basis.as_ref().expect("time_basis populated");
@@ -779,6 +804,7 @@ mod tests {
             observed_at: Some("2026-05-21T12:01:00Z".into()),
             freshness: None,
             admissibility_state: None,
+            witness_packet: None,
         });
         r.supports.push(PreflightSupport {
             claim: "b".into(),
@@ -787,6 +813,7 @@ mod tests {
             observed_at: Some("2026-05-21T12:30:00Z".into()),
             freshness: None,
             admissibility_state: None,
+            witness_packet: None,
         });
         r.compute_time_basis();
         let tb = r.time_basis.as_ref().expect("time_basis populated");

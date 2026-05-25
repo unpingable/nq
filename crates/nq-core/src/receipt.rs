@@ -295,20 +295,43 @@ impl From<PreflightResult> for Receipt {
             })
             .collect();
 
-        // Track A leaves `digest` absent: PreflightCoverage entries are
-        // derived from finding state, not from retained witness packet
-        // envelopes. See the doc comment on `WitnessRef` and Slice 2 in
-        // `docs/architecture/PATH_TO_1_0.md`
-        // (`DISK_STATE_CUTOVER_TO_SHARED_SPINE`).
-        let witnesses: Vec<WitnessRef> = pr
-            .coverage
-            .iter()
-            .map(|c| WitnessRef {
-                witness_type: c.witness.clone(),
-                digest: None,
-                observed_at: None,
-            })
-            .collect();
+        // Slice 2 cut-over: when supports carry projected witness
+        // packet identities (today: `disk_state` after the cut-over),
+        // build one `WitnessRef` per admitted support, anchored to its
+        // packet's digest. The meaning shifts from "witness-family
+        // standing" to "specific admitted observations" — a richer
+        // custody claim that consumers can verify against supplied
+        // packets via `nq receipt check`. Coverage entries remain on
+        // the result for the witness-family standing block; they are
+        // no longer the receipt's witness anchor on cut-over paths.
+        //
+        // Evaluators that have not yet cut over (today: `ingest_state`,
+        // `dns_state`) leave `witness_packet` absent on every support;
+        // those receipts continue to emit coverage-derived WitnessRefs
+        // with `digest: None`. See
+        // `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md`.
+        let any_support_packet = pr.supports.iter().any(|s| s.witness_packet.is_some());
+        let witnesses: Vec<WitnessRef> = if any_support_packet {
+            pr.supports
+                .iter()
+                .filter_map(|s| {
+                    s.witness_packet.as_ref().map(|wp| WitnessRef {
+                        witness_type: wp.witness_type.clone(),
+                        digest: Some(wp.digest.clone()),
+                        observed_at: Some(wp.observed_at.clone()),
+                    })
+                })
+                .collect()
+        } else {
+            pr.coverage
+                .iter()
+                .map(|c| WitnessRef {
+                    witness_type: c.witness.clone(),
+                    digest: None,
+                    observed_at: None,
+                })
+                .collect()
+        };
 
         let observed_at_min = pr
             .supports
@@ -456,6 +479,7 @@ mod tests {
             observed_at: Some("2026-05-15T13:00:00Z".into()),
             freshness: Some("fresh".into()),
             admissibility_state: Some("admissible".into()),
+            witness_packet: None,
         }];
         pr
     }
@@ -544,6 +568,7 @@ mod tests {
                 observed_at: Some("2026-05-15T10:00:00Z".into()),
                 freshness: None,
                 admissibility_state: None,
+                witness_packet: None,
             },
             PreflightSupport {
                 claim: "b".into(),
@@ -552,6 +577,7 @@ mod tests {
                 observed_at: Some("2026-05-15T11:00:00Z".into()),
                 freshness: None,
                 admissibility_state: None,
+                witness_packet: None,
             },
         ];
         let r: Receipt = pr.into();
