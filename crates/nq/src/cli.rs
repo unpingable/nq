@@ -120,6 +120,13 @@ pub enum ReceiptAction {
     /// Render an `nq.receipt.v1` document. Reads from a file (or `-`
     /// for stdin) and writes to stdout.
     Render(ReceiptRenderCmd),
+    /// Structurally verify an `nq.receipt.v1` document against supplied
+    /// witness packets. Does NOT replay the evaluator, re-ratify the
+    /// claim, or authorize action.
+    ///
+    /// A stale receipt is not a forged receipt. A forged receipt is not
+    /// a stale receipt.
+    Check(ReceiptCheckCmd),
 }
 
 #[derive(Debug, Args)]
@@ -132,6 +139,38 @@ pub struct ReceiptRenderCmd {
     /// passthrough.
     #[arg(long, short, default_value = "human")]
     pub format: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ReceiptCheckCmd {
+    /// Path to the `nq.receipt.v1` JSON document to check. Use `-` for
+    /// stdin.
+    #[arg(long)]
+    pub receipt: String,
+    /// Path(s) to `nq.witness.v1` packet files. May be specified
+    /// multiple times; matching is by digest, not order. Extra packets
+    /// (no matching WitnessRef in the receipt) are reported as warnings
+    /// (or failures under `--strict`).
+    #[arg(long, num_args = 0..)]
+    pub witness: Vec<std::path::PathBuf>,
+    /// Treat warn-shaped outcomes (unanchored receipt, unanchored
+    /// witness ref, missing witness packet, extra witness packet,
+    /// freshness-horizon absent under --fresh) as failures. Broken
+    /// integrity is always a failure regardless of this flag.
+    #[arg(long)]
+    pub strict: bool,
+    /// Evaluate freshness: compare `as_of` (default: now) against the
+    /// receipt's `freshness_horizon` (when present). Without this flag,
+    /// freshness is not consulted.
+    #[arg(long)]
+    pub fresh: bool,
+    /// RFC3339 UTC timestamp at which to evaluate freshness. Implies
+    /// `--fresh`. Default: wall-clock now.
+    #[arg(long)]
+    pub as_of: Option<String>,
+    /// Emit machine-readable JSON instead of human-readable output.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
