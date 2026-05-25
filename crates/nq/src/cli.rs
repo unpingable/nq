@@ -127,6 +127,15 @@ pub enum ReceiptAction {
     /// A stale receipt is not a forged receipt. A forged receipt is not
     /// a stale receipt.
     Check(ReceiptCheckCmd),
+    /// Semantically replay an `nq.receipt.v1` document: re-run a
+    /// compatible evaluator against supplied witness material and
+    /// compare the semantic decision (verdict, supported claims,
+    /// witness set) to the receipt's. Does NOT renew freshness or
+    /// authorize action.
+    ///
+    /// Replay failure is not forgery. Replay success is not fresh
+    /// authorization.
+    Replay(ReceiptReplayCmd),
 }
 
 #[derive(Debug, Args)]
@@ -139,6 +148,37 @@ pub struct ReceiptRenderCmd {
     /// passthrough.
     #[arg(long, short, default_value = "human")]
     pub format: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ReceiptReplayCmd {
+    /// Path to the `nq.receipt.v1` JSON document to replay. Use `-`
+    /// for stdin.
+    #[arg(long)]
+    pub receipt: String,
+    /// Path(s) to `nq.witness.v1` packet files. Duplicates (same
+    /// digest) are de-duplicated before replay. Track A receipts
+    /// ignore supplied packets — replay is not applicable until
+    /// Track A cuts over to the shared spine.
+    #[arg(long, num_args = 0..)]
+    pub witness: Vec<std::path::PathBuf>,
+    /// Treat warn-shaped outcomes (duplicate packets, freshness
+    /// horizon absent under `--fresh`) as failures. Replay-fatal
+    /// statuses are unaffected.
+    #[arg(long)]
+    pub strict: bool,
+    /// Evaluate freshness (orthogonal to replay). A receipt may
+    /// replay successfully yet be stale; the freshness axis is
+    /// reported independently.
+    #[arg(long)]
+    pub fresh: bool,
+    /// RFC3339 UTC timestamp at which to evaluate freshness. Implies
+    /// `--fresh`. Default: wall-clock now.
+    #[arg(long)]
+    pub as_of: Option<String>,
+    /// Emit machine-readable JSON instead of human-readable output.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
