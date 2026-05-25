@@ -43,7 +43,7 @@
 
 use crate::receipt::{NotVerifiedEntry, Receipt, WitnessRef, RECEIPT_SCHEMA};
 use crate::receipt_check::{check_receipt, CheckOptions, CheckReport};
-use crate::witness::WitnessPacket;
+use crate::witness::{WitnessPacket, CUSTODY_BASIS_LEGACY_PROJECTION};
 use serde::Serialize;
 
 /// Caller-supplied replay options.
@@ -256,14 +256,7 @@ pub fn replay_receipt(
             integrity,
             comparison: None,
             freshness,
-            detail: Some(format!(
-                "Track A evaluator {:?}: PreflightCoverage is decoupled from \
-                 retained witness packets, so semantic replay against supplied \
-                 packets is out of scope. Structural integrity, witness digests, \
-                 and freshness still checked. See Slice 2 \
-                 (DISK_STATE_CUTOVER_TO_SHARED_SPINE).",
-                binding.evaluator
-            )),
+            detail: Some(track_a_not_applicable_detail(receipt, &binding.evaluator)),
             duplicate_packet_digests,
         },
         other => ReplayReport {
@@ -358,6 +351,59 @@ fn replay_track_b(
         detail: None,
         duplicate_packet_digests,
     }
+}
+
+/// Build the `detail` string for a Track A `NotApplicable` replay
+/// report. Surfaces the witness refs' declared custody basis when
+/// available, neutrally when not.
+///
+/// **`None` is not a claim.** A `WitnessRef` with `custody_basis: None`
+/// can be any of three things today: a pre-cut-over Track A
+/// ingest_state or dns_state coverage-derived ref; or a Track B ref
+/// from a packet that did not declare its basis. The detail string
+/// must not silently promote that absence to "native" or "old-family"
+/// or "safe." See `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md`.
+fn track_a_not_applicable_detail(receipt: &Receipt, evaluator: &str) -> String {
+    let bases: std::collections::BTreeSet<&str> = receipt
+        .witnesses
+        .iter()
+        .filter_map(|w| w.custody_basis.as_deref())
+        .collect();
+
+    let head = match bases.len() {
+        0 => format!(
+            "Track A replay is not applicable for evaluator {evaluator:?}; \
+             witness refs do not carry an explicit custody basis."
+        ),
+        1 => {
+            // Safe: len == 1 means exactly one element.
+            let basis = *bases.iter().next().unwrap();
+            if basis == CUSTODY_BASIS_LEGACY_PROJECTION {
+                format!(
+                    "Track A replay is not applicable for evaluator \
+                     {evaluator:?} with projected legacy witness custody: \
+                     {basis}."
+                )
+            } else {
+                format!(
+                    "Track A replay is not applicable for evaluator \
+                     {evaluator:?} with witness custody basis: {basis}."
+                )
+            }
+        }
+        _ => {
+            let list = bases.iter().copied().collect::<Vec<_>>().join(", ");
+            format!(
+                "Track A replay is not applicable for evaluator {evaluator:?}; \
+                 witness refs declare mixed custody bases: {list}."
+            )
+        }
+    };
+
+    format!(
+        "{head} Structural integrity, witness digests, and freshness still \
+         checked. See docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md."
+    )
 }
 
 fn freshness_outcome_from(integrity: &CheckReport, opts: &ReplayOptions) -> FreshnessOutcome {
@@ -714,6 +760,131 @@ mod tests {
         let report = replay_receipt(&r, &[p], &opts());
         assert_eq!(report.status, ReplayStatus::NotApplicable);
         assert_eq!(exit_code_for(&report), 1);
+    }
+
+    // -----------------------------------------------------------------
+    // Track A NotApplicable detail string surfaces witness custody basis
+    // (Slice 2 Q2 follow-up). The detail must distinguish projected
+    // custody from "no explicit basis declared," and must not promote
+    // `custody_basis: None` to "native" or "old-family" or "safe."
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn track_a_detail_names_legacy_projection_when_all_refs_declare_it() {
+        // Mirror the post-Slice-2 disk_state shape: every WitnessRef on
+        // the receipt has custody_basis: Some("legacy_projection").
+        let p = pkt(
+            "pytest",
+            "repo:.",
+            vec![serde_json::json!({"type": "pytest_run", "exit_code": 0})],
+        );
+        let mut r = make_b_receipt(std::slice::from_ref(&p));
+        for w in &mut r.witnesses {
+            w.custody_basis = Some(CUSTODY_BASIS_LEGACY_PROJECTION.to_string());
+        }
+        r.seal(EvaluatorBinding {
+            evaluator: "disk_state".into(),
+            version: 1,
+        })
+        .unwrap();
+
+        let report = replay_receipt(&r, &[p], &opts());
+        assert_eq!(report.status, ReplayStatus::NotApplicable);
+        let detail = report.detail.expect("Track A NotApplicable carries detail");
+        assert!(
+            detail.contains("legacy_projection"),
+            "detail must name the legacy_projection custody basis: {detail}"
+        );
+        assert!(
+            detail.contains("projected legacy witness custody"),
+            "detail must distinguish projection from generic basis: {detail}"
+        );
+    }
+
+    #[test]
+    fn track_a_detail_is_neutral_when_no_witness_ref_declares_basis() {
+        // Mirror the pre-cut-over ingest_state / dns_state shape:
+        // WitnessRefs exist (coverage-derived) but none declare a basis.
+        // The detail must not promote that absence to "native" or "old"
+        // — see the doc comment on `track_a_not_applicable_detail`.
+        let p = pkt(
+            "pytest",
+            "repo:.",
+            vec![serde_json::json!({"type": "pytest_run", "exit_code": 0})],
+        );
+        let mut r = make_b_receipt(std::slice::from_ref(&p));
+        for w in &mut r.witnesses {
+            w.custody_basis = None;
+        }
+        r.seal(EvaluatorBinding {
+            evaluator: "ingest_state".into(),
+            version: 1,
+        })
+        .unwrap();
+
+        let report = replay_receipt(&r, &[p], &opts());
+        assert_eq!(report.status, ReplayStatus::NotApplicable);
+        let detail = report.detail.expect("Track A NotApplicable carries detail");
+        assert!(
+            detail.contains("do not carry an explicit custody basis"),
+            "detail must report the absence neutrally: {detail}"
+        );
+        // Negative check: do not promote None to a specific basis.
+        assert!(
+            !detail.contains("legacy_projection"),
+            "detail must not name a basis that no WitnessRef declared: {detail}"
+        );
+        assert!(
+            !detail.contains("native_observation"),
+            "detail must not promote None to native_observation: {detail}"
+        );
+    }
+
+    #[test]
+    fn track_a_detail_handles_mixed_custody_bases_without_collapsing() {
+        // Hypothetical mixed-shape Track A receipt: one ref declares
+        // legacy_projection, another does not declare any basis. The
+        // detail must enumerate the declared bases without smoothing
+        // over the un-declared ones — that absence stays visible.
+        let p = pkt(
+            "pytest",
+            "repo:.",
+            vec![serde_json::json!({"type": "pytest_run", "exit_code": 0})],
+        );
+        let mut r = make_b_receipt(std::slice::from_ref(&p));
+        // Construct two refs with different bases.
+        r.witnesses = vec![
+            WitnessRef {
+                witness_type: "zfs_pool_degraded_legacy_projection".into(),
+                digest: Some(
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .into(),
+                ),
+                observed_at: Some("2026-05-15T14:00:00Z".into()),
+                custody_basis: Some(CUSTODY_BASIS_LEGACY_PROJECTION.to_string()),
+            },
+            WitnessRef {
+                witness_type: "smart_witness".into(),
+                digest: None,
+                observed_at: None,
+                custody_basis: Some("native_observation".to_string()),
+            },
+        ];
+        r.seal(EvaluatorBinding {
+            evaluator: "disk_state".into(),
+            version: 1,
+        })
+        .unwrap();
+
+        let report = replay_receipt(&r, &[p], &opts());
+        assert_eq!(report.status, ReplayStatus::NotApplicable);
+        let detail = report.detail.expect("Track A NotApplicable carries detail");
+        assert!(
+            detail.contains("mixed custody bases"),
+            "detail must signal that bases differ across witness refs: {detail}"
+        );
+        assert!(detail.contains("legacy_projection"), "detail names each basis: {detail}");
+        assert!(detail.contains("native_observation"), "detail names each basis: {detail}");
     }
 
     #[test]
