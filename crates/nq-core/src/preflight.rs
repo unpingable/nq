@@ -233,6 +233,14 @@ pub struct SupportingWitnessPacket {
     pub witness_type: String,
     pub digest: String,
     pub observed_at: String,
+    /// Custody basis copied from the underlying `WitnessPacket`. Today:
+    /// `Some("legacy_projection")` for `disk_state` post-cut-over;
+    /// `Some("native_observation")` for packets that explicitly declare
+    /// it; `None` for packets that predate the Slice 2 cut-over
+    /// distinction. Threaded onto `WitnessRef.custody_basis` by
+    /// `From<PreflightResult>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custody_basis: Option<String>,
 }
 
 /// One admissible weaker claim, with provenance back to the underlying

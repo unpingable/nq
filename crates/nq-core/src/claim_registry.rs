@@ -184,12 +184,18 @@ pub fn evaluate(
     // on that path we leave digest absent rather than failing the whole
     // evaluation. Absence of digest is not a verification result — see
     // the doc comment on `WitnessRef`.
+    //
+    // `custody_basis` is carried through unchanged from each packet —
+    // packets that explicitly declare their basis (Slice 2 cut-over)
+    // surface that declaration on the receipt; packets that predate the
+    // distinction stay `None` on the receipt side too.
     let witness_refs: Vec<WitnessRef> = applicable
         .iter()
         .map(|w| WitnessRef {
             witness_type: w.witness_type.clone(),
             digest: w.digest().ok(),
             observed_at: Some(w.observed_at.clone()),
+            custody_basis: w.custody_basis.clone(),
         })
         .collect();
     let observed_at_min = applicable.iter().map(|w| w.observed_at.clone()).min();
@@ -807,6 +813,51 @@ mod tests {
         let h = r.content_hash.as_ref().expect("Track B receipt has content_hash");
         assert!(h.starts_with("sha256:"));
         assert_eq!(h.len(), "sha256:".len() + 64);
+    }
+
+    #[test]
+    fn track_b_witness_ref_carries_packet_custody_basis_when_set() {
+        // Slice 2 follow-up: WitnessRef.custody_basis mirrors the
+        // packet's own custody_basis. A packet that explicitly declares
+        // "native_observation" surfaces that declaration on the
+        // receipt; a packet without an explicit basis leaves the
+        // WitnessRef's custody_basis None.
+        let reg = ClaimRegistry::track_b_starter();
+
+        let mut native = pkt(
+            "pytest",
+            "repo:.",
+            vec![serde_json::json!({"type": "pytest_run", "exit_code": 0})],
+        );
+        native.custody_basis = Some(
+            crate::witness::CUSTODY_BASIS_NATIVE.to_string(),
+        );
+
+        let r = evaluate(&reg, "tests_passed", "repo:.", &[native], "2026-05-15T14:00:00Z");
+        assert_eq!(r.witnesses.len(), 1);
+        assert_eq!(
+            r.witnesses[0].custody_basis.as_deref(),
+            Some(crate::witness::CUSTODY_BASIS_NATIVE)
+        );
+    }
+
+    #[test]
+    fn track_b_witness_ref_custody_basis_is_absent_when_packet_does_not_declare() {
+        // Backward compatibility: packets that predate the cut-over
+        // (custody_basis: None) still produce WitnessRefs, with
+        // custody_basis: None on the receipt side. Absence is honest,
+        // not "native by default."
+        let reg = ClaimRegistry::track_b_starter();
+        let w = pkt(
+            "pytest",
+            "repo:.",
+            vec![serde_json::json!({"type": "pytest_run", "exit_code": 0})],
+        );
+        assert!(w.custody_basis.is_none(), "fixture must be pre-cut-over");
+
+        let r = evaluate(&reg, "tests_passed", "repo:.", &[w], "2026-05-15T14:00:00Z");
+        assert_eq!(r.witnesses.len(), 1);
+        assert!(r.witnesses[0].custody_basis.is_none());
     }
 
     #[test]
