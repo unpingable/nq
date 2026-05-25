@@ -287,6 +287,26 @@ pub struct PreflightResult {
     /// `observed_at_min`: window disclosure, no validity claim.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observed_at_max: Option<String>,
+    /// Evaluator-provided per-claim deadline, when that evaluator defines
+    /// one. RFC3339 UTC. Today: `dns_state` and `ingest_state` evaluators
+    /// emit `observed_at_max + claim-kind-specific threshold` here.
+    /// `disk_state` does not — its freshness model is per-finding
+    /// admissibility, not a per-claim deadline.
+    ///
+    /// `freshness_horizon` is not a universal freshness model. Absence of
+    /// this field means no per-claim deadline was emitted by this
+    /// evaluator; it does not mean stale-immune, verified fresh, or
+    /// freshness-unbounded.
+    ///
+    /// Anchored to `observed_at_max`, never to `generated_at` — packet-time
+    /// is not an honest substitute for observation-time. When
+    /// `observed_at_max` is absent, this field is also absent.
+    ///
+    /// Carried through to [`crate::receipt::Receipt::freshness_horizon`]
+    /// by `From<PreflightResult>`. Verification (e.g. `now > horizon`) is
+    /// Slice 1d territory; 1c populates only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub freshness_horizon: Option<String>,
     /// Receiver-side time-basis sanity annotation, populated by
     /// `compute_time_basis`. `None` when no time-basis check has run;
     /// `Some(Unknown)` when checks ran and found nothing to flag (this
@@ -330,6 +350,7 @@ impl PreflightResult {
             generated_at,
             observed_at_min: None,
             observed_at_max: None,
+            freshness_horizon: None,
             time_basis: None,
         }
     }
@@ -399,6 +420,24 @@ impl PreflightResult {
 
 fn parse_rfc3339(s: &str) -> Option<time::OffsetDateTime> {
     time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
+}
+
+/// Compute a per-claim freshness horizon: `observed_at + threshold_seconds`,
+/// rendered as RFC3339 UTC. Returns `None` if `observed_at_max` is `None`
+/// or fails to parse — never anchor on `generated_at` as a fallback, since
+/// packet-time substituting for observation-time would launder the meaning
+/// of the horizon. Used by `dns_state` and `ingest_state` evaluators to
+/// populate [`PreflightResult::freshness_horizon`]; carried through to
+/// [`crate::receipt::Receipt::freshness_horizon`].
+pub fn freshness_horizon_from(
+    observed_at_max: Option<&str>,
+    threshold_seconds: i64,
+) -> Option<String> {
+    let dt = parse_rfc3339(observed_at_max?)?;
+    let horizon = dt + time::Duration::seconds(threshold_seconds);
+    horizon
+        .format(&time::format_description::well_known::Rfc3339)
+        .ok()
 }
 
 /// Constitutional refusal surface for `ingest_state`. Each entry
@@ -825,5 +864,48 @@ mod tests {
         assert_eq!(s, "\"unknown\"");
         let s = serde_json::to_string(&TimeBasisStatus::Suspect).unwrap();
         assert_eq!(s, "\"suspect\"");
+    }
+
+    // -----------------------------------------------------------------
+    // Slice 1c — freshness_horizon helper. The receipt-side carry-through
+    // and evaluator-side wiring are exercised by tests in nq-core::receipt
+    // and nq-db (dns + ingest paths).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn freshness_horizon_from_computes_observed_at_plus_threshold() {
+        let h = freshness_horizon_from(Some("2026-05-15T14:00:00Z"), 300).unwrap();
+        // 14:00:00 + 300s = 14:05:00.
+        assert!(h.starts_with("2026-05-15T14:05:00"));
+    }
+
+    #[test]
+    fn freshness_horizon_from_returns_none_when_observed_at_max_is_none() {
+        // Guard against future drift toward anchoring on generated_at:
+        // absent observed_at_max yields absent horizon, period.
+        assert!(freshness_horizon_from(None, 300).is_none());
+    }
+
+    #[test]
+    fn freshness_horizon_from_returns_none_on_unparseable_observed_at() {
+        assert!(freshness_horizon_from(Some("not a timestamp"), 300).is_none());
+    }
+
+    #[test]
+    fn skeleton_leaves_freshness_horizon_none() {
+        // Skeleton is the universal entry point for evaluator construction;
+        // horizon must start absent and be populated only by evaluators
+        // that have a per-claim policy.
+        let target = PreflightTarget {
+            host: "h1".into(),
+            scope: "host".into(),
+            id: None,
+        };
+        let r = PreflightResult::skeleton(
+            ClaimKind::DiskState,
+            target,
+            "2026-05-21T12:00:00Z".into(),
+        );
+        assert!(r.freshness_horizon.is_none());
     }
 }

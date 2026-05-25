@@ -221,6 +221,7 @@ pub fn evaluate(
             observed_at_max: None,
             generated_at: generated_at.into(),
             evaluator: None,
+            freshness_horizon: None,
             content_hash: None,
         },
         Some(entry) => resolve(registry, entry, subject, &applicable, generated_at),

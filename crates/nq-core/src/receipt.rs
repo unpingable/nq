@@ -126,14 +126,36 @@ pub struct Receipt {
     /// adopted `seal`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evaluator: Option<EvaluatorBinding>,
+    /// Evaluator-provided per-claim freshness deadline, when the
+    /// originating evaluator defines one. RFC3339 UTC. Today: present on
+    /// receipts whose evaluator has a per-claim horizon (`dns_state`,
+    /// `ingest_state`) and a non-empty `observed_at_max`. Absent for
+    /// `disk_state` (freshness is per-finding admissibility there, not
+    /// a per-claim deadline) and absent for Track B receipts (the
+    /// claim_registry evaluator has no per-claim freshness policy).
+    ///
+    /// `freshness_horizon` is not a universal freshness model. Absence
+    /// of this field means no per-claim deadline was emitted by this
+    /// evaluator; **it does not mean stale-immune, verified fresh, or
+    /// freshness-unbounded.**
+    ///
+    /// Anchored to `observed_at_max`, never to `generated_at` — packet
+    /// time is not an honest substitute for observation time. When
+    /// `observed_at_max` is absent, this field is also absent.
+    ///
+    /// Verification (e.g. `now > freshness_horizon`) is Slice 1d
+    /// territory. 1c populates only; no read path checks the horizon
+    /// today, no new failure modes shipped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub freshness_horizon: Option<String>,
     /// `sha256:<lowercase-hex-64>` over the JCS-canonicalized form of
     /// this receipt with `content_hash` itself omitted from the hashed
     /// bytes. Anchors *receipt identity* — the exact emitted envelope
-    /// (including evaluator binding, witness digests, generated_at).
-    /// It is **not** semantic equivalence: two receipts recording the
-    /// same decision but differing in `generated_at`, evaluator
-    /// version, or any other envelope field will have different
-    /// content_hashes by design.
+    /// (including evaluator binding, witness digests, generated_at,
+    /// freshness_horizon). It is **not** semantic equivalence: two
+    /// receipts recording the same decision but differing in
+    /// `generated_at`, evaluator version, or any other envelope field
+    /// will have different content_hashes by design.
     ///
     /// **Absence is not a verification result.** A missing
     /// `content_hash` means "this receipt was not sealed" — typically
@@ -168,6 +190,7 @@ impl Receipt {
             observed_at_max: None,
             generated_at: generated_at.into(),
             evaluator: None,
+            freshness_horizon: None,
             content_hash: None,
         }
     }
@@ -322,6 +345,11 @@ impl From<PreflightResult> for Receipt {
             witnesses,
             observed_at_min,
             observed_at_max,
+            // Carry Track A's per-claim freshness horizon through to the
+            // receipt unchanged. Evaluators that don't emit a horizon
+            // (today: disk_state) leave this None — see the doc comment on
+            // Receipt::freshness_horizon for what absence means.
+            freshness_horizon: pr.freshness_horizon,
             generated_at: pr.generated_at,
             evaluator: None,
             content_hash: None,
@@ -676,6 +704,49 @@ mod tests {
         }];
         let bind = EvaluatorBinding {
             evaluator: "claim_registry".into(),
+            version: 1,
+        };
+        a.seal(bind.clone()).unwrap();
+        b.seal(bind).unwrap();
+        assert_ne!(a.content_hash, b.content_hash);
+    }
+
+    // -----------------------------------------------------------------
+    // Slice 1c — freshness_horizon carries through From<PreflightResult>
+    // and is part of receipt-identity content_hash.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn freshness_horizon_carries_from_preflight_result() {
+        let mut pr = make_pr(Verdict::Admissible);
+        pr.freshness_horizon = Some("2026-05-15T14:05:00Z".into());
+        let r: Receipt = pr.into();
+        assert_eq!(
+            r.freshness_horizon.as_deref(),
+            Some("2026-05-15T14:05:00Z")
+        );
+    }
+
+    #[test]
+    fn freshness_horizon_absent_when_evaluator_did_not_emit_one() {
+        // disk_state PreflightResult (per make_pr) leaves freshness_horizon
+        // None — the disk_state evaluator does not emit a per-claim horizon.
+        let pr = make_pr(Verdict::Admissible);
+        assert!(pr.freshness_horizon.is_none());
+        let r: Receipt = pr.into();
+        assert!(r.freshness_horizon.is_none());
+    }
+
+    #[test]
+    fn content_hash_changes_when_freshness_horizon_changes() {
+        // Horizon is part of receipt identity per the doc comment on
+        // Receipt::content_hash — changing it must change the hash.
+        let mut a = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        let mut b = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        a.freshness_horizon = Some("2026-05-15T14:05:00Z".into());
+        b.freshness_horizon = Some("2026-05-15T14:06:00Z".into());
+        let bind = EvaluatorBinding {
+            evaluator: "dns_state".into(),
             version: 1,
         };
         a.seal(bind.clone()).unwrap();
