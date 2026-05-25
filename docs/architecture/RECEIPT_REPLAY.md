@@ -113,6 +113,16 @@ Until then:
 
 The exit code for `REPLAY_NOT_APPLICABLE` is 1, not 0. Replay was requested and did not establish a match. The detail string makes it clear *why* match couldn't be established. The operator knows to expect this for Track A receipts and to use a fresh preflight if they need current standing.
 
+### Detail string surfaces witness custody basis
+
+After Slice 2 (`TRACK_A_WITNESS_PACKET_CUTOVER.md`), Track A WitnessRefs may carry an optional `custody_basis`. `disk_state` post-cut-over emits `Some("legacy_projection")` on every WitnessRef; `ingest_state` and `dns_state` (not yet cut over) emit `None`. The `REPLAY_NOT_APPLICABLE` detail string now surfaces the declared basis when present:
+
+- All WitnessRefs declare a single basis → the detail names it ("with projected legacy witness custody: legacy_projection" for `legacy_projection`; "with witness custody basis: <value>" otherwise).
+- No WitnessRef declares a basis → the detail says "witness refs do not carry an explicit custody basis" — neutrally, without promoting absence to "native" or "old-family."
+- Mixed bases across WitnessRefs → the detail enumerates them as "mixed custody bases: <list>" so the un-declared ones stay visible.
+
+`custody_basis: None` is **not** a claim. A WitnessRef without an explicit basis can be a pre-cut-over Track A coverage-derived ref or a Track B ref from a packet that did not declare its basis. The detail string preserves that ambiguity rather than smoothing it over.
+
 ## Why replay depends on custody
 
 The receipt names witnesses by digest. The digest is a fingerprint — it tells you what a packet would look like if you still had it. But the digest is not the packet. Replay requires the packets themselves: the evaluator has to run over actual observations, not over their hashes.
