@@ -54,6 +54,9 @@ pub fn run(cmd: WitnessGitStatusCmd) -> anyhow::Result<()> {
             "Does not observe maintainer intent".into(),
         ],
         dependencies: vec![],
+        custody_basis: None,
+        source_finding_ref: None,
+        projection_limits: vec![],
     };
 
     packet.validate()?;

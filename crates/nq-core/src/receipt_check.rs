@@ -522,6 +522,9 @@ mod tests {
             observations: vec![serde_json::json!({"type": "x"})],
             coverage_limits: vec![],
             dependencies: vec![],
+            custody_basis: None,
+            source_finding_ref: None,
+            projection_limits: vec![],
         }
     }
 

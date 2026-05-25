@@ -5,6 +5,31 @@
 //! which claims it supports; claim mapping is the evaluator's job. A
 //! witness packet that names claims in its body is rejected by the
 //! validator — that surface belongs to the registry, not the witness.
+//!
+//! ## Custody basis (Slice 2 cut-over)
+//!
+//! Three optional fields support the Track A witness-packet cut-over
+//! (see `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md`):
+//! `custody_basis`, `source_finding_ref`, and `projection_limits`. The
+//! envelope still describes a single packet; the new fields let a
+//! consumer distinguish a *native* observation from a *projected*
+//! compatibility packet built from legacy detector / finding state.
+//!
+//! - **Native** (`custody_basis == "native_observation"` or absent): the
+//!   packet anchors its own substrate observation. Existing callers
+//!   produce native packets by construction.
+//! - **Legacy projection** (`custody_basis == "legacy_projection"`):
+//!   transitional packet projected from legacy finding state during
+//!   the Track A cut-over. Must carry a `source_finding_ref` and a
+//!   non-empty `projection_limits` that includes the literal
+//!   `"native_witness_custody"` token — projected packets cannot
+//!   anchor native witness custody, and the wire enforces declaration
+//!   of that limit.
+//!
+//! The envelope adds no schema version (`nq.witness.v1` unchanged). The
+//! new fields are skipped on serialization when absent or empty, so
+//! existing pre-cut-over packets serialize identically and their digests
+//! remain stable.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17,6 +42,21 @@ pub const WITNESS_SCHEMA: &str = "nq.witness.v1";
 /// hash algorithms (`blake3:...`) without rewriting consumers that only
 /// know the current algorithm.
 pub const DIGEST_ALGORITHM_PREFIX: &str = "sha256:";
+
+/// `custody_basis` value for a packet that anchors its own substrate
+/// observation. Equivalent to absence of the field for pre-cut-over
+/// packets; new producers should set it explicitly.
+pub const CUSTODY_BASIS_NATIVE: &str = "native_observation";
+
+/// `custody_basis` value for a transitional packet projected from legacy
+/// finding state during the Track A cut-over (Slice 2 of
+/// `docs/architecture/PATH_TO_1_0.md`).
+pub const CUSTODY_BASIS_LEGACY_PROJECTION: &str = "legacy_projection";
+
+/// Required `projection_limits` token on every legacy-projection packet.
+/// A projected packet cannot anchor native witness custody by construction;
+/// the wire validator refuses projection packets that omit this declaration.
+pub const PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY: &str = "native_witness_custody";
 
 /// One witness packet. Field shape per `docs/architecture/SHARED_SPINE.md`.
 ///
@@ -35,6 +75,25 @@ pub struct WitnessPacket {
     pub coverage_limits: Vec<String>,
     #[serde(default)]
     pub dependencies: Vec<String>,
+
+    /// Custody basis: `"native_observation"` or `"legacy_projection"`.
+    /// Absent means the packet predates the Slice 2 cut-over (treated as
+    /// native by consumers; new producers should set it explicitly).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custody_basis: Option<String>,
+
+    /// Reference back to the source finding when (and only when)
+    /// `custody_basis == "legacy_projection"`. Local finding identifier
+    /// (e.g. `finding:zfs_pool_degraded:host:storage01:pool:tank`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_finding_ref: Option<String>,
+
+    /// What the projection could not preserve. Required and non-empty on
+    /// legacy-projection packets; must include the
+    /// `"native_witness_custody"` token. Must be empty on native or
+    /// pre-cut-over packets — this is not a general notes field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projection_limits: Vec<String>,
 }
 
 /// Validation error. Soft typing — message-first so callers can surface
@@ -114,6 +173,75 @@ impl WitnessPacket {
                 }
             }
         }
+
+        // Custody-basis discipline (Slice 2 cut-over — see
+        // docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md). The wire
+        // validator's job here is the structural deadbolt: a projected
+        // packet must not be indistinguishable from a native packet, and
+        // a native packet must not carry projection-only baggage.
+        match self.custody_basis.as_deref() {
+            None | Some(CUSTODY_BASIS_NATIVE) => {
+                if self.source_finding_ref.is_some() {
+                    return Err(err(
+                        "source_finding_ref is set without \
+                         custody_basis == \"legacy_projection\" — native or \
+                         pre-cut-over packets must not name a source finding"
+                            .into(),
+                    ));
+                }
+                if !self.projection_limits.is_empty() {
+                    return Err(err(
+                        "projection_limits is non-empty without \
+                         custody_basis == \"legacy_projection\" — \
+                         projection_limits describes what a projection \
+                         cannot preserve and has no meaning on native packets"
+                            .into(),
+                    ));
+                }
+            }
+            Some(CUSTODY_BASIS_LEGACY_PROJECTION) => {
+                let finding_ref = self.source_finding_ref.as_deref().unwrap_or("");
+                if finding_ref.trim().is_empty() {
+                    return Err(err(format!(
+                        "custody_basis == {CUSTODY_BASIS_LEGACY_PROJECTION:?} \
+                         requires a non-empty source_finding_ref"
+                    )));
+                }
+                if self.projection_limits.is_empty() {
+                    return Err(err(format!(
+                        "custody_basis == {CUSTODY_BASIS_LEGACY_PROJECTION:?} \
+                         requires a non-empty projection_limits enumerating \
+                         what the projection cannot preserve (must include \
+                         {PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY:?})"
+                    )));
+                }
+                for (i, lim) in self.projection_limits.iter().enumerate() {
+                    if lim.trim().is_empty() {
+                        return Err(err(format!(
+                            "projection_limits[{i}] is empty — each entry \
+                             must name what the projection cannot preserve"
+                        )));
+                    }
+                }
+                if !self
+                    .projection_limits
+                    .iter()
+                    .any(|l| l == PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY)
+                {
+                    return Err(err(format!(
+                        "projection_limits on a legacy_projection packet must \
+                         include {PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY:?} — \
+                         projected packets cannot anchor native witness custody"
+                    )));
+                }
+            }
+            Some(other) => {
+                return Err(err(format!(
+                    "custody_basis must be {CUSTODY_BASIS_NATIVE:?} or \
+                     {CUSTODY_BASIS_LEGACY_PROJECTION:?}, got {other:?}"
+                )));
+            }
+        }
         Ok(())
     }
 
@@ -190,6 +318,9 @@ mod tests {
             })],
             coverage_limits: vec!["does not observe production behavior".into()],
             dependencies: vec![],
+            custody_basis: None,
+            source_finding_ref: None,
+            projection_limits: vec![],
         }
     }
 
@@ -238,6 +369,173 @@ mod tests {
             "supports": ["tests_passed"]
         })];
         assert!(p.validate().is_err());
+    }
+
+    // ---------------------------------------------------------------
+    // Custody-basis tests (Slice 2 cut-over — see
+    // docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md)
+    // ---------------------------------------------------------------
+
+    fn ok_projection_packet() -> WitnessPacket {
+        WitnessPacket {
+            schema: WITNESS_SCHEMA.into(),
+            witness_type: "disk_state_legacy_projection".into(),
+            subject: "host:storage01/pool:tank".into(),
+            access_path: "legacy_finding_projection".into(),
+            observed_at: "2026-05-15T14:00:00Z".into(),
+            generated_at: "2026-05-15T14:00:03Z".into(),
+            observations: vec![serde_json::json!({
+                "type": "zfs_pool_state_projected",
+                "pool": "tank",
+                "state": "degraded"
+            })],
+            coverage_limits: vec!["packet reconstructed from legacy finding state".into()],
+            dependencies: vec![],
+            custody_basis: Some(CUSTODY_BASIS_LEGACY_PROJECTION.into()),
+            source_finding_ref: Some(
+                "finding:zfs_pool_degraded:host:storage01:pool:tank".into(),
+            ),
+            projection_limits: vec![
+                PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY.into(),
+                "original detector run metadata not preserved".into(),
+            ],
+        }
+    }
+
+    #[test]
+    fn native_packet_with_explicit_basis_validates() {
+        let mut p = ok_packet();
+        p.custody_basis = Some(CUSTODY_BASIS_NATIVE.into());
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn legacy_projection_packet_validates() {
+        ok_projection_packet().validate().unwrap();
+    }
+
+    #[test]
+    fn unknown_custody_basis_rejected() {
+        let mut p = ok_packet();
+        p.custody_basis = Some("vibes".into());
+        let err = p.validate().unwrap_err();
+        assert!(err.message.contains("custody_basis"));
+    }
+
+    #[test]
+    fn legacy_projection_without_source_finding_ref_rejected() {
+        let mut p = ok_projection_packet();
+        p.source_finding_ref = None;
+        let err = p.validate().unwrap_err();
+        assert!(err.message.contains("source_finding_ref"));
+    }
+
+    #[test]
+    fn legacy_projection_with_blank_source_finding_ref_rejected() {
+        let mut p = ok_projection_packet();
+        p.source_finding_ref = Some("   ".into());
+        let err = p.validate().unwrap_err();
+        assert!(err.message.contains("source_finding_ref"));
+    }
+
+    #[test]
+    fn legacy_projection_with_empty_projection_limits_rejected() {
+        let mut p = ok_projection_packet();
+        p.projection_limits = vec![];
+        let err = p.validate().unwrap_err();
+        assert!(err.message.contains("projection_limits"));
+    }
+
+    #[test]
+    fn legacy_projection_with_blank_entry_in_projection_limits_rejected() {
+        let mut p = ok_projection_packet();
+        p.projection_limits = vec![
+            PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY.into(),
+            "   ".into(),
+        ];
+        let err = p.validate().unwrap_err();
+        assert!(err.message.contains("projection_limits"));
+    }
+
+    #[test]
+    fn legacy_projection_without_native_witness_custody_limit_rejected() {
+        // The wire deadbolt: a projected packet cannot omit the
+        // declaration that it does not anchor native witness custody.
+        let mut p = ok_projection_packet();
+        p.projection_limits = vec!["original detector run metadata not preserved".into()];
+        let err = p.validate().unwrap_err();
+        assert!(err.message.contains("native_witness_custody"));
+    }
+
+    #[test]
+    fn native_packet_with_source_finding_ref_rejected() {
+        // A native packet that names a source finding is custody
+        // confusion — either projected (and should declare so) or not
+        // (and should not reference one).
+        let mut p = ok_packet();
+        p.source_finding_ref = Some("finding:foo".into());
+        let err = p.validate().unwrap_err();
+        assert!(err.message.contains("source_finding_ref"));
+    }
+
+    #[test]
+    fn native_packet_with_projection_limits_rejected() {
+        let mut p = ok_packet();
+        p.projection_limits = vec!["something".into()];
+        let err = p.validate().unwrap_err();
+        assert!(err.message.contains("projection_limits"));
+    }
+
+    #[test]
+    fn pre_cutover_packet_without_custody_fields_still_validates() {
+        // Backward compatibility: a packet that predates the cut-over
+        // (no custody_basis, no source_finding_ref, empty
+        // projection_limits — the existing wire shape) continues to
+        // validate unchanged.
+        let p = ok_packet();
+        assert!(p.custody_basis.is_none());
+        assert!(p.source_finding_ref.is_none());
+        assert!(p.projection_limits.is_empty());
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn pre_cutover_packet_digest_is_stable_across_field_addition() {
+        // A packet with the original field set serializes identically
+        // before and after the additive cut-over (skip_serializing_if
+        // omits absent / empty new fields). This test pins the digest
+        // for the standard ok_packet() shape — if it changes, the
+        // additive cut-over has silently become non-additive.
+        let d = ok_packet().digest().unwrap();
+        // Pinned digest of the ok_packet() shape with no custody fields
+        // serialized. Regenerated on intentional shape change only.
+        assert_eq!(
+            d,
+            "sha256:598d44eeea65fa1a5e4bb9bbb5571733f6e6758ae858ba0ed1df5bbcf1ba5959"
+        );
+    }
+
+    #[test]
+    fn deserialization_defaults_for_missing_custody_fields() {
+        // Existing on-wire packets do not carry the new fields. Verify
+        // that deserialization treats absent fields as None / empty
+        // (so legacy stored packets continue to round-trip).
+        let json = serde_json::json!({
+            "schema": WITNESS_SCHEMA,
+            "witness_type": "pytest",
+            "subject": "repo:.",
+            "access_path": "local_command",
+            "observed_at": "2026-05-15T14:00:00Z",
+            "generated_at": "2026-05-15T14:00:03Z",
+            "observations": [{"type": "pytest_run", "exit_code": 0}],
+            "coverage_limits": ["does not observe production behavior"],
+            "dependencies": []
+        });
+        let p: WitnessPacket = serde_json::from_value(json).unwrap();
+        assert!(p.custody_basis.is_none());
+        assert!(p.source_finding_ref.is_none());
+        assert!(p.projection_limits.is_empty());
+        p.validate().unwrap();
     }
 
     // ---------------------------------------------------------------
