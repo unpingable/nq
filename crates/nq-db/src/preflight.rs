@@ -667,14 +667,19 @@ pub fn evaluate_ingest_state_preflight_from_conn(
     Ok(result)
 }
 
+/// In-memory DTO for the most-recent row in `generations`.
+///
+/// Made public for the ingest_state witness packet projector
+/// (`crate::ingest_state_witness_projection`). The projector consumes
+/// this shape directly; the evaluator owns loading and lifetime.
 #[derive(Debug)]
-struct LatestGeneration {
-    generation_id: i64,
-    completed_at: String,
-    status: String,
-    sources_expected: i64,
-    sources_ok: i64,
-    sources_failed: i64,
+pub struct LatestGeneration {
+    pub generation_id: i64,
+    pub completed_at: String,
+    pub status: String,
+    pub sources_expected: i64,
+    pub sources_ok: i64,
+    pub sources_failed: i64,
 }
 
 fn load_latest_generation(
@@ -702,12 +707,16 @@ fn load_latest_generation(
     Ok(row)
 }
 
+/// In-memory DTO for a non-`ok` row in `source_runs` for a given
+/// generation. Made public for the ingest_state witness packet
+/// projector. Successful source rows are aggregated into the
+/// generation-level support and do not surface here.
 #[derive(Debug)]
-struct FailedSourceRun {
-    source: String,
-    status: String,
-    received_at: String,
-    error_message: Option<String>,
+pub struct FailedSourceRun {
+    pub source: String,
+    pub status: String,
+    pub received_at: String,
+    pub error_message: Option<String>,
 }
 
 fn load_failed_source_runs(
