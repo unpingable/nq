@@ -15,10 +15,18 @@
 //! slice when there are more leaves than fit on one screen.
 
 use crate::receipt::{
-    NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef, RECEIPT_SCHEMA,
+    EvaluatorBinding, NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef,
+    RECEIPT_SCHEMA,
 };
 use crate::witness::WitnessPacket;
 use std::collections::BTreeMap;
+
+/// Version of the Track B claim evaluator. Stamped on every receipt
+/// produced by [`evaluate`] via the `evaluator` binding. Bump on any
+/// semantically observable change to the evaluation rules (new condition
+/// kinds, changed admission criteria, etc.). Wire-shape changes get the
+/// `RECEIPT_SCHEMA` bump instead.
+pub const EVALUATOR_VERSION: u32 = 1;
 
 #[derive(Debug, Clone)]
 pub enum ClaimEntry {
@@ -212,6 +220,8 @@ pub fn evaluate(
             observed_at_min: None,
             observed_at_max: None,
             generated_at: generated_at.into(),
+            evaluator: None,
+            content_hash: None,
         },
         Some(entry) => resolve(registry, entry, subject, &applicable, generated_at),
     };
@@ -221,6 +231,15 @@ pub fn evaluate(
     receipt.witnesses = witness_refs;
     receipt.observed_at_min = observed_at_min;
     receipt.observed_at_max = observed_at_max;
+
+    // Slice 1b: stamp evaluator binding and compute content_hash. Fail-soft —
+    // if JCS canonicalization rejects the receipt body, leave evaluator stamped
+    // but content_hash absent; absence is not a verification result per the
+    // Receipt::content_hash doc comment.
+    let _ = receipt.seal(EvaluatorBinding {
+        evaluator: "claim_registry".into(),
+        version: EVALUATOR_VERSION,
+    });
     receipt
 }
 
@@ -767,6 +786,23 @@ mod tests {
             "WitnessRef.digest must match WitnessPacket::digest() output exactly"
         );
         assert!(wref.digest.as_deref().unwrap().starts_with("sha256:"));
+    }
+
+    #[test]
+    fn track_b_receipt_is_sealed_with_evaluator_and_content_hash() {
+        let reg = ClaimRegistry::track_b_starter();
+        let w = pkt(
+            "pytest",
+            "repo:.",
+            vec![serde_json::json!({"type": "pytest_run", "exit_code": 0})],
+        );
+        let r = evaluate(&reg, "tests_passed", "repo:.", &[w], "2026-05-15T14:00:00Z");
+        let ev = r.evaluator.as_ref().expect("Track B receipt has evaluator");
+        assert_eq!(ev.evaluator, "claim_registry");
+        assert_eq!(ev.version, EVALUATOR_VERSION);
+        let h = r.content_hash.as_ref().expect("Track B receipt has content_hash");
+        assert!(h.starts_with("sha256:"));
+        assert_eq!(h.len(), "sha256:".len() + 64);
     }
 
     #[test]
