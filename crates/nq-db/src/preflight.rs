@@ -8,7 +8,21 @@
 //! See `docs/CLAIM_PREFLIGHT.md` and `docs/gaps/CLAIM_KIND_DISK_STATE_GAP.md`
 //! for the doctrine; see `docs/WITNESS_PACKET.md` for the three witness-side
 //! constraints this evaluator preserves.
+//!
+//! ## Slice 2 cut-over (disk_state only)
+//!
+//! `disk_state` substrate findings now pass through the projector in
+//! `crate::disk_state_witness_projection` before contributing to the
+//! result. A finding that cannot project (no recoverable substrate-time
+//! `observed_at`, or detector the projector does not handle) appears as
+//! a `PreflightExclusion` with a projection-refused reason and is
+//! removed from the verdict's observable-substrate set. The projected
+//! packets themselves are not yet exposed to receipt consumers — that
+//! lands in Slice 2 commit 4. See
+//! `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md`. `ingest_state`
+//! is out of scope for Slice 2 V1.
 
+use crate::disk_state_witness_projection::{project_disk_state_finding, ProjectionRefusal};
 use crate::export::{export_findings_from_conn, ExportFilter, FindingSnapshot};
 use crate::ReadDb;
 use nq_core::preflight::{
@@ -78,7 +92,8 @@ pub fn evaluate_disk_state_preflight_from_conn(
         .unwrap_or_else(|_| String::new());
 
     let target_obj = make_target(host, target);
-    let mut result = PreflightResult::skeleton(ClaimKind::DiskState, target_obj, generated_at);
+    let mut result =
+        PreflightResult::skeleton(ClaimKind::DiskState, target_obj, generated_at.clone());
 
     // Partition snapshots: substrate-testifying vs standing-reporting vs other.
     let mut substrate: Vec<&FindingSnapshot> = Vec::new();
@@ -99,11 +114,43 @@ pub fn evaluate_disk_state_preflight_from_conn(
         }
     }
 
-    // Coverage block: ZFS, SMART, and node-level standing.
+    // Coverage block: ZFS, SMART, and node-level standing. Coverage
+    // describes the witness family's declared observational capacity;
+    // it is not adjusted by per-finding projection refusals (those
+    // surface as PreflightExclusion entries, below).
     result.coverage = compute_coverage(&standing);
 
-    // Supports + excludes from substrate findings.
+    // Slice 2 cut-over: project each substrate finding into a
+    // legacy_projection witness packet before admitting it. The
+    // projector enforces custody — a finding that cannot recover a
+    // substrate-time observed_at (or whose detector the projector
+    // does not handle) is a custody failure, not a coverage failure.
+    // Refusal surfaces as a PreflightExclusion with a projection-
+    // refused reason; the finding does not contribute to the verdict's
+    // "observable substrate" set.
+    //
+    // The projected packets themselves are not yet exposed to receipt
+    // consumers — that lands in Slice 2 commit 4, which will stamp
+    // WitnessRef.digest onto Track A receipts and dispatch replay over
+    // native-custody Track A material. For now, the projector runs as
+    // the custody gate and its output is dropped after the gate check.
+    // See docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md.
+    let mut admitted_substrate: Vec<&FindingSnapshot> = Vec::new();
     for snap in &substrate {
+        match project_disk_state_finding(snap, &generated_at) {
+            Ok(_packet) => {
+                admitted_substrate.push(snap);
+            }
+            Err(refusal) => {
+                result
+                    .excludes
+                    .push(make_projection_refusal_exclusion(snap, &refusal));
+            }
+        }
+    }
+
+    // Supports + excludes from admitted substrate findings.
+    for snap in &admitted_substrate {
         match snap.admissibility.state.as_str() {
             "observable" => {
                 result.supports.push(make_support(snap));
@@ -129,8 +176,10 @@ pub fn evaluate_disk_state_preflight_from_conn(
         .filter_map(|s| s.observed_at.clone())
         .max();
 
-    // Verdict.
-    let (verdict, note) = compute_verdict(&substrate, &standing);
+    // Verdict computed over admitted substrate — projection-refused
+    // findings have not produced admissible testimony and do not count
+    // as observable substrate for verdict purposes.
+    let (verdict, note) = compute_verdict(&admitted_substrate, &standing);
     result.verdict = verdict;
     result.verdict_note = note;
 
@@ -218,6 +267,24 @@ fn make_exclusion(snap: &FindingSnapshot, state: &str) -> PreflightExclusion {
         subject: snap.identity.subject.clone(),
         reason,
         detail: snap.admissibility.ancestor_finding_key.clone(),
+    }
+}
+
+/// Build a PreflightExclusion for a finding that could not be projected
+/// into a witness packet. Projection refusal is a custody failure: the
+/// finding lacks the substrate evidence a native witness would have
+/// carried, so it cannot become admissible testimony under the Slice 2
+/// custody contract. The reason names the specific custody constraint
+/// that could not be satisfied.
+fn make_projection_refusal_exclusion(
+    snap: &FindingSnapshot,
+    refusal: &ProjectionRefusal,
+) -> PreflightExclusion {
+    PreflightExclusion {
+        finding_kind: snap.identity.detector.clone(),
+        subject: snap.identity.subject.clone(),
+        reason: format!("Witness packet projection refused: {}", refusal.reason),
+        detail: None,
     }
 }
 
@@ -841,6 +908,95 @@ mod tests {
         let r = evaluate_disk_state_preflight_from_conn(&db.conn, "lil-nas-x", None).unwrap();
         assert_eq!(r.schema, nq_core::preflight::PREFLIGHT_DISK_STATE_SCHEMA);
         assert_eq!(r.contract_version, nq_core::preflight::PREFLIGHT_CONTRACT_VERSION);
+    }
+
+    // -----------------------------------------------------------------------
+    // Slice 2 cut-over: projection refusal surfaces as PreflightExclusion
+    // -----------------------------------------------------------------------
+
+    /// Variant of `insert_finding` that lets the caller supply `last_seen_at`.
+    /// Used to construct findings whose substrate-time observed_at is missing
+    /// or malformed, so the projector refuses to admit them.
+    fn insert_finding_with_last_seen_at(
+        db: &crate::WriteDb,
+        host: &str,
+        kind: &str,
+        subject: &str,
+        visibility: &str,
+        last_seen_at: &str,
+    ) {
+        db.conn
+            .execute(
+                "INSERT INTO warning_state
+                   (host, kind, subject, domain, message, severity,
+                    first_seen_gen, first_seen_at, last_seen_gen, last_seen_at,
+                    consecutive_gens, finding_class, absent_gens, visibility_state,
+                    failure_class, service_impact, action_bias, synopsis, why_care)
+                 VALUES (?1, ?2, ?3, 'Δg', 'test', 'warning', 1, '2026-05-01T00:00:00Z', 100, ?5,
+                         5, 'signal', 0, ?4, 'Accumulation', 'NoneCurrent',
+                         'InvestigateBusinessHours', 'test', 'test')",
+                rusqlite::params![host, kind, subject, visibility, last_seen_at],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn projection_refused_finding_appears_as_exclude_not_support() {
+        // A finding whose substrate-time observed_at cannot be parsed
+        // is a custody failure under the Slice 2 cut-over. It must
+        // surface as a PreflightExclusion with a projection-refused
+        // reason, not as a PreflightSupport.
+        let db = make_db();
+        ensure_generation(&db, 100);
+        insert_finding_with_last_seen_at(
+            &db,
+            "lil-nas-x",
+            "zfs_pool_degraded",
+            "tank",
+            "observed",
+            "not-a-timestamp",
+        );
+
+        let r = evaluate_disk_state_preflight_from_conn(&db.conn, "lil-nas-x", None).unwrap();
+
+        assert!(
+            r.supports.is_empty(),
+            "projection-refused finding must not appear in supports"
+        );
+        let refusal = r
+            .excludes
+            .iter()
+            .find(|e| e.finding_kind == "zfs_pool_degraded" && e.subject == "tank")
+            .expect("projection-refused finding must appear in excludes");
+        assert!(
+            refusal.reason.contains("projection refused"),
+            "exclusion reason must name projection refusal: {}",
+            refusal.reason
+        );
+    }
+
+    #[test]
+    fn projection_refused_finding_does_not_contribute_to_verdict_substrate() {
+        // A single substrate finding that refuses projection must not
+        // count as observable substrate for the verdict. Without
+        // admissible substrate, the verdict is InsufficientCoverage
+        // (the same as a clean host) — not AdmissibleWithScope, which
+        // would be the verdict if the finding had been admitted.
+        let db = make_db();
+        ensure_generation(&db, 100);
+        insert_finding_with_last_seen_at(
+            &db,
+            "lil-nas-x",
+            "zfs_pool_degraded",
+            "tank",
+            "observed",
+            "",
+        );
+
+        let r = evaluate_disk_state_preflight_from_conn(&db.conn, "lil-nas-x", None).unwrap();
+        assert_eq!(r.verdict, Verdict::InsufficientCoverage);
+        // The finding still surfaces as an exclusion for visibility.
+        assert!(r.excludes.iter().any(|e| e.reason.contains("projection refused")));
     }
 
     // -----------------------------------------------------------------------
