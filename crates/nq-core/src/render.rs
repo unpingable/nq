@@ -199,6 +199,7 @@ mod tests {
             observed_at_max: Some("2026-05-15T14:00:02Z".into()),
             generated_at: "2026-05-15T14:00:04Z".into(),
             evaluator: None,
+            freshness_horizon: None,
             content_hash: None,
         }
     }

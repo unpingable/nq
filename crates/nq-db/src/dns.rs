@@ -19,8 +19,8 @@
 use crate::ReadDb;
 use anyhow::Context;
 use nq_core::preflight::{
-    ClaimKind, PreflightCoverage, PreflightResult, PreflightSupport, PreflightTarget,
-    ResponseKind, Verdict,
+    freshness_horizon_from, ClaimKind, PreflightCoverage, PreflightResult, PreflightSupport,
+    PreflightTarget, ResponseKind, Verdict,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::str::FromStr;
@@ -245,6 +245,10 @@ pub fn evaluate_dns_state_preflight_from_conn(
         let support = make_support(&obs);
         result.observed_at_min = Some(obs.observed_at.clone());
         result.observed_at_max = Some(obs.observed_at.clone());
+        result.freshness_horizon = freshness_horizon_from(
+            result.observed_at_max.as_deref(),
+            DNS_STATE_STALE_THRESHOLD_SECONDS,
+        );
         result.supports.push(support);
         result.coverage.push(PreflightCoverage {
             witness: "dns_resolver".to_string(),
@@ -276,6 +280,10 @@ pub fn evaluate_dns_state_preflight_from_conn(
             let support = make_support(&obs);
             result.observed_at_min = Some(obs.observed_at.clone());
             result.observed_at_max = Some(obs.observed_at.clone());
+            result.freshness_horizon = freshness_horizon_from(
+                result.observed_at_max.as_deref(),
+                DNS_STATE_STALE_THRESHOLD_SECONDS,
+            );
             result.supports.push(support);
             result.coverage.push(PreflightCoverage {
                 witness: "dns_resolver".to_string(),
@@ -352,6 +360,10 @@ pub fn evaluate_dns_state_preflight_from_conn(
             let support = make_support(&obs);
             result.observed_at_min = Some(obs.observed_at.clone());
             result.observed_at_max = Some(obs.observed_at.clone());
+            result.freshness_horizon = freshness_horizon_from(
+                result.observed_at_max.as_deref(),
+                DNS_STATE_STALE_THRESHOLD_SECONDS,
+            );
             result.supports.push(support);
             result.coverage.push(PreflightCoverage {
                 witness: "dns_resolver".to_string(),
@@ -1203,6 +1215,89 @@ mod tests {
             "verdict_note must name staleness and threshold: {note}"
         );
         assert_supports_are_bounded(&r);
+    }
+
+    // -----------------------------------------------------------------
+    // Slice 1c — freshness_horizon on the dns_state evaluator path.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn evaluator_emits_freshness_horizon_on_fresh_success() {
+        let db = make_db();
+        ensure_generation(&db.conn, 100);
+        let observed = rfc3339_at_offset(-30); // 30s ago — well within 300s threshold
+        let mut row = obs(
+            100,
+            "sushi-k",
+            "8.8.8.8",
+            "nq.neutral.zone",
+            "A",
+            ResponseKind::Success,
+            &observed,
+        );
+        row.answer_summary = Some("198.51.100.7".into());
+        row.min_ttl_seconds = Some(60);
+        insert_observation(&db.conn, &row).unwrap();
+
+        let r = evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert!(matches!(
+            r.verdict,
+            Verdict::AdmissibleWithScope | Verdict::Admissible
+        ));
+        let horizon = r
+            .freshness_horizon
+            .as_deref()
+            .expect("fresh dns_state result emits freshness_horizon");
+        // Horizon must be strictly after observed_at_max.
+        let obs_at = r.observed_at_max.as_deref().unwrap();
+        assert!(
+            horizon > obs_at,
+            "horizon ({horizon}) must be after observed_at_max ({obs_at})"
+        );
+    }
+
+    #[test]
+    fn evaluator_emits_freshness_horizon_even_when_verdict_is_stale() {
+        // The horizon is descriptive of when the testimony falls outside
+        // policy. A stale verdict means the deadline already passed —
+        // horizon is still meaningful and still emitted.
+        let db = make_db();
+        ensure_generation(&db.conn, 100);
+        let stale_at = "2020-01-01T00:00:00Z"; // far past
+        let mut row = obs(
+            100,
+            "sushi-k",
+            "8.8.8.8",
+            "nq.neutral.zone",
+            "A",
+            ResponseKind::Success,
+            stale_at,
+        );
+        row.answer_summary = Some("198.51.100.7".into());
+        row.min_ttl_seconds = Some(60);
+        insert_observation(&db.conn, &row).unwrap();
+
+        let r = evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.verdict, Verdict::StaleTestimony);
+        // stale_at + 300s = 2020-01-01T00:05:00.
+        assert_eq!(
+            r.freshness_horizon.as_deref(),
+            Some("2020-01-01T00:05:00Z"),
+            "horizon is emitted alongside StaleTestimony verdict (deadline already passed)"
+        );
+    }
+
+    #[test]
+    fn evaluator_no_row_leaves_freshness_horizon_absent() {
+        // insufficient_coverage: no observation row → no observed_at_max
+        // → no horizon. Guard against anchoring to generated_at as a
+        // fallback.
+        let db = make_db();
+        ensure_generation(&db.conn, 100);
+        let r = evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        assert_eq!(r.verdict, Verdict::InsufficientCoverage);
+        assert!(r.observed_at_max.is_none());
+        assert!(r.freshness_horizon.is_none());
     }
 
     #[test]

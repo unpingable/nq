@@ -12,8 +12,8 @@
 use crate::export::{export_findings_from_conn, ExportFilter, FindingSnapshot};
 use crate::ReadDb;
 use nq_core::preflight::{
-    ClaimKind, PreflightCoverage, PreflightExclusion, PreflightResult, PreflightSupport,
-    PreflightTarget, Verdict,
+    freshness_horizon_from, ClaimKind, PreflightCoverage, PreflightExclusion, PreflightResult,
+    PreflightSupport, PreflightTarget, Verdict,
 };
 
 /// Staleness threshold for the latest generation's `completed_at`, in
@@ -513,6 +513,16 @@ pub fn evaluate_ingest_state_preflight_from_conn(
         .iter()
         .filter_map(|s| s.observed_at.clone())
         .max();
+
+    // Per-claim freshness horizon (Slice 1c): observed_at_max +
+    // INGEST_STATE_STALE_THRESHOLD_SECONDS, rendered RFC3339. Anchored to
+    // observation-time, never to generated_at — see the doc comment on
+    // PreflightResult::freshness_horizon. Absent when observed_at_max is
+    // absent.
+    result.freshness_horizon = freshness_horizon_from(
+        result.observed_at_max.as_deref(),
+        INGEST_STATE_STALE_THRESHOLD_SECONDS,
+    );
 
     // Verdict.
     let now = time::OffsetDateTime::now_utc();
@@ -1031,6 +1041,66 @@ mod tests {
         // verdict — staleness is testimony about freshness, not a license
         // to drop the refusals.
         assert!(!r.cannot_testify.is_empty());
+        // Slice 1c: horizon is still emitted alongside StaleTestimony —
+        // 2020-01-01T00:00:00Z + 300s = 2020-01-01T00:05:00.
+        assert_eq!(
+            r.freshness_horizon.as_deref(),
+            Some("2020-01-01T00:05:00Z")
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Slice 1c — freshness_horizon on the ingest_state evaluator path,
+    // and the disk_state evaluator's intentional absence of one.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn ingest_state_clean_generation_emits_freshness_horizon() {
+        let db = make_db();
+        let completed = rfc3339_at_offset(-30);
+        insert_generation(&db, 100, &completed, "complete", 1, 1, 0);
+
+        let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        let horizon = r
+            .freshness_horizon
+            .as_deref()
+            .expect("ingest_state emits a freshness horizon");
+        let obs = r.observed_at_max.as_deref().unwrap();
+        assert!(
+            horizon > obs,
+            "horizon ({horizon}) must be after observed_at_max ({obs})"
+        );
+    }
+
+    #[test]
+    fn ingest_state_no_generation_leaves_freshness_horizon_absent() {
+        // No generation row → no observed_at_max → no horizon. Guards
+        // against anchoring to generated_at when no real anchor exists.
+        let db = make_db();
+        let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        // The "no generations exist" path returns InsufficientCoverage
+        // with absent observation window.
+        assert_eq!(r.verdict, Verdict::InsufficientCoverage);
+        assert!(r.observed_at_max.is_none());
+        assert!(r.freshness_horizon.is_none());
+    }
+
+    #[test]
+    fn disk_state_does_not_emit_freshness_horizon() {
+        // disk_state's freshness model is per-finding admissibility, not
+        // a per-claim deadline. The evaluator must leave horizon absent.
+        // Documented contract on Receipt::freshness_horizon.
+        let db = make_db();
+        let r = evaluate_disk_state_preflight_from_conn(
+            &db.conn,
+            "host-with-no-findings",
+            None,
+        )
+        .unwrap();
+        assert!(
+            r.freshness_horizon.is_none(),
+            "disk_state must not emit a per-claim freshness horizon"
+        );
     }
 
     #[test]
