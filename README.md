@@ -166,9 +166,9 @@ FROM v_hosts h JOIN v_services s ON h.host = s.host;
 Monitored hosts              Central host
 ┌──────────────┐            ┌─────────────────────────┐
 │ nq publish   │──HTTP───→  │ nq serve                │
-│  host        │            │  pull → publish → detect │
-│  services    │            │  lifecycle → notify      │
-│  sqlite      │            │  web UI + SQL API        │
+│  host        │            │  pull → publish → detect│
+│  services    │            │  lifecycle → notify     │
+│  sqlite      │            │  web UI + SQL API       │
 │  prometheus  │            └──────────┬──────────────┘
 │  logs        │                       │
 └──────────────┘                  ┌────▼────┐
