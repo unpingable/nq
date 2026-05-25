@@ -27,8 +27,9 @@ use crate::export::{export_findings_from_conn, ExportFilter, FindingSnapshot};
 use crate::ReadDb;
 use nq_core::preflight::{
     freshness_horizon_from, ClaimKind, PreflightCoverage, PreflightExclusion, PreflightResult,
-    PreflightSupport, PreflightTarget, Verdict,
+    PreflightSupport, PreflightTarget, SupportingWitnessPacket, Verdict,
 };
+use nq_core::witness::WitnessPacket;
 
 /// Staleness threshold for the latest generation's `completed_at`, in
 /// seconds. The aggregator's default pull interval is 60s; 300s (5×) is
@@ -129,17 +130,17 @@ pub fn evaluate_disk_state_preflight_from_conn(
     // refused reason; the finding does not contribute to the verdict's
     // "observable substrate" set.
     //
-    // The projected packets themselves are not yet exposed to receipt
-    // consumers — that lands in Slice 2 commit 4, which will stamp
-    // WitnessRef.digest onto Track A receipts and dispatch replay over
-    // native-custody Track A material. For now, the projector runs as
-    // the custody gate and its output is dropped after the gate check.
-    // See docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md.
-    let mut admitted_substrate: Vec<&FindingSnapshot> = Vec::new();
+    // We retain the projected packet alongside the finding so the
+    // support entry can carry the packet's wire identity (witness type,
+    // JCS+SHA-256 digest, observed_at). `From<PreflightResult>` reads
+    // these to build one `WitnessRef` per admitted support on Track A
+    // disk_state receipts (Slice 2 commit 4). See
+    // docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md.
+    let mut admitted: Vec<(&FindingSnapshot, nq_core::witness::WitnessPacket)> = Vec::new();
     for snap in &substrate {
         match project_disk_state_finding(snap, &generated_at) {
-            Ok(_packet) => {
-                admitted_substrate.push(snap);
+            Ok(packet) => {
+                admitted.push((snap, packet));
             }
             Err(refusal) => {
                 result
@@ -149,17 +150,24 @@ pub fn evaluate_disk_state_preflight_from_conn(
         }
     }
 
-    // Supports + excludes from admitted substrate findings.
-    for snap in &admitted_substrate {
+    // Supports + excludes from admitted substrate findings. Supports
+    // carry the projected packet's identity for receipt stamping.
+    for (snap, packet) in &admitted {
         match snap.admissibility.state.as_str() {
             "observable" => {
-                result.supports.push(make_support(snap));
+                let mut support = make_support(snap);
+                support.witness_packet = packet_identity(packet);
+                result.supports.push(support);
             }
             other => {
                 result.excludes.push(make_exclusion(snap, other));
             }
         }
     }
+    // `admitted_substrate` is the view compute_verdict needs: only the
+    // snapshots that survived projection, regardless of admissibility.
+    let admitted_substrate: Vec<&FindingSnapshot> =
+        admitted.iter().map(|(s, _)| *s).collect();
 
     // Observation-window disclosure. Computed only from `supports` —
     // excludes are findings the witness layer has refused to admit, so
@@ -250,6 +258,9 @@ fn make_support(snap: &FindingSnapshot) -> PreflightSupport {
         observed_at: Some(snap.lifecycle.last_seen_at.clone()),
         freshness: None,
         admissibility_state: Some(snap.admissibility.state.clone()),
+        // Stamped after construction in the evaluator loop, where the
+        // projected witness packet is in scope.
+        witness_packet: None,
     }
 }
 
@@ -286,6 +297,23 @@ fn make_projection_refusal_exclusion(
         reason: format!("Witness packet projection refused: {}", refusal.reason),
         detail: None,
     }
+}
+
+/// Extract the wire-identity slice of a projected witness packet for
+/// `PreflightSupport::witness_packet`. Returns `None` only if
+/// `WitnessPacket::digest()` itself fails (in practice, never — the
+/// projector already validated the packet).
+///
+/// Absence of digest is not a verification result. Per the doc comment
+/// on `WitnessRef`, `digest: None` means "this WitnessRef is not
+/// anchored to a specific packet envelope," not "verification false."
+fn packet_identity(packet: &WitnessPacket) -> Option<SupportingWitnessPacket> {
+    let digest = packet.digest().ok()?;
+    Some(SupportingWitnessPacket {
+        witness_type: packet.witness_type.clone(),
+        digest,
+        observed_at: packet.observed_at.clone(),
+    })
 }
 
 fn compute_coverage(standing: &[&FindingSnapshot]) -> Vec<PreflightCoverage> {
@@ -541,6 +569,9 @@ pub fn evaluate_ingest_state_preflight_from_conn(
         observed_at: Some(gen.completed_at.clone()),
         freshness: None,
         admissibility_state: Some("observable".to_string()),
+        // ingest_state has not yet cut over to witness packets; see
+        // docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md.
+        witness_packet: None,
     });
 
     // Source-level supports for failed sources within this generation.
@@ -563,6 +594,7 @@ pub fn evaluate_ingest_state_preflight_from_conn(
             observed_at: Some(src.received_at.clone()),
             freshness: None,
             admissibility_state: Some("observable".to_string()),
+            witness_packet: None,
         });
     }
 
@@ -1000,6 +1032,101 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Slice 2 commit 4: disk_state receipts carry per-support WitnessRefs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn disk_state_supports_carry_projected_packet_identity() {
+        // After the cut-over, every admitted disk_state support carries
+        // the projected witness packet's wire identity (witness type,
+        // digest, observed_at) — the foundation for receipt-side
+        // custody stamping.
+        let db = make_db();
+        ensure_generation(&db, 100);
+        insert_finding(&db, "lil-nas-x", "zfs_pool_degraded", "tank", "observed");
+
+        let r = evaluate_disk_state_preflight_from_conn(&db.conn, "lil-nas-x", None).unwrap();
+        assert_eq!(r.supports.len(), 1);
+        let wp = r.supports[0]
+            .witness_packet
+            .as_ref()
+            .expect("admitted disk_state support must carry its projected packet identity");
+        assert_eq!(wp.witness_type, "zfs_pool_degraded_legacy_projection");
+        assert!(wp.digest.starts_with("sha256:"));
+        assert_eq!(wp.digest.len(), "sha256:".len() + 64);
+        assert_eq!(wp.observed_at, "2026-05-14T00:00:00Z");
+    }
+
+    #[test]
+    fn disk_state_receipt_anchors_witness_refs_to_admitted_packets() {
+        // Track A disk_state receipts, post-cut-over, emit one
+        // WitnessRef per admitted support — anchored to the projected
+        // packet's digest. Coverage-derived WitnessRefs are not the
+        // anchor on the cut-over path.
+        use nq_core::receipt::Receipt;
+
+        let db = make_db();
+        ensure_generation(&db, 100);
+        insert_finding(&db, "lil-nas-x", "zfs_pool_degraded", "tank", "observed");
+        insert_finding(
+            &db,
+            "lil-nas-x",
+            "smart_reallocated_sectors_rising",
+            "/dev/sdX",
+            "observed",
+        );
+
+        let pr = evaluate_disk_state_preflight_from_conn(&db.conn, "lil-nas-x", None).unwrap();
+        let receipt: Receipt = pr.into();
+
+        assert_eq!(receipt.witnesses.len(), 2);
+        for w in &receipt.witnesses {
+            assert!(
+                w.witness_type.ends_with("_legacy_projection"),
+                "witness_type must reflect projected-packet provenance: {}",
+                w.witness_type
+            );
+            let d = w
+                .digest
+                .as_ref()
+                .expect("post-cut-over disk_state WitnessRef must carry a digest");
+            assert!(d.starts_with("sha256:"));
+            assert!(w.observed_at.is_some());
+        }
+    }
+
+    #[test]
+    fn disk_state_receipt_with_no_supports_falls_back_to_coverage_witnesses() {
+        // When no substrate findings are admitted (clean host, or all
+        // findings refused projection), the receipt still emits the
+        // coverage-derived WitnessRef block. Standing testimony stays
+        // visible.
+        use nq_core::receipt::Receipt;
+
+        let db = make_db();
+        ensure_generation(&db, 100);
+        // No findings inserted.
+
+        let pr = evaluate_disk_state_preflight_from_conn(&db.conn, "lil-nas-x", None).unwrap();
+        let receipt: Receipt = pr.into();
+
+        // 3 coverage entries: zfs_witness, smart_witness, disk_pressure.
+        assert_eq!(receipt.witnesses.len(), 3);
+        for w in &receipt.witnesses {
+            assert!(
+                w.digest.is_none(),
+                "coverage-derived WitnessRef must not carry a digest: {} -> {:?}",
+                w.witness_type,
+                w.digest
+            );
+        }
+        let names: Vec<&str> = receipt.witnesses.iter().map(|w| w.witness_type.as_str()).collect();
+        assert!(names.contains(&"zfs_witness"));
+        assert!(names.contains(&"smart_witness"));
+        assert!(names.contains(&"disk_pressure"));
+    }
+
+    // -----------------------------------------------------------------------
     // ingest_state evaluator tests
     // -----------------------------------------------------------------------
 
@@ -1110,6 +1237,40 @@ mod tests {
             .cannot_testify
             .iter()
             .any(|s| s.contains("Future ingest")));
+    }
+
+    #[test]
+    fn ingest_state_supports_do_not_carry_projected_packet_identity_pre_cutover() {
+        // ingest_state has not yet cut over to witness packets. Every
+        // support must leave witness_packet absent so receipts continue
+        // to emit coverage-derived WitnessRefs. Regression guard for
+        // Slice 2 commit 4 — when ingest_state's own cut-over lands,
+        // this test will need an explicit update, not a silent drift.
+        let db = make_db();
+        let completed = rfc3339_at_offset(-30);
+        insert_generation(&db, 100, &completed, "complete", 2, 2, 0);
+
+        let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        for s in &r.supports {
+            assert!(
+                s.witness_packet.is_none(),
+                "ingest_state support unexpectedly carries witness_packet: {:?}",
+                s.witness_packet
+            );
+        }
+
+        use nq_core::receipt::Receipt;
+        let receipt: Receipt = r.into();
+        // Coverage-derived WitnessRefs survive on the pre-cut-over path.
+        assert!(!receipt.witnesses.is_empty());
+        for w in &receipt.witnesses {
+            assert!(
+                w.digest.is_none(),
+                "ingest_state WitnessRef must remain digest-absent pre-cut-over: {} -> {:?}",
+                w.witness_type,
+                w.digest
+            );
+        }
     }
 
     #[test]
