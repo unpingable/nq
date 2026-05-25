@@ -56,6 +56,19 @@ pub enum ClaimKind {
     DnsState,
 }
 
+impl ClaimKind {
+    /// Snake-case string form. Must match the serde serialization above.
+    /// Used by the receipt `evaluator` binding (Slice 1b) to name which
+    /// Track A evaluator produced a given receipt.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DiskState => "disk_state",
+            Self::IngestState => "ingest_state",
+            Self::DnsState => "dns_state",
+        }
+    }
+}
+
 /// Kind of response observed for a single DNS query against a single
 /// resolver from a single vantage. Closed enum; new variants require a
 /// ratified change. The negative-answer taxonomy (`Nodata`, `Nxdomain`,

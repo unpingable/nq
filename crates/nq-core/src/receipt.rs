@@ -8,9 +8,32 @@
 //! boundary.
 
 use crate::preflight::{PreflightResult, Verdict};
+use crate::witness::{DigestError, DIGEST_ALGORITHM_PREFIX};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub const RECEIPT_SCHEMA: &str = "nq.receipt.v1";
+
+/// Names the evaluator that minted a receipt and the version of its
+/// contract. Included in the canonical bytes covered by
+/// [`Receipt::content_hash`] so the hash anchors not only the receipt
+/// body but also which evaluator + version produced it.
+///
+/// Track B (`nq verify` / claim_registry) uses `evaluator =
+/// "claim_registry"`, version = [`crate::claim_registry::EVALUATOR_VERSION`].
+/// Track A (operational preflight) uses the claim-kind snake-case name
+/// (`"disk_state"`, `"ingest_state"`, `"dns_state"`) and the
+/// `contract_version` carried on the originating
+/// [`crate::preflight::PreflightResult`].
+///
+/// Slice 1e (`nq receipt replay`) reads this binding to decide whether
+/// the current binary can re-run the evaluator that produced the
+/// receipt under inspection.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvaluatorBinding {
+    pub evaluator: String,
+    pub version: u32,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -96,6 +119,36 @@ pub struct Receipt {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observed_at_max: Option<String>,
     pub generated_at: String,
+    /// Evaluator binding: name + version of the engine that minted this
+    /// receipt. Populated by [`Receipt::seal`]; part of the canonical
+    /// bytes covered by [`Receipt::content_hash`]. Absent on receipts
+    /// produced before Slice 1b (or produced by paths that have not yet
+    /// adopted `seal`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evaluator: Option<EvaluatorBinding>,
+    /// `sha256:<lowercase-hex-64>` over the JCS-canonicalized form of
+    /// this receipt with `content_hash` itself omitted from the hashed
+    /// bytes. Anchors *receipt identity* — the exact emitted envelope
+    /// (including evaluator binding, witness digests, generated_at).
+    /// It is **not** semantic equivalence: two receipts recording the
+    /// same decision but differing in `generated_at`, evaluator
+    /// version, or any other envelope field will have different
+    /// content_hashes by design.
+    ///
+    /// **Absence is not a verification result.** A missing
+    /// `content_hash` means "this receipt was not sealed" — typically
+    /// because it was produced before Slice 1b, or because the path
+    /// that built it did not call [`Receipt::seal`]. It does not mean
+    /// "verification false" and is not implicitly "verification ok."
+    /// Verification (re-canonicalize, re-hash, compare) is Slice 1d
+    /// territory.
+    ///
+    /// **Verification is deferred.** Slice 1b populates only. No read
+    /// path verifies `content_hash` today; `nq receipt check` (Slice 1d
+    /// in `docs/architecture/PATH_TO_1_0.md`) is where verification
+    /// lands.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
 }
 
 impl Receipt {
@@ -114,7 +167,60 @@ impl Receipt {
             observed_at_min: None,
             observed_at_max: None,
             generated_at: generated_at.into(),
+            evaluator: None,
+            content_hash: None,
         }
+    }
+
+    /// Compute `content_hash` over the JCS-canonicalized form of this
+    /// receipt **with `content_hash` itself omitted from the hashed
+    /// bytes**. Pure: does not mutate `self`. Returns
+    /// `"sha256:<lowercase-hex-64>"`.
+    ///
+    /// The self-reference is handled by serde: `content_hash` carries
+    /// `skip_serializing_if = "Option::is_none"`, so setting it to
+    /// `None` before serialization causes JCS to omit the key entirely.
+    /// `compute_content_hash` clones a `None`-content_hash view of the
+    /// receipt for the canonical bytes, so the caller does not have to
+    /// blank-and-restore by hand.
+    ///
+    /// Errors only when JCS canonicalization itself rejects a value
+    /// (e.g. a non-finite number reaching the receipt via some
+    /// non-standard path). In normal operation this does not fail.
+    pub fn compute_content_hash(&self) -> Result<String, DigestError> {
+        let mut to_hash = self.clone();
+        to_hash.content_hash = None;
+        let bytes = serde_jcs::to_vec(&to_hash).map_err(|e| DigestError {
+            message: format!("JCS canonicalization failed: {e}"),
+        })?;
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        Ok(format!(
+            "{DIGEST_ALGORITHM_PREFIX}{}",
+            hex::encode(hasher.finalize())
+        ))
+    }
+
+    /// Seal the receipt: stamp the evaluator binding, then compute and
+    /// attach `content_hash` over the canonical bytes that include the
+    /// evaluator binding. Ordering matters — evaluator must be set
+    /// before the hash is computed so it is anchored.
+    ///
+    /// Idempotent in the sense that re-sealing with the same binding
+    /// produces the same `content_hash`. Re-sealing with a *different*
+    /// binding overwrites both fields and produces a different hash.
+    ///
+    /// On JCS failure, returns `Err` and leaves the receipt as it was
+    /// found by the call (i.e. evaluator binding is still written,
+    /// because that mutation happens first; content_hash is left
+    /// unchanged from its prior value). Callers that want fail-soft
+    /// behavior should `.ok()` the result and proceed — see the call
+    /// sites in `claim_registry::evaluate` and `From<PreflightResult>`.
+    pub fn seal(&mut self, binding: EvaluatorBinding) -> Result<(), DigestError> {
+        self.evaluator = Some(binding);
+        let hash = self.compute_content_hash()?;
+        self.content_hash = Some(hash);
+        Ok(())
     }
 }
 
@@ -194,7 +300,16 @@ impl From<PreflightResult> for Receipt {
 
         let supported_status = render_supported_status(&pr.target, status, &pr.supports, pr.verdict_note.as_deref());
 
-        Receipt {
+        // Track A evaluator binding is derived from the originating
+        // PreflightResult: claim_kind names which evaluator (disk_state /
+        // ingest_state / dns_state), contract_version is the wire-contract
+        // version of the PreflightResult shape this conversion is built from.
+        let track_a_binding = EvaluatorBinding {
+            evaluator: pr.claim_kind.as_str().to_string(),
+            version: pr.contract_version,
+        };
+
+        let mut receipt = Receipt {
             schema: RECEIPT_SCHEMA.to_string(),
             claim,
             subject,
@@ -208,7 +323,13 @@ impl From<PreflightResult> for Receipt {
             observed_at_min,
             observed_at_max,
             generated_at: pr.generated_at,
-        }
+            evaluator: None,
+            content_hash: None,
+        };
+        // Fail-soft seal: per the Receipt::content_hash doc comment,
+        // absence of content_hash is not a verification result.
+        let _ = receipt.seal(track_a_binding);
+        receipt
     }
 }
 
@@ -408,5 +529,157 @@ mod tests {
         let r: Receipt = pr.into();
         assert_eq!(r.observed_at_min.as_deref(), Some("2026-05-15T10:00:00Z"));
         assert_eq!(r.observed_at_max.as_deref(), Some("2026-05-15T11:00:00Z"));
+    }
+
+    // -----------------------------------------------------------------
+    // Slice 1b — content_hash + evaluator binding.
+    //  Receipts produced by Track A (From<PreflightResult>) carry both
+    //  fields; the hash anchors the canonical receipt envelope (with
+    //  content_hash itself omitted from the hashed bytes) including
+    //  the evaluator binding and the witness digests carried from
+    //  Slice 1a (Track A leaves witness digests absent; the receipt
+    //  hash still anchors that absence).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn track_a_receipt_is_sealed_with_evaluator_and_content_hash() {
+        let pr = make_pr(Verdict::Admissible);
+        let r: Receipt = pr.into();
+        let ev = r.evaluator.as_ref().expect("evaluator binding present");
+        assert_eq!(ev.evaluator, "disk_state");
+        assert!(ev.version >= 1);
+        let h = r.content_hash.as_ref().expect("content_hash present");
+        assert!(h.starts_with("sha256:"));
+        assert_eq!(h.len(), "sha256:".len() + 64);
+    }
+
+    #[test]
+    fn content_hash_format_is_sha256_prefix_plus_64_lowercase_hex() {
+        let mut r = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        r.seal(EvaluatorBinding {
+            evaluator: "claim_registry".into(),
+            version: 1,
+        })
+        .unwrap();
+        let h = r.content_hash.unwrap();
+        assert!(h.starts_with("sha256:"));
+        let hex_part = &h["sha256:".len()..];
+        assert_eq!(hex_part.len(), 64);
+        assert!(hex_part
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn content_hash_is_deterministic_for_identical_receipts() {
+        let mut a = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        let mut b = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        let bind = EvaluatorBinding {
+            evaluator: "claim_registry".into(),
+            version: 1,
+        };
+        a.seal(bind.clone()).unwrap();
+        b.seal(bind).unwrap();
+        assert_eq!(a.content_hash, b.content_hash);
+    }
+
+    #[test]
+    fn content_hash_excludes_content_hash_itself() {
+        // Sealing twice with the same binding must produce the same hash:
+        // proves the hash material omits content_hash (otherwise the second
+        // computation would see the first hash in the bytes and diverge).
+        let mut r = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        let bind = EvaluatorBinding {
+            evaluator: "claim_registry".into(),
+            version: 1,
+        };
+        r.seal(bind.clone()).unwrap();
+        let first = r.content_hash.clone();
+        r.seal(bind).unwrap();
+        assert_eq!(first, r.content_hash);
+
+        // And: blanking content_hash and recomputing yields the same value.
+        let recomputed = r.compute_content_hash().unwrap();
+        assert_eq!(Some(recomputed), r.content_hash);
+    }
+
+    #[test]
+    fn content_hash_changes_when_evaluator_binding_changes() {
+        let mut a = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        let mut b = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        a.seal(EvaluatorBinding {
+            evaluator: "claim_registry".into(),
+            version: 1,
+        })
+        .unwrap();
+        b.seal(EvaluatorBinding {
+            evaluator: "claim_registry".into(),
+            version: 2,
+        })
+        .unwrap();
+        assert_ne!(a.content_hash, b.content_hash);
+
+        let mut c = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        c.seal(EvaluatorBinding {
+            evaluator: "disk_state".into(),
+            version: 1,
+        })
+        .unwrap();
+        assert_ne!(a.content_hash, c.content_hash);
+    }
+
+    #[test]
+    fn content_hash_changes_when_status_changes() {
+        let mut a = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        let mut b = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        b.status = Status::Verified;
+        let bind = EvaluatorBinding {
+            evaluator: "claim_registry".into(),
+            version: 1,
+        };
+        a.seal(bind.clone()).unwrap();
+        b.seal(bind).unwrap();
+        assert_ne!(a.content_hash, b.content_hash);
+    }
+
+    #[test]
+    fn content_hash_changes_when_generated_at_changes() {
+        // Two receipts recording the same decision but emitted at
+        // different times have different content_hashes by design —
+        // receipt identity is per-emission, not semantic equivalence.
+        let mut a = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        let mut b = Receipt::new("c", "s", "2026-05-15T14:00:01Z");
+        let bind = EvaluatorBinding {
+            evaluator: "claim_registry".into(),
+            version: 1,
+        };
+        a.seal(bind.clone()).unwrap();
+        b.seal(bind).unwrap();
+        assert_ne!(a.content_hash, b.content_hash);
+    }
+
+    #[test]
+    fn content_hash_changes_when_witness_ref_digest_changes() {
+        // Carries the Slice 1a digests into receipt identity: swapping
+        // the digest on a WitnessRef changes the receipt hash.
+        let mut a = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        let mut b = a.clone();
+        a.witnesses = vec![WitnessRef {
+            witness_type: "pytest".into(),
+            digest: Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
+            observed_at: Some("2026-05-15T14:00:00Z".into()),
+        }];
+        b.witnesses = vec![WitnessRef {
+            witness_type: "pytest".into(),
+            digest: Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into()),
+            observed_at: Some("2026-05-15T14:00:00Z".into()),
+        }];
+        let bind = EvaluatorBinding {
+            evaluator: "claim_registry".into(),
+            version: 1,
+        };
+        a.seal(bind.clone()).unwrap();
+        b.seal(bind).unwrap();
+        assert_ne!(a.content_hash, b.content_hash);
     }
 }
