@@ -969,6 +969,51 @@ mod tests {
     }
 
     #[test]
+    fn dns_state_supports_do_not_carry_projected_packet_identity_pre_cutover() {
+        // dns_state has not yet cut over to witness packets. Every
+        // support must leave witness_packet absent so receipts continue
+        // to emit coverage-derived WitnessRefs with digest: None and
+        // custody_basis: None.
+        //
+        // This regression guard replaces the equivalent pin that ingest_state
+        // used to carry. When dns_state's own cut-over lands (the third
+        // evaluator, the forcing case for claim-registry generalization
+        // per CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md), this test must be
+        // explicitly updated, not silently drift.
+        let db = make_db();
+        let _row = seed_observation(&db, 100, ResponseKind::Success);
+
+        let r =
+            evaluate_dns_state_preflight_from_conn(&db.conn, &default_tuple()).unwrap();
+        for s in &r.supports {
+            assert!(
+                s.witness_packet.is_none(),
+                "dns_state support unexpectedly carries witness_packet: {:?}",
+                s.witness_packet
+            );
+        }
+
+        use nq_core::receipt::Receipt;
+        let receipt: Receipt = r.into();
+        // Coverage-derived WitnessRefs survive on the pre-cut-over path.
+        assert!(!receipt.witnesses.is_empty());
+        for w in &receipt.witnesses {
+            assert!(
+                w.digest.is_none(),
+                "dns_state WitnessRef must remain digest-absent pre-cut-over: {} -> {:?}",
+                w.witness_type,
+                w.digest
+            );
+            assert!(
+                w.custody_basis.is_none(),
+                "dns_state WitnessRef must not declare a custody_basis pre-cut-over: {} -> {:?}",
+                w.witness_type,
+                w.custody_basis
+            );
+        }
+    }
+
+    #[test]
     fn evaluator_no_row_is_insufficient_coverage_with_absent_coverage() {
         let db = make_db();
         let r =

@@ -9,21 +9,37 @@
 //! for the doctrine; see `docs/WITNESS_PACKET.md` for the three witness-side
 //! constraints this evaluator preserves.
 //!
-//! ## Slice 2 cut-over (disk_state only)
+//! ## Slice 2 cut-over (disk_state + ingest_state)
 //!
-//! `disk_state` substrate findings now pass through the projector in
-//! `crate::disk_state_witness_projection` before contributing to the
-//! result. A finding that cannot project (no recoverable substrate-time
-//! `observed_at`, or detector the projector does not handle) appears as
-//! a `PreflightExclusion` with a projection-refused reason and is
-//! removed from the verdict's observable-substrate set. The projected
-//! packets themselves are not yet exposed to receipt consumers — that
-//! lands in Slice 2 commit 4. See
-//! `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md`. `ingest_state`
-//! is out of scope for Slice 2 V1.
+//! Both evaluators now project their substrate into witness packets
+//! before admitting it as testimony, and stamp the projected packet
+//! identity onto each `PreflightSupport.witness_packet`. The receipt
+//! conversion (`From<PreflightResult>`) reads those packets to build
+//! per-support `WitnessRef`s with `digest` and `custody_basis`
+//! populated.
+//!
+//! - `disk_state` projects each substrate finding via
+//!   `crate::disk_state_witness_projection`. Per-finding refusals
+//!   appear as `PreflightExclusion` entries; the rest of the supports
+//!   admit as before.
+//! - `ingest_state` projects the latest `generations` row and each
+//!   failed `source_runs` row via
+//!   `crate::ingest_state_witness_projection`. The generation row is
+//!   load-bearing — its refusal forces `Verdict::InsufficientCoverage`
+//!   and an early return, since no admissible substrate remains for
+//!   the evaluation. Per-source refusals are localized (the source
+//!   degrades to an exclude; the generation-level support survives).
+//!
+//! `dns_state` has not yet cut over. See
+//! `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md` (parent) and
+//! `docs/architecture/INGEST_STATE_WITNESS_PACKET_CUTOVER.md` (sibling
+//! for ingest_state).
 
 use crate::disk_state_witness_projection::{project_disk_state_finding, ProjectionRefusal};
 use crate::export::{export_findings_from_conn, ExportFilter, FindingSnapshot};
+use crate::ingest_state_witness_projection::{
+    project_ingest_generation, project_ingest_source,
+};
 use crate::ReadDb;
 use nq_core::preflight::{
     freshness_horizon_from, ClaimKind, PreflightCoverage, PreflightExclusion, PreflightResult,
@@ -519,7 +535,8 @@ pub fn evaluate_ingest_state_preflight_from_conn(
         scope: "ingest".to_string(),
         id: None,
     };
-    let mut result = PreflightResult::skeleton(ClaimKind::IngestState, target, generated_at);
+    let mut result =
+        PreflightResult::skeleton(ClaimKind::IngestState, target, generated_at.clone());
 
     let latest = load_latest_generation(conn)?;
 
@@ -542,19 +559,59 @@ pub fn evaluate_ingest_state_preflight_from_conn(
         return Ok(result);
     };
 
+    // Slice 2 cut-over: project the generation row before admitting it
+    // as testimony. The generation row is the load-bearing substrate —
+    // unlike disk_state (where one finding's refusal still leaves others
+    // admissible), ingest_state has exactly one latest-generation row per
+    // evaluation. If it cannot be projected, no admissible substrate
+    // remains, and the verdict is InsufficientCoverage. The refusal
+    // surfaces as a PreflightExclusion so the operator can see why.
+    // Coverage stays observable: the witness exists (the row is in the
+    // DB), the custody of this specific row failed. Coverage is
+    // witness-family standing, not per-row admissibility. See
+    // docs/architecture/INGEST_STATE_WITNESS_PACKET_CUTOVER.md.
+    let gen_packet = match project_ingest_generation(&gen, &generated_at) {
+        Ok(p) => p,
+        Err(refusal) => {
+            result.coverage.push(PreflightCoverage {
+                witness: "ingest_pulse".to_string(),
+                standing: "observable".to_string(),
+                note: Some(
+                    "latest generation row refused projection — see excludes for the custody constraint"
+                        .to_string(),
+                ),
+            });
+            result.excludes.push(PreflightExclusion {
+                finding_kind: format!("ingest_generation_{}", gen.status),
+                subject: format!("generation:{}", gen.generation_id),
+                reason: format!("Witness packet projection refused: {}", refusal.reason),
+                detail: None,
+            });
+            result.verdict = Verdict::InsufficientCoverage;
+            result.verdict_note = Some(
+                "Latest generation row could not be projected into an admissible \
+                 witness packet; ingest pulse evidence is in custody refusal."
+                    .to_string(),
+            );
+            result.compute_time_basis();
+            return Ok(result);
+        }
+    };
+
     // The pulse witness has standing iff at least one generation row
-    // exists. Failed sources still constitute observable testimony at
-    // the pulse-structure layer.
+    // exists and projects. Failed sources still constitute observable
+    // testimony at the pulse-structure layer.
     result.coverage.push(PreflightCoverage {
         witness: "ingest_pulse".to_string(),
         standing: "observable".to_string(),
         note: None,
     });
 
-    // Generation-level support. The `finding_kind` is synthetic — there
-    // is no detector for generation status; the wire field just labels
-    // the support's source row class so consumers can distinguish the
-    // pulse-level support from per-source supports below.
+    // Generation-level support, stamped with the projected packet's
+    // identity. The `finding_kind` is synthetic — there is no detector
+    // for generation status; the wire field just labels the support's
+    // source row class so consumers can distinguish the pulse-level
+    // support from per-source supports below.
     result.supports.push(PreflightSupport {
         claim: format!(
             "NQ recorded generation {} as {} at observed_at {} (sources_ok={}/{}, sources_failed={})",
@@ -570,33 +627,46 @@ pub fn evaluate_ingest_state_preflight_from_conn(
         observed_at: Some(gen.completed_at.clone()),
         freshness: None,
         admissibility_state: Some("observable".to_string()),
-        // ingest_state has not yet cut over to witness packets; see
-        // docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md.
-        witness_packet: None,
+        witness_packet: packet_identity(&gen_packet),
     });
 
     // Source-level supports for failed sources within this generation.
     // Successful sources are aggregated into the generation-level
-    // support; surfacing them individually would be noise.
+    // support; surfacing them individually would be noise. Each row
+    // projects independently: a single source-row refusal degrades that
+    // source to a PreflightExclusion without affecting the others or
+    // the generation-level testimony.
     let failed_sources = load_failed_source_runs(conn, gen.generation_id)?;
     for src in &failed_sources {
-        let err_note = src
-            .error_message
-            .as_deref()
-            .map(|e| format!(" — error: {e}"))
-            .unwrap_or_default();
-        result.supports.push(PreflightSupport {
-            claim: format!(
-                "Source '{}' reported status {} at received_at {}{}",
-                src.source, src.status, src.received_at, err_note
-            ),
-            finding_kind: format!("ingest_source_{}", src.status),
-            subject: format!("source:{}", src.source),
-            observed_at: Some(src.received_at.clone()),
-            freshness: None,
-            admissibility_state: Some("observable".to_string()),
-            witness_packet: None,
-        });
+        match project_ingest_source(src, gen.generation_id, &generated_at) {
+            Ok(src_packet) => {
+                let err_note = src
+                    .error_message
+                    .as_deref()
+                    .map(|e| format!(" — error: {e}"))
+                    .unwrap_or_default();
+                result.supports.push(PreflightSupport {
+                    claim: format!(
+                        "Source '{}' reported status {} at received_at {}{}",
+                        src.source, src.status, src.received_at, err_note
+                    ),
+                    finding_kind: format!("ingest_source_{}", src.status),
+                    subject: format!("source:{}", src.source),
+                    observed_at: Some(src.received_at.clone()),
+                    freshness: None,
+                    admissibility_state: Some("observable".to_string()),
+                    witness_packet: packet_identity(&src_packet),
+                });
+            }
+            Err(refusal) => {
+                result.excludes.push(PreflightExclusion {
+                    finding_kind: format!("ingest_source_{}", src.status),
+                    subject: format!("source:{}", src.source),
+                    reason: format!("Witness packet projection refused: {}", refusal.reason),
+                    detail: None,
+                });
+            }
+        }
     }
 
     // Observation-window disclosure. Computed only over supports[],
@@ -1306,44 +1376,145 @@ mod tests {
             .any(|s| s.contains("Future ingest")));
     }
 
+    // -----------------------------------------------------------------------
+    // ingest_state Slice 2 cut-over: per-support witness_packet identity,
+    // generation-row refusal forces InsufficientCoverage, per-source
+    // refusal degrades only that source.
+    // -----------------------------------------------------------------------
+
     #[test]
-    fn ingest_state_supports_do_not_carry_projected_packet_identity_pre_cutover() {
-        // ingest_state has not yet cut over to witness packets. Every
-        // support must leave witness_packet absent so receipts continue
-        // to emit coverage-derived WitnessRefs. Regression guard for
-        // Slice 2 commit 4 — when ingest_state's own cut-over lands,
-        // this test will need an explicit update, not a silent drift.
+    fn ingest_state_supports_carry_projected_packet_identity_post_cutover() {
+        // After the ingest_state cut-over, every admitted support
+        // carries the projected witness packet's wire identity. Replaces
+        // the pre-cut-over pin that previously asserted the opposite.
+        use nq_core::witness::CUSTODY_BASIS_LEGACY_PROJECTION;
+
         let db = make_db();
         let completed = rfc3339_at_offset(-30);
         insert_generation(&db, 100, &completed, "complete", 2, 2, 0);
 
         let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
-        for s in &r.supports {
-            assert!(
-                s.witness_packet.is_none(),
-                "ingest_state support unexpectedly carries witness_packet: {:?}",
-                s.witness_packet
-            );
-        }
+        assert_eq!(r.supports.len(), 1, "clean gen → one pulse-level support");
+        let wp = r.supports[0]
+            .witness_packet
+            .as_ref()
+            .expect("post-cut-over ingest_state support must carry its packet identity");
+        assert_eq!(wp.witness_type, "ingest_generation_legacy_projection");
+        assert!(wp.digest.starts_with("sha256:"));
+        assert_eq!(wp.digest.len(), "sha256:".len() + 64);
+        assert_eq!(
+            wp.custody_basis.as_deref(),
+            Some(CUSTODY_BASIS_LEGACY_PROJECTION)
+        );
+    }
 
+    #[test]
+    fn ingest_state_receipt_anchors_witness_refs_to_projected_packets_post_cutover() {
         use nq_core::receipt::Receipt;
-        let receipt: Receipt = r.into();
-        // Coverage-derived WitnessRefs survive on the pre-cut-over path.
-        assert!(!receipt.witnesses.is_empty());
+        use nq_core::witness::CUSTODY_BASIS_LEGACY_PROJECTION;
+
+        let db = make_db();
+        let completed = rfc3339_at_offset(-30);
+        let earlier = rfc3339_at_offset(-35);
+        insert_generation(&db, 200, &completed, "partial", 3, 1, 2);
+        insert_source_run(&db, 200, "bad", "error", &earlier, Some("conn refused"));
+
+        let pr = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        let receipt: Receipt = pr.into();
+
+        // Two admitted supports (generation + one failed source) →
+        // two per-support WitnessRefs, each digest-stamped, each
+        // declaring legacy_projection basis.
+        assert_eq!(receipt.witnesses.len(), 2);
         for w in &receipt.witnesses {
             assert!(
-                w.digest.is_none(),
-                "ingest_state WitnessRef must remain digest-absent pre-cut-over: {} -> {:?}",
-                w.witness_type,
-                w.digest
+                w.witness_type.ends_with("_legacy_projection"),
+                "WitnessRef must reflect projected-packet provenance: {}",
+                w.witness_type
             );
             assert!(
-                w.custody_basis.is_none(),
-                "ingest_state WitnessRef must not declare a custody_basis pre-cut-over: {} -> {:?}",
-                w.witness_type,
+                w.digest.as_deref().unwrap_or("").starts_with("sha256:"),
+                "WitnessRef must carry a digest: {:?}",
+                w.digest
+            );
+            assert_eq!(
+                w.custody_basis.as_deref(),
+                Some(CUSTODY_BASIS_LEGACY_PROJECTION),
+                "WitnessRef must declare legacy_projection basis: {:?}",
                 w.custody_basis
             );
         }
+    }
+
+    #[test]
+    fn ingest_state_generation_refusal_forces_insufficient_coverage_and_excludes_the_row() {
+        // The generation row is load-bearing — if its substrate-time
+        // completed_at cannot be projected, no admissible substrate
+        // remains. Verdict must be InsufficientCoverage; the refusal
+        // must appear as a PreflightExclusion; supports must be empty.
+        let db = make_db();
+        // Insert a generation whose completed_at is a non-RFC3339 sentinel.
+        // Using insert_generation would have given us a clean shape;
+        // here we mirror its INSERT directly to slip a garbage timestamp
+        // past the schema.
+        db.conn
+            .execute(
+                "INSERT INTO generations
+                   (generation_id, started_at, completed_at, status,
+                    sources_expected, sources_ok, sources_failed, duration_ms)
+                 VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, 0)",
+                rusqlite::params![999, "not-a-timestamp", "complete", 1, 1, 0],
+            )
+            .unwrap();
+
+        let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        assert_eq!(r.verdict, Verdict::InsufficientCoverage);
+        assert!(r.supports.is_empty(), "refused generation → no supports");
+
+        let refusal = r
+            .excludes
+            .iter()
+            .find(|e| e.subject == "generation:999")
+            .expect("refused generation must appear in excludes");
+        assert!(
+            refusal.reason.contains("projection refused"),
+            "exclusion reason must name projection refusal: {}",
+            refusal.reason
+        );
+    }
+
+    #[test]
+    fn ingest_state_source_refusal_localizes_to_that_source() {
+        // A failed source row whose received_at cannot be projected
+        // must NOT bring down the whole evaluation — the generation-
+        // level support survives, and only the bad source degrades
+        // to an exclude. Tests that source refusal is per-row, not
+        // catastrophic like generation refusal.
+        let db = make_db();
+        let completed = rfc3339_at_offset(-30);
+        insert_generation(&db, 300, &completed, "partial", 2, 1, 1);
+        // One source row with a bogus received_at.
+        db.conn
+            .execute(
+                "INSERT INTO source_runs
+                   (generation_id, source, status, received_at, error_message)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![300, "broken_src", "error", "yesterday", None::<String>],
+            )
+            .unwrap();
+
+        let r = evaluate_ingest_state_preflight_from_conn(&db.conn).unwrap();
+        // Generation-level support survives.
+        assert_eq!(r.supports.len(), 1, "gen-level support survives source refusal");
+        assert_eq!(r.supports[0].subject, "generation:300");
+
+        // The broken source surfaces as an exclude.
+        let refusal = r
+            .excludes
+            .iter()
+            .find(|e| e.subject == "source:broken_src")
+            .expect("refused source must appear in excludes");
+        assert!(refusal.reason.contains("projection refused"));
     }
 
     #[test]
