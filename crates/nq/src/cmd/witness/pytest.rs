@@ -70,6 +70,9 @@ pub fn run(cmd: WitnessPytestCmd) -> anyhow::Result<()> {
             "Does not observe behavioral change between commits".into(),
         ],
         dependencies: vec![],
+        custody_basis: None,
+        source_finding_ref: None,
+        projection_limits: vec![],
     };
 
     packet.validate()?;
