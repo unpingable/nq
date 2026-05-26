@@ -294,9 +294,13 @@ pub fn evaluate_sqlite_wal_state_preflight_from_conn(
     evaluate_sqlite_wal_state_preflight_at(conn, target, now)
 }
 
-/// Internal entry point that takes `now` explicitly so tests can pin
-/// the evaluation clock. The public callers stamp wall-clock time.
-fn evaluate_sqlite_wal_state_preflight_at(
+/// Entry point that takes `now` explicitly so callers can pin the
+/// evaluation clock. The public wall-clock entry points (`...preflight`
+/// and `..._from_conn`) delegate to this. Tests use it to make verdicts
+/// deterministic against fixture timestamps; the consumer-preflight
+/// fixture example (`examples/sqlite_wal_state_consumer_fixture.rs`)
+/// uses it to produce reproducible JSON.
+pub fn evaluate_sqlite_wal_state_preflight_at(
     conn: &Connection,
     target: &SqliteWalTarget<'_>,
     now: time::OffsetDateTime,
