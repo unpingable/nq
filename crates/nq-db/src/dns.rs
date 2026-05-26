@@ -17,12 +17,12 @@
 //! a generic "DNS failed."
 
 use crate::dns_state_witness_projection::project_dns_observation;
-use crate::preflight::packet_identity;
+use crate::witness_projection_support::{make_projection_refusal_exclusion, packet_identity};
 use crate::ReadDb;
 use anyhow::Context;
 use nq_core::preflight::{
-    freshness_horizon_from, ClaimKind, PreflightCoverage, PreflightExclusion, PreflightResult,
-    PreflightSupport, PreflightTarget, ResponseKind, Verdict,
+    freshness_horizon_from, ClaimKind, PreflightCoverage, PreflightResult, PreflightSupport,
+    PreflightTarget, ResponseKind, Verdict,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::str::FromStr;
@@ -268,15 +268,14 @@ pub fn evaluate_dns_state_preflight_from_conn(
         match project_dns_observation(&obs, &generated_at) {
             Ok(packet) => Some(packet),
             Err(refusal) => {
-                result.excludes.push(PreflightExclusion {
-                    finding_kind: format!("dns_{}", obs.response_kind.as_str()),
-                    subject: format!(
+                result.excludes.push(make_projection_refusal_exclusion(
+                    format!("dns_{}", obs.response_kind.as_str()),
+                    format!(
                         "resolver={};name={};type={}",
                         obs.resolver, obs.query_name, obs.query_type
                     ),
-                    reason: format!("Witness packet projection refused: {}", refusal.reason),
-                    detail: None,
-                });
+                    &refusal,
+                ));
                 result.coverage.push(PreflightCoverage {
                     witness: "dns_resolver".to_string(),
                     standing: "observable".to_string(),

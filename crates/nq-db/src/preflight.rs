@@ -35,17 +35,17 @@
 //! `docs/architecture/INGEST_STATE_WITNESS_PACKET_CUTOVER.md` (sibling
 //! for ingest_state).
 
-use crate::disk_state_witness_projection::{project_disk_state_finding, ProjectionRefusal};
+use crate::disk_state_witness_projection::project_disk_state_finding;
 use crate::export::{export_findings_from_conn, ExportFilter, FindingSnapshot};
 use crate::ingest_state_witness_projection::{
     project_ingest_generation, project_ingest_source,
 };
+use crate::witness_projection_support::{make_projection_refusal_exclusion, packet_identity};
 use crate::ReadDb;
 use nq_core::preflight::{
     freshness_horizon_from, ClaimKind, PreflightCoverage, PreflightExclusion, PreflightResult,
-    PreflightSupport, PreflightTarget, SupportingWitnessPacket, Verdict,
+    PreflightSupport, PreflightTarget, Verdict,
 };
-use nq_core::witness::WitnessPacket;
 
 /// Staleness threshold for the latest generation's `completed_at`, in
 /// seconds. The aggregator's default pull interval is 60s; 300s (5×) is
@@ -159,9 +159,11 @@ pub fn evaluate_disk_state_preflight_from_conn(
                 admitted.push((snap, packet));
             }
             Err(refusal) => {
-                result
-                    .excludes
-                    .push(make_projection_refusal_exclusion(snap, &refusal));
+                result.excludes.push(make_projection_refusal_exclusion(
+                    snap.identity.detector.clone(),
+                    snap.identity.subject.clone(),
+                    &refusal,
+                ));
             }
         }
     }
@@ -295,42 +297,6 @@ fn make_exclusion(snap: &FindingSnapshot, state: &str) -> PreflightExclusion {
         reason,
         detail: snap.admissibility.ancestor_finding_key.clone(),
     }
-}
-
-/// Build a PreflightExclusion for a finding that could not be projected
-/// into a witness packet. Projection refusal is a custody failure: the
-/// finding lacks the substrate evidence a native witness would have
-/// carried, so it cannot become admissible testimony under the Slice 2
-/// custody contract. The reason names the specific custody constraint
-/// that could not be satisfied.
-fn make_projection_refusal_exclusion(
-    snap: &FindingSnapshot,
-    refusal: &ProjectionRefusal,
-) -> PreflightExclusion {
-    PreflightExclusion {
-        finding_kind: snap.identity.detector.clone(),
-        subject: snap.identity.subject.clone(),
-        reason: format!("Witness packet projection refused: {}", refusal.reason),
-        detail: None,
-    }
-}
-
-/// Extract the wire-identity slice of a projected witness packet for
-/// `PreflightSupport::witness_packet`. Returns `None` only if
-/// `WitnessPacket::digest()` itself fails (in practice, never — the
-/// projector already validated the packet).
-///
-/// Absence of digest is not a verification result. Per the doc comment
-/// on `WitnessRef`, `digest: None` means "this WitnessRef is not
-/// anchored to a specific packet envelope," not "verification false."
-pub(crate) fn packet_identity(packet: &WitnessPacket) -> Option<SupportingWitnessPacket> {
-    let digest = packet.digest().ok()?;
-    Some(SupportingWitnessPacket {
-        witness_type: packet.witness_type.clone(),
-        digest,
-        observed_at: packet.observed_at.clone(),
-        custody_basis: packet.custody_basis.clone(),
-    })
 }
 
 fn compute_coverage(standing: &[&FindingSnapshot]) -> Vec<PreflightCoverage> {
@@ -581,12 +547,11 @@ pub fn evaluate_ingest_state_preflight_from_conn(
                         .to_string(),
                 ),
             });
-            result.excludes.push(PreflightExclusion {
-                finding_kind: format!("ingest_generation_{}", gen.status),
-                subject: format!("generation:{}", gen.generation_id),
-                reason: format!("Witness packet projection refused: {}", refusal.reason),
-                detail: None,
-            });
+            result.excludes.push(make_projection_refusal_exclusion(
+                format!("ingest_generation_{}", gen.status),
+                format!("generation:{}", gen.generation_id),
+                &refusal,
+            ));
             result.verdict = Verdict::InsufficientCoverage;
             result.verdict_note = Some(
                 "Latest generation row could not be projected into an admissible \
@@ -659,12 +624,11 @@ pub fn evaluate_ingest_state_preflight_from_conn(
                 });
             }
             Err(refusal) => {
-                result.excludes.push(PreflightExclusion {
-                    finding_kind: format!("ingest_source_{}", src.status),
-                    subject: format!("source:{}", src.source),
-                    reason: format!("Witness packet projection refused: {}", refusal.reason),
-                    detail: None,
-                });
+                result.excludes.push(make_projection_refusal_exclusion(
+                    format!("ingest_source_{}", src.status),
+                    format!("source:{}", src.source),
+                    &refusal,
+                ));
             }
         }
     }

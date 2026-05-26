@@ -36,6 +36,7 @@
 //! - Does not project anything outside the two known row classes.
 
 use crate::preflight::{FailedSourceRun, LatestGeneration};
+use crate::witness_projection_support::ProjectionRefusal;
 use nq_core::witness::{
     WitnessPacket, CUSTODY_BASIS_LEGACY_PROJECTION, PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY,
     WITNESS_SCHEMA,
@@ -54,24 +55,6 @@ pub const WITNESS_TYPE_INGEST_SOURCE: &str = "ingest_source_legacy_projection";
 /// emission from the aggregator at commit time.
 pub const PROJECTION_LIMIT_AGGREGATOR_ROW_RECOVERY: &str =
     "aggregator self-testimony recovered from db row, not first-person emission";
-
-/// A refusal to project an ingest_state substrate row. `source_ref` is
-/// the synthesized reference the caller would have used as
-/// `source_finding_ref` had the projection succeeded — preserved so
-/// callers can log or surface which row was refused.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectionRefusal {
-    pub reason: String,
-    pub source_ref: String,
-}
-
-impl std::fmt::Display for ProjectionRefusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} (source_ref={})", self.reason, self.source_ref)
-    }
-}
-
-impl std::error::Error for ProjectionRefusal {}
 
 /// Project a `generations` row into a legacy-projection witness packet.
 ///

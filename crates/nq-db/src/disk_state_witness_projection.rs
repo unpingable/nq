@@ -33,6 +33,7 @@
 //!   of scope for Slice 2 V1.
 
 use crate::export::FindingSnapshot;
+use crate::witness_projection_support::ProjectionRefusal;
 use nq_core::witness::{
     WitnessPacket, CUSTODY_BASIS_LEGACY_PROJECTION, PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY,
     WITNESS_SCHEMA,
@@ -57,24 +58,6 @@ const PROJECTABLE_DETECTORS: &[&str] = &[
     "smart_nvme_percentage_used",
     "disk_pressure",
 ];
-
-/// A refusal to project a finding. The reason names the constraint that
-/// could not be satisfied. The `finding_key` is preserved so a caller
-/// (e.g. the evaluator commit) can log or surface which finding the
-/// projector refused.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectionRefusal {
-    pub reason: String,
-    pub finding_key: String,
-}
-
-impl std::fmt::Display for ProjectionRefusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} (finding_key={})", self.reason, self.finding_key)
-    }
-}
-
-impl std::error::Error for ProjectionRefusal {}
 
 /// Project a disk-state finding into a `legacy_projection` witness packet.
 ///
@@ -107,7 +90,7 @@ pub fn project_disk_state_finding(
     let finding_key = snap.finding_key.clone();
     let refuse = |reason: &str| ProjectionRefusal {
         reason: reason.to_string(),
-        finding_key: finding_key.clone(),
+        source_ref: finding_key.clone(),
     };
 
     let detector = snap.identity.detector.as_str();
@@ -451,7 +434,7 @@ mod tests {
     fn refusal_preserves_finding_key_for_caller_logging() {
         let snap = snap_for("zfs_pool_degraded", "storage01", "tank", "");
         let err = project_disk_state_finding(&snap, GENERATED_AT).unwrap_err();
-        assert_eq!(err.finding_key, "finding:zfs_pool_degraded:storage01:tank");
+        assert_eq!(err.source_ref, "finding:zfs_pool_degraded:storage01:tank");
     }
 
     #[test]
