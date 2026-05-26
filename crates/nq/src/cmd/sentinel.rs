@@ -4,7 +4,7 @@
 //! alerts on staleness/silence. Deliberately dumb: does not import
 //! detector logic, does not touch nq.db, depends only on the artifact.
 //!
-//! See docs/gaps/SENTINEL_LIVENESS_GAP.md.
+//! See docs/working/gaps/SENTINEL_LIVENESS_GAP.md.
 
 use crate::cli::SentinelCmd;
 use nq_core::config::NotificationChannel;

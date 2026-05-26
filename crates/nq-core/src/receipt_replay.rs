@@ -1,6 +1,6 @@
 //! Semantic replay of `nq.receipt.v1` documents against supplied
 //! `nq.witness.v1` packets. Slice 1e of
-//! `docs/architecture/PATH_TO_1_0.md`.
+//! `docs/working/decisions/PATH_TO_1_0.md`.
 //!
 //! Where Slice 1d (`receipt_check`) answers *"is this receipt
 //! structurally intact?"*, 1e answers *"would the same evaluator,
@@ -362,7 +362,7 @@ fn replay_track_b(
 /// ingest_state or dns_state coverage-derived ref; or a Track B ref
 /// from a packet that did not declare its basis. The detail string
 /// must not silently promote that absence to "native" or "old-family"
-/// or "safe." See `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md`.
+/// or "safe." See `docs/working/decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md`.
 fn track_a_not_applicable_detail(receipt: &Receipt, evaluator: &str) -> String {
     let bases: std::collections::BTreeSet<&str> = receipt
         .witnesses
@@ -402,7 +402,7 @@ fn track_a_not_applicable_detail(receipt: &Receipt, evaluator: &str) -> String {
 
     format!(
         "{head} Structural integrity, witness digests, and freshness still \
-         checked. See docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md."
+         checked. See docs/working/decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md."
     )
 }
 

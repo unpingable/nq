@@ -1,7 +1,7 @@
 -- Migration 048: wal_observations substrate for the `sqlite_wal_state`
 -- preflight witness family (fourth bespoke claim kind, V0).
 --
--- See docs/architecture/KIND_4_SQLITE_WAL_STATE.md.
+-- See docs/working/decisions/preflights/KIND_4_SQLITE_WAL_STATE.md.
 --
 -- Design discipline (constitutional from the preflight):
 --   - Substrate only. No probe, no projector, no evaluator, no HTTP.

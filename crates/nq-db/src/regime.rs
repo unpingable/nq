@@ -5,7 +5,7 @@
 //! per generation. Consumers (diagnosis, projection, rendering) read
 //! reconstructed facts, never raw history storage internals.
 //!
-//! See docs/gaps/REGIME_FEATURES_GAP.md.
+//! See docs/working/gaps/REGIME_FEATURES_GAP.md.
 //!
 //! Invariant from HISTORY_COMPACTION: derived facts never depend on blob
 //! internals. This module reads history tables as logical series; if

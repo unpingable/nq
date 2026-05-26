@@ -2,7 +2,7 @@
 //! representative data migrates cleanly to `CURRENT_SCHEMA_VERSION` and
 //! retains its rows in expected shapes.
 //!
-//! Per docs/architecture/PATH_TO_1_0.md Slice 5 (operational hardening):
+//! Per docs/working/decisions/PATH_TO_1_0.md Slice 5 (operational hardening):
 //! the existing migrate-fresh-DB tests cover bootstrap but not the upgrade
 //! path an operator actually exercises when they install a newer binary
 //! against an older on-disk DB.

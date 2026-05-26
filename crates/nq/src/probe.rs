@@ -2,7 +2,7 @@
 //! `dns_observations` row per query into an existing aggregator
 //! generation context.
 //!
-//! See `docs/gaps/DNS_WITNESS_FAMILY_GAP.md`. This module owns the
+//! See `docs/working/gaps/DNS_WITNESS_FAMILY_GAP.md`. This module owns the
 //! mockable boundary between the DNS wire layer and the substrate
 //! writer:
 //!

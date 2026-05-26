@@ -820,7 +820,7 @@ fn metric_matches_policy(name: &str, policies: &[(String, String)]) -> bool {
 /// because URL encoding handles the '/' inside scope cleanly. Don't change
 /// the format without auditing every consumer of finding_key.
 ///
-/// See docs/gaps/EVIDENCE_LAYER_GAP.md for full rationale.
+/// See docs/working/gaps/EVIDENCE_LAYER_GAP.md for full rationale.
 pub fn compute_finding_key(scope: &str, host: &str, detector_id: &str, subject: &str) -> String {
     fn enc(s: &str) -> String {
         s.bytes().map(|b| match b {
@@ -1430,7 +1430,7 @@ fn update_warning_state_inner(
 
     // Generation lineage: write coverage counters into the generations row
     // for this generation. Atomic with the rest of the lifecycle update.
-    // See docs/gaps/GENERATION_LINEAGE_GAP.md.
+    // See docs/working/gaps/GENERATION_LINEAGE_GAP.md.
     let findings_observed = findings.len() as i64;
     let detectors_run: i64 = findings
         .iter()

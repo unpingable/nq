@@ -5,7 +5,7 @@
 -- Computed per-finding from consecutive_gens and observation history.
 -- Orthogonal to diagnosis and severity.
 --
--- See docs/gaps/STABILITY_AXIS_GAP.md.
+-- See docs/working/gaps/STABILITY_AXIS_GAP.md.
 
 ALTER TABLE warning_state ADD COLUMN stability TEXT;
 

@@ -14,7 +14,7 @@
 //! `cannot_testify` when it can't collect). The collector preserves
 //! what the witness declared — it never adds or removes tags.
 //!
-//! This is Phase A of the ZFS collector slice (`docs/gaps/ZFS_COLLECTOR_GAP.md`):
+//! This is Phase A of the ZFS collector slice (`docs/working/gaps/ZFS_COLLECTOR_GAP.md`):
 //! ingest + store + surface. Detectors that gate off the coverage array
 //! land in Phase B.
 

@@ -10,7 +10,7 @@
 //! is one witness object; tomorrow's INSTANCE_WITNESS_GAP collection
 //! becomes `[LivenessSnapshot, ...]` without a breaking rewrite. The
 //! `instance_id` field is the join key that will survive the
-//! transition. See `docs/gaps/INSTANCE_WITNESS_GAP.md` for the future
+//! transition. See `docs/working/gaps/INSTANCE_WITNESS_GAP.md` for the future
 //! arc; this module does not implement any of it.
 //!
 //! Discipline (same as finding export):

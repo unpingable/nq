@@ -779,7 +779,7 @@ mod tests {
 
     // -------------------------------------------------------------------
     // Track B witness-ref digest end-to-end (Slice 1a — see
-    // docs/architecture/PATH_TO_1_0.md). Receipts produced by Track B
+    // docs/working/decisions/PATH_TO_1_0.md). Receipts produced by Track B
     // must carry the JCS+SHA-256 digest of each consulted witness
     // packet, matching what `WitnessPacket::digest()` returns directly.
     // -------------------------------------------------------------------

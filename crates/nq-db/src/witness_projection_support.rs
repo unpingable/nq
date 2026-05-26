@@ -16,7 +16,7 @@
 //! subject vocabulary; those are the named-deferred wire commitments that
 //! the registry-shape gap explicitly preserves for when claim kind 4 (or
 //! a fifth subject vocabulary, or a second multi-field `target.id`)
-//! forces them. See `docs/architecture/DNS_STATE_WITNESS_PACKET_CUTOVER.md`
+//! forces them. See `docs/working/decisions/preflights/DNS_STATE_WITNESS_PACKET_CUTOVER.md`
 //! §0.
 //!
 //! What this module unifies is the parts that were duplicated by

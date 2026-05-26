@@ -2,7 +2,7 @@
 //!
 //! Reads each target's liveness artifact via the URL declared in the
 //! manifest, renders one row per target. No merged state, no synthetic
-//! fleet rollup. See `docs/gaps/FLEET_INDEX_GAP.md`.
+//! fleet rollup. See `docs/working/gaps/FLEET_INDEX_GAP.md`.
 //!
 //! Transport interpretation (V1, narrow on purpose):
 //! - `file:///absolute/path/to/liveness.json` — local filesystem read

@@ -7,7 +7,7 @@
 //! - `check` structurally verifies a receipt against supplied witness
 //!   packets (content_hash, witness digests, optional freshness). Does
 //!   NOT replay the evaluator, re-ratify the claim, or authorize action.
-//!   Slice 1d of `docs/architecture/PATH_TO_1_0.md`.
+//!   Slice 1d of `docs/working/decisions/PATH_TO_1_0.md`.
 //!
 //! Keepers (printed in `--help`):
 //!

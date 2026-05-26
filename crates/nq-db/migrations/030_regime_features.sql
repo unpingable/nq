@@ -9,7 +9,7 @@
 -- the underlying history is owned by hosts_history / metrics_history /
 -- finding_observations.
 --
--- See docs/gaps/REGIME_FEATURES_GAP.md.
+-- See docs/working/gaps/REGIME_FEATURES_GAP.md.
 
 CREATE TABLE regime_features (
     feature_id              INTEGER PRIMARY KEY,

@@ -24,7 +24,7 @@ pub enum Command {
     /// alerts on staleness/silence from outside NQ's failure boundary.
     Sentinel(SentinelCmd),
     /// Consumer-facing finding surface (canonical JSON export).
-    /// See docs/gaps/FINDING_EXPORT_GAP.md.
+    /// See docs/working/gaps/FINDING_EXPORT_GAP.md.
     Findings(FindingsCmd),
     /// Consumer-facing liveness surface (canonical JSON export of
     /// the sentinel liveness artifact). Single-instance today; the
@@ -34,16 +34,16 @@ pub enum Command {
     /// Fleet index — comparison surface for declared NQ targets. Reads
     /// each target's liveness artifact via the manifest URL and renders
     /// one row per target. No merged authority, no synthetic fleet
-    /// rollup. See `docs/gaps/FLEET_INDEX_GAP.md`.
+    /// rollup. See `docs/working/gaps/FLEET_INDEX_GAP.md`.
     Fleet(FleetCmd),
     /// Maintenance — declare expected disturbance windows that annotate
     /// findings as `covered` (in window) or `overrun` (window past, finding
     /// persists). Annotation only — never suppresses or hides findings.
-    /// See `docs/gaps/MAINTENANCE_DECLARATION_GAP.md`.
+    /// See `docs/working/gaps/MAINTENANCE_DECLARATION_GAP.md`.
     Maintenance(MaintenanceCmd),
     /// Claim preflight — bounded verdict against existing NQ testimony for a
     /// structured claim kind. V1 supports `disk_state`. NQ testifies; NQ does
-    /// not authorize consequence. See `docs/CLAIM_PREFLIGHT.md`.
+    /// not authorize consequence. See `docs/working/decisions/CLAIM_PREFLIGHT.md`.
     Preflight(PreflightCmd),
     /// Validate a caller-supplied witness packet (`nq.witness.v1`).
     /// Reads a JSON file, checks the envelope, and reports problems.
@@ -73,7 +73,7 @@ pub enum Command {
     Smoke(SmokeCmd),
     /// Probe an external substrate and write the observation into NQ's
     /// DB. V0 supports `dns` — one DNS query per invocation, writing
-    /// one `dns_observations` row. See `docs/gaps/DNS_WITNESS_FAMILY_GAP.md`.
+    /// one `dns_observations` row. See `docs/working/gaps/DNS_WITNESS_FAMILY_GAP.md`.
     /// Decoupled from the aggregator publish transaction; the row is
     /// recorded in the latest existing generation context.
     Probe(ProbeCmd),
@@ -467,7 +467,7 @@ pub enum FindingsAction {
     /// Export is evidence, not authority. A `FindingSnapshot` is admissible
     /// evidence for downstream reconciliation, not an authorization token —
     /// consumers must reconcile against current state before acting on any
-    /// snapshot. See docs/gaps/FINDING_EXPORT_GAP.md §"Consumer Semantics"
+    /// snapshot. See docs/working/gaps/FINDING_EXPORT_GAP.md §"Consumer Semantics"
     /// for the full discipline.
     Export(FindingsExportCmd),
 }

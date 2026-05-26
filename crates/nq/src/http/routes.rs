@@ -39,7 +39,7 @@ fn parse_rfc3339(s: &str) -> Option<time::OffsetDateTime> {
 
 /// Render a finding's age + persistence count as one operator-legible cell.
 ///
-/// Per `docs/ARCHITECTURE_NOTES.md` §"Operator surfaces render human time by
+/// Per `docs/working/decisions/ARCHITECTURE_NOTES.md` §"Operator surfaces render human time by
 /// default": wallclock first for operator intuition, gens second for machine
 /// cadence. Returns `(cell_text, optional_tooltip)` — tooltip carries the
 /// absolute first_seen_at so hover gives the authoritative timestamp while
@@ -787,7 +787,7 @@ struct PreflightDiskStateQuery {
 /// not the Receipt-wrapped shape used by the CLI: the constitutional
 /// `cannot_testify` list is preserved on the wire so that monitor-mode
 /// consumers can see the refusal surface, not just the supported weaker
-/// claims. See `docs/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md` §Non-goals.
+/// claims. See `docs/working/decisions/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md` §Non-goals.
 async fn api_preflight_disk_state(
     State(db): State<Db>,
     Path(host): Path<String>,

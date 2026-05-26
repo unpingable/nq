@@ -1,6 +1,6 @@
 //! Finding export — canonical consumer-facing `FindingSnapshot` DTO.
 //!
-//! Per `docs/gaps/FINDING_EXPORT_GAP.md`. This is the typed, versioned
+//! Per `docs/working/gaps/FINDING_EXPORT_GAP.md`. This is the typed, versioned
 //! surface external consumers (Night Shift first, others later) use to
 //! read NQ's finding state without coupling to internal schema.
 //!

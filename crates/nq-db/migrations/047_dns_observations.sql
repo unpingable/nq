@@ -1,7 +1,7 @@
 -- Migration 047: dns_observations substrate for the `dns_state` preflight
 -- witness family (third bespoke claim kind, V0).
 --
--- See docs/gaps/DNS_WITNESS_FAMILY_GAP.md.
+-- See docs/working/gaps/DNS_WITNESS_FAMILY_GAP.md.
 --
 -- Design discipline (constitutional from the gap):
 --   - Substrate only. No probe, no evaluator, no HTTP, no registry.

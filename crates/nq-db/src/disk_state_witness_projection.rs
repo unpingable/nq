@@ -2,7 +2,7 @@
 //!
 //! **Transitional substrate.** This module exists to carry Track A's
 //! existing disk-state detector output across the Slice 2 cut-over
-//! (`docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md`). It is not a
+//! (`docs/working/decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md`). It is not a
 //! permanent component. When native disk-state witness families come
 //! online and the detector path is retired, this module retires with it.
 //! The file name advertises the retirement target.

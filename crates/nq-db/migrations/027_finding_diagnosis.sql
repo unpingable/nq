@@ -8,7 +8,7 @@
 -- Application code is the source of truth for enum values in v1; CHECK
 -- constraints deferred to a follow-up.
 --
--- See docs/gaps/FINDING_DIAGNOSIS_GAP.md.
+-- See docs/working/gaps/FINDING_DIAGNOSIS_GAP.md.
 
 -- warning_state: lifecycle row carries the most recent diagnosis
 ALTER TABLE warning_state ADD COLUMN failure_class TEXT;

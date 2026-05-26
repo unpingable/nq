@@ -5,7 +5,7 @@
 //! `crate::disk_state_witness_projection` and
 //! `crate::ingest_state_witness_projection`: this module exists to carry
 //! dns_state's existing probe-written observation rows across the Slice
-//! 2 cut-over (`docs/architecture/DNS_STATE_WITNESS_PACKET_CUTOVER.md`).
+//! 2 cut-over (`docs/working/decisions/preflights/DNS_STATE_WITNESS_PACKET_CUTOVER.md`).
 //! When a future native dns_resolver witness emits packets directly at
 //! probe time, this module retires with the projection layer.
 //!

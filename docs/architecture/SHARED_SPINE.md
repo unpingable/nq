@@ -40,7 +40,7 @@ A witness reports what it observed and where its observation cannot reach. It do
 
 ### `observed_at` vs `generated_at`
 
-Not interchangeable. `observed_at` is when the substrate was looked at; `generated_at` is when the packet was assembled. Freshness is always evaluated against `observed_at`. A packet generated now from a four-hour-old snapshot is stale observation in a fresh envelope — exactly the laundering surface the three witness-semantics constraints exist to refuse. See `docs/WITNESS_PACKET.md` for those constraints; they bind packets emitted under this schema regardless of field naming.
+Not interchangeable. `observed_at` is when the substrate was looked at; `generated_at` is when the packet was assembled. Freshness is always evaluated against `observed_at`. A packet generated now from a four-hour-old snapshot is stale observation in a fresh envelope — exactly the laundering surface the three witness-semantics constraints exist to refuse. See `docs/architecture/WITNESS_PACKET.md` for those constraints; they bind packets emitted under this schema regardless of field naming.
 
 ### Witness example
 
@@ -225,18 +225,18 @@ A renderer describes the receipt; it does not adjudicate. No renderer is allowed
 
 ## Relationship to existing docs
 
-- `docs/CLAIM_PREFLIGHT.md` — internal doctrine. Authoritative for the ladder (Observation → Testimony → Finding → Claim → Consequence) and the finding ≠ claim cut. The receipt's external vocabulary is the projection of that doctrine, not a replacement.
-- `docs/VERDICTS.md` — internal eight-verdict vocabulary. Still authoritative for evaluator-internal labels.
-- `docs/WITNESS_PACKET.md` — doctrinal statement of witness-semantics constraints. **Field-name correction:** witnesses carry `coverage_limits`, not `cannot_testify`. The three semantic constraints (proxy shock / replicated observability / timestamped evidence) bind regardless of field naming. WITNESS_PACKET.md will be updated in a follow-up to match this doc on the field-name point.
-- `docs/MVP_SCOPE.md` — v0 don't-build list. The spine is the shape over which those refusals apply; none of the listed exclusions conflict.
-- `docs/gaps/AGENTIC_CI_WITNESS_FAMILIES_GAP.md` — Track B's constitutional witness bounds. Remains authoritative for what a Track B witness must look like; this doc is the shared kernel above it.
-- `docs/gaps/CLAIM_KIND_DISK_STATE_GAP.md` — Track A disk-state substrate/workflow split. The disk-state evaluator described there continues to function as Track A.0; cut-over to witness-packet ingest is a tracked Track A.1 task.
+- `docs/working/decisions/CLAIM_PREFLIGHT.md` — internal doctrine. Authoritative for the ladder (Observation → Testimony → Finding → Claim → Consequence) and the finding ≠ claim cut. The receipt's external vocabulary is the projection of that doctrine, not a replacement.
+- `docs/operator/VERDICTS.md` — internal eight-verdict vocabulary. Still authoritative for evaluator-internal labels.
+- `docs/architecture/WITNESS_PACKET.md` — doctrinal statement of witness-semantics constraints. **Field-name correction:** witnesses carry `coverage_limits`, not `cannot_testify`. The three semantic constraints (proxy shock / replicated observability / timestamped evidence) bind regardless of field naming. WITNESS_PACKET.md will be updated in a follow-up to match this doc on the field-name point.
+- `docs/working/decisions/MVP_SCOPE.md` — v0 don't-build list. The spine is the shape over which those refusals apply; none of the listed exclusions conflict.
+- `docs/working/gaps/AGENTIC_CI_WITNESS_FAMILIES_GAP.md` — Track B's constitutional witness bounds. Remains authoritative for what a Track B witness must look like; this doc is the shared kernel above it.
+- `docs/working/gaps/CLAIM_KIND_DISK_STATE_GAP.md` — Track A disk-state substrate/workflow split. The disk-state evaluator described there continues to function as Track A.0; cut-over to witness-packet ingest is a tracked Track A.1 task.
 
 ## Phases and gaps
 
 This document does not authorize phase-level implementation. Implementation lands through follow-up gap records, e.g.:
 
-- `docs/gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md` — project ZFS/SMART findings into witness packets so Track A.0 (disk-state DB-reading evaluator) can retire.
-- `docs/gaps/TRACK_B_WITNESS_PRODUCERS.md` — `nq witness git-status` / `nq witness pytest` / `nq witness diff-scope`, claim registry entries for the repo/CI claim catalog.
+- `docs/working/gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md` — project ZFS/SMART findings into witness packets so Track A.0 (disk-state DB-reading evaluator) can retire.
+- `docs/working/gaps/TRACK_B_WITNESS_PRODUCERS.md` — `nq witness git-status` / `nq witness pytest` / `nq witness diff-scope`, claim registry entries for the repo/CI claim catalog.
 
 Neither gap doc exists yet. They will be drafted when the corresponding implementation slice is approached, not preemptively. Coexistence note: `nq preflight disk-state` continues to read NQ findings directly. Normalizing its output to `nq.receipt.v1` is in scope for Phase 1; full witness-packet projection is the Track A.1 cut-over above and is not a precondition for Track B.

@@ -1,6 +1,6 @@
 //! Generate `sqlite_wal_state` PreflightResult + derived Receipt
 //! fixtures for the consumer-preflight beat
-//! (`docs/architecture/SQLITE_WAL_STATE_CONSUMER_PREFLIGHT.md`).
+//! (`docs/working/decisions/preflights/SQLITE_WAL_STATE_CONSUMER_PREFLIGHT.md`).
 //!
 //! The substrate mirrors the 2026-04-22 labelwatch WAL-bloat incident:
 //! 12 h of observations against the discovery DB, WAL sustained >10 GB,

@@ -7,7 +7,7 @@
 -- Suppressed findings are excluded from dominance candidacy but
 -- included in counts. Host-less findings (e.g. check_failed) excluded.
 --
--- See docs/gaps/DOMINANCE_PROJECTION_GAP.md.
+-- See docs/working/gaps/DOMINANCE_PROJECTION_GAP.md.
 
 CREATE VIEW v_host_state AS
 WITH ranked AS (

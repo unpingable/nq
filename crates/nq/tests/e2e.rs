@@ -185,7 +185,7 @@ fn seed_fresh_generation(
 /// Seed the canonical `lil-nas-x` forcing case: pool DEGRADED, vdev
 /// FAULTED, SMART reallocated-sectors rising, SMART uncorrected
 /// counters nonzero. Shared exhibit across the disk_state preflight
-/// surface tests. See `docs/gaps/CLAIM_KIND_DISK_STATE_GAP.md`
+/// surface tests. See `docs/working/gaps/CLAIM_KIND_DISK_STATE_GAP.md`
 /// §"Forcing-case shape".
 fn seed_disk_state_forcing_case(conn: &rusqlite::Connection, host: &str) {
     for (kind, subject) in [
@@ -681,7 +681,7 @@ async fn preflight_disk_state_http_emits_bounded_testimony() {
     );
 
     // (3) Constitutional refusal surface is populated regardless of
-    //     substrate state. Per docs/gaps/CLAIM_KIND_DISK_STATE_GAP.md the
+    //     substrate state. Per docs/working/gaps/CLAIM_KIND_DISK_STATE_GAP.md the
     //     seven non-mintable conclusions live here; spot-check the four
     //     that name the worst laundering risks for the monitor path.
     let cannot_testify = resp["cannot_testify"]
@@ -855,7 +855,7 @@ async fn preflight_disk_state_http_seeded_faulted_emits_bounded_testimony() {
     //     evidence age without iterating supports. observed_at_min and
     //     observed_at_max must be present and must bracket every
     //     supports[].observed_at. Pure window disclosure — no validity
-    //     claim, no horizon. See docs/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md
+    //     claim, no horizon. See docs/working/decisions/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md
     //     surface discipline rule 4.
     let observed_min = resp["observed_at_min"]
         .as_str()

@@ -1,10 +1,10 @@
 //! Backup verification: the `VACUUM INTO` flow documented for operators
-//! in docs/OPERATOR_GUIDE.md and DESIGN.md §6 actually produces a usable
+//! in docs/operator/OPERATOR_GUIDE.md and DESIGN.md §6 actually produces a usable
 //! backup. The backup file is openable as a separate SQLite database,
 //! carries the same `PRAGMA user_version`, retains the same data, and
 //! supports the same query shapes as the live DB.
 //!
-//! Per docs/architecture/PATH_TO_1_0.md Slice 5 (operational hardening):
+//! Per docs/working/decisions/PATH_TO_1_0.md Slice 5 (operational hardening):
 //! the operator docs treat `VACUUM INTO` as the backup path, so the
 //! round-trip behavior is now a tested promise, not an aspirational one.
 

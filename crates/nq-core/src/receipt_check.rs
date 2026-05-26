@@ -1,6 +1,6 @@
 //! Structural verification of `nq.receipt.v1` documents against supplied
 //! `nq.witness.v1` packets. Slice 1d of
-//! `docs/architecture/PATH_TO_1_0.md`.
+//! `docs/working/decisions/PATH_TO_1_0.md`.
 //!
 //! This module verifies what the receipt *says about itself*. It does not
 //! replay the evaluator, re-ratify the claim, or authorize any downstream
@@ -433,7 +433,7 @@ pub fn check_receipt(
 }
 
 /// Map a [`CheckReport`] to a process exit code following the contract
-/// in `docs/architecture/PATH_TO_1_0.md` Slice 1d:
+/// in `docs/working/decisions/PATH_TO_1_0.md` Slice 1d:
 ///
 /// - `0` — check completed; no broken integrity, no failures
 /// - `1` — requested check failed without proving corruption (stale,

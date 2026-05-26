@@ -4,7 +4,7 @@
 //! **Transitional substrate.** Same posture as
 //! `crate::disk_state_witness_projection`: this module exists to carry
 //! ingest_state's existing aggregator-written rows across the Slice 2
-//! cut-over (`docs/architecture/INGEST_STATE_WITNESS_PACKET_CUTOVER.md`).
+//! cut-over (`docs/working/decisions/preflights/INGEST_STATE_WITNESS_PACKET_CUTOVER.md`).
 //! When the aggregator emits native ingest witness packets directly at
 //! commit time, this module retires with the projection layer.
 //!
