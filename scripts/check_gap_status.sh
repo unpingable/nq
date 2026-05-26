@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
 # Enforce the "gap docs are design records, not shipped-state ledgers"
-# doctrine recorded in docs/ARCHITECTURE_NOTES.md.
+# doctrine recorded in docs/working/decisions/ARCHITECTURE_NOTES.md.
 #
 # A gap doc whose Status line claims shipped state must point at
-# docs/FEATURE_HISTORY.md. The repeated rot pattern (specimens
+# docs/working/decisions/FEATURE_HISTORY.md. The repeated rot pattern (specimens
 # documented in ARCHITECTURE_NOTES: FINDING_EXPORT, FINDING_DIAGNOSIS,
 # DOMINANCE_PROJECTION, GENERATION_LINEAGE, EVIDENCE_LAYER,
 # REGIME_FEATURES, COVERAGE_HONESTY, OPERATIONAL_INTENT_DECLARATION,
@@ -15,7 +15,7 @@
 # front-matter.
 #
 # Rule: a gap doc whose Status field contains 'shipped' (case-
-# insensitive) MUST also reference docs/FEATURE_HISTORY.md somewhere
+# insensitive) MUST also reference docs/working/decisions/FEATURE_HISTORY.md somewhere
 # in the doc.
 #
 # Exit non-zero with a clear message when violated.
@@ -25,7 +25,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 violations=()
-for f in docs/gaps/*.md; do
+for f in docs/working/gaps/*.md; do
   [ -f "$f" ] || continue
   status_line=$(grep -m1 -E '^\*\*Status:\*\*' "$f" || true)
   [ -n "$status_line" ] || continue
@@ -48,9 +48,9 @@ if [ ${#violations[@]} -gt 0 ]; then
   for v in "${violations[@]}"; do
     printf '  %s\n' "$v"
   done
-  printf '\nDoctrine: docs/ARCHITECTURE_NOTES.md §"Gap docs are design records,\n'
+  printf '\nDoctrine: docs/working/decisions/ARCHITECTURE_NOTES.md §"Gap docs are design records,\n'
   printf 'not shipped-state ledgers."\n'
-  printf '\nRepair: write a docs/FEATURE_HISTORY.md entry with explicit evidence\n'
+  printf '\nRepair: write a docs/working/decisions/FEATURE_HISTORY.md entry with explicit evidence\n'
   printf 'pointers (commits, paths, tests, what is unblocked), then trim the\n'
   printf 'gap-doc Status to a one-line pointer at the FEATURE_HISTORY anchor.\n'
   exit 1
