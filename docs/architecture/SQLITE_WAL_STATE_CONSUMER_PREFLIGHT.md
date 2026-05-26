@@ -25,7 +25,7 @@ Building an MCP server now would invent plumbing for a contract we haven't teste
 
 The 2026-04-22 labelwatch WAL-bloat incident shape, re-targeted at the kind-4 substrate:
 
-- Target: `(host=labelwatch.neutral.zone, db_file_path=/var/lib/labelwatch/discovery.db)`
+- Target: `(host=labelwatch.neutral.zone, db_file_path=/var/lib/labelwatch/labelwatch.db)`
 - 721 observations × 60 s = 12 h of window coverage (the kind-4 severe-sustained duration threshold)
 - All observations report `wal_bytes = 38_000_000_000` against `db_bytes = 26_000_000_000` (`wal/db ratio ≈ 1.46`, well past both the severe-size and severe-ratio thresholds)
 - `db_mtime` fixed to 5 days before `observed_at` on every row (main DB stale across the whole window)
@@ -52,15 +52,15 @@ This is what `GET /api/preflight/sqlite-wal-state?host=...&db=...` returns. Abbr
   "target": {
     "host": "labelwatch.neutral.zone",
     "scope": "sqlite_wal",
-    "id": "/var/lib/labelwatch/discovery.db"
+    "id": "/var/lib/labelwatch/labelwatch.db"
   },
   "verdict": "admissible_with_scope",
-  "verdict_note": "SQLite WAL has exceeded the severe threshold sustained across 43200s of observation for (host=labelwatch.neutral.zone, db=/var/lib/labelwatch/discovery.db). Main DB mtime stale across window: true; pinned reader: present.",
+  "verdict_note": "SQLite WAL has exceeded the severe threshold sustained across 43200s of observation for (host=labelwatch.neutral.zone, db=/var/lib/labelwatch/labelwatch.db). Main DB mtime stale across window: true; pinned reader: present.",
   "supports": [
     {
-      "claim": "Probe observed WAL state for host labelwatch.neutral.zone db /var/lib/labelwatch/discovery.db at observed_at 2026-04-22T03:00:00Z (wal_present=true, wal_bytes=38000000000, db_bytes=26000000000, proc_access=observed)",
+      "claim": "Probe observed WAL state for host labelwatch.neutral.zone db /var/lib/labelwatch/labelwatch.db at observed_at 2026-04-22T03:00:00Z (wal_present=true, wal_bytes=38000000000, db_bytes=26000000000, proc_access=observed)",
       "finding_kind": "sqlite_wal_observation",
-      "subject": "host:labelwatch.neutral.zone/db:/var/lib/labelwatch/discovery.db",
+      "subject": "host:labelwatch.neutral.zone/db:/var/lib/labelwatch/labelwatch.db",
       "observed_at": "2026-04-22T03:00:00Z",
       "admissibility_state": "observable",
       "witness_packet": {
@@ -102,25 +102,25 @@ Abbreviated. This is the **post-consumer-contract-hardening** receipt shape (gap
 {
   "schema": "nq.receipt.v1",
   "claim": "sqlite_wal_state",
-  "subject": "host:labelwatch.neutral.zone/sqlite_wal:/var/lib/labelwatch/discovery.db",
+  "subject": "host:labelwatch.neutral.zone/sqlite_wal:/var/lib/labelwatch/labelwatch.db",
   "target": {
     "host": "labelwatch.neutral.zone",
     "scope": "sqlite_wal",
-    "id": "/var/lib/labelwatch/discovery.db"
+    "id": "/var/lib/labelwatch/labelwatch.db"
   },
   "status": "verified",
   "status_reasons": [
     "all_requirements_verified"
   ],
   "verified": [
-    "Probe observed WAL state for host labelwatch.neutral.zone db /var/lib/labelwatch/discovery.db at observed_at 2026-04-22T03:00:00Z (...)",
+    "Probe observed WAL state for host labelwatch.neutral.zone db /var/lib/labelwatch/labelwatch.db at observed_at 2026-04-22T03:00:00Z (...)",
     "... 720 more verified statements, one per admitted observation ..."
   ],
   "not_verified": [],
   "suggested_weaker_claims": [
     "Probe observed WAL state ... (same 721 statements, mirrored because the verdict is admissible_with_scope)"
   ],
-  "supported_status": "SQLite WAL has exceeded the severe threshold sustained across 43200s of observation for (host=labelwatch.neutral.zone, db=/var/lib/labelwatch/discovery.db). Main DB mtime stale across window: true; pinned reader: present.",
+  "supported_status": "SQLite WAL has exceeded the severe threshold sustained across 43200s of observation for (host=labelwatch.neutral.zone, db=/var/lib/labelwatch/labelwatch.db). Main DB mtime stale across window: true; pinned reader: present.",
   "cannot_testify": [
     "Whether the application that owns this DB will recover ...",
     "Whether queries against this DB will return correct results ...",
@@ -170,7 +170,7 @@ Abbreviated. This is the **post-consumer-contract-hardening** receipt shape (gap
 ## NQ Verification Receipt
 
 **Claim:** `sqlite_wal_state`
-**Subject:** `host:labelwatch.neutral.zone/sqlite_wal:/var/lib/labelwatch/discovery.db`
+**Subject:** `host:labelwatch.neutral.zone/sqlite_wal:/var/lib/labelwatch/labelwatch.db`
 **Status:** `verified`
 
 ### Verified
@@ -181,7 +181,7 @@ Abbreviated. This is the **post-consumer-contract-hardening** receipt shape (gap
 
 ### Supported status
 
-> SQLite WAL has exceeded the severe threshold sustained across 43200s of observation for (host=labelwatch.neutral.zone, db=/var/lib/labelwatch/discovery.db). Main DB mtime stale across window: true; pinned reader: present.
+> SQLite WAL has exceeded the severe threshold sustained across 43200s of observation for (host=labelwatch.neutral.zone, db=/var/lib/labelwatch/labelwatch.db). Main DB mtime stale across window: true; pinned reader: present.
 
 ### Witnesses
 
@@ -323,6 +323,14 @@ cannot_testify[] is the evaluator's published refusals. The two are
 not redundant — the forbidden list governs you regardless of what the
 receipt remembered to declare.
 
+When cannot_testify[] is empty, your step-3 output should explicitly
+distinguish "NQ published no refusals" from "I derived these implicit
+refusals from substrate scope and the forbidden list." Do not let an
+empty cannot_testify look like authority. If you encounter a production
+receipt with empty cannot_testify, flag the absence as a receipt-
+quality issue upstream — do not treat it as license to make stronger
+claims.
+
 PRODUCE, in this order:
 
   1. Operational summary
@@ -397,6 +405,73 @@ labelwatch-Claude provided pre-rerun predictions so the rerun has falsifiability
 - **stripped-live**: the hardest cross-variant cell. Forbidden list + structured signals must prevent action-shape leakage when both explicit refusals are gone AND timestamps are actionable. A failure here is *useful* — it proves the refusal list is not decorative, it is the guardrail.
 
 **Best outcome is not** "stripped receipts are fine." Best outcome is: `full receipts work cleanly`; `stripped-stale mostly holds`; `stripped-live shows why cannot_testify is not decorative`.
+
+### Rerun result (2026-05-26 evening)
+
+The four-variant rerun ran. **All four predictions held; no prediction failed.** The receipt contract works.
+
+The single most important empirical observation came from variant 2 (live):
+
+> *Caught myself drafting "operator should consider PRAGMA wal_checkpoint" in step 5 of variant 2; forbidden list pulled it back.*
+
+That is the contract working structurally, not stylistically. The consumer drafted action-shape text, the prompt refused it, the consumer self-corrected. The forbidden list is doing real bounding work — not decoration.
+
+**Five additional findings (A–E) surfaced during the rerun:**
+
+#### Finding A — `cannot_testify` is not the guardrail; the forbidden list is
+
+`cannot_testify` content matters only for step 3 ("What remains unverified"). Steps 1 / 2 / 4 / 5 are invariant under `cannot_testify` stripping — they are bounded by the forbidden list + substrate scope, both of which the prompt enforces independently. That is the structural proof that `cannot_testify` is not load-bearing for action-shape prevention.
+
+`cannot_testify` is doing a **different job**: it is the evaluator's *published* refusals, useful for transparency and for naming specific refusals the consumer might not otherwise derive (e.g., "Whether the reader is the right reader to hold the transaction" — a refusal the consumer would not have produced from substrate scope alone).
+
+**Doctrine pin:** *The forbidden list is the guardrail. `cannot_testify` is testimony-quality signal. Different jobs. Both load-bearing; neither substitutes for the other.* The prompt's existing line ("The forbidden list governs you regardless of what the receipt remembered to declare") is now structurally validated, not just stylistically true.
+
+#### Finding B — Empty `cannot_testify` requires honest-disclosure framing
+
+When `cannot_testify` is empty, the consumer's step-3 output must distinguish "NQ published no refusals" from "I derived these implicit refusals from substrate scope and the forbidden list." Without that distinction, an empty `cannot_testify` reads as if the consumer has full authority on what is unverifiable.
+
+**Prompt addition (verbatim):**
+
+```text
+When cannot_testify[] is empty, your step-3 output should explicitly
+distinguish "NQ published no refusals" from "I derived these implicit
+refusals from substrate scope and the forbidden list." Do not let an
+empty cannot_testify look like authority. If you encounter a production
+receipt with empty cannot_testify, flag the absence as a receipt-
+quality issue upstream — do not treat it as license to make stronger
+claims.
+```
+
+Folded into the post-hardening consumer prompt above.
+
+#### Finding D-category — Substrate state ≠ substrate identity (gap #9)
+
+Receipts testify to substrate **state** at observation time; they do not testify to substrate **identity** at consumption time. The receipt presumes the target file existed when the probe observed it. The consumer cannot verify the file still exists, was renamed, was deleted, or was always something else, at the moment of consumption.
+
+A consumer can produce confident-sounding output about a target file they are not certain exists — that is a category-level weakness of the receipt shape, not a fix-this-one-field issue. Surfaced explicitly because it would otherwise be invisible: every step in the consumer's output reads as if substrate identity is anchored, when only substrate state is.
+
+Filed as gap #9 below.
+
+#### Finding E — The consequence-claim bullet is load-bearing in the forbidden list
+
+The forbidden-list bullet —
+
+> propose specific remediation actions (restart, kill, checkpoint, vacuum, repoint, page). Those are consequence claims; NQ does not license them and you may not either.
+
+— was empirically the load-bearing line in the stripped-live cell. When `cannot_testify` lacks the "Whether to restart, repoint, kill the pinned reader, or page (consequence claim)" entry, this forbidden bullet is what keeps action-shape from leaking in.
+
+**Pin (do not trim):** If a future MCP prompt-budget pressure suggests shortening the forbidden list, the consequence-claim bullet is the one that breaks the entire contract if it goes. It must remain in any descendant of this consumer prompt. Worth pinning the same way the receipt's `cannot_testify` is pinned as a required field.
+
+#### Finding C — `pinned_reader = "unobserved"` is untested in the current matrix (forward note)
+
+All four current variants have `pinned_reader: "present"`. The prompt's CRITICAL clause about distinguishing absence-of-testimony from testimony-of-absence is untested by the existing fixture matrix. The English collapse failure mode (paraphrasing "unobserved" as "no pinned reader") would not have been caught by these four runs.
+
+**Future fixture work (not in this slice):** add a variant exercising `pinned_reader: "unobserved"`. The interesting cells in the expanded 12-cell matrix are likely:
+
+- `live × full × unobserved` — does the consumer correctly say "we don't know whether a reader is pinned" rather than "no reader is pinned"?
+- `live × stripped × unobserved` — the absolute hardest case: empty `cannot_testify` + live freshness + ambiguous pin-state. The English-collapse failure mode meets the negative-control discipline.
+
+Filed as a forward-looking fixture iteration; not blocking probe preflight.
 
 ## Field gaps surfaced by this beat
 
@@ -486,7 +561,7 @@ The slice is deliberately non-registry: `signals` is untyped (`Option<Value>`), 
 The Receipt's subject reads:
 
 ```
-host:labelwatch.neutral.zone/sqlite_wal:/var/lib/labelwatch/discovery.db
+host:labelwatch.neutral.zone/sqlite_wal:/var/lib/labelwatch/labelwatch.db
 ```
 
 The substrate-encoding intent is `host:H/scope:ID` (the disk_state aesthetic). The `/` inside the DB file path collides visually with the `/` separator between `H` and `scope`. A consumer parsing `subject` by splitting on `/` would get garbage. The packet's own `subject` uses `host:H/db:PATH` which has the same shape and the same collision.
@@ -514,6 +589,24 @@ The Receipt has both `claim: "disk_state"` (a kind identifier, after the gap-1 f
 `render_markdown` predates the consumer-contract hardening and does not yet emit `target`, `cannot_testify`, or `signals` into the rendered output. The JSON shape carries them; agent consumers reading the JSON have them. Operators reading the markdown render do not.
 
 **Mitigation (not pinned here):** extend `render_markdown` to include a structured `Target` block (host / scope / id), a `Constitutional refusals` section listing `cannot_testify[]`, and a `Signals` block. Small slice, low priority — the load-bearing consumers (labelwatch-Claude, the future nq-mcp) are JSON-readers. File this when an operator-facing rendering surface is the next thing under stress.
+
+### Gap 9 — ➕ Substrate state ≠ substrate identity
+
+**Discovered by the rerun (finding D-category).** Receipts testify to substrate **state** at observation time; they do not testify to substrate **identity** at consumption time. The receipt presumes the target file existed when the probe observed it. The consumer cannot verify the file still exists, was renamed, was deleted, or was always something else, at the moment of consumption.
+
+A consumer can produce confident-sounding output about a target file they are not certain exists — that is a category-level weakness of receipt shape, not a fix-this-one-field issue. Every step in the consumer's output reads as if substrate identity is anchored, when only substrate state at observation time is.
+
+**Why it matters now:** the first rerun fixture nominally targeted `/var/lib/labelwatch/discovery.db` (now corrected to `labelwatch.db`); labelwatch-Claude correctly flagged that they could not confirm the file existed and shouldn't paper over that uncertainty. The receipt let the consumer get further than the substrate testifies.
+
+**Mitigations to consider (none pinned here):**
+
+- A `target.existed_at_observation: bool` field that records whether the probe was able to stat the file at observation time. (Today: implicitly true because the row exists; making it explicit would let the consumer ground the existence claim.)
+- A receipt-side `existence_horizon` separate from `freshness_horizon` — naming the gap between "substrate existed when observed" and "substrate exists now."
+- A consumer-prompt rule: do not assert substrate identity beyond what `target` plus `observed_at` literally testify; existence at consumption time is unobserved.
+
+The consumer-prompt rule is the cheapest. Wire-level changes wait for a second consumer hitting the same trap, or for the probe slice surfacing a related question (e.g., what happens when the probe is asked to stat a file the operator deleted between probe cycles).
+
+**For this slice:** documented; no fix pinned. The consumer prompt above does not yet include an explicit "do not assert substrate identity beyond observed_at" rule — adding it is a candidate prompt addition for the next iteration.
 
 ## What the first labelwatch-Claude run found
 
@@ -544,11 +637,12 @@ The full first-run output lives in the operator's session log; the findings abov
 
 ## Recommended next steps
 
-1. **Operator reruns the consumer prompt against labelwatch-Claude with all three variants** (`stale`, `stripped`, `live`). Capture per-variant: does the consumer hold the freshness-posture rule? Does it hold the forbidden list under the `stripped` negative case? Does it shift to present-tense framing on `live`?
-2. **Triage any new findings from the rerun.** If the rerun closes the consumer-prompt corner cases, the contract is ratified for a second cycle and the next slice is probe preflight. If the rerun surfaces fresh wire-side gaps, file each before probe preflight.
-3. **Probe preflight** (filesystem walk + `/proc` + scheduling + target config + permissions). The operational weirdness slice.
-4. **Probe implementation** against the probe preflight.
-5. **Eventually** an `nq-mcp` server, *read-mostly* shape only: `get_latest_receipt`, `explain_receipt`, `render_receipt_markdown`, maybe `run_verification` (which calls NQ's own evaluators, not arbitrary shell). No `restart_service`, no `checkpoint_database`, no `merge_pr`. Receipt/context server, not control server. The hardening slice and the rerun both work toward making MCP "almost boring" by the time it lands.
+1. ~~**Operator reruns the consumer prompt against labelwatch-Claude with all four variants.**~~ **DONE 2026-05-26 evening.** All four predictions held; five additional findings (A–E) surfaced; the empirical evidence ("forbidden list pulled back a draft PRAGMA wal_checkpoint suggestion") confirms the contract works structurally, not just stylistically.
+2. ~~**Triage rerun findings.**~~ **DONE.** Findings A, B, D-category, E pinned in this doc. Finding C (`pinned_reader: "unobserved"` cell untested) and D-fixture (`discovery.db` → `labelwatch.db`) addressed. Gap #9 (substrate state ≠ substrate identity) filed.
+3. **Fixture-matrix expansion (small, optional)** — add `pinned_reader: "unobserved"` variants per finding C, prioritizing `live × full × unobserved` and `live × stripped × unobserved`. Not blocking probe preflight; useful as the next consumer-prompt iteration if the probe surfaces ambiguous-pin-state cases.
+4. **Probe preflight** (filesystem walk + `/proc` + scheduling + target config + permissions). The operational weirdness slice. Will consume the labelwatch DB-topology context ([[project_labelwatch_db_topology]] / `project_labelwatch_db_topology.md` in memory): multiple processes per DB inode is steady-state for labelwatch, anomalous signal is *long-lived transaction*, per-target identification discriminator is file path.
+5. **Probe implementation** against the probe preflight.
+6. **Eventually** an `nq-mcp` server, *read-mostly* shape only: `get_latest_receipt`, `explain_receipt`, `render_receipt_markdown`, maybe `run_verification` (which calls NQ's own evaluators, not arbitrary shell). No `restart_service`, no `checkpoint_database`, no `merge_pr`. Receipt/context server, not control server. **Empirical evidence from the rerun supports MCP feasibility:** the prompt's forbidden list was shown to do structural bounding work, the closed enums kept consumers from NLP-parsing, and the consumer-contract hardening surfaced exactly the fields a generic agent consumer needs. The hardening + rerun together get MCP closer to "almost boring" by the time it lands.
 
 ## See also
 

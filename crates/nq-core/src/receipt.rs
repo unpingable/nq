@@ -637,7 +637,7 @@ mod tests {
                 PreflightTarget {
                     host: "labelwatch.neutral.zone".into(),
                     scope: "sqlite_wal".into(),
-                    id: Some("/var/lib/labelwatch/discovery.db".into()),
+                    id: Some("/var/lib/labelwatch/labelwatch.db".into()),
                 },
             ),
         ];
@@ -703,7 +703,7 @@ mod tests {
             PreflightTarget {
                 host: "labelwatch.neutral.zone".into(),
                 scope: "sqlite_wal".into(),
-                id: Some("/var/lib/labelwatch/discovery.db".into()),
+                id: Some("/var/lib/labelwatch/labelwatch.db".into()),
             },
             "2026-05-26T14:00:00Z".into(),
         );

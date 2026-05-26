@@ -2201,7 +2201,7 @@ async fn sqlite_wal_state_http_no_rows_emits_insufficient_coverage() {
     let client = reqwest::Client::new();
     let url = format!(
         "{base}/api/preflight/sqlite-wal-state\
-         ?host=labelwatch.neutral.zone&db=/var/lib/labelwatch/discovery.db"
+         ?host=labelwatch.neutral.zone&db=/var/lib/labelwatch/labelwatch.db"
     );
     let http_resp = client.get(&url).send().await.unwrap();
     assert_eq!(http_resp.status(), reqwest::StatusCode::OK);
@@ -2213,7 +2213,7 @@ async fn sqlite_wal_state_http_no_rows_emits_insufficient_coverage() {
     assert_eq!(resp["claim_kind"], "sqlite_wal_state");
     assert_eq!(resp["target"]["host"], "labelwatch.neutral.zone");
     assert_eq!(resp["target"]["scope"], "sqlite_wal");
-    assert_eq!(resp["target"]["id"], "/var/lib/labelwatch/discovery.db");
+    assert_eq!(resp["target"]["id"], "/var/lib/labelwatch/labelwatch.db");
 
     // Verdict: no rows → insufficient_coverage.
     assert_eq!(resp["verdict"], "insufficient_coverage");
@@ -2287,7 +2287,7 @@ async fn sqlite_wal_state_http_inserted_rows_return_supports_with_witness_packet
                 write_db.conn(),
                 100,
                 "labelwatch.neutral.zone",
-                "/var/lib/labelwatch/discovery.db",
+                "/var/lib/labelwatch/labelwatch.db",
                 &observed_at,
                 1_000_000, // 1 MB — well under the elevated threshold
             );
@@ -2308,7 +2308,7 @@ async fn sqlite_wal_state_http_inserted_rows_return_supports_with_witness_packet
     let client = reqwest::Client::new();
     let url = format!(
         "{base}/api/preflight/sqlite-wal-state\
-         ?host=labelwatch.neutral.zone&db=/var/lib/labelwatch/discovery.db"
+         ?host=labelwatch.neutral.zone&db=/var/lib/labelwatch/labelwatch.db"
     );
     let http_resp = client.get(&url).send().await.unwrap();
     assert_eq!(http_resp.status(), reqwest::StatusCode::OK);

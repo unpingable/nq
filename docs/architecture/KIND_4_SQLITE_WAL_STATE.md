@@ -158,7 +158,7 @@ Observation body fields, per projected packet (mirrors disk_state's open-typed J
 {
   "type": "sqlite_wal_observation_projected",
   "host": "labelwatch.neutral.zone",
-  "db_file_path": "/var/lib/labelwatch/discovery.db",
+  "db_file_path": "/var/lib/labelwatch/labelwatch.db",
   "wal_present": true,
   "wal_bytes": 38000000000,
   "db_bytes": 26000000000,
@@ -278,7 +278,7 @@ The `cannot_testify` list is load-bearing for the consumer-mapping discipline. l
 PreflightTarget {
     host: "labelwatch.neutral.zone".to_string(),
     scope: "sqlite_wal".to_string(),
-    id: Some("/var/lib/labelwatch/discovery.db".to_string()),
+    id: Some("/var/lib/labelwatch/labelwatch.db".to_string()),
 }
 ```
 
@@ -287,7 +287,7 @@ PreflightTarget {
 ### Subject vocabulary in the packet
 
 ```text
-subject: "host:labelwatch.neutral.zone/db:/var/lib/labelwatch/discovery.db"
+subject: "host:labelwatch.neutral.zone/db:/var/lib/labelwatch/labelwatch.db"
 ```
 
 Adopts disk_state's `host:{h}/{scope}:{subject}` aesthetic verbatim. **Not** a fifth subject vocabulary. The DNS preflight §0 threshold "fifth subject vocabulary" is not tripped.

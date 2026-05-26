@@ -183,7 +183,7 @@ mod tests {
                 observed_at, error_detail
              ) VALUES (
                 1, 'labelwatch.neutral.zone',
-                '/var/lib/labelwatch/discovery.db',
+                '/var/lib/labelwatch/labelwatch.db',
                 1, 1024, '2026-05-26T14:00:00Z',
                 2048, '2026-05-26T13:59:00Z',
                 'observed',
