@@ -28,6 +28,15 @@ pub const PREFLIGHT_INGEST_STATE_SCHEMA: &str = "nq.preflight.ingest_state.v1";
 /// global DNS truth, future resolution, or registrar/account status.
 pub const PREFLIGHT_DNS_STATE_SCHEMA: &str = "nq.preflight.dns_state.v1";
 
+/// Wire schema identifier for `sqlite_wal_state` preflight results. One
+/// envelope per `(host, db_file_path)` target. NQ testifies to SQLite
+/// WAL substrate state observed by a probe over a recent observation
+/// window. It does **not** testify to application recovery, query
+/// correctness, downstream artifact freshness, future checkpoint
+/// outcomes, or any consequence claim — those refusals are
+/// constitutional, see `sqlite_wal_state_cannot_testify`.
+pub const PREFLIGHT_SQLITE_WAL_STATE_SCHEMA: &str = "nq.preflight.sqlite_wal_state.v1";
+
 /// Contract version for the preflight wire shape. Bumps on breaking change.
 pub const PREFLIGHT_CONTRACT_VERSION: u32 = 1;
 
@@ -54,6 +63,7 @@ pub enum ClaimKind {
     DiskState,
     IngestState,
     DnsState,
+    SqliteWalState,
 }
 
 impl ClaimKind {
@@ -65,6 +75,7 @@ impl ClaimKind {
             Self::DiskState => "disk_state",
             Self::IngestState => "ingest_state",
             Self::DnsState => "dns_state",
+            Self::SqliteWalState => "sqlite_wal_state",
         }
     }
 }
@@ -366,6 +377,10 @@ impl PreflightResult {
                 PREFLIGHT_DNS_STATE_SCHEMA.to_string(),
                 dns_state_cannot_testify(),
             ),
+            ClaimKind::SqliteWalState => (
+                PREFLIGHT_SQLITE_WAL_STATE_SCHEMA.to_string(),
+                sqlite_wal_state_cannot_testify(),
+            ),
         };
         Self {
             schema,
@@ -517,6 +532,28 @@ pub fn dns_state_cannot_testify() -> Vec<String> {
     ]
 }
 
+/// Constitutional refusal surface for `sqlite_wal_state`. Each entry
+/// corresponds to a conclusion no `wal_observations` row (or window
+/// thereof) licenses, regardless of how the WAL has moved. Mirrors the
+/// `cannot_testify` enumeration in
+/// `docs/architecture/KIND_4_SQLITE_WAL_STATE.md` §5. The last entry is
+/// the [[feedback_knob_facing]] boundary preserved at the wire surface:
+/// NQ classifies WAL substrate testimony; consumer-side consequence
+/// (alert mapping, restart, repointing, page) stays with the consumer.
+pub fn sqlite_wal_state_cannot_testify() -> Vec<String> {
+    vec![
+        "Whether the application that owns this DB will recover (application-state claim; the WAL substrate does not testify to it)".to_string(),
+        "Whether queries against this DB will return correct results (query correctness is below substrate)".to_string(),
+        "Whether reports / downstream artifacts derived from this DB are stale (application-layer claim, not WAL substrate)".to_string(),
+        "Whether the WAL state on a different DB file is healthy (single-target jurisdiction)".to_string(),
+        "Whether the WAL state will degrade in the future (future-state claim)".to_string(),
+        "Whether checkpoint operations succeeded (the operation itself is below substrate; absence of effect is testifiable, the operation is not)".to_string(),
+        "Whether the reader holding a pinned transaction is the right reader to hold it (operational-context claim)".to_string(),
+        "Whether SQLite's behavior is correct given its inputs (DB engine correctness is below substrate)".to_string(),
+        "Whether to restart, repoint, kill the pinned reader, or page (consequence claim)".to_string(),
+    ]
+}
+
 /// Constitutional refusal surface for `disk_state`. Each entry corresponds to
 /// a conclusion no combination of ZFS / SMART / disk-pressure witness output
 /// licenses, regardless of how many findings light up. Mirrors the
@@ -578,6 +615,61 @@ mod tests {
         let k = ClaimKind::DnsState;
         let s = serde_json::to_string(&k).unwrap();
         assert_eq!(s, "\"dns_state\"");
+        let k = ClaimKind::SqliteWalState;
+        let s = serde_json::to_string(&k).unwrap();
+        assert_eq!(s, "\"sqlite_wal_state\"");
+    }
+
+    #[test]
+    fn sqlite_wal_state_skeleton_has_constitutional_refusals() {
+        let target = PreflightTarget {
+            host: "labelwatch.neutral.zone".into(),
+            scope: "sqlite_wal".into(),
+            id: Some("/var/lib/labelwatch/discovery.db".into()),
+        };
+        let r = PreflightResult::skeleton(
+            ClaimKind::SqliteWalState,
+            target,
+            "2026-05-26T14:00:00Z".into(),
+        );
+        assert_eq!(r.schema, PREFLIGHT_SQLITE_WAL_STATE_SCHEMA);
+        assert_eq!(r.contract_version, PREFLIGHT_CONTRACT_VERSION);
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("application that owns this DB")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("queries against this DB")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("WAL state will degrade in the future")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("checkpoint operations")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("repoint, kill the pinned reader, or page")));
+    }
+
+    #[test]
+    fn sqlite_wal_state_cannot_testify_uses_no_alert_taxonomy() {
+        // Per preflight §5 and the [[feedback_knob_facing]] discipline:
+        // the cannot_testify list itself must not use warn/critical/
+        // alert language. The list refuses claims, not alert levels.
+        for refusal in sqlite_wal_state_cannot_testify() {
+            let lower = refusal.to_ascii_lowercase();
+            for forbidden in ["warn", "critical", "alert", "incident", "p1", "p2"] {
+                assert!(
+                    !lower.contains(forbidden),
+                    "cannot_testify entry contains alert-taxonomy term {forbidden:?}: {refusal:?}"
+                );
+            }
+        }
     }
 
     #[test]
