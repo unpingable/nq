@@ -356,6 +356,19 @@ pub struct PreflightResult {
     /// posture rule in `TIME_BASIS_POISONING_GAP.md`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_basis: Option<TimeBasisAnnotation>,
+    /// Receipt-side consumer-convenience field carrying structured
+    /// signals computed by the evaluator. **Namespaced by claim kind**
+    /// (`signals.sqlite_wal_state.<field>`), untyped (`Option<Value>`),
+    /// not a claim-definition surface. See `Receipt.signals` for the
+    /// full contract — this field carries through unchanged.
+    ///
+    /// Populated today only by the `sqlite_wal_state` evaluator (the
+    /// kind whose verdict_note carries multiple decoration booleans
+    /// the consumer-preflight beat showed agents NLP-parsing). Other
+    /// kinds may adopt structured signals later; this field remains
+    /// `None` for them until they do.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub signals: Option<serde_json::Value>,
 }
 
 impl PreflightResult {
@@ -398,6 +411,7 @@ impl PreflightResult {
             observed_at_max: None,
             freshness_horizon: None,
             time_basis: None,
+            signals: None,
         }
     }
 

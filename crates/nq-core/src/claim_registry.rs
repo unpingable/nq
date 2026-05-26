@@ -206,6 +206,13 @@ pub fn evaluate(
             schema: RECEIPT_SCHEMA.into(),
             claim: claim_name.into(),
             subject: subject.into(),
+            // Track B receipts: target is not meaningful at the receipt
+            // layer (the claim is composed across multiple witness
+            // sources). cannot_testify is empty (no Track B claim has
+            // declared constitutional refusals through this path; the
+            // refusal surface for Track B lives in the claim_registry
+            // definition itself, not on the per-evaluation receipt).
+            target: None,
             status: Status::InvalidEvidence,
             status_reasons: vec![StatusReason::InvalidWitness],
             verified: vec![],
@@ -222,12 +229,14 @@ pub fn evaluate(
             }],
             suggested_weaker_claims: vec![],
             supported_status: format!("Claim {claim_name:?} is not registered."),
+            cannot_testify: vec![],
             witnesses: vec![],
             observed_at_min: None,
             observed_at_max: None,
             generated_at: generated_at.into(),
             evaluator: None,
             freshness_horizon: None,
+            signals: None,
             content_hash: None,
         },
         Some(entry) => resolve(registry, entry, subject, &applicable, generated_at),

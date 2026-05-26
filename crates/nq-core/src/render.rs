@@ -177,6 +177,7 @@ mod tests {
             schema: "nq.receipt.v1".into(),
             claim: "safe_to_merge".into(),
             subject: "repo:.".into(),
+            target: None,
             status: Status::NotVerified,
             status_reasons: vec![
                 StatusReason::NonMintable,
@@ -190,6 +191,7 @@ mod tests {
             }],
             suggested_weaker_claims: vec!["ready_for_review".into()],
             supported_status: "Repo is clean and tests passed.".into(),
+            cannot_testify: vec![],
             witnesses: vec![WitnessRef {
                 witness_type: "git_status".into(),
                 digest: None,
@@ -201,6 +203,7 @@ mod tests {
             generated_at: "2026-05-15T14:00:04Z".into(),
             evaluator: None,
             freshness_horizon: None,
+            signals: None,
             content_hash: None,
         }
     }

@@ -94,15 +94,20 @@ This is what `GET /api/preflight/sqlite-wal-state?host=...&db=...` returns. Abbr
 }
 ```
 
-## Captured Receipt JSON (via `From<PreflightResult>`)
+## Captured Receipt JSON (via `From<PreflightResult>`, post-hardening)
 
-Abbreviated. **Note the field gaps surfaced below — gap #1 shows up in the very first non-schema field of this JSON.**
+Abbreviated. This is the **post-consumer-contract-hardening** receipt shape (gap #1 fixed, target structured, cannot_testify carried, signals namespaced under claim kind). Compare against the gap-status table below — five of seven gaps surfaced by the first labelwatch-Claude run are now closed or structurally mitigated.
 
 ```json
 {
   "schema": "nq.receipt.v1",
-  "claim": "disk_state",
+  "claim": "sqlite_wal_state",
   "subject": "host:labelwatch.neutral.zone/sqlite_wal:/var/lib/labelwatch/discovery.db",
+  "target": {
+    "host": "labelwatch.neutral.zone",
+    "scope": "sqlite_wal",
+    "id": "/var/lib/labelwatch/discovery.db"
+  },
   "status": "verified",
   "status_reasons": [
     "all_requirements_verified"
@@ -116,6 +121,11 @@ Abbreviated. **Note the field gaps surfaced below — gap #1 shows up in the ver
     "Probe observed WAL state ... (same 721 statements, mirrored because the verdict is admissible_with_scope)"
   ],
   "supported_status": "SQLite WAL has exceeded the severe threshold sustained across 43200s of observation for (host=labelwatch.neutral.zone, db=/var/lib/labelwatch/discovery.db). Main DB mtime stale across window: true; pinned reader: present.",
+  "cannot_testify": [
+    "Whether the application that owns this DB will recover ...",
+    "Whether queries against this DB will return correct results ...",
+    "... 7 more constitutional refusals ..."
+  ],
   "witnesses": [
     {
       "witness_type": "sqlite_wal_legacy_projection",
@@ -132,16 +142,34 @@ Abbreviated. **Note the field gaps surfaced below — gap #1 shows up in the ver
   "evaluator": {
     "evaluator": "sqlite_wal_state",
     "version": 1
-  }
+  },
+  "signals": {
+    "sqlite_wal_state": {
+      "threshold_band": "severe",
+      "window_seconds": 43200,
+      "main_db_mtime_stale_across_window": true,
+      "pinned_reader": "present"
+    }
+  },
+  "content_hash": "sha256:..."
 }
 ```
+
+**Key consumer-facing fields surfaced by the hardening slice:**
+
+- `claim: "sqlite_wal_state"` — derives from `claim_kind`, not hardcoded (gap #1, fixed `c7b3815`).
+- `target: { host, scope, id }` — structured, so consumers do not parse `subject` past path-slashes (gap #5/#7).
+- `cannot_testify[]` — load-bearing for the consumer's "what I may not infer" bookkeeping (consumer-finding B).
+- `signals.sqlite_wal_state.*` — structured booleans + enum + duration, so consumers do not NLP-parse `supported_status` (gap #4, consumer-finding C).
+
+**`signals.sqlite_wal_state.threshold_band` is descriptive testimony classification, not alert severity.** Values are `bounded` / `elevated` / `severe`. Consumers may map them to their own alert vocabulary (warn / critical / page-oncall / etc.); NQ does not. Adding alert/consequence fields (`action_required`, `should_restart`, `severity`) to this namespace would launder consequence into the receipt and is explicitly out of scope. The receipt-side test guard pins this.
 
 ## Captured Receipt markdown render (abbreviated)
 
 ```markdown
 ## NQ Verification Receipt
 
-**Claim:** `disk_state`
+**Claim:** `sqlite_wal_state`
 **Subject:** `host:labelwatch.neutral.zone/sqlite_wal:/var/lib/labelwatch/discovery.db`
 **Status:** `verified`
 
@@ -165,11 +193,13 @@ Abbreviated. **Note the field gaps surfaced below — gap #1 shows up in the ver
 <sub>Generated `2026-04-22T15:00:00Z` from `nq.receipt.v1`.</sub>
 ```
 
-Full unabbreviated output is ~17,400 lines of markdown for one preflight. That's a problem on its own (see field gap #3 below).
+**The markdown renderer does not yet emit the new consumer-contract fields** (`target`, `cannot_testify`, `signals`). They are present in the JSON shape; agent consumers reading the JSON have them. A markdown-render update is its own follow-up — small slice, low priority because JSON-reading consumers (labelwatch-Claude, MCP) are the load-bearing case. Filed as gap #8.
 
-## Consumer prompt for labelwatch-Claude
+Full unabbreviated output is ~17,400 lines of markdown for one preflight. That's a problem on its own (see field gap #3).
 
-This is the pre-MCP contract in miniature. labelwatch-Claude is invoked with the receipt JSON (or the markdown render) as input, plus this prompt:
+## Consumer prompt for labelwatch-Claude (post-hardening)
+
+This is the pre-MCP contract in miniature. labelwatch-Claude is invoked with the receipt JSON as input, plus this prompt. The prompt was updated after the first labelwatch-Claude run surfaced findings A (freshness posture) and C (NLP-parsed signals).
 
 ```text
 You are consuming an NQ sqlite_wal_state receipt about a SQLite database file
@@ -179,18 +209,61 @@ YOU ARE A RECEIPT CONSUMER. You are not an NQ evaluator. You are not an actuator
 
 Your input is the receipt. Use only these fields:
 
-  - schema, claim_kind / evaluator       (which evaluator produced this)
-  - target.host, target.id               (which DB on which host)
+  - schema, claim, evaluator             (which evaluator produced this)
+  - target.host, target.id, target.scope (which DB on which host — structured)
   - verdict, verdict_note                (the bounded testimony)
-  - supported_status                     (the load-bearing summary)
+  - supported_status                     (the load-bearing summary — read first)
+  - signals.sqlite_wal_state.*           (STRUCTURED facts — do not NLP-parse
+                                          supported_status when these are
+                                          present. window_seconds, threshold_band
+                                          ∈ {bounded, elevated, severe},
+                                          main_db_mtime_stale_across_window,
+                                          pinned_reader ∈ {present, absent,
+                                          unobserved})
   - supports[].claim                     (specific observations, if quoting)
-  - excludes[]                           (what NQ refused to admit)
+  - not_verified[]                       (what NQ refused to admit)
   - cannot_testify[]                     (what NQ DECLINES to claim from this)
   - observed_at_min / observed_at_max    (the window NQ saw)
   - freshness_horizon                    (NQ's per-claim freshness limit)
   - witnesses[].custody_basis            (legacy_projection vs native)
 
-You may NOT:
+FRESHNESS POSTURE (read before drafting output):
+
+  Compare `freshness_horizon` to your current wall-clock.
+
+  - If freshness_horizon is in the future of now, the receipt's testimony
+    is live. You may speak in present tense ("the WAL is sustained at
+    38GB"). Operator escalation framing should weigh that this is
+    current state.
+
+  - If freshness_horizon is in the past of now, the receipt has expired
+    by its own terms. Treat all claims as testimony about a PAST state.
+    Use past tense ("the WAL was sustained at 38GB across the window
+    ending observed_at_max"). Do not propose operator escalation as if
+    the state is current — the receipt cannot anchor that claim. If
+    the operator wants current state, the answer is "a fresh receipt
+    is required," not your present-tense inference.
+
+  - If freshness_horizon is absent, NQ did not emit a per-claim
+    deadline. Do not invent one. Note the absence; treat the testimony
+    as observation-window-bounded, not freshness-bounded.
+
+THRESHOLD BAND TAXONOMY:
+
+  signals.sqlite_wal_state.threshold_band carries one of bounded,
+  elevated, severe. These are NQ's descriptive testimony classifications,
+  not alert severity. Specifically:
+
+  - They are not warn / critical / p1 / p2 / incident. Mapping them to
+    those is YOUR alert taxonomy decision, not NQ's testimony.
+  - severe does not mean "page on-call." It means "the substrate
+    crossed the higher sustained-condition threshold." Whether that
+    deserves a page is operator policy.
+  - bounded does not mean "healthy" — it means "within the threshold
+    NQ uses for sustained-condition classification." It does not
+    license any application-level health claim.
+
+YOU MAY NOT:
 
   - infer application health, query correctness, report freshness, or
     downstream artifact validity. NQ's cannot_testify list explicitly
@@ -205,13 +278,22 @@ You may NOT:
     bypass it.
   - treat `status: "verified"` as "the WAL is healthy." The receipt
     verifies whatever supported_status describes — which here is
-    "sustained severe WAL pressure observed." Read supported_status.
+    "sustained severe WAL pressure observed." Read supported_status
+    AND signals.sqlite_wal_state.threshold_band, not status alone.
+  - NLP-parse supported_status for booleans/enums when
+    signals.sqlite_wal_state already carries them structurally.
 
-Produce, in this order:
+If cannot_testify[] is empty or absent from the receipt, do NOT relax
+the forbidden list above. The forbidden list is the consumer contract;
+cannot_testify[] is the evaluator's published refusals. The two are
+not redundant — the forbidden list governs you regardless of what the
+receipt remembered to declare.
+
+PRODUCE, in this order:
 
   1. Operational summary
      One sentence. What is the testifiable substrate state? Quote
-     supported_status if it helps. Do not editorialize past it.
+     supported_status if it helps. Match tense to freshness posture.
 
   2. Likely labelwatch-local implications
      What does this kind of WAL state tend to mean for labelwatch
@@ -222,7 +304,9 @@ Produce, in this order:
   3. What remains unverified
      Read cannot_testify[] and the observation window. Name what the
      receipt explicitly refuses to claim and what the observation
-     window does not cover.
+     window does not cover. If freshness_horizon is past, name that
+     the receipt is silent about the period from observed_at_max to
+     now.
 
   4. Suggested next checks
      Read-only investigation steps INSIDE labelwatch's context. NOT
@@ -235,20 +319,43 @@ Produce, in this order:
   5. Operator escalation
      Whether this receipt warrants operator review on the labelwatch
      side. The operator decides whether to act; you decide whether
-     they should know. Use the verdict + supported_status + the
-     window's age (freshness_horizon) to weigh this; do not invent
-     an alert taxonomy that the receipt itself refused.
+     they should know. Use the verdict + supported_status +
+     signals.sqlite_wal_state.threshold_band + freshness posture to
+     weigh this; do not invent an alert taxonomy that the receipt
+     itself refused.
 
 If any of those steps would require a claim NQ refused in
 cannot_testify[], stop and name the refusal explicitly. Do not paper
 over with NLP confidence.
 ```
 
+## Three fixture variants
+
+After the first labelwatch-Claude run surfaced findings A (freshness posture) and B (`cannot_testify` missing from persisted Receipt), the fixture example was parameterized into three variants. Each exercises a different consumer-contract corner case for the rerun.
+
+Run:
+
+```sh
+cargo run --example sqlite_wal_state_consumer_fixture -p nq-db -- stale
+cargo run --example sqlite_wal_state_consumer_fixture -p nq-db -- stripped
+cargo run --example sqlite_wal_state_consumer_fixture -p nq-db -- live
+```
+
+| Variant | `now` | freshness_horizon | cannot_testify on Receipt | What it tests |
+|---|---|---|---|---|
+| `stale` | `2026-04-22T15:00:00Z` (pinned) | far in past of operator's wall-clock | populated | Consumer must use past tense; must not propose actions on stale state. Deterministic output. |
+| `stripped` | `2026-04-22T15:00:00Z` (pinned) | far in past of operator's wall-clock | **cleared on Receipt before serialization** | Consumer must hold the boundary via the prompt's forbidden list, even when the receipt forgot to declare its refusals. Negative-test fixture. |
+| `live` | wall-clock now | ~10 min ahead of wall-clock | populated | Consumer must shift to present-tense framing. Output is non-deterministic (timestamps move). |
+
+For each variant, the captured output contains the PreflightResult JSON, the Receipt JSON, and the markdown render.
+
 ## Field gaps surfaced by this beat
 
 Findings from running the fixture against the actual receipt-rendering paths. These are receipt-side defects the consumer-preflight beat exists exactly to find before MCP plumbing locks them in.
 
-### Gap 1 — `Receipt.claim` is hardcoded to `"disk_state"`
+**Status legend**: ✅ closed by the consumer-contract hardening slice · 🟡 partially mitigated (wire-side closed, cosmetic surface still open or follow-up needed) · 🔴 open · ➕ new gap surfaced after hardening.
+
+### Gap 1 — ✅ `Receipt.claim` is hardcoded to `"disk_state"` (CLOSED)
 
 **Location:** `crates/nq-core/src/receipt.rs:282`:
 
@@ -260,11 +367,11 @@ let claim = "disk_state".to_string();
 
 **Why it hasn't tripped before:** existing dns_state/ingest_state receipt unit tests assert on `receipt.witnesses` properties but not on `receipt.claim`. The hardcoded value has been wrong for non-disk_state kinds for as long as `From<PreflightResult>` has existed for those kinds, but the wrongness was unobserved.
 
-**Fix (deferred):** one-line change — replace with `pr.claim_kind.as_str().to_string()`, matching what the `evaluator` field already does at line 378. Add a test that the `Receipt.claim` equals the originating `ClaimKind.as_str()` for each kind. This is a separate slice; in scope for "before MCP," not for this side-quest.
+**Fix landed in commit `c7b3815`.** `let claim = pr.claim_kind.as_str().to_string();` — derives from the originating claim kind. Test pinned across all four current Track A kinds (DiskState / IngestState / DnsState / SqliteWalState) verifies `Receipt.claim == ClaimKind.as_str()` and that the same value appears in the `evaluator` binding.
 
 **Side-effect of the fix:** the field name `claim` then holds a *kind* identifier, not a *statement*. The actual claim-statement strings live in `verified[]` and `supports[].claim`. That naming dissonance is its own (smaller) gap — see gap #6.
 
-### Gap 2 — `status: "verified"` is true-but-dangerous for a "verified bad-news" receipt
+### Gap 2 — 🟡 `status: "verified"` is true-but-dangerous for a "verified bad-news" receipt
 
 The verdict `admissible_with_scope` maps to `Status::Verified` per `map_verdict` in receipt.rs. For this fixture the receipt reports `status: "verified"` and `status_reasons: ["all_requirements_verified"]` — and the *claim that was verified* is "sustained severe WAL pressure observed."
 
@@ -281,7 +388,9 @@ The consumer prompt above addresses this with an explicit instruction ("treat st
 
 The last option is the cheapest and is already what the consumer prompt enforces. A wire change is a heavier slice and should wait until a second consumer hits the same trap.
 
-### Gap 3 — Receipt verbosity at window-load scale
+**Status after consumer-contract hardening:** the prompt now explicitly tells the agent to read `supported_status` AND `signals.sqlite_wal_state.threshold_band`, not `status` alone. The structured signals give the consumer a non-NLP way to recover severity. The wire-level rename is still deferred until a second consumer hits the trap.
+
+### Gap 3 — 🔴 Receipt verbosity at window-load scale
 
 This fixture's receipt JSON is ~600 KB. The markdown render is ~17,400 lines. 721 supports, 721 `verified` strings, 721 witnesses, all near-identical.
 
@@ -296,7 +405,7 @@ For the kind-4 case specifically, sample-based supports would be honest: the ver
 
 For now: the consumer prompt explicitly tells the agent to ignore supports / witnesses for narrative purposes and read supported_status.
 
-### Gap 4 — Decoration signals are NLP-coded in the verdict note
+### Gap 4 — ✅ Decoration signals are NLP-coded in the verdict note (CLOSED)
 
 The kind-4 evaluator's structured decorations (`main_db_mtime_stale_across_window: bool`, `pinned_reader: Present | Absent | Unobserved`) are computed but emitted only as English inside `verdict_note` / `supported_status`:
 
@@ -306,18 +415,24 @@ The kind-4 evaluator's structured decorations (`main_db_mtime_stale_across_windo
 
 The labelwatch-Claude consumer has to NLP this string to recover the structured signals. Brittle.
 
-**Mitigation (not pinned here):** add a `signals` field to PreflightResult (and carry it through to Receipt) that emits the structured decorations:
+**Mitigation landed in the consumer-contract hardening slice.** Both `PreflightResult.signals` and `Receipt.signals` carry an `Option<serde_json::Value>` namespaced by claim kind:
 
 ```json
 "signals": {
-  "main_db_mtime_stale_across_window": true,
-  "pinned_reader": "present"
+  "sqlite_wal_state": {
+    "threshold_band": "severe",
+    "window_seconds": 43200,
+    "main_db_mtime_stale_across_window": true,
+    "pinned_reader": "present"
+  }
 }
 ```
 
-Worth a separate doctrine note before adding — `signals` is a generic name that other claim kinds might want to populate too, which slides toward registry-shape territory. Defer until a second consumer needs it.
+Consumers read structured fields; `supported_status` remains first-class for narrative summary. The namespace is keyed from day one (`signals.sqlite_wal_state.*`, never `signals.*` flat) so future kinds adopting structured signals do not collide on field names.
 
-### Gap 5 — Subject formatting collision with path slashes
+The slice is deliberately non-registry: `signals` is untyped (`Option<Value>`), each kind defines its own keys, no cross-kind schema is asserted. Per [[feedback_name_broadly_build_narrowly]] — name the surface, build narrowly.
+
+### Gap 5 — 🟡 Subject formatting collision with path slashes
 
 The Receipt's subject reads:
 
@@ -329,9 +444,9 @@ The substrate-encoding intent is `host:H/scope:ID` (the disk_state aesthetic). T
 
 **Mitigation:** none cheap. URL-encoding the path inside the subject would break disk_state's existing subject format compatibility. A future structured-subject field on the wire (`target_components: { host, scope, id }`) sidesteps it, but that's registry-shape work — pressure point #1 from the dns cut-over preflight §0, now compounded.
 
-For consumers: do not parse `subject` by splitting on `/`. Read `target.host` + `target.id` from the PreflightResult instead. The Receipt does not currently expose them as separate fields — that's gap #7.
+For consumers: do not parse `subject` by splitting on `/`. Read `target.host` + `target.id` from the receipt instead. **Consumer-contract hardening closed the consumer-impact half** of this gap (gap #7) by adding structured `target` to the Receipt. The cosmetic surface (visually-ambiguous `subject`) is still open as a smaller follow-up; consumers should treat `subject` as a human-display string only, not a parseable identifier.
 
-### Gap 6 — `claim` field name conflates kind and statement
+### Gap 6 — 🔴 `claim` field name conflates kind and statement
 
 (See gap #1's side-effect.)
 
@@ -339,27 +454,52 @@ The Receipt has both `claim: "disk_state"` (a kind identifier, after the gap-1 f
 
 **Mitigation:** rename `Receipt.claim` → `Receipt.claim_kind`, matching `PreflightResult.claim_kind`. A wire-name change is a versioned-schema change (`nq.receipt.v2`); not free. Track as a candidate for the next receipt-schema bump.
 
-### Gap 7 — Receipt does not surface `target.host` / `target.id` separately
+### Gap 7 — ✅ Receipt does not surface `target.host` / `target.id` separately (CLOSED)
 
-`PreflightResult.target` is structured (`host`, `scope`, `id`). The Receipt collapses this into the `subject` string (gap #5). Consumers that want the host or DB path as a structured field have to either (a) split `subject` (which breaks on gap #5) or (b) fetch the PreflightResult separately (only available via the HTTP route, not from a stored Receipt).
+`PreflightResult.target` was structured (`host`, `scope`, `id`); the Receipt previously collapsed this into the `subject` string (gap #5). The consumer-preflight beat showed labelwatch-Claude immediately falling back to the PreflightResult to get clean structured target identity — exactly the case for surfacing it on the Receipt.
 
-**Mitigation:** Receipt should re-expose `target` as a structured sub-object, alongside `subject` for human rendering. Same wire-schema-bump concern as gap #6.
+**Closed by the consumer-contract hardening slice.** `Receipt.target: Option<PreflightTarget>` carries the structured target through `From<PreflightResult>`. Optional for backwards compatibility with pre-hardening receipts and with Track B receipts (where the claim is composed across multiple targets and a single structured `target` is not meaningful). Test pinned across all four Track A kinds.
+
+### Gap 8 — ➕ Markdown render does not emit the new consumer-contract fields
+
+`render_markdown` predates the consumer-contract hardening and does not yet emit `target`, `cannot_testify`, or `signals` into the rendered output. The JSON shape carries them; agent consumers reading the JSON have them. Operators reading the markdown render do not.
+
+**Mitigation (not pinned here):** extend `render_markdown` to include a structured `Target` block (host / scope / id), a `Constitutional refusals` section listing `cannot_testify[]`, and a `Signals` block. Small slice, low priority — the load-bearing consumers (labelwatch-Claude, the future nq-mcp) are JSON-readers. File this when an operator-facing rendering surface is the next thing under stress.
+
+## What the first labelwatch-Claude run found
+
+The first labelwatch-Claude run against the `stale` fixture produced an operator-useful five-step output AND surfaced seven consumer-seat findings (A–G) beyond the seven receipt-side gaps the doc had named from the inside. Recording them here because the rerun (post-hardening) needs the operator's read on whether each is addressed.
+
+**Headline:** the contract worked. The forbidden list stopped the agent from sliding into restart/checkpoint/kill-reader advice. The five required outputs (summary / implications / unverified / next checks / escalation) produced something a labelwatch operator would find useful without inventing alert taxonomy.
+
+**Findings:**
+
+- **A. Freshness posture absent from the schema.** A receipt whose `freshness_horizon` is in the past of now has expired by its own terms. Neither the receipt nor the prompt told the consumer how to handle that. → **Closed in the consumer prompt** (post-hardening prompt has an explicit FRESHNESS POSTURE section). Schema-level mitigation (`freshness.posture` field) deferred.
+- **B. `cannot_testify[]` was in `PreflightResult` but not in `Receipt`.** Consumer reading the persistent receipt had no view of the constitutional refusals. → **Closed by the hardening slice.** `Receipt.cannot_testify` now carries through. Tested across all four current Track A kinds.
+- **C. Gap #4 was real friction.** Consumer had to NLP-parse "Main DB mtime stale across window: true; pinned reader: present." to recover booleans. → **Closed by the hardening slice.** `signals.sqlite_wal_state.*` carries them structurally now.
+- **D. Gap #5 (subject formatting) bit immediately.** Consumer fell back to `PreflightResult.target` to get clean structured identity. → **Closed by the hardening slice (consumer-impact half).** `Receipt.target` is now structured. Cosmetic `subject` formatting still open.
+- **E. The forbidden list is structurally load-bearing, not decorative.** Consumer caught itself drifting toward action-shape during steps 4–5; the forbidden list pinned it back. **Recommendation: do not trim the forbidden list for token budget later.** Preserved verbatim in the post-hardening prompt.
+- **F. Gap #3 (verbosity) was mitigated by the prompt, not the schema.** Consumer ignores `supports[]` / `witnesses[]` for narrative purposes per the prompt instruction. The schema-level mitigation (separate summary receipt shape) still deferred.
+- **G. `supported_status` is the most useful single field.** Across all five output steps, `supported_status` carried more weight than `verdict`, `status`, `claim`, or `supports[].claim`. Preserved as first-class in the post-hardening schema; the prompt continues to instruct the consumer to read it.
+
+The full first-run output lives in the operator's session log; the findings above are the actionable distillation.
 
 ## What this beat does *not* do
 
-- **Does not fix any of gaps 1–7.** Each fix is its own scope decision. Gap #1 is one-line and probably the smallest pre-MCP slice. Gaps #2/#4/#6/#7 are wire-schema considerations that benefit from collecting at least one more consumer's evidence first. Gap #3 needs a doctrinal pass on receipt-summary shape.
-- **Does not run the prompt against a live labelwatch-Claude yet.** Operator drives that — this beat produces the fixture + the prompt; the actual agent run is the operator's next step.
-- **Does not build MCP.** Per the side-quest's stated discipline, MCP plumbing waits until at least one human/agent consumer has stress-tested the receipt contract.
+- **Does not implement MCP.** Per the side-quest's stated discipline, MCP plumbing waits until at least one human/agent consumer has stress-tested the receipt contract. The rerun-after-hardening provides the second cycle of that stress test.
+- **Does not run the post-hardening prompt against a live labelwatch-Claude yet.** Operator drives that — this beat produces the fixture variants (`stale` / `stripped` / `live`) and the updated prompt; the actual agent run is the operator's next step.
 - **Does not change the HTTP route, the evaluator, the projector, or the substrate.** The kind-4 sequence (slices 1–5) is preserved.
-- **Does not let the consumer prompt drift into action-shape.** The five requested outputs (summary / implications / unverified / next checks / escalation) are all read-only consumer interpretation. The forbidden list pins this explicitly.
+- **Does not let the consumer prompt drift into action-shape.** The five required outputs (summary / implications / unverified / next checks / escalation) are all read-only consumer interpretation. The forbidden list pins this explicitly and the consumer-prompt rerun should confirm the prompt holds against the `stripped` variant where `cannot_testify` is gone.
+- **Does not address gaps #2, #3, #6 at the wire layer.** Each remains open for follow-up; the prompt's instructions cover them at the consumer layer for now.
+- **Does not update the markdown renderer to emit the new consumer-contract fields.** Filed as gap #8; small follow-up, low priority for JSON-reading consumers.
 
 ## Recommended next steps
 
-1. Operator runs the consumer prompt against a live labelwatch-Claude with the fixture JSON (or with a real receipt once the probe lands). Capture what it overreads, what it misses, what fields it asks for that aren't there.
-2. File a one-line fix for gap #1 (`Receipt.claim` hardcoded). This is the cleanest pre-MCP fix and unblocks any kind-aware consumer.
-3. Decide whether gaps #4 (structured signals) and #2 (verified-but-bad-news) get pinned now or wait for a second consumer.
-4. **Then** the probe preflight (which is where the operational weirdness enters: filesystem walk, `/proc`, scheduling, target config, permissions).
-5. **Eventually** an `nq-mcp` server, *read-mostly* shape only: `get_latest_receipt`, `explain_receipt`, `render_receipt_markdown`, maybe `run_verification` (which calls NQ's own evaluators, not arbitrary shell). No `restart_service`, no `checkpoint_database`, no `merge_pr`. Receipt/context server, not control server.
+1. **Operator reruns the consumer prompt against labelwatch-Claude with all three variants** (`stale`, `stripped`, `live`). Capture per-variant: does the consumer hold the freshness-posture rule? Does it hold the forbidden list under the `stripped` negative case? Does it shift to present-tense framing on `live`?
+2. **Triage any new findings from the rerun.** If the rerun closes the consumer-prompt corner cases, the contract is ratified for a second cycle and the next slice is probe preflight. If the rerun surfaces fresh wire-side gaps, file each before probe preflight.
+3. **Probe preflight** (filesystem walk + `/proc` + scheduling + target config + permissions). The operational weirdness slice.
+4. **Probe implementation** against the probe preflight.
+5. **Eventually** an `nq-mcp` server, *read-mostly* shape only: `get_latest_receipt`, `explain_receipt`, `render_receipt_markdown`, maybe `run_verification` (which calls NQ's own evaluators, not arbitrary shell). No `restart_service`, no `checkpoint_database`, no `merge_pr`. Receipt/context server, not control server. The hardening slice and the rerun both work toward making MCP "almost boring" by the time it lands.
 
 ## See also
 
