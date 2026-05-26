@@ -1,6 +1,6 @@
 -- Migration 031: ZFS witness ingestion spine.
 --
--- Phase A of docs/gaps/ZFS_COLLECTOR_GAP.md: the NQ side can ingest,
+-- Phase A of docs/working/gaps/ZFS_COLLECTOR_GAP.md: the NQ side can ingest,
 -- store, and surface a conforming nq-witness report from a publisher.
 -- Detectors that gate off `coverage.can_testify` land in Phase B.
 --

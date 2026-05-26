@@ -2,7 +2,7 @@
 //!
 //! Single tuple per invocation. Writes one `dns_observations` row
 //! into the latest existing aggregator generation. See
-//! `docs/gaps/DNS_WITNESS_FAMILY_GAP.md` for the V0 scope and the
+//! `docs/working/gaps/DNS_WITNESS_FAMILY_GAP.md` for the V0 scope and the
 //! constitutional refusal surface.
 //!
 //! The CLI parses the inputs, dispatches to the library

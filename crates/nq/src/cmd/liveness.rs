@@ -4,7 +4,7 @@
 //! NQ writes after each successful generation and emits a typed,
 //! versioned `LivenessSnapshot` consumers can rely on without
 //! parsing the raw artifact directly. See
-//! `docs/gaps/SENTINEL_LIVENESS_GAP.md` for the artifact side and
+//! `docs/working/gaps/SENTINEL_LIVENESS_GAP.md` for the artifact side and
 //! the `liveness_export` module in nq-db for the DTO contract.
 
 use crate::cli::{LivenessAction, LivenessCmd, LivenessExportCmd};

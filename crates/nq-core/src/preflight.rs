@@ -1,8 +1,8 @@
 //! Claim preflight types — operator-facing surface that consumes existing
 //! NQ testimony and returns a bounded verdict + evidence bundle.
 //!
-//! See `docs/CLAIM_PREFLIGHT.md`, `docs/VERDICTS.md`, `docs/WITNESS_PACKET.md`,
-//! and `docs/gaps/CLAIM_KIND_DISK_STATE_GAP.md` for the doctrine. This module
+//! See `docs/working/decisions/CLAIM_PREFLIGHT.md`, `docs/operator/VERDICTS.md`, `docs/architecture/WITNESS_PACKET.md`,
+//! and `docs/working/gaps/CLAIM_KIND_DISK_STATE_GAP.md` for the doctrine. This module
 //! defines the consumer-facing DTO shape; the evaluator (`nq-db::preflight`)
 //! computes a `PreflightResult` from existing findings and standing state.
 //!
@@ -46,16 +46,16 @@ pub const PREFLIGHT_CONTRACT_VERSION: u32 = 1;
 /// milliseconds is flagged as suspect. The default (300_000 ms = 5
 /// minutes) mirrors the Kerberos clock-skew tolerance — large enough to
 /// absorb ordinary network and clock-update jitter, small enough to
-/// catch gross drift. See `docs/gaps/TIME_BASIS_POISONING_GAP.md` §
+/// catch gross drift. See `docs/working/gaps/TIME_BASIS_POISONING_GAP.md` §
 /// "Internal sanity checks" for the discipline.
 pub const TIME_BASIS_DRIFT_THRESHOLD_MS: i64 = 300_000;
 
 /// Structured claim kind. V3 covers `DiskState`, `IngestState`, and
 /// `DnsState`. New kinds require a separate ratified change. The
 /// bespoke per-kind pattern stands; the four concrete registry-pressure
-/// points named in `docs/gaps/DNS_WITNESS_FAMILY_GAP.md` move the
+/// points named in `docs/working/gaps/DNS_WITNESS_FAMILY_GAP.md` move the
 /// forcing case to kind 4 (see also
-/// `docs/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md` for the eight
+/// `docs/working/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md` for the eight
 /// guardrails that govern the registry shape when it does land).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -86,7 +86,7 @@ impl ClaimKind {
 /// `Servfail`, `Refused`, `Timeout`, `TransportError`) is the
 /// load-bearing DNS-specific witness contribution — conflating them is
 /// the bug `dns_state` exists to refuse. See
-/// `docs/gaps/DNS_WITNESS_FAMILY_GAP.md` for verdict mapping and
+/// `docs/working/gaps/DNS_WITNESS_FAMILY_GAP.md` for verdict mapping and
 /// constitutional refusals.
 ///
 /// `ValidationFailure` is reserved for a future DNSSEC-validating
@@ -156,7 +156,7 @@ impl std::fmt::Display for UnknownResponseKind {
 
 impl std::error::Error for UnknownResponseKind {}
 
-/// The eight verdicts from `docs/VERDICTS.md`. Non-overlapping in primary
+/// The eight verdicts from `docs/operator/VERDICTS.md`. Non-overlapping in primary
 /// trigger; the more-specific one wins when two could apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -172,7 +172,7 @@ pub enum Verdict {
 }
 
 /// Status of receiver-side time-basis sanity over the supports in a
-/// `PreflightResult`. Per `docs/gaps/TIME_BASIS_POISONING_GAP.md` §
+/// `PreflightResult`. Per `docs/working/gaps/TIME_BASIS_POISONING_GAP.md` §
 /// "Default posture": **`Unknown` is not poisoned.** Absence of an
 /// active suspicion does not constitute a clean bill of time-basis
 /// health; it is silence about the question. Refusal or downgrade
@@ -238,7 +238,7 @@ pub struct PreflightTarget {
 /// support. Absent on supports from evaluators that have not yet cut
 /// over (today: `ingest_state`, `dns_state`); those receipts continue
 /// to carry coverage-derived WitnessRefs. See
-/// `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md`.
+/// `docs/working/decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupportingWitnessPacket {
     pub witness_type: String,
@@ -417,7 +417,7 @@ impl PreflightResult {
 
     /// Run receiver-side time-basis sanity checks over `self.supports`
     /// and set `self.time_basis` accordingly. See
-    /// `docs/gaps/TIME_BASIS_POISONING_GAP.md` § "Internal sanity checks"
+    /// `docs/working/gaps/TIME_BASIS_POISONING_GAP.md` § "Internal sanity checks"
     /// for the discipline.
     ///
     /// V1 implements one check: `observed_at_future_of_evaluator`. A
@@ -525,7 +525,7 @@ pub fn ingest_state_cannot_testify() -> Vec<String> {
 /// corresponds to a conclusion no `response_kind` row licenses,
 /// regardless of which kind was observed or how many tuples were
 /// probed. Mirrors the `cannot_testify` enumeration in
-/// `docs/gaps/DNS_WITNESS_FAMILY_GAP.md`. The last entry is the
+/// `docs/working/gaps/DNS_WITNESS_FAMILY_GAP.md`. The last entry is the
 /// `feedback_knob_facing` boundary preserved: `dns_state` classifies
 /// world-state testimony; consequence stays downstream.
 pub fn dns_state_cannot_testify() -> Vec<String> {
@@ -550,7 +550,7 @@ pub fn dns_state_cannot_testify() -> Vec<String> {
 /// corresponds to a conclusion no `wal_observations` row (or window
 /// thereof) licenses, regardless of how the WAL has moved. Mirrors the
 /// `cannot_testify` enumeration in
-/// `docs/architecture/KIND_4_SQLITE_WAL_STATE.md` §5. The last entry is
+/// `docs/working/decisions/preflights/KIND_4_SQLITE_WAL_STATE.md` §5. The last entry is
 /// the [[feedback_knob_facing]] boundary preserved at the wire surface:
 /// NQ classifies WAL substrate testimony; consumer-side consequence
 /// (alert mapping, restart, repointing, page) stays with the consumer.
@@ -571,7 +571,7 @@ pub fn sqlite_wal_state_cannot_testify() -> Vec<String> {
 /// Constitutional refusal surface for `disk_state`. Each entry corresponds to
 /// a conclusion no combination of ZFS / SMART / disk-pressure witness output
 /// licenses, regardless of how many findings light up. Mirrors the
-/// `cannot_testify` enumeration in `docs/gaps/CLAIM_KIND_DISK_STATE_GAP.md`.
+/// `cannot_testify` enumeration in `docs/working/gaps/CLAIM_KIND_DISK_STATE_GAP.md`.
 pub fn disk_state_cannot_testify() -> Vec<String> {
     vec![
         "Physical disk death".to_string(),

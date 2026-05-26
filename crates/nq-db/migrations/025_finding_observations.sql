@@ -1,6 +1,6 @@
 -- Migration 025: finding_observations evidence layer.
 --
--- See docs/gaps/EVIDENCE_LAYER_GAP.md for full rationale.
+-- See docs/working/gaps/EVIDENCE_LAYER_GAP.md for full rationale.
 --
 -- The substrate rule for NQ:
 --   "Confidence in a claim must decay in the absence of fresh evidence,

@@ -1,7 +1,7 @@
 //! `wal_observations` substrate + `sqlite_wal_state` preflight evaluator
 //! (V0, fourth bespoke claim kind).
 //!
-//! See `docs/architecture/KIND_4_SQLITE_WAL_STATE.md`. This module owns
+//! See `docs/working/decisions/preflights/KIND_4_SQLITE_WAL_STATE.md`. This module owns
 //! the typed DTO that represents a `wal_observations` row, the
 //! `proc_access` closed enum, the substrate insert / window-load paths,
 //! and the bespoke evaluator that turns a window of observations into a

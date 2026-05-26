@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn docs_only_accepts_docs_prefix() {
-        assert!(is_docs_path("docs/gaps/FOO.txt"));
+        assert!(is_docs_path("docs/working/gaps/FOO.txt"));
         assert!(is_docs_path("docs/anything"));
     }
 

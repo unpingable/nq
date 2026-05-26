@@ -1,6 +1,6 @@
 -- Migration 026: generation lineage / coverage metadata.
 --
--- See docs/gaps/GENERATION_LINEAGE_GAP.md for full rationale.
+-- See docs/working/gaps/GENERATION_LINEAGE_GAP.md for full rationale.
 --
 -- Adds counters that let a generation row describe its own coverage:
 --   - findings_observed: total findings written this generation

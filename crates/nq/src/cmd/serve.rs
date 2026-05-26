@@ -230,7 +230,7 @@ async fn send_notifications(
 
     // Group by (host, state_kind, detector_family) before rendering. Lane
     // order (incident → legacy) privileges kind first; severity sorts within
-    // a lane. See docs/gaps/ALERT_INTERPRETATION_GAP.md §"State kind as a
+    // a lane. See docs/working/gaps/ALERT_INTERPRETATION_GAP.md §"State kind as a
     // first-class axis".
     let rollups = nq_db::notify::rollup_pending(pending);
     if rollups.is_empty() {

@@ -240,9 +240,9 @@ observability substrate → dashboard / alert → operator
 
 ## See also
 
-- [`PATH_TO_1_0.md`](PATH_TO_1_0.md) — Slice 1a/1b/1c/1d/1e scope and ordering.
+- [`PATH_TO_1_0.md`](../working/decisions/PATH_TO_1_0.md) — Slice 1a/1b/1c/1d/1e scope and ordering.
 - [`SHARED_SPINE.md`](SHARED_SPINE.md) — the witness → claim → receipt pipeline 1d/1e operate over.
 - [`CLAIM_CUSTODY.md`](CLAIM_CUSTODY.md) — the category these primitives define.
-- [`../RECEIPTS.md`](../RECEIPTS.md) — operator-facing guide to `nq receipt check` and `nq receipt replay`.
-- [`../VERDICTS.md`](../VERDICTS.md) — the preflight verdict vocabulary the evaluators emit and replay re-runs against.
-- [`../CLAIM_PREFLIGHT.md`](../CLAIM_PREFLIGHT.md) — preflight doctrine.
+- [`../operator/RECEIPTS.md`](../operator/RECEIPTS.md) — operator-facing guide to `nq receipt check` and `nq receipt replay`.
+- [`../operator/VERDICTS.md`](../operator/VERDICTS.md) — the preflight verdict vocabulary the evaluators emit and replay re-runs against.
+- [`../working/decisions/CLAIM_PREFLIGHT.md`](../working/decisions/CLAIM_PREFLIGHT.md) — preflight doctrine.

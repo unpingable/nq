@@ -1,6 +1,6 @@
 -- Migration 032: ZFS vdev error counter history.
 --
--- Phase C of docs/gaps/ZFS_COLLECTOR_GAP.md adds
+-- Phase C of docs/working/gaps/ZFS_COLLECTOR_GAP.md adds
 -- `zfs_error_count_increased`, which is edge-triggered: did a vdev's
 -- error counter strictly increase between the last two generations?
 --

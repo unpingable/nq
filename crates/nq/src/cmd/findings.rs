@@ -1,6 +1,6 @@
 //! `nq findings export` — canonical consumer-facing finding export.
 //!
-//! Per `docs/gaps/FINDING_EXPORT_GAP.md`. Contract-first, transport-later:
+//! Per `docs/working/gaps/FINDING_EXPORT_GAP.md`. Contract-first, transport-later:
 //! this is the local CLI/JSON seam that consumers (Night Shift first) read
 //! against. HTTP / push surfaces land in v1.1+ once the semantics settle.
 

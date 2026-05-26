@@ -10,7 +10,7 @@
 --   legacy_unclassified — pre-migration findings; age out via retention, never
 --                         heuristically backfilled from ServiceImpact/ActionBias
 --
--- Declaration rule (constitutional, see docs/gaps/ALERT_INTERPRETATION_GAP.md
+-- Declaration rule (constitutional, see docs/working/gaps/ALERT_INTERPRETATION_GAP.md
 -- §"State kind as a first-class axis"): state_kind is declared by the emitting
 -- detector. It is NOT inferred from ServiceImpact, ActionBias, rendered copy,
 -- or notification routing. Downstream layers may sort or group by kind, but

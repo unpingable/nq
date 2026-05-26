@@ -7,7 +7,7 @@
 -- two stores; V1 keeps them apart to preserve the annotation-vs-suppression
 -- distinction.
 --
--- See docs/gaps/MAINTENANCE_DECLARATION_GAP.md.
+-- See docs/working/gaps/MAINTENANCE_DECLARATION_GAP.md.
 --
 -- Design discipline (constitutional from the gap):
 --   - Maintenance suppresses interruption, not reality.

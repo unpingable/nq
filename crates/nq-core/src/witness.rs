@@ -9,7 +9,7 @@
 //! ## Custody basis (Slice 2 cut-over)
 //!
 //! Three optional fields support the Track A witness-packet cut-over
-//! (see `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md`):
+//! (see `docs/working/decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md`):
 //! `custody_basis`, `source_finding_ref`, and `projection_limits`. The
 //! envelope still describes a single packet; the new fields let a
 //! consumer distinguish a *native* observation from a *projected*
@@ -50,7 +50,7 @@ pub const CUSTODY_BASIS_NATIVE: &str = "native_observation";
 
 /// `custody_basis` value for a transitional packet projected from legacy
 /// finding state during the Track A cut-over (Slice 2 of
-/// `docs/architecture/PATH_TO_1_0.md`).
+/// `docs/working/decisions/PATH_TO_1_0.md`).
 pub const CUSTODY_BASIS_LEGACY_PROJECTION: &str = "legacy_projection";
 
 /// Required `projection_limits` token on every legacy-projection packet.
@@ -135,7 +135,7 @@ impl WitnessPacket {
     /// timestamps parse as RFC3339, no claim-naming in the body.
     ///
     /// The three witness-semantics constraints from
-    /// `docs/WITNESS_PACKET.md` (proxy-shock / replicated-observability /
+    /// `docs/architecture/WITNESS_PACKET.md` (proxy-shock / replicated-observability /
     /// timestamped-evidence) are semantic — they cannot be validated here
     /// without claim context, and are the evaluator's responsibility.
     pub fn validate(&self) -> Result<(), WitnessValidationError> {
@@ -175,7 +175,7 @@ impl WitnessPacket {
         }
 
         // Custody-basis discipline (Slice 2 cut-over — see
-        // docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md). The wire
+        // docs/working/decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md). The wire
         // validator's job here is the structural deadbolt: a projected
         // packet must not be indistinguishable from a native packet, and
         // a native packet must not carry projection-only baggage.
@@ -274,7 +274,7 @@ impl WitnessPacket {
     /// **Verification.** This method computes the digest; it does not
     /// verify one. Verification (re-hash a stored witness, compare
     /// against a digest carried in a receipt) is `nq receipt check`
-    /// territory (Slice 1d in `docs/architecture/PATH_TO_1_0.md`). The
+    /// territory (Slice 1d in `docs/working/decisions/PATH_TO_1_0.md`). The
     /// presence of a digest on a `WitnessRef` is admissibility evidence
     /// for the packet, not authority over the claim.
     pub fn digest(&self) -> Result<String, DigestError> {
@@ -373,7 +373,7 @@ mod tests {
 
     // ---------------------------------------------------------------
     // Custody-basis tests (Slice 2 cut-over — see
-    // docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md)
+    // docs/working/decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md)
     // ---------------------------------------------------------------
 
     fn ok_projection_packet() -> WitnessPacket {
@@ -539,7 +539,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Digest tests (Slice 1a — see docs/architecture/PATH_TO_1_0.md)
+    // Digest tests (Slice 1a — see docs/working/decisions/PATH_TO_1_0.md)
     // ---------------------------------------------------------------
 
     #[test]

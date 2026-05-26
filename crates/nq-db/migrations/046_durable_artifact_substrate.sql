@@ -7,7 +7,7 @@
 -- six existing silence detectors remain ad-hoc pending their own
 -- SILENCE_UNIFICATION_GAP migration.
 --
--- See docs/gaps/DURABLE_ARTIFACT_SUBSTRATE_GAP.md.
+-- See docs/working/gaps/DURABLE_ARTIFACT_SUBSTRATE_GAP.md.
 --
 -- Design discipline (constitutional from the gap):
 --   - Inbound testimony has its own contract (nq.finding_import.v1);

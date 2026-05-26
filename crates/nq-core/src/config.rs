@@ -24,7 +24,7 @@ pub struct Config {
 }
 
 /// Configuration for operational intent declarations.
-/// See docs/gaps/OPERATIONAL_INTENT_DECLARATION_GAP.md.
+/// See docs/working/gaps/OPERATIONAL_INTENT_DECLARATION_GAP.md.
 ///
 /// `path` is the JSON file the publish path re-reads each cycle. If
 /// unset, the suppression pass is a no-op. A configured path that
@@ -39,7 +39,7 @@ pub struct DeclarationsConfig {
 
 /// Configuration for writing the liveness artifact after each successful
 /// generation commit. Read by a separate sentinel process.
-/// See docs/gaps/SENTINEL_LIVENESS_GAP.md.
+/// See docs/working/gaps/SENTINEL_LIVENESS_GAP.md.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LivenessConfig {
     /// Path to write the artifact. If None, no artifact is written.
@@ -343,7 +343,7 @@ impl Default for RetentionConfig {
 /// `DESIGN.md` §6 "Disk Budget Strategy" (warn → aggressive retention →
 /// stop writing history) is not implemented. The fields are kept so the
 /// future enforcement implementation does not have to re-add them. See
-/// `docs/gaps/DISK_BUDGET_ENFORCEMENT_GAP.md` for the decision space a
+/// `docs/working/gaps/DISK_BUDGET_ENFORCEMENT_GAP.md` for the decision space a
 /// ratified implementation must pin first.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiskBudgetConfig {

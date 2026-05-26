@@ -1,8 +1,8 @@
 # NQ Architecture Spine and Roadmap
 
 **Status:** `ratified` — drafted 2026-05-20 after audit of `nq` and `nq-witness` against the proposed spine framing. This document is the source of truth; the memory leaves `project_nq_architecture_spine.md` and `project_nq_roadmap_v0.md` summarize and point here.
-**Depends on:** `../CLAIM_PREFLIGHT.md` (doctrine), `../WITNESS_PACKET.md` (witness side), `../VERDICTS.md` (verdict vocabulary), `../CLAIM_PREFLIGHT_EXISTING_WITNESSES.md` (Track A surface), `SHARED_SPINE.md` (Receipt boundary)
-**Related gaps:** `../gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`, `../gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md`, `../gaps/DNS_WITNESS_FAMILY_GAP.md`, `../gaps/PREMISE_DEGRADED_GAP.md`
+**Depends on:** `../working/decisions/CLAIM_PREFLIGHT.md` (doctrine), `../architecture/WITNESS_PACKET.md` (witness side), `../operator/VERDICTS.md` (verdict vocabulary), `../working/decisions/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md` (Track A surface), `SHARED_SPINE.md` (Receipt boundary)
+**Related gaps:** `../working/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`, `../working/gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md`, `../working/gaps/DNS_WITNESS_FAMILY_GAP.md`, `../working/gaps/PREMISE_DEGRADED_GAP.md`
 **Last updated:** 2026-05-20
 
 ## Keeper
@@ -31,7 +31,7 @@ Five layers. Each layer has one job and one keeper rule. The keepers exist to pr
 - `cannot_testify` — per-claim-kind constitutional refusal lists (e.g. `disk_state_cannot_testify()`, `ingest_state_cannot_testify()`, `dns_state_cannot_testify()`) in `crates/nq-core/src/preflight.rs`
 - Producer-side contracts: `nq.witness.v0` plus per-profile shapes (`nq.witness.zfs.v0`, `nq.witness.smart.v0`) — separate repo at `~/git/nq-witness`
 
-**Doctrine:** `../WITNESS_PACKET.md` (three witness-semantics constraints), `~/git/nq-witness/SPEC.md`
+**Doctrine:** `../architecture/WITNESS_PACKET.md` (three witness-semantics constraints), `~/git/nq-witness/SPEC.md`
 
 **Tests:** envelope-validation tests in `crates/nq-core/src/witness.rs`; per-claim-kind cannot_testify presence asserted across the evaluator suites.
 
@@ -48,7 +48,7 @@ A claim kind declares: required witness families, minimum freshness, required co
 - `ClaimRegistry` — `crates/nq-core/src/claim_registry.rs` — `Leaf` / `Composite` / `NonMintable` entries; Track B starter catalog hardcoded
 - Per-kind `cannot_testify` lists — `crates/nq-core/src/preflight.rs`
 
-**Doctrine:** `../CLAIM_PREFLIGHT.md`, `../CLAIM_PREFLIGHT_EXISTING_WITNESSES.md`, `../gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`
+**Doctrine:** `../working/decisions/CLAIM_PREFLIGHT.md`, `../working/decisions/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md`, `../working/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`
 
 **Tests:** unit tests across `crates/nq-core/src/claim_registry.rs` and `crates/nq-core/src/preflight.rs` cover serde shape, skeleton refusals, leaf/composite/non-mintable resolution.
 
@@ -76,7 +76,7 @@ A claim kind declares: required witness families, minimum freshness, required co
 - Track A evaluators — `crates/nq-db/src/preflight.rs` (`disk_state`, `ingest_state`), `crates/nq-db/src/dns.rs` (`dns_state`)
 - Track B evaluator — `crates/nq-core/src/claim_registry.rs::evaluate`
 
-**Doctrine:** `../VERDICTS.md`
+**Doctrine:** `../operator/VERDICTS.md`
 
 **Tests:** 21 in `crates/nq-db/src/dns.rs`; analogous suites for `disk_state` and `ingest_state` in `crates/nq-db/src/preflight.rs`; the V0 wire-parser hardening pass in `crates/nq/src/probe.rs` exercises the response-kind classifier against hostile inputs.
 
@@ -115,7 +115,7 @@ A receipt binds: requested claim, evaluated claim, witness references, evaluator
 |---|---|---|
 | `nq.witness.v1` | **live** | `WITNESS_SCHEMA` in `nq-core::witness`. nq-witness side ships `v0` — independent versioning is intentional (see seam #3 below). |
 | `nq.claim.v1` | **deferred / aspirational** | Claim kinds live in Rust code (`ClaimRegistry`). Extract to wire contract only when external claim authorship, cross-repo claim inspection, or non-Rust consumers force it. Symmetry for symmetry's sake is how YAML gets tenure. |
-| `nq.preflight.<claim_kind>.v1` (per-kind, plural) | **live as per-kind** | `nq.preflight.disk_state.v1`, `nq.preflight.ingest_state.v1`, `nq.preflight.dns_state.v1` all ship today. Single internal `PreflightResult` DTO. Unified `nq.preflight_result.v1` is future consolidation only — the registry-pressure point named in `../gaps/DNS_WITNESS_FAMILY_GAP.md` stays visible until claim kind 4 forces it. |
+| `nq.preflight.<claim_kind>.v1` (per-kind, plural) | **live as per-kind** | `nq.preflight.disk_state.v1`, `nq.preflight.ingest_state.v1`, `nq.preflight.dns_state.v1` all ship today. Single internal `PreflightResult` DTO. Unified `nq.preflight_result.v1` is future consolidation only — the registry-pressure point named in `../working/gaps/DNS_WITNESS_FAMILY_GAP.md` stays visible until claim kind 4 forces it. |
 | `nq.receipt.v1` | **live** | `RECEIPT_SCHEMA` in `nq-core::receipt`. Renderers ship. Hash / binding / replay still TODO (Phase 2 of roadmap). |
 
 ## Claim families — live vs candidate
@@ -137,7 +137,7 @@ A receipt binds: requested claim, evaluated claim, witness references, evaluator
 
 | Claim | Status | Notes |
 |---|---|---|
-| `service_recovered` / `service_state` | docs-only candidate | Doctrined in `../CLAIM_PREFLIGHT_EXISTING_WITNESSES.md`. No witness, no evaluator. |
+| `service_recovered` / `service_state` | docs-only candidate | Doctrined in `../working/decisions/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md`. No witness, no evaluator. |
 | `deployment_safe` | not in scope | Mentioned in some prior framings as an example; no implementation, no doctrine. |
 | `dns_name_exists` | **subsumed by `dns_state`** | NQ ships finer-grained per-(vantage, resolver, name, type) testimony. No separate name. Do not record as roadmap debt. |
 
@@ -147,11 +147,11 @@ These are surfaces a future audit would otherwise call "incomplete" — they are
 
 1. **Claim wire contract is not extracted.** Claim kinds live in `ClaimRegistry` Rust code, not in a `nq.claim.v1` serialized doctrine. Defer extraction until external claim authorship, cross-repo claim inspection, or non-Rust consumers force the wire format. Claim definitions are operational doctrine, not portable data blobs.
 
-2. **Preflight results carry per-claim-kind wire schemas.** No unified `nq.preflight_result.v1` envelope. Three per-kind shapes (`nq.preflight.disk_state.v1`, `nq.preflight.ingest_state.v1`, `nq.preflight.dns_state.v1`) sit on the wire. Consolidation is the registry generalization (`../gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`), forcing case: claim kind 4.
+2. **Preflight results carry per-claim-kind wire schemas.** No unified `nq.preflight_result.v1` envelope. Three per-kind shapes (`nq.preflight.disk_state.v1`, `nq.preflight.ingest_state.v1`, `nq.preflight.dns_state.v1`) sit on the wire. Consolidation is the registry generalization (`../working/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`), forcing case: claim kind 4.
 
 3. **nq and nq-witness version independently.** nq's consumer-side `nq.witness.v1` and nq-witness's producer-side `nq.witness.v0` are contract-compatible today. Bump nq-witness when the producer contract itself changes or hardens — not for aesthetic alignment.
 
-4. **Track A.0 reads `FindingSnapshot` directly.** The `disk_state` evaluator currently shortcuts the witness-packet projection. **This is acknowledged carry pending the A.1 cut-over** (`../gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md`) — **not a doctrine exception.** The keeper rule ("Witnesses observe. They do not promote.") stands. Track A.0 will retire or become a thin renderer over the shared spine when the cut-over lands. Do not weaken the keeper to absorb the shortcut; that turns temporary scaffolding into architecture by adverse possession.
+4. **Track A.0 reads `FindingSnapshot` directly.** The `disk_state` evaluator currently shortcuts the witness-packet projection. **This is acknowledged carry pending the A.1 cut-over** (`../working/gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md`) — **not a doctrine exception.** The keeper rule ("Witnesses observe. They do not promote.") stands. Track A.0 will retire or become a thin renderer over the shared spine when the cut-over lands. Do not weaken the keeper to absorb the shortcut; that turns temporary scaffolding into architecture by adverse possession.
 
 ## Roadmap — audit-corrected
 
@@ -239,7 +239,7 @@ Mainline NQ asks "given this observation, what may we claim?" Witness-path assur
 
 **Warning label:** do not build until a real claim family needs stronger testimony than today's packets provide. Candidate first forcing cases (none active): DNS multi-vantage disagreement, imported findings with stale producer basis, CI witness packets where provenance is weak, Nightshift consumption distinguishing native vs imported freshness, effect-boundary witness with specimen.
 
-See `../gaps/WITNESS_PATH_ASSURANCE_GAP.md` for the full ladder, current-level audit, and composition rules with the existing phases.
+See `../working/gaps/WITNESS_PATH_ASSURANCE_GAP.md` for the full ladder, current-level audit, and composition rules with the existing phases.
 
 ## Roadmap rules (anti-sprawl)
 
@@ -267,9 +267,9 @@ Each of those may appear later. None is implied by the shape.
 
 ## Cross-references
 
-- Doctrine: `../CLAIM_PREFLIGHT.md`, `../WITNESS_PACKET.md`, `../VERDICTS.md`, `../CLAIM_PREFLIGHT_EXISTING_WITNESSES.md`
+- Doctrine: `../working/decisions/CLAIM_PREFLIGHT.md`, `../architecture/WITNESS_PACKET.md`, `../operator/VERDICTS.md`, `../working/decisions/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md`
 - Architecture: `SHARED_SPINE.md`
-- Gaps: `../gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`, `../gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md`, `../gaps/DNS_WITNESS_FAMILY_GAP.md`, `../gaps/PREMISE_DEGRADED_GAP.md`
+- Gaps: `../working/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`, `../working/gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md`, `../working/gaps/DNS_WITNESS_FAMILY_GAP.md`, `../working/gaps/PREMISE_DEGRADED_GAP.md`
 - Producer side: `~/git/nq-witness/SPEC.md`, `~/git/nq-witness/profiles/{zfs,smart}.md`
 
 ## Closing line

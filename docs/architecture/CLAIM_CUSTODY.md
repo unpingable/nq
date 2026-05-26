@@ -170,7 +170,7 @@ These are pressure, not scope. None of them is in flight. The right move when an
 
 ## Slogans
 
-The doctrinal lines are quoted across this document and `docs/RECEIPTS.md`. Pinning them in one place so they don't drift in restatement:
+The doctrinal lines are quoted across this document and `docs/operator/RECEIPTS.md`. Pinning them in one place so they don't drift in restatement:
 
 > A stale receipt is not a forged receipt. A forged receipt is not a stale receipt.
 
@@ -202,11 +202,11 @@ The engineer-shaped sticky handle. Tells you what kind of tool this is in a sent
 
 ## See also
 
-- [`PATH_TO_1_0.md`](PATH_TO_1_0.md) — Slice 1a/1b/1c/1d/1e scope and ordering; Phase 2 complete.
+- [`PATH_TO_1_0.md`](../working/decisions/PATH_TO_1_0.md) — Slice 1a/1b/1c/1d/1e scope and ordering; Phase 2 complete.
 - [`RECEIPT_REPLAY.md`](RECEIPT_REPLAY.md) — semantics pin for `nq receipt check` and `nq receipt replay`.
 - [`SHARED_SPINE.md`](SHARED_SPINE.md) — the witness → claim → receipt pipeline.
 - [`SPINE_AND_ROADMAP.md`](SPINE_AND_ROADMAP.md) — the five-layer spine and roadmap phases.
-- [`../RECEIPTS.md`](../RECEIPTS.md) — operator-facing receipt guide.
-- [`../CLAIM_PREFLIGHT.md`](../CLAIM_PREFLIGHT.md) — preflight doctrine and the laundering-pattern refusal.
-- [`../CLAIM_CATALOG.md`](../CLAIM_CATALOG.md) — every shipped claim and what it refuses.
-- [`../REFUSAL_EXAMPLES.md`](../REFUSAL_EXAMPLES.md) — worked refusal examples.
+- [`../operator/RECEIPTS.md`](../operator/RECEIPTS.md) — operator-facing receipt guide.
+- [`../working/decisions/CLAIM_PREFLIGHT.md`](../working/decisions/CLAIM_PREFLIGHT.md) — preflight doctrine and the laundering-pattern refusal.
+- [`../operator/CLAIM_CATALOG.md`](../operator/CLAIM_CATALOG.md) — every shipped claim and what it refuses.
+- [`../operator/REFUSAL_EXAMPLES.md`](../operator/REFUSAL_EXAMPLES.md) — worked refusal examples.

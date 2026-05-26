@@ -3,7 +3,7 @@
 //! Phase 1: evaluator continues to read findings from the NQ DB (Track
 //! A.0), but output is normalized to `nq.receipt.v1` so the shared
 //! receipt spine carries it. See `docs/architecture/SHARED_SPINE.md`
-//! and `docs/PRODUCT_SURFACES.md`.
+//! and `docs/working/decisions/PRODUCT_SURFACES.md`.
 
 use crate::cli::{PreflightAction, PreflightCmd, PreflightDiskStateCmd};
 use nq_core::{render_human, render_json, render_jsonl, Receipt};

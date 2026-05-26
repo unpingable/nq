@@ -3,7 +3,7 @@
 //! non-arrival of new generations becomes legible to something outside
 //! NQ's failure boundary.
 //!
-//! See docs/gaps/SENTINEL_LIVENESS_GAP.md.
+//! See docs/working/gaps/SENTINEL_LIVENESS_GAP.md.
 
 use serde::{Deserialize, Serialize};
 use std::io::Write;

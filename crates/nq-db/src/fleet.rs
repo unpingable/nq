@@ -3,7 +3,7 @@
 //! presents them as one row per target — no merged authority, no
 //! synthetic fleet state.
 //!
-//! See `docs/gaps/FLEET_INDEX_GAP.md`. This module owns the typed
+//! See `docs/working/gaps/FLEET_INDEX_GAP.md`. This module owns the typed
 //! manifest shape and its loader; the reader/render lives in the nq
 //! binary's `cmd::fleet` module.
 

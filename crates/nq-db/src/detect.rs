@@ -12,7 +12,7 @@ use rusqlite::Connection;
 
 // ---------------------------------------------------------------------------
 // Typed diagnosis: the semantic nucleus that detectors attach to findings.
-// See docs/gaps/FINDING_DIAGNOSIS_GAP.md for boundary discipline and
+// See docs/working/gaps/FINDING_DIAGNOSIS_GAP.md for boundary discipline and
 // worked examples.
 // ---------------------------------------------------------------------------
 
@@ -196,7 +196,7 @@ impl Stability {
 ///
 /// Declaration rule: every emitter declares this at construction time. It
 /// is **not** inferred from ServiceImpact, ActionBias, rendered copy, or
-/// notification routing. See docs/gaps/ALERT_INTERPRETATION_GAP.md §"State
+/// notification routing. See docs/working/gaps/ALERT_INTERPRETATION_GAP.md §"State
 /// kind as a first-class axis".
 ///
 /// `LegacyUnclassified` exists as the migration contract: pre-migration

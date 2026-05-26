@@ -1,7 +1,7 @@
 //! `dns_observations` substrate + `dns_state` preflight evaluator
 //! (V0, third bespoke claim kind).
 //!
-//! See `docs/gaps/DNS_WITNESS_FAMILY_GAP.md`. This module owns the
+//! See `docs/working/gaps/DNS_WITNESS_FAMILY_GAP.md`. This module owns the
 //! insert and latest-per-tuple load paths against the
 //! `dns_observations` table (migration 047) and the bespoke evaluator
 //! that maps those rows into a bounded `PreflightResult`. No probe, no
@@ -253,7 +253,7 @@ pub fn evaluate_dns_state_preflight_from_conn(
     // produce supports today (silence is not affirmative testimony;
     // unreachable vantage is a witness-standing refusal), so no
     // projection is attempted on those paths. See
-    // docs/architecture/DNS_STATE_WITNESS_PACKET_CUTOVER.md.
+    // docs/working/decisions/preflights/DNS_STATE_WITNESS_PACKET_CUTOVER.md.
     let produces_support = stale
         || matches!(
             obs.response_kind,

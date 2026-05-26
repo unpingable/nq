@@ -100,7 +100,7 @@ pub struct NotVerifiedEntry {
 ///   explicit basis, and on Track A coverage-derived WitnessRefs from
 ///   evaluators that have not yet cut over.
 ///
-/// See `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md`.
+/// See `docs/working/decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md`.
 ///
 /// **Absence of `digest` is not a verification result.** A missing
 /// digest means "this WitnessRef is not anchored to a specific packet
@@ -245,7 +245,7 @@ pub struct Receipt {
     ///
     /// **Verification is deferred.** Slice 1b populates only. No read
     /// path verifies `content_hash` today; `nq receipt check` (Slice 1d
-    /// in `docs/architecture/PATH_TO_1_0.md`) is where verification
+    /// in `docs/working/decisions/PATH_TO_1_0.md`) is where verification
     /// lands.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<String>,
@@ -397,7 +397,7 @@ impl From<PreflightResult> for Receipt {
         // `dns_state`) leave `witness_packet` absent on every support;
         // those receipts continue to emit coverage-derived WitnessRefs
         // with `digest: None`. See
-        // `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md`.
+        // `docs/working/decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md`.
         let any_support_packet = pr.supports.iter().any(|s| s.witness_packet.is_some());
         let witnesses: Vec<WitnessRef> = if any_support_packet {
             pr.supports
@@ -823,7 +823,7 @@ mod tests {
         // pr.claim_kind correctly; the `claim` field now matches.
         // Discrepancy between the two fields was the consumer-
         // preflight beat's headline field gap (see
-        // docs/architecture/SQLITE_WAL_STATE_CONSUMER_PREFLIGHT.md
+        // docs/working/decisions/preflights/SQLITE_WAL_STATE_CONSUMER_PREFLIGHT.md
         // gap #1).
         for kind in [
             ClaimKind::DiskState,

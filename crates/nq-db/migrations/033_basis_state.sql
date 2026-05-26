@@ -16,7 +16,7 @@
 -- last_basis_generation and basis_state_at are NULL when basis_state = 'unknown',
 -- because we won't fabricate timestamps for "we know that we don't know."
 --
--- See docs/gaps/EVIDENCE_RETIREMENT_GAP.md.
+-- See docs/working/gaps/EVIDENCE_RETIREMENT_GAP.md.
 
 ALTER TABLE warning_state ADD COLUMN basis_state TEXT NOT NULL DEFAULT 'unknown'
     CHECK (basis_state IN ('live','stale','retired','invalidated','unknown'));

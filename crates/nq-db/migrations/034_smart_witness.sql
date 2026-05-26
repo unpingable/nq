@@ -1,6 +1,6 @@
 -- Migration 034: SMART witness ingestion spine.
 --
--- Phase 1 of docs/gaps/SMART_* (profile at ~/git/nq-witness/profiles/smart.md):
+-- Phase 1 of docs/working/gaps/SMART_* (profile at ~/git/nq-witness/profiles/smart.md):
 -- the NQ side can ingest, store, and surface a conforming nq.witness.smart.v0
 -- report. No detectors; raw evidence only.
 --

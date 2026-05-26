@@ -5,8 +5,8 @@
 //! the result into a bounded `PreflightResult` per `nq-core::preflight`.
 //!
 //! No new detectors, no new witness families, no operator-phrase intake.
-//! See `docs/CLAIM_PREFLIGHT.md` and `docs/gaps/CLAIM_KIND_DISK_STATE_GAP.md`
-//! for the doctrine; see `docs/WITNESS_PACKET.md` for the three witness-side
+//! See `docs/working/decisions/CLAIM_PREFLIGHT.md` and `docs/working/gaps/CLAIM_KIND_DISK_STATE_GAP.md`
+//! for the doctrine; see `docs/architecture/WITNESS_PACKET.md` for the three witness-side
 //! constraints this evaluator preserves.
 //!
 //! ## Slice 2 cut-over (disk_state + ingest_state)
@@ -31,8 +31,8 @@
 //!   degrades to an exclude; the generation-level support survives).
 //!
 //! `dns_state` has not yet cut over. See
-//! `docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md` (parent) and
-//! `docs/architecture/INGEST_STATE_WITNESS_PACKET_CUTOVER.md` (sibling
+//! `docs/working/decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md` (parent) and
+//! `docs/working/decisions/preflights/INGEST_STATE_WITNESS_PACKET_CUTOVER.md` (sibling
 //! for ingest_state).
 
 use crate::disk_state_witness_projection::project_disk_state_finding;
@@ -151,7 +151,7 @@ pub fn evaluate_disk_state_preflight_from_conn(
     // JCS+SHA-256 digest, observed_at). `From<PreflightResult>` reads
     // these to build one `WitnessRef` per admitted support on Track A
     // disk_state receipts (Slice 2 commit 4). See
-    // docs/architecture/TRACK_A_WITNESS_PACKET_CUTOVER.md.
+    // docs/working/decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md.
     let mut admitted: Vec<(&FindingSnapshot, nq_core::witness::WitnessPacket)> = Vec::new();
     for snap in &substrate {
         match project_disk_state_finding(snap, &generated_at) {
@@ -535,7 +535,7 @@ pub fn evaluate_ingest_state_preflight_from_conn(
     // Coverage stays observable: the witness exists (the row is in the
     // DB), the custody of this specific row failed. Coverage is
     // witness-family standing, not per-row admissibility. See
-    // docs/architecture/INGEST_STATE_WITNESS_PACKET_CUTOVER.md.
+    // docs/working/decisions/preflights/INGEST_STATE_WITNESS_PACKET_CUTOVER.md.
     let gen_packet = match project_ingest_generation(&gen, &generated_at) {
         Ok(p) => p,
         Err(refusal) => {

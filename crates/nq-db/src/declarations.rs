@@ -1,7 +1,7 @@
 //! Operational intent declarations: operator-declared expectation
 //! mutation as first-class testimony.
 //!
-//! See docs/gaps/OPERATIONAL_INTENT_DECLARATION_GAP.md for full rationale.
+//! See docs/working/gaps/OPERATIONAL_INTENT_DECLARATION_GAP.md for full rationale.
 //!
 //! V1 ingestion is file-based: a JSON file at a config-supplied path is
 //! re-read at the start of each publish cycle. Hard invariants

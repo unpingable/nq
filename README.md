@@ -189,21 +189,21 @@ NQ classifies every finding into one of four failure domains. You don't need to 
 | **Substrate under pressure** | Δg | Service looks up but the medium underneath is struggling | WAL bloat, disk pressure, service down |
 | **Worsening over time** | Δh | Within spec now but trending toward failure | Resource drift, service flapping |
 
-These map to a broader [15-domain failure taxonomy](docs/failure-domains.md) from research on temporal coherence in operational systems.
+These map to a broader [15-domain failure taxonomy](docs/operator/failure-domains.md) from research on temporal coherence in operational systems.
 
 ## Docs
 
-- [Operator Guide](docs/OPERATOR_GUIDE.md) — install, deploy, configure, troubleshoot
-- [Receipts](docs/RECEIPTS.md) — `nq receipt check` and `nq receipt replay`, failure taxonomy, worked examples
-- [Claim Catalog](docs/CLAIM_CATALOG.md) — every shipped claim, required witnesses, what each refuses
-- [Refusal Examples](docs/REFUSAL_EXAMPLES.md) — worked examples of NQ refusing stronger claims
-- [Quickstart](docs/quickstart.md) — monitoring a host in 5 minutes
-- [Failure Domains](docs/failure-domains.md) — the four domains and every detector
-- [SQL Cookbook](docs/sql-cookbook.md) — 30+ ready-to-use queries
-- [Integrations](docs/integrations.md) — Prometheus, Telegraf, systemd, Docker, webhooks
-- [Incident Replays](docs/incident-replays.md) — three scenarios showing classification in action
-- [Domains, Not Priority](docs/domains-not-priority.md) — why NQ uses failure type instead of urgency
-- [Architecture](docs/architecture.md) — how it's built
+- [Operator Guide](docs/operator/OPERATOR_GUIDE.md) — install, deploy, configure, troubleshoot
+- [Receipts](docs/operator/RECEIPTS.md) — `nq receipt check` and `nq receipt replay`, failure taxonomy, worked examples
+- [Claim Catalog](docs/operator/CLAIM_CATALOG.md) — every shipped claim, required witnesses, what each refuses
+- [Refusal Examples](docs/operator/REFUSAL_EXAMPLES.md) — worked examples of NQ refusing stronger claims
+- [Quickstart](docs/operator/quickstart.md) — monitoring a host in 5 minutes
+- [Failure Domains](docs/operator/failure-domains.md) — the four domains and every detector
+- [SQL Cookbook](docs/operator/sql-cookbook.md) — 30+ ready-to-use queries
+- [Integrations](docs/operator/integrations.md) — Prometheus, Telegraf, systemd, Docker, webhooks
+- [Incident Replays](docs/operator/incident-replays.md) — three scenarios showing classification in action
+- [Domains, Not Priority](docs/theory/domains-not-priority.md) — why NQ uses failure type instead of urgency
+- [Architecture](docs/architecture/OVERVIEW.md) — how it's built
 
 ## License
 
