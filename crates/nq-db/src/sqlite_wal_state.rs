@@ -1,19 +1,30 @@
-//! `wal_observations` substrate scaffolding for the `sqlite_wal_state`
-//! preflight witness family (fourth bespoke claim kind, V0).
+//! `wal_observations` substrate + `sqlite_wal_state` preflight evaluator
+//! (V0, fourth bespoke claim kind).
 //!
 //! See `docs/architecture/KIND_4_SQLITE_WAL_STATE.md`. This module owns
 //! the typed DTO that represents a `wal_observations` row, the
-//! `proc_access` closed enum, and the insert path used by tests and
-//! (later) by the probe slice.
+//! `proc_access` closed enum, the substrate insert / window-load paths,
+//! and the bespoke evaluator that turns a window of observations into a
+//! bounded `PreflightResult`.
 //!
-//! Substrate-load helpers (window load by target) and the evaluator
-//! both live elsewhere — slice 4 adds them and they will join this
-//! module then. For slice 3 (the projector), the projector consumes
-//! `WalObservation` values constructed in memory by tests, so only the
-//! DTO and the insert helper are needed here.
+//! The evaluator's compound rule is a **pure temporal-condition
+//! function** over the loaded window (§4 of the preflight). Per the
+//! preflight §0 wager, the function is inlined rather than expressed
+//! through a predicate AST: at N=4 the bespoke pattern still composes,
+//! and a generic temporal-condition algebra would be the speculative-
+//! generalization failure mode. If a future kind 5 also wants sustained-
+//! over-window reasoning, that is the explicit threshold where the
+//! registry shape gets re-tested.
 
+use crate::sqlite_wal_state_witness_projection::project_wal_observation;
+use crate::witness_projection_support::{make_projection_refusal_exclusion, packet_identity};
+use crate::ReadDb;
 use anyhow::Context;
-use rusqlite::{params, Connection};
+use nq_core::preflight::{
+    freshness_horizon_from, ClaimKind, PreflightCoverage, PreflightResult, PreflightSupport,
+    PreflightTarget, Verdict,
+};
+use rusqlite::{params, Connection, Row};
 use std::str::FromStr;
 
 /// Whether the `/proc/$pid/fd` cross-check was performed for this
@@ -115,6 +126,762 @@ pub struct WalObservation {
     pub error_detail: Option<String>,
 }
 
+/// The `(host, db_file_path)` identity that selects a single SQLite WAL
+/// substrate target. The evaluator (slice 4) reads a window of
+/// observations matching this key.
+#[derive(Debug, Clone, Copy)]
+pub struct SqliteWalTarget<'a> {
+    pub host: &'a str,
+    pub db_file_path: &'a str,
+}
+
+/// Load the window of `wal_observations` for `target` whose
+/// `observed_at >= window_start_rfc3339`, ordered oldest-to-newest.
+///
+/// The evaluator's compound rule reasons over a sliding window, not a
+/// single latest row, so this loader differs from
+/// `dns::latest_observation_for_tuple` (which returns one row) and from
+/// `ingest_state` loaders (which return latest + auxiliaries). This is
+/// the fourth hand-rolled substrate loader — pressure point #3 from the
+/// DNS preflight §0, now at N=4, still composing as a bespoke per-kind
+/// fetch (see kind-4 preflight §0 for the named-deferred carry).
+///
+/// Ordering: ascending `observed_at` (with `observation_id` as the
+/// tie-breaker for monotonic determinism). The evaluator scans the
+/// window from oldest to newest so window-duration computations
+/// (`last - first`) read cleanly.
+///
+/// `window_start_rfc3339` is the inclusive lower bound. The caller
+/// computes it from `now - window_duration`; the evaluator does not
+/// embed the duration here.
+pub fn load_recent_wal_observations(
+    conn: &Connection,
+    target: &SqliteWalTarget<'_>,
+    window_start_rfc3339: &str,
+) -> anyhow::Result<Vec<WalObservation>> {
+    let mut stmt = conn.prepare(
+        "SELECT observation_id, generation_id, host, db_file_path,
+                wal_present, wal_bytes, wal_mtime,
+                db_bytes, db_mtime,
+                proc_access,
+                pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                observed_at, error_detail
+         FROM wal_observations
+         WHERE host = ?1 AND db_file_path = ?2
+           AND observed_at >= ?3
+         ORDER BY observed_at ASC, observation_id ASC",
+    )?;
+    let rows = stmt.query_map(
+        params![target.host, target.db_file_path, window_start_rfc3339],
+        row_to_observation,
+    )?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+fn row_to_observation(r: &Row<'_>) -> rusqlite::Result<WalObservation> {
+    let proc_access_str: String = r.get(9)?;
+    let proc_access = ProcAccess::from_str(&proc_access_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(
+            9,
+            rusqlite::types::Type::Text,
+            Box::new(e),
+        )
+    })?;
+    let wal_present_int: i64 = r.get(4)?;
+    let pinned_reader_present_opt: Option<i64> = r.get(10)?;
+    Ok(WalObservation {
+        observation_id: Some(r.get(0)?),
+        generation_id: r.get(1)?,
+        host: r.get(2)?,
+        db_file_path: r.get(3)?,
+        wal_present: wal_present_int != 0,
+        wal_bytes: r.get(5)?,
+        wal_mtime: r.get(6)?,
+        db_bytes: r.get(7)?,
+        db_mtime: r.get(8)?,
+        proc_access,
+        pinned_reader_present: pinned_reader_present_opt.map(|v| v != 0),
+        pinned_reader_pid: r.get(11)?,
+        pinned_reader_command: r.get(12)?,
+        observed_at: r.get(13)?,
+        error_detail: r.get(14)?,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// `sqlite_wal_state` evaluator constants. All bespoke for V0; calibration
+// targets per the 2026-04-22 incident lesson and Continuity
+// `mem_2d5b975947624b30a4f6dccc4c5c9d38`.
+//
+// Bytes are decimal (10^9) — what `df` and disk vendors report. The 2^30
+// alternative is ~7% larger; at calibration thresholds the choice is
+// noise. Document and move on.
+// ---------------------------------------------------------------------------
+
+/// Staleness threshold for the latest `wal_observations` row, in seconds.
+/// 600s = 10× the default 60s probe interval — large enough to absorb
+/// missed cycles, small enough that two consecutive misses surface as
+/// `stale_testimony`.
+pub const SQLITE_WAL_STATE_STALE_THRESHOLD_SECONDS: i64 = 600;
+
+/// Sustained-condition window duration, in seconds. The evaluator loads
+/// observations whose `observed_at >= now - WINDOW_DURATION_SECONDS`.
+/// 12 h matches the most-aggressive sustained-condition window in the
+/// 2026-04-22 detector design.
+pub const SQLITE_WAL_STATE_WINDOW_DURATION_SECONDS: i64 = 12 * 3600;
+
+/// Minimum window-duration coverage for `CONDITION_ELEVATED_SUSTAINED`,
+/// in seconds. 6 h — the elevated threshold's sustainability lower bound.
+const SQLITE_WAL_STATE_ELEVATED_DURATION_SECONDS: i64 = 6 * 3600;
+
+/// Minimum window-duration coverage for `CONDITION_SEVERE_SUSTAINED`,
+/// in seconds. 12 h — the severe threshold's sustainability lower bound.
+const SQLITE_WAL_STATE_SEVERE_DURATION_SECONDS: i64 = 12 * 3600;
+
+/// Minimum observation samples for the elevated path. Below this floor
+/// the evaluator returns `insufficient_coverage` — sustained-condition
+/// testimony requires observably-covered windows, not extrapolation.
+const SQLITE_WAL_STATE_MIN_SAMPLES_ELEVATED: usize = 100;
+
+/// Minimum observation samples for the severe path. ~5 h of coverage at
+/// a 60s probe interval out of the 12 h window.
+const SQLITE_WAL_STATE_MIN_SAMPLES_SEVERE: usize = 300;
+
+/// Elevated WAL size threshold, in bytes. 2 GB (decimal).
+const SQLITE_WAL_STATE_ELEVATED_BYTES: i64 = 2_000_000_000;
+
+/// Severe WAL size threshold, in bytes. 10 GB (decimal).
+const SQLITE_WAL_STATE_SEVERE_BYTES: i64 = 10_000_000_000;
+
+/// Severe WAL-to-DB ratio threshold. WAL bytes exceeding half the main
+/// DB size for the whole window is severe regardless of absolute size —
+/// `wal/db > 0.5` is the "WAL approaches DB scale" signal from the
+/// 2026-04-22 incident.
+const SQLITE_WAL_STATE_SEVERE_RATIO: f64 = 0.5;
+
+/// Error-detail prefix the probe uses when it could not stat the main
+/// DB file. The evaluator routes any window containing a row with this
+/// prefix to `cannot_testify`. (No probe writes such rows today; the
+/// convention is fixed here so a future probe slice has a stable
+/// substrate vocabulary to opt into.)
+const ERROR_DETAIL_INACCESSIBLE_DB_PREFIX: &str = "cannot_stat_db:";
+
+// ---------------------------------------------------------------------------
+// Public evaluator entry points.
+// ---------------------------------------------------------------------------
+
+/// Public entry point. Returns a `PreflightResult` for `sqlite_wal_state`
+/// over the recent observation window for `target`.
+pub fn evaluate_sqlite_wal_state_preflight(
+    db: &ReadDb,
+    target: &SqliteWalTarget<'_>,
+) -> anyhow::Result<PreflightResult> {
+    evaluate_sqlite_wal_state_preflight_from_conn(db.conn(), target)
+}
+
+/// Variant that accepts a raw `Connection`. Used by tests and by the
+/// HTTP route layer (later slice); the public API is the `ReadDb` form
+/// above.
+pub fn evaluate_sqlite_wal_state_preflight_from_conn(
+    conn: &Connection,
+    target: &SqliteWalTarget<'_>,
+) -> anyhow::Result<PreflightResult> {
+    let now = time::OffsetDateTime::now_utc();
+    evaluate_sqlite_wal_state_preflight_at(conn, target, now)
+}
+
+/// Internal entry point that takes `now` explicitly so tests can pin
+/// the evaluation clock. The public callers stamp wall-clock time.
+fn evaluate_sqlite_wal_state_preflight_at(
+    conn: &Connection,
+    target: &SqliteWalTarget<'_>,
+    now: time::OffsetDateTime,
+) -> anyhow::Result<PreflightResult> {
+    let generated_at = now
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_default();
+
+    let preflight_target = PreflightTarget {
+        host: target.host.to_string(),
+        scope: "sqlite_wal".to_string(),
+        id: Some(target.db_file_path.to_string()),
+    };
+    let mut result = PreflightResult::skeleton(
+        ClaimKind::SqliteWalState,
+        preflight_target,
+        generated_at.clone(),
+    );
+
+    let window_start = (now
+        - time::Duration::seconds(SQLITE_WAL_STATE_WINDOW_DURATION_SECONDS))
+    .format(&time::format_description::well_known::Rfc3339)
+    .unwrap_or_default();
+
+    let window = load_recent_wal_observations(conn, target, &window_start)?;
+
+    // Classification: the pure temporal-condition function. The whole
+    // §0 wager lives here.
+    let classification = classify_window(&window, now);
+
+    // Project + emit supports / exclusions for every observation in the
+    // window. Refusals route through the shared scaffolding from commit
+    // 92ad59a. Some classifications (NoRows, InaccessibleDb) intentionally
+    // skip the per-row support emission; see emit_supports_and_packets.
+    let projected_packets =
+        emit_supports_and_packets(&window, &generated_at, &mut result, &classification);
+
+    // Coverage standing — one entry, the sqlite_wal_probe witness.
+    let standing = match &classification {
+        WalClassification::NoRowsInWindow => "absent",
+        WalClassification::InaccessibleDb { .. } => "observable", // probe ran; main DB was the blocker
+        WalClassification::LatestRowStale { .. } => "stale",
+        WalClassification::InsufficientSamples { .. } => "observable",
+        WalClassification::BoundedWal { .. }
+        | WalClassification::ElevatedSustained { .. }
+        | WalClassification::SevereSustained { .. }
+        | WalClassification::Contradictory { .. } => "observable",
+    };
+    result.coverage.push(PreflightCoverage {
+        witness: "sqlite_wal_probe".to_string(),
+        standing: standing.to_string(),
+        note: None,
+    });
+
+    // Observation-window disclosure: derived from supports[] (mirrors
+    // the three earlier evaluator paths). Set even if no rows admitted.
+    result.observed_at_min = result
+        .supports
+        .iter()
+        .filter_map(|s| s.observed_at.clone())
+        .min();
+    result.observed_at_max = result
+        .supports
+        .iter()
+        .filter_map(|s| s.observed_at.clone())
+        .max();
+    result.freshness_horizon = freshness_horizon_from(
+        result.observed_at_max.as_deref(),
+        SQLITE_WAL_STATE_STALE_THRESHOLD_SECONDS,
+    );
+
+    // Verdict + note. Mapping is total over the WalClassification enum.
+    let (verdict, note) = map_classification_to_verdict(&classification, target);
+    result.verdict = verdict;
+    result.verdict_note = Some(note);
+
+    result.compute_time_basis();
+
+    // `projected_packets` is currently unused after the support loop;
+    // it exists as a value-binding to keep the projection lifetime
+    // explicit (the supports hold the wire-identity slice; the packets
+    // themselves go out of scope here, matching the dns_state and
+    // ingest_state evaluator patterns).
+    drop(projected_packets);
+
+    Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// The pure temporal-condition function. This is the slice's §0 evidence:
+// a single bespoke function over `&[WalObservation]`. No predicate AST,
+// no combinator helpers, no shared temporal machinery. If a kind 5
+// proposes the same shape, this function is the thing the registry-
+// shape gap gets to test against.
+// ---------------------------------------------------------------------------
+
+/// What the window says about the substrate. Total over the eight
+/// closed verdicts via `map_classification_to_verdict`.
+#[derive(Debug, Clone, PartialEq)]
+enum WalClassification {
+    /// No rows for this target in the window.
+    NoRowsInWindow,
+    /// Latest row exists but its `observed_at` exceeds the staleness
+    /// threshold against `now`.
+    LatestRowStale {
+        observed_at: String,
+        age_seconds: i64,
+    },
+    /// The window contains a row with `error_detail` indicating the
+    /// probe could not read the main DB file. Single-row trip; the
+    /// probe's substrate boundary is broken for this target.
+    InaccessibleDb {
+        error_detail: String,
+    },
+    /// Substrate physics violation that survived projection (e.g.,
+    /// `wal_mtime` or `db_mtime` in the future of `observed_at`).
+    Contradictory {
+        reason: String,
+    },
+    /// Latest row is fresh but the window has too few samples to
+    /// underwrite sustained-condition testimony.
+    InsufficientSamples {
+        count: usize,
+        needed: usize,
+    },
+    /// Window meets the sample floor, observations all below the
+    /// elevated WAL threshold.
+    BoundedWal {
+        window_duration_seconds: i64,
+        signals: WalSignals,
+    },
+    /// Window satisfies `CONDITION_ELEVATED_SUSTAINED` but not
+    /// `CONDITION_SEVERE_SUSTAINED`.
+    ElevatedSustained {
+        window_duration_seconds: i64,
+        signals: WalSignals,
+    },
+    /// Window satisfies `CONDITION_SEVERE_SUSTAINED`. Decorations on
+    /// the note text come from `signals`.
+    SevereSustained {
+        window_duration_seconds: i64,
+        signals: WalSignals,
+    },
+}
+
+/// Decoration signals that ride on the verdict note for elevated and
+/// severe classifications. Computed once per window.
+#[derive(Debug, Clone, PartialEq)]
+struct WalSignals {
+    /// True iff every observation in the window has
+    /// `observed_at - db_mtime >= window_duration_seconds` (main DB
+    /// hasn't moved at any point during the window).
+    main_db_mtime_stale_across_window: bool,
+    /// What the window's pinned-reader observations say. Honestly
+    /// distinguishes "present," "absent," "unobserved" (no observation
+    /// in the window had `proc_access == Observed`).
+    pinned_reader: PinnedReaderSignal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PinnedReaderSignal {
+    Present,
+    Absent,
+    Unobserved,
+}
+
+impl PinnedReaderSignal {
+    fn as_note_text(self) -> &'static str {
+        match self {
+            Self::Present => "present",
+            Self::Absent => "absent",
+            Self::Unobserved => "unobserved",
+        }
+    }
+}
+
+/// Classify the window. Pure function — the slice's load-bearing
+/// promise from §0 is that this stays readable as a single function
+/// without combinators.
+fn classify_window(window: &[WalObservation], now: time::OffsetDateTime) -> WalClassification {
+    // Pre-substrate failures first: inaccessible DB and chronology
+    // violations get verdict precedence over coverage / sustained
+    // condition mapping.
+    if let Some(detail) = first_inaccessible_db(window) {
+        return WalClassification::InaccessibleDb {
+            error_detail: detail,
+        };
+    }
+    if let Some(reason) = first_contradiction(window) {
+        return WalClassification::Contradictory { reason };
+    }
+
+    // Coverage gate.
+    let Some(latest) = window.last() else {
+        return WalClassification::NoRowsInWindow;
+    };
+
+    // Freshness gate — the latest row anchors the "is the probe still
+    // running?" question. If the latest is stale, the window cannot
+    // anchor sustained-condition testimony regardless of sample count.
+    let Some(latest_obs) = parse_rfc3339(&latest.observed_at) else {
+        // Defensive: projector / loader should reject unparseable
+        // observed_at upstream. Treat as no coverage rather than
+        // panic.
+        return WalClassification::NoRowsInWindow;
+    };
+    let age = (now - latest_obs).whole_seconds();
+    if age > SQLITE_WAL_STATE_STALE_THRESHOLD_SECONDS {
+        return WalClassification::LatestRowStale {
+            observed_at: latest.observed_at.clone(),
+            age_seconds: age,
+        };
+    }
+
+    // Sample-count floor. Sustained-condition testimony requires
+    // observably-covered windows — not "one row that happens to
+    // satisfy a threshold."
+    if window.len() < SQLITE_WAL_STATE_MIN_SAMPLES_ELEVATED {
+        return WalClassification::InsufficientSamples {
+            count: window.len(),
+            needed: SQLITE_WAL_STATE_MIN_SAMPLES_ELEVATED,
+        };
+    }
+
+    let window_duration_seconds = compute_window_duration_seconds(window);
+    let signals = compute_signals(window, window_duration_seconds);
+
+    // Severe > elevated > bounded. Severe needs both the higher sample
+    // floor and the higher window duration AND the threshold (size OR
+    // ratio).
+    if window.len() >= SQLITE_WAL_STATE_MIN_SAMPLES_SEVERE
+        && window_duration_seconds >= SQLITE_WAL_STATE_SEVERE_DURATION_SECONDS
+        && all_severe(window)
+    {
+        return WalClassification::SevereSustained {
+            window_duration_seconds,
+            signals,
+        };
+    }
+
+    if window_duration_seconds >= SQLITE_WAL_STATE_ELEVATED_DURATION_SECONDS && all_elevated(window)
+    {
+        return WalClassification::ElevatedSustained {
+            window_duration_seconds,
+            signals,
+        };
+    }
+
+    WalClassification::BoundedWal {
+        window_duration_seconds,
+        signals,
+    }
+}
+
+/// `ALL(observations).wal_bytes > ELEVATED_BYTES`.
+fn all_elevated(window: &[WalObservation]) -> bool {
+    !window.is_empty()
+        && window
+            .iter()
+            .all(|o| o.wal_bytes > SQLITE_WAL_STATE_ELEVATED_BYTES)
+}
+
+/// `ALL(observations).wal_bytes > SEVERE_BYTES OR
+///  ALL(observations).wal/db > SEVERE_RATIO`.
+/// Parenthesisation per preflight §4 (the `OR` binds inside the `ALL`
+/// after the size/ratio choice; the choice is per-observation, the
+/// `ALL` applies after).
+fn all_severe(window: &[WalObservation]) -> bool {
+    if window.is_empty() {
+        return false;
+    }
+    let all_above_bytes = window
+        .iter()
+        .all(|o| o.wal_bytes > SQLITE_WAL_STATE_SEVERE_BYTES);
+    let all_above_ratio = window.iter().all(|o| {
+        o.db_bytes > 0 && (o.wal_bytes as f64 / o.db_bytes as f64) > SQLITE_WAL_STATE_SEVERE_RATIO
+    });
+    all_above_bytes || all_above_ratio
+}
+
+/// `observed_at_max - observed_at_min` in seconds. Window passed in
+/// loader order (ascending), so this is `last - first`. Defensive
+/// against parse errors: returns 0 if either endpoint won't parse.
+fn compute_window_duration_seconds(window: &[WalObservation]) -> i64 {
+    if window.len() < 2 {
+        return 0;
+    }
+    let first = window.first().and_then(|o| parse_rfc3339(&o.observed_at));
+    let last = window.last().and_then(|o| parse_rfc3339(&o.observed_at));
+    match (first, last) {
+        (Some(a), Some(b)) => (b - a).whole_seconds(),
+        _ => 0,
+    }
+}
+
+fn compute_signals(window: &[WalObservation], window_duration_seconds: i64) -> WalSignals {
+    // Main DB mtime stale across the window: every observation reports
+    // db_mtime older than (observed_at - window_duration_seconds).
+    // Conceptually: throughout the window, the main DB hasn't moved
+    // for at least as long as the window itself.
+    let main_db_mtime_stale_across_window = !window.is_empty()
+        && window.iter().all(|o| {
+            let observed = parse_rfc3339(&o.observed_at);
+            let db_mtime = parse_rfc3339(&o.db_mtime);
+            match (observed, db_mtime) {
+                (Some(obs), Some(mt)) => (obs - mt).whole_seconds() >= window_duration_seconds,
+                _ => false,
+            }
+        });
+
+    // Pinned reader: only count observations that actually performed
+    // the /proc cross-check. If none did, the signal is `Unobserved`
+    // (not silently `Absent`).
+    let observed_rows: Vec<&WalObservation> = window
+        .iter()
+        .filter(|o| o.proc_access == ProcAccess::Observed)
+        .collect();
+    let pinned_reader = if observed_rows.is_empty() {
+        PinnedReaderSignal::Unobserved
+    } else if observed_rows
+        .iter()
+        .any(|o| o.pinned_reader_present == Some(true))
+    {
+        PinnedReaderSignal::Present
+    } else {
+        PinnedReaderSignal::Absent
+    };
+
+    WalSignals {
+        main_db_mtime_stale_across_window,
+        pinned_reader,
+    }
+}
+
+fn first_inaccessible_db(window: &[WalObservation]) -> Option<String> {
+    window.iter().find_map(|o| {
+        o.error_detail
+            .as_deref()
+            .filter(|d| d.starts_with(ERROR_DETAIL_INACCESSIBLE_DB_PREFIX))
+            .map(|d| d.to_string())
+    })
+}
+
+fn first_contradiction(window: &[WalObservation]) -> Option<String> {
+    for o in window {
+        let observed_at = match parse_rfc3339(&o.observed_at) {
+            Some(t) => t,
+            None => continue,
+        };
+        let db_mtime = match parse_rfc3339(&o.db_mtime) {
+            Some(t) => t,
+            None => continue,
+        };
+        if db_mtime > observed_at {
+            return Some(format!(
+                "row observation_id={:?} reports db_mtime {} after observed_at {} (file mtime in the future of observation is impossible substrate physics)",
+                o.observation_id, o.db_mtime, o.observed_at,
+            ));
+        }
+        if let Some(raw) = o.wal_mtime.as_deref() {
+            if let Some(wal_mtime) = parse_rfc3339(raw) {
+                if wal_mtime > observed_at {
+                    return Some(format!(
+                        "row observation_id={:?} reports wal_mtime {} after observed_at {} (file mtime in the future of observation is impossible substrate physics)",
+                        o.observation_id, raw, o.observed_at,
+                    ));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn parse_rfc3339(s: &str) -> Option<time::OffsetDateTime> {
+    time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
+}
+
+// ---------------------------------------------------------------------------
+// Support emission + verdict mapping.
+// ---------------------------------------------------------------------------
+
+fn emit_supports_and_packets(
+    window: &[WalObservation],
+    generated_at: &str,
+    result: &mut PreflightResult,
+    classification: &WalClassification,
+) -> Vec<nq_core::witness::WitnessPacket> {
+    // Some classifications represent pre-substrate failures: there is
+    // either no row to support at all (NoRowsInWindow) or a substrate-
+    // breakage we refuse to anchor positive testimony against.
+    // `LatestRowStale` still emits supports — the verdict note quotes
+    // the latest row's observation; consumers reading the receipt need
+    // to see what was observed at the (now-stale) time.
+    let skip_supports = matches!(
+        classification,
+        WalClassification::NoRowsInWindow
+            | WalClassification::InaccessibleDb { .. }
+            | WalClassification::Contradictory { .. }
+    );
+
+    let mut packets = Vec::new();
+    if skip_supports {
+        // For InaccessibleDb / Contradictory: still surface each
+        // window row as an exclusion so the receipt records what was
+        // observed and refused. Projection refusal lane is the right
+        // shape for "the row existed but cannot anchor positive
+        // testimony" only when the projector itself refused; for these
+        // evaluator-level refusals we synthesize a per-row exclusion.
+        if matches!(classification, WalClassification::InaccessibleDb { .. })
+            || matches!(classification, WalClassification::Contradictory { .. })
+        {
+            for o in window {
+                result.excludes.push(nq_core::preflight::PreflightExclusion {
+                    finding_kind: "sqlite_wal_observation".to_string(),
+                    subject: format!("host:{}/db:{}", o.host, o.db_file_path),
+                    reason: classification_exclusion_reason(classification),
+                    detail: o.error_detail.clone(),
+                });
+            }
+        }
+        return packets;
+    }
+
+    for obs in window {
+        match project_wal_observation(obs, generated_at) {
+            Ok(pkt) => {
+                let mut support = make_support(obs);
+                support.witness_packet = packet_identity(&pkt);
+                result.supports.push(support);
+                packets.push(pkt);
+            }
+            Err(refusal) => {
+                result.excludes.push(make_projection_refusal_exclusion(
+                    "sqlite_wal_observation".to_string(),
+                    format!("host:{}/db:{}", obs.host, obs.db_file_path),
+                    &refusal,
+                ));
+            }
+        }
+    }
+    packets
+}
+
+fn classification_exclusion_reason(classification: &WalClassification) -> String {
+    match classification {
+        WalClassification::InaccessibleDb { .. } => {
+            "Probe could not stat the main DB file; substrate inaccessible from the probe's vantage."
+                .to_string()
+        }
+        WalClassification::Contradictory { .. } => {
+            "Substrate physics violation: file mtime in the future of observed_at."
+                .to_string()
+        }
+        _ => "Window observation not admitted as support.".to_string(),
+    }
+}
+
+fn make_support(obs: &WalObservation) -> PreflightSupport {
+    let claim = format!(
+        "Probe observed WAL state for host {} db {} at observed_at {} \
+         (wal_present={}, wal_bytes={}, db_bytes={}, proc_access={})",
+        obs.host,
+        obs.db_file_path,
+        obs.observed_at,
+        obs.wal_present,
+        obs.wal_bytes,
+        obs.db_bytes,
+        obs.proc_access.as_str(),
+    );
+    PreflightSupport {
+        claim,
+        finding_kind: "sqlite_wal_observation".to_string(),
+        subject: format!("host:{}/db:{}", obs.host, obs.db_file_path),
+        observed_at: Some(obs.observed_at.clone()),
+        freshness: None,
+        admissibility_state: Some("observable".to_string()),
+        // Stamped by the caller from the projected packet.
+        witness_packet: None,
+    }
+}
+
+fn map_classification_to_verdict(
+    c: &WalClassification,
+    target: &SqliteWalTarget<'_>,
+) -> (Verdict, String) {
+    match c {
+        WalClassification::NoRowsInWindow => (
+            Verdict::InsufficientCoverage,
+            format!(
+                "No SQLite WAL probe has run for (host={}, db={}) in the last {}h; \
+                 absence of observation is not affirmative testimony of WAL health.",
+                target.host,
+                target.db_file_path,
+                SQLITE_WAL_STATE_WINDOW_DURATION_SECONDS / 3600,
+            ),
+        ),
+        WalClassification::LatestRowStale {
+            observed_at,
+            age_seconds,
+        } => (
+            Verdict::StaleTestimony,
+            format!(
+                "Most recent SQLite WAL observation for (host={}, db={}) is {}s old (> {}s threshold) \
+                 at observed_at {}; WAL state evidence is stale.",
+                target.host,
+                target.db_file_path,
+                age_seconds,
+                SQLITE_WAL_STATE_STALE_THRESHOLD_SECONDS,
+                observed_at,
+            ),
+        ),
+        WalClassification::InsufficientSamples { count, needed } => (
+            Verdict::InsufficientCoverage,
+            format!(
+                "Probe has accumulated only {} samples for (host={}, db={}) in the last {}h \
+                 (need at least {}); window-based testimony requires sustained coverage.",
+                count,
+                target.host,
+                target.db_file_path,
+                SQLITE_WAL_STATE_WINDOW_DURATION_SECONDS / 3600,
+                needed,
+            ),
+        ),
+        WalClassification::InaccessibleDb { error_detail } => (
+            Verdict::CannotTestify,
+            format!(
+                "Probe could not stat ({}, {}) — substrate inaccessible from the probe's vantage \
+                 (error_detail: {}).",
+                target.host, target.db_file_path, error_detail,
+            ),
+        ),
+        WalClassification::Contradictory { reason } => (
+            Verdict::ContradictoryTestimony,
+            format!(
+                "WAL observations for (host={}, db={}) record a substrate state combination that \
+                 cannot describe a real filesystem; admitting either side is laundering. ({})",
+                target.host, target.db_file_path, reason,
+            ),
+        ),
+        WalClassification::BoundedWal {
+            window_duration_seconds,
+            ..
+        } => (
+            Verdict::AdmissibleWithScope,
+            format!(
+                "SQLite WAL pressure observed within bounded thresholds for (host={}, db={}) \
+                 across {}s of observation. Scope: this testimony does not exclude transient bursts \
+                 shorter than the probe interval.",
+                target.host, target.db_file_path, window_duration_seconds,
+            ),
+        ),
+        WalClassification::ElevatedSustained {
+            window_duration_seconds,
+            signals,
+        } => (
+            Verdict::AdmissibleWithScope,
+            format!(
+                "SQLite WAL has exceeded the elevated threshold sustained across {}s of observation \
+                 for (host={}, db={}). The substrate is bloated but does not meet the higher threshold. \
+                 Main DB mtime stale across window: {}; pinned reader: {}.",
+                window_duration_seconds,
+                target.host,
+                target.db_file_path,
+                signals.main_db_mtime_stale_across_window,
+                signals.pinned_reader.as_note_text(),
+            ),
+        ),
+        WalClassification::SevereSustained {
+            window_duration_seconds,
+            signals,
+        } => (
+            Verdict::AdmissibleWithScope,
+            format!(
+                "SQLite WAL has exceeded the severe threshold sustained across {}s of observation \
+                 for (host={}, db={}). Main DB mtime stale across window: {}; pinned reader: {}.",
+                window_duration_seconds,
+                target.host,
+                target.db_file_path,
+                signals.main_db_mtime_stale_across_window,
+                signals.pinned_reader.as_note_text(),
+            ),
+        ),
+    }
+}
+
 /// Insert one observation row. Returns the assigned `observation_id`.
 ///
 /// Tests construct `WalObservation` values directly; the future probe
@@ -181,5 +948,602 @@ mod tests {
         assert_eq!(err.0, "maybe");
         let rendered = format!("{err}");
         assert!(rendered.contains("maybe"));
+    }
+
+    // -- Substrate-window loader (slice 4) ----------------------------
+    //
+    // Fixture-driven tests against an in-memory DB. The loader is a
+    // hand-rolled SELECT over `wal_observations`; these tests pin the
+    // ordering, window filtering, and target filtering it relies on.
+
+    use crate::{migrate, open_rw, WriteDb};
+
+    fn make_db() -> WriteDb {
+        let mut db = open_rw(std::path::Path::new(":memory:")).unwrap();
+        migrate(&mut db).unwrap();
+        // Seed a parent generation.
+        db.conn
+            .execute(
+                "INSERT INTO generations
+                   (generation_id, started_at, completed_at, status,
+                    sources_expected, sources_ok, sources_failed, duration_ms)
+                 VALUES (1, '2026-05-26T14:00:00Z', '2026-05-26T14:00:00Z',
+                         'complete', 1, 1, 0, 0)",
+                [],
+            )
+            .unwrap();
+        db
+    }
+
+    fn observed_obs(at: &str, wal_bytes: i64) -> WalObservation {
+        WalObservation {
+            observation_id: None,
+            generation_id: 1,
+            host: "labelwatch.neutral.zone".into(),
+            db_file_path: "/var/lib/labelwatch/discovery.db".into(),
+            wal_present: true,
+            wal_bytes,
+            wal_mtime: Some(at.into()),
+            db_bytes: 26_000_000_000,
+            db_mtime: "2026-05-26T10:00:00Z".into(),
+            proc_access: ProcAccess::Observed,
+            pinned_reader_present: Some(false),
+            pinned_reader_pid: None,
+            pinned_reader_command: None,
+            observed_at: at.into(),
+            error_detail: None,
+        }
+    }
+
+    #[test]
+    fn loader_returns_empty_for_unknown_target() {
+        let db = make_db();
+        let target = SqliteWalTarget {
+            host: "nobody",
+            db_file_path: "/nowhere.db",
+        };
+        let rows =
+            load_recent_wal_observations(&db.conn, &target, "2026-05-26T00:00:00Z").unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn loader_returns_only_rows_within_window() {
+        let db = make_db();
+        for at in [
+            "2026-05-26T01:00:00Z", // outside window
+            "2026-05-26T13:00:00Z", // inside
+            "2026-05-26T14:00:00Z", // inside
+        ] {
+            insert_observation(&db.conn, &observed_obs(at, 1024)).unwrap();
+        }
+        let target = SqliteWalTarget {
+            host: "labelwatch.neutral.zone",
+            db_file_path: "/var/lib/labelwatch/discovery.db",
+        };
+        let window = load_recent_wal_observations(&db.conn, &target, "2026-05-26T02:00:00Z")
+            .unwrap();
+        assert_eq!(window.len(), 2);
+        // Ordering: oldest-first.
+        assert_eq!(window[0].observed_at, "2026-05-26T13:00:00Z");
+        assert_eq!(window[1].observed_at, "2026-05-26T14:00:00Z");
+    }
+
+    #[test]
+    fn loader_filters_by_target_identity() {
+        let db = make_db();
+        // Same time, different targets.
+        let mut other = observed_obs("2026-05-26T13:00:00Z", 1024);
+        other.db_file_path = "/var/lib/labelwatch/other.db".into();
+        insert_observation(&db.conn, &other).unwrap();
+        insert_observation(&db.conn, &observed_obs("2026-05-26T13:00:00Z", 1024)).unwrap();
+
+        let target = SqliteWalTarget {
+            host: "labelwatch.neutral.zone",
+            db_file_path: "/var/lib/labelwatch/discovery.db",
+        };
+        let window = load_recent_wal_observations(&db.conn, &target, "2026-05-26T00:00:00Z")
+            .unwrap();
+        assert_eq!(window.len(), 1);
+        assert_eq!(window[0].db_file_path, "/var/lib/labelwatch/discovery.db");
+    }
+
+    #[test]
+    fn loader_round_trips_proc_access_enum() {
+        let db = make_db();
+        let mut row = observed_obs("2026-05-26T13:00:00Z", 1024);
+        row.proc_access = ProcAccess::PermissionDenied;
+        row.pinned_reader_present = None;
+        row.pinned_reader_pid = None;
+        row.pinned_reader_command = None;
+        insert_observation(&db.conn, &row).unwrap();
+        let target = SqliteWalTarget {
+            host: "labelwatch.neutral.zone",
+            db_file_path: "/var/lib/labelwatch/discovery.db",
+        };
+        let window = load_recent_wal_observations(&db.conn, &target, "2026-05-26T00:00:00Z")
+            .unwrap();
+        assert_eq!(window.len(), 1);
+        assert_eq!(window[0].proc_access, ProcAccess::PermissionDenied);
+        assert_eq!(window[0].pinned_reader_present, None);
+    }
+
+    #[test]
+    fn loader_round_trips_truncated_wal_path() {
+        let db = make_db();
+        let mut row = observed_obs("2026-05-26T13:00:00Z", 0);
+        row.wal_present = false;
+        row.wal_bytes = 0;
+        row.wal_mtime = None;
+        insert_observation(&db.conn, &row).unwrap();
+        let target = SqliteWalTarget {
+            host: "labelwatch.neutral.zone",
+            db_file_path: "/var/lib/labelwatch/discovery.db",
+        };
+        let window = load_recent_wal_observations(&db.conn, &target, "2026-05-26T00:00:00Z")
+            .unwrap();
+        assert_eq!(window.len(), 1);
+        assert!(!window[0].wal_present);
+        assert_eq!(window[0].wal_bytes, 0);
+        assert_eq!(window[0].wal_mtime, None);
+    }
+
+    // ============================================================
+    // Evaluator tests (slice 4).
+    // ============================================================
+    //
+    // Fixture rows are inserted directly into wal_observations via
+    // insert_observation; no probe exists yet (the preflight §9 fixture
+    // sentence makes this the explicit pattern). `now` is pinned via
+    // evaluate_sqlite_wal_state_preflight_at so verdicts are
+    // deterministic.
+
+    use time::OffsetDateTime;
+
+    /// Build a window of `count` observations spaced `interval_seconds`
+    /// apart, ending at `end_rfc3339`. Each observation's `wal_bytes`
+    /// comes from `wal_bytes_for(i)` (i is 0..count, 0 is the oldest
+    /// observation). Other fields are sane defaults; tests mutate them
+    /// after build if they need to.
+    fn build_window(
+        end_rfc3339: &str,
+        interval_seconds: i64,
+        count: usize,
+        mut wal_bytes_for: impl FnMut(usize) -> i64,
+    ) -> Vec<WalObservation> {
+        let end = OffsetDateTime::parse(
+            end_rfc3339,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap();
+        (0..count)
+            .map(|i| {
+                let t = end
+                    - time::Duration::seconds((count - 1 - i) as i64 * interval_seconds);
+                let t_s = t
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap();
+                WalObservation {
+                    observation_id: None,
+                    generation_id: 1,
+                    host: "labelwatch.neutral.zone".into(),
+                    db_file_path: "/var/lib/labelwatch/discovery.db".into(),
+                    wal_present: true,
+                    wal_bytes: wal_bytes_for(i),
+                    wal_mtime: Some(t_s.clone()),
+                    db_bytes: 26_000_000_000,
+                    db_mtime: "2026-05-26T01:00:00Z".into(),
+                    proc_access: ProcAccess::Observed,
+                    pinned_reader_present: Some(false),
+                    pinned_reader_pid: None,
+                    pinned_reader_command: None,
+                    observed_at: t_s,
+                    error_detail: None,
+                }
+            })
+            .collect()
+    }
+
+    fn insert_all(conn: &Connection, rows: &[WalObservation]) {
+        for r in rows {
+            insert_observation(conn, r).unwrap();
+        }
+    }
+
+    const NOW: &str = "2026-05-26T14:00:00Z";
+
+    fn now_dt() -> OffsetDateTime {
+        OffsetDateTime::parse(NOW, &time::format_description::well_known::Rfc3339).unwrap()
+    }
+
+    fn default_target() -> SqliteWalTarget<'static> {
+        SqliteWalTarget {
+            host: "labelwatch.neutral.zone",
+            db_file_path: "/var/lib/labelwatch/discovery.db",
+        }
+    }
+
+    // ---- coverage / freshness gates -------------------------------------
+
+    #[test]
+    fn evaluator_no_rows_yields_insufficient_coverage() {
+        let db = make_db();
+        let target = default_target();
+        let r = evaluate_sqlite_wal_state_preflight_at(&db.conn, &target, now_dt()).unwrap();
+        assert_eq!(r.verdict, Verdict::InsufficientCoverage);
+        assert!(
+            r.verdict_note
+                .as_deref()
+                .unwrap()
+                .contains("No SQLite WAL probe has run"),
+            "got: {:?}",
+            r.verdict_note
+        );
+        assert!(r.supports.is_empty());
+        // Coverage standing for absent witness.
+        let cov = r.coverage.iter().find(|c| c.witness == "sqlite_wal_probe").unwrap();
+        assert_eq!(cov.standing, "absent");
+    }
+
+    #[test]
+    fn evaluator_stale_latest_row_yields_stale_testimony() {
+        // Only one row, far older than the staleness threshold.
+        let db = make_db();
+        // 30 min ago; threshold is 10 min.
+        let rows = build_window("2026-05-26T13:30:00Z", 60, 1, |_| 1024);
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        assert_eq!(r.verdict, Verdict::StaleTestimony);
+        assert!(r.verdict_note.as_deref().unwrap().contains("stale"));
+        // Even though the verdict is stale, the latest row's support
+        // is admitted: receipts need to record what was observed at
+        // the (now-stale) observation time.
+        assert_eq!(r.supports.len(), 1);
+    }
+
+    #[test]
+    fn evaluator_too_few_samples_yields_insufficient_coverage() {
+        // 50 samples, latest row fresh (so freshness gate passes).
+        // Below the 100-sample elevated floor.
+        let db = make_db();
+        let rows = build_window(NOW, 60, 50, |_| 1024);
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        assert_eq!(r.verdict, Verdict::InsufficientCoverage);
+        assert!(r
+            .verdict_note
+            .as_deref()
+            .unwrap()
+            .contains("accumulated only 50 samples"));
+    }
+
+    // ---- bounded / elevated / severe -----------------------------------
+
+    #[test]
+    fn evaluator_bounded_wal_yields_admissible_with_scope() {
+        // 200 samples, all under the elevated threshold.
+        let db = make_db();
+        let rows = build_window(NOW, 60, 200, |_| 1_000_000); // 1 MB
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
+        assert!(r
+            .verdict_note
+            .as_deref()
+            .unwrap()
+            .contains("within bounded thresholds"));
+        assert_eq!(r.supports.len(), 200);
+    }
+
+    #[test]
+    fn evaluator_elevated_sustained_yields_admissible_with_scope_elevated_note() {
+        // 200 samples spanning > 6h, all between 2GB and 10GB
+        // (so all_severe is false and all_elevated is true).
+        // 60s × 200 = 12000s = 3.33h — not enough duration.
+        // Use 360 samples × 60s = 6h.
+        let db = make_db();
+        let rows = build_window(NOW, 60, 361, |_| 3_000_000_000);
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
+        let note = r.verdict_note.as_deref().unwrap();
+        assert!(
+            note.contains("exceeded the elevated threshold"),
+            "got: {note:?}"
+        );
+        assert!(
+            !note.contains("severe threshold"),
+            "elevated should not mention severe: {note:?}"
+        );
+    }
+
+    #[test]
+    fn evaluator_severe_sustained_by_size_yields_admissible_with_scope_severe_note() {
+        // 720 samples × 60s = 12h; all > 10 GB.
+        let db = make_db();
+        let rows = build_window(NOW, 60, 721, |_| 15_000_000_000);
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
+        let note = r.verdict_note.as_deref().unwrap();
+        assert!(
+            note.contains("exceeded the severe threshold"),
+            "got: {note:?}"
+        );
+    }
+
+    #[test]
+    fn evaluator_severe_sustained_by_ratio_yields_admissible_with_scope_severe_note() {
+        // 720 samples × 60s = 12h; all 6 GB WAL against 10 GB DB
+        // → ratio 0.6 > 0.5, even though size is below the 10 GB
+        // severe-by-size threshold.
+        let db = make_db();
+        let mut rows = build_window(NOW, 60, 721, |_| 6_000_000_000);
+        for r in &mut rows {
+            r.db_bytes = 10_000_000_000;
+        }
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
+        let note = r.verdict_note.as_deref().unwrap();
+        assert!(
+            note.contains("exceeded the severe threshold"),
+            "ratio-driven severe must hit the severe path: {note:?}"
+        );
+    }
+
+    #[test]
+    fn evaluator_severe_decorates_with_main_db_stale_signal() {
+        // 720 × 60s = 12h; db_mtime is set to 24h before NOW, so
+        // db_mtime is stale across the whole window.
+        let db = make_db();
+        let mut rows = build_window(NOW, 60, 721, |_| 15_000_000_000);
+        for r in &mut rows {
+            r.db_mtime = "2026-05-25T14:00:00Z".into();
+        }
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        let note = r.verdict_note.as_deref().unwrap();
+        assert!(
+            note.contains("Main DB mtime stale across window: true"),
+            "got: {note:?}"
+        );
+    }
+
+    #[test]
+    fn evaluator_severe_decorates_with_pinned_reader_present() {
+        let db = make_db();
+        let mut rows = build_window(NOW, 60, 721, |_| 15_000_000_000);
+        // One observation reports a pinned reader; per §4 ANY suffices.
+        rows[600].pinned_reader_present = Some(true);
+        rows[600].pinned_reader_pid = Some(12345);
+        rows[600].pinned_reader_command = Some("labelwatch-discovery".into());
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        let note = r.verdict_note.as_deref().unwrap();
+        assert!(
+            note.contains("pinned reader: present"),
+            "got: {note:?}"
+        );
+    }
+
+    #[test]
+    fn evaluator_severe_decorates_with_pinned_reader_unobserved_when_proc_access_absent() {
+        // 720 rows; none have proc_access == Observed. PinnedReader
+        // signal must be `unobserved`, not silently `absent`.
+        let db = make_db();
+        let mut rows = build_window(NOW, 60, 721, |_| 15_000_000_000);
+        for r in &mut rows {
+            r.proc_access = ProcAccess::Unavailable;
+            r.pinned_reader_present = None;
+            r.pinned_reader_pid = None;
+            r.pinned_reader_command = None;
+        }
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        let note = r.verdict_note.as_deref().unwrap();
+        assert!(
+            note.contains("pinned reader: unobserved"),
+            "proc_access unobserved across the window must not silently report 'absent': {note:?}"
+        );
+    }
+
+    // ---- cannot_testify + contradictory paths --------------------------
+
+    #[test]
+    fn evaluator_inaccessible_db_yields_cannot_testify() {
+        // Latest row has the cannot_stat_db: prefix in error_detail.
+        let db = make_db();
+        let mut rows = build_window(NOW, 60, 200, |_| 1024);
+        rows.last_mut().unwrap().error_detail =
+            Some("cannot_stat_db: ENOENT main DB file missing".into());
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        assert_eq!(r.verdict, Verdict::CannotTestify);
+        assert!(r
+            .verdict_note
+            .as_deref()
+            .unwrap()
+            .contains("Probe could not stat"));
+        // Inaccessible-DB path emits exclusions, not supports.
+        assert!(r.supports.is_empty());
+        assert!(!r.excludes.is_empty());
+    }
+
+    #[test]
+    fn evaluator_db_mtime_in_future_yields_contradictory_testimony() {
+        // db_mtime set to one minute in the future of observed_at —
+        // impossible substrate physics.
+        let db = make_db();
+        let mut rows = build_window(NOW, 60, 200, |_| 1024);
+        rows[100].db_mtime = "2027-05-26T14:00:00Z".into(); // year in the future
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        assert_eq!(r.verdict, Verdict::ContradictoryTestimony);
+        assert!(r
+            .verdict_note
+            .as_deref()
+            .unwrap()
+            .contains("impossible substrate physics"));
+        assert!(r.supports.is_empty());
+    }
+
+    #[test]
+    fn evaluator_wal_mtime_in_future_yields_contradictory_testimony() {
+        let db = make_db();
+        let mut rows = build_window(NOW, 60, 200, |_| 1024);
+        rows[100].wal_mtime = Some("2027-05-26T14:00:00Z".into());
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        assert_eq!(r.verdict, Verdict::ContradictoryTestimony);
+    }
+
+    // ---- constitutional surface ---------------------------------------
+
+    #[test]
+    fn evaluator_cannot_testify_is_populated_across_all_verdicts() {
+        let db = make_db();
+
+        // (A) no rows
+        let r = evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt())
+            .unwrap();
+        assert!(!r.cannot_testify.is_empty());
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("application that owns this DB")));
+
+        // (B) bounded WAL
+        let rows = build_window(NOW, 60, 200, |_| 1_000_000);
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        assert!(!r.cannot_testify.is_empty());
+
+        // (C) severe + cannot_testify still set
+        let db2 = make_db();
+        let rows2 = build_window(NOW, 60, 721, |_| 15_000_000_000);
+        insert_all(&db2.conn, &rows2);
+        let r2 = evaluate_sqlite_wal_state_preflight_at(&db2.conn, &default_target(), now_dt())
+            .unwrap();
+        assert_eq!(r2.verdict, Verdict::AdmissibleWithScope);
+        assert!(r2
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("checkpoint operations")));
+    }
+
+    // ---- wire shape ---------------------------------------------------
+
+    #[test]
+    fn evaluator_emits_sqlite_wal_state_schema_and_claim_kind() {
+        let db = make_db();
+        let r = evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt())
+            .unwrap();
+        assert_eq!(r.schema, nq_core::preflight::PREFLIGHT_SQLITE_WAL_STATE_SCHEMA);
+        assert_eq!(r.claim_kind, ClaimKind::SqliteWalState);
+        assert_eq!(r.target.host, "labelwatch.neutral.zone");
+        assert_eq!(r.target.scope, "sqlite_wal");
+        assert_eq!(
+            r.target.id.as_deref(),
+            Some("/var/lib/labelwatch/discovery.db")
+        );
+    }
+
+    #[test]
+    fn evaluator_supports_carry_witness_packet_identity() {
+        let db = make_db();
+        let rows = build_window(NOW, 60, 150, |_| 1_000_000);
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        assert_eq!(r.supports.len(), 150);
+        let first = &r.supports[0];
+        let id = first
+            .witness_packet
+            .as_ref()
+            .expect("admitted support must carry its projected packet identity");
+        assert_eq!(id.witness_type, "sqlite_wal_legacy_projection");
+        assert_eq!(
+            id.custody_basis.as_deref(),
+            Some(nq_core::witness::CUSTODY_BASIS_LEGACY_PROJECTION)
+        );
+        assert!(!id.digest.is_empty());
+    }
+
+    #[test]
+    fn evaluator_emits_observation_window_and_freshness_horizon() {
+        let db = make_db();
+        let rows = build_window(NOW, 60, 200, |_| 1024);
+        let earliest = rows.first().unwrap().observed_at.clone();
+        let latest = rows.last().unwrap().observed_at.clone();
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        assert_eq!(r.observed_at_min.as_deref(), Some(earliest.as_str()));
+        assert_eq!(r.observed_at_max.as_deref(), Some(latest.as_str()));
+        let horizon = r
+            .freshness_horizon
+            .as_ref()
+            .expect("admissible result emits freshness_horizon");
+        // Horizon = observed_at_max + 600s.
+        assert!(
+            horizon.as_str() > latest.as_str(),
+            "horizon {horizon:?} should be after observed_at_max {latest:?}"
+        );
+    }
+
+    #[test]
+    fn evaluator_note_never_uses_alert_vocabulary() {
+        // The §5 [[feedback_knob_facing]] guard at the wire surface:
+        // no warn/critical/alert language in any verdict note,
+        // regardless of which classification fired.
+        let db = make_db();
+
+        // Bounded
+        let rows_b = build_window(NOW, 60, 200, |_| 1_000_000);
+        insert_all(&db.conn, &rows_b);
+        let r = evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt())
+            .unwrap();
+        assert_no_alert_vocabulary(&r.verdict_note);
+
+        // Severe
+        let db2 = make_db();
+        let rows_s = build_window(NOW, 60, 721, |_| 15_000_000_000);
+        insert_all(&db2.conn, &rows_s);
+        let r2 = evaluate_sqlite_wal_state_preflight_at(&db2.conn, &default_target(), now_dt())
+            .unwrap();
+        assert_no_alert_vocabulary(&r2.verdict_note);
+
+        // Elevated
+        let db3 = make_db();
+        let rows_e = build_window(NOW, 60, 361, |_| 3_000_000_000);
+        insert_all(&db3.conn, &rows_e);
+        let r3 = evaluate_sqlite_wal_state_preflight_at(&db3.conn, &default_target(), now_dt())
+            .unwrap();
+        assert_no_alert_vocabulary(&r3.verdict_note);
+    }
+
+    fn assert_no_alert_vocabulary(note: &Option<String>) {
+        let note = note.as_deref().unwrap_or("");
+        let lower = note.to_ascii_lowercase();
+        for forbidden in ["warn", "critical", "alert", "incident", " p1 ", " p2 "] {
+            assert!(
+                !lower.contains(forbidden),
+                "verdict note must not use alert vocabulary {forbidden:?}: {note:?}"
+            );
+        }
     }
 }

@@ -21,9 +21,9 @@ pub use config::{
 };
 pub use humanize::humanize_duration_s;
 pub use preflight::{
-    disk_state_cannot_testify, ClaimKind, PreflightCoverage, PreflightExclusion, PreflightResult,
-    PreflightSupport, PreflightTarget, Verdict, PREFLIGHT_CONTRACT_VERSION,
-    PREFLIGHT_DISK_STATE_SCHEMA,
+    disk_state_cannot_testify, sqlite_wal_state_cannot_testify, ClaimKind, PreflightCoverage,
+    PreflightExclusion, PreflightResult, PreflightSupport, PreflightTarget, Verdict,
+    PREFLIGHT_CONTRACT_VERSION, PREFLIGHT_DISK_STATE_SCHEMA, PREFLIGHT_SQLITE_WAL_STATE_SCHEMA,
 };
 pub use claim_registry::{
     evaluate, ClaimEntry, ClaimRegistry, CompositeClaim, LeafClaim, LeafCondition,
