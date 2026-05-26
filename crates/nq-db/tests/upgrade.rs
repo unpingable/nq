@@ -34,7 +34,7 @@ const PREVIOUS_SCHEMA_VERSION: u32 = CURRENT_SCHEMA_VERSION - 1;
 /// part of the upgrade fixture. If a migration that only alters or renames
 /// existing tables becomes the latest, this constant becomes wrong and the
 /// test stops representing the upgrade path it claims to.
-const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["dns_observations"];
+const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["wal_observations"];
 
 #[test]
 fn upgrade_from_previous_version_preserves_data() {

@@ -5,7 +5,7 @@ use tracing::info;
 /// with the last entry of `MIGRATIONS` below. Exposed for consumer
 /// surfaces (e.g. the finding export path) so they can preflight
 /// against a DB whose schema is older than the code was built for.
-pub const CURRENT_SCHEMA_VERSION: u32 = 47;
+pub const CURRENT_SCHEMA_VERSION: u32 = 48;
 
 /// Read `PRAGMA user_version` from an arbitrary connection. Returns 0
 /// for a freshly-opened SQLite file that's never been migrated.
@@ -63,6 +63,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (45, include_str!("../migrations/045_maintenance_declarations.sql")),
     (46, include_str!("../migrations/046_durable_artifact_substrate.sql")),
     (47, include_str!("../migrations/047_dns_observations.sql")),
+    (48, include_str!("../migrations/048_wal_observations.sql")),
 ];
 
 pub fn migrate(db: &mut WriteDb) -> anyhow::Result<()> {
@@ -111,7 +112,7 @@ mod tests {
             .conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 47);
+        assert_eq!(version, 48);
 
         // Verify tables exist
         let count: i64 = db
@@ -132,5 +133,421 @@ mod tests {
         let mut db = open_rw(&db_path).unwrap();
         migrate(&mut db).unwrap();
         migrate(&mut db).unwrap(); // should be a no-op
+    }
+
+    // -----------------------------------------------------------------
+    // Migration 048 — wal_observations CHECK constraints.
+    //
+    // The migration is schema-only; no Rust consumers yet. These tests
+    // pin the load-bearing invariants from the preflight at the
+    // substrate boundary, so the projector (later slice) can rely on
+    // the table never holding a physically-impossible row past INSERT.
+    // -----------------------------------------------------------------
+
+    fn fresh_db() -> crate::WriteDb {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let mut db = open_rw(&db_path).unwrap();
+        migrate(&mut db).unwrap();
+        // Seed a generation so wal_observations FK can be satisfied.
+        db.conn
+            .execute(
+                "INSERT INTO generations
+                   (generation_id, started_at, completed_at, status,
+                    sources_expected, sources_ok, sources_failed, duration_ms)
+                 VALUES (1, '2026-05-26T14:00:00Z', '2026-05-26T14:00:00Z',
+                         'complete', 1, 1, 0, 0)",
+                [],
+            )
+            .unwrap();
+        // Keep the tempdir alive via leak — the WriteDb owns the
+        // connection but not the dir; the dir would drop and delete
+        // the file otherwise. SQLite holds the open handle so the
+        // file stays usable, but defensive: leak the dir to the test
+        // process. (Production code never does this; tests only.)
+        std::mem::forget(dir);
+        db
+    }
+
+    /// Insert a known-valid `wal_observations` row. Returns the
+    /// `observation_id` on success. Used by negative tests as the
+    /// baseline they mutate from.
+    fn insert_clean_wal_row(conn: &rusqlite::Connection) -> rusqlite::Result<i64> {
+        conn.execute(
+            "INSERT INTO wal_observations (
+                generation_id, host, db_file_path,
+                wal_present, wal_bytes, wal_mtime,
+                db_bytes, db_mtime,
+                proc_access,
+                pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                observed_at, error_detail
+             ) VALUES (
+                1, 'labelwatch.neutral.zone',
+                '/var/lib/labelwatch/discovery.db',
+                1, 1024, '2026-05-26T14:00:00Z',
+                2048, '2026-05-26T13:59:00Z',
+                'observed',
+                0, NULL, NULL,
+                '2026-05-26T14:00:00Z', NULL
+             )",
+            [],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    #[test]
+    fn wal_observations_accepts_well_formed_row() {
+        let db = fresh_db();
+        let id = insert_clean_wal_row(&db.conn).expect("clean row must insert");
+        assert!(id > 0);
+    }
+
+    #[test]
+    fn wal_observations_rejects_absent_wal_with_positive_bytes() {
+        // wal_present = 0 must imply wal_bytes = 0. An "absent" WAL
+        // file cannot have a positive size; admitting the row would
+        // record physically-impossible substrate state.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO wal_observations (
+                    generation_id, host, db_file_path,
+                    wal_present, wal_bytes, wal_mtime,
+                    db_bytes, db_mtime,
+                    proc_access,
+                    pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/d.db',
+                    0, 1024, NULL,
+                    2048, '2026-05-26T13:59:00Z',
+                    'not_attempted',
+                    NULL, NULL, NULL,
+                    '2026-05-26T14:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK constraint violation, got: {err}"
+        );
+    }
+
+    #[test]
+    fn wal_observations_rejects_absent_wal_with_mtime_set() {
+        // wal_present = 0 must imply wal_mtime IS NULL. Faking a
+        // mtime for an absent file is timestamp laundering.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO wal_observations (
+                    generation_id, host, db_file_path,
+                    wal_present, wal_bytes, wal_mtime,
+                    db_bytes, db_mtime,
+                    proc_access,
+                    pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/d.db',
+                    0, 0, '2026-05-26T14:00:00Z',
+                    2048, '2026-05-26T13:59:00Z',
+                    'not_attempted',
+                    NULL, NULL, NULL,
+                    '2026-05-26T14:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn wal_observations_rejects_unobserved_proc_with_reader_fields_set() {
+        // proc_access != 'observed' must imply all pinned_reader_*
+        // fields IS NULL. The capability flag carries the partiality;
+        // setting reader fields without 'observed' would launder an
+        // unverified observation into testimony.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO wal_observations (
+                    generation_id, host, db_file_path,
+                    wal_present, wal_bytes, wal_mtime,
+                    db_bytes, db_mtime,
+                    proc_access,
+                    pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/d.db',
+                    1, 1024, '2026-05-26T14:00:00Z',
+                    2048, '2026-05-26T13:59:00Z',
+                    'unavailable',
+                    1, 12345, 'someproc',
+                    '2026-05-26T14:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn wal_observations_rejects_observed_proc_without_reader_present() {
+        // proc_access = 'observed' must imply pinned_reader_present
+        // IS NOT NULL. An observed cross-check must record an
+        // outcome (0 or 1), not silence.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO wal_observations (
+                    generation_id, host, db_file_path,
+                    wal_present, wal_bytes, wal_mtime,
+                    db_bytes, db_mtime,
+                    proc_access,
+                    pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/d.db',
+                    1, 1024, '2026-05-26T14:00:00Z',
+                    2048, '2026-05-26T13:59:00Z',
+                    'observed',
+                    NULL, NULL, NULL,
+                    '2026-05-26T14:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn wal_observations_rejects_reader_absent_with_pid_set() {
+        // pinned_reader_present = 0 must imply pinned_reader_pid IS
+        // NULL AND pinned_reader_command IS NULL. No reader → no
+        // PID, no command.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO wal_observations (
+                    generation_id, host, db_file_path,
+                    wal_present, wal_bytes, wal_mtime,
+                    db_bytes, db_mtime,
+                    proc_access,
+                    pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/d.db',
+                    1, 1024, '2026-05-26T14:00:00Z',
+                    2048, '2026-05-26T13:59:00Z',
+                    'observed',
+                    0, 12345, 'someproc',
+                    '2026-05-26T14:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn wal_observations_rejects_pid_without_command() {
+        // pinned_reader_pid IS NOT NULL  IFF  pinned_reader_command
+        // IS NOT NULL. The pair was either observed together (via
+        // /proc/$pid/comm) or not at all.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO wal_observations (
+                    generation_id, host, db_file_path,
+                    wal_present, wal_bytes, wal_mtime,
+                    db_bytes, db_mtime,
+                    proc_access,
+                    pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/d.db',
+                    1, 1024, '2026-05-26T14:00:00Z',
+                    2048, '2026-05-26T13:59:00Z',
+                    'observed',
+                    1, 12345, NULL,
+                    '2026-05-26T14:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn wal_observations_rejects_command_without_pid() {
+        // Symmetric to the above: command set without PID also
+        // violates the observed-together invariant.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO wal_observations (
+                    generation_id, host, db_file_path,
+                    wal_present, wal_bytes, wal_mtime,
+                    db_bytes, db_mtime,
+                    proc_access,
+                    pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/d.db',
+                    1, 1024, '2026-05-26T14:00:00Z',
+                    2048, '2026-05-26T13:59:00Z',
+                    'observed',
+                    1, NULL, 'someproc',
+                    '2026-05-26T14:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn wal_observations_rejects_unknown_proc_access_value() {
+        // proc_access is a closed enum. Unknown values would let
+        // future-probe ambiguity launder into testimony.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO wal_observations (
+                    generation_id, host, db_file_path,
+                    wal_present, wal_bytes, wal_mtime,
+                    db_bytes, db_mtime,
+                    proc_access,
+                    pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/d.db',
+                    1, 1024, '2026-05-26T14:00:00Z',
+                    2048, '2026-05-26T13:59:00Z',
+                    'maybe',
+                    NULL, NULL, NULL,
+                    '2026-05-26T14:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn wal_observations_rejects_negative_byte_counts() {
+        // Negative wal_bytes or db_bytes is impossible-substrate.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO wal_observations (
+                    generation_id, host, db_file_path,
+                    wal_present, wal_bytes, wal_mtime,
+                    db_bytes, db_mtime,
+                    proc_access,
+                    pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/d.db',
+                    1, -1, '2026-05-26T14:00:00Z',
+                    2048, '2026-05-26T13:59:00Z',
+                    'not_attempted',
+                    NULL, NULL, NULL,
+                    '2026-05-26T14:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn wal_observations_cascades_on_generation_delete() {
+        // ON DELETE CASCADE: retention-driven generation pruning
+        // carries wal_observations rows with it. Mirrors the
+        // dns_observations and source_runs cascade discipline.
+        let db = fresh_db();
+        let _ = insert_clean_wal_row(&db.conn).unwrap();
+
+        let before: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM wal_observations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(before, 1);
+
+        db.conn
+            .execute("DELETE FROM generations WHERE generation_id = 1", [])
+            .unwrap();
+
+        let after: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM wal_observations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(after, 0, "wal_observations must cascade on generation delete");
+    }
+
+    #[test]
+    fn wal_observations_accepts_unobserved_proc_capability_path() {
+        // proc_access = 'unavailable' with all pinned_reader_* NULL
+        // is the honest partial-observation case. Must round-trip.
+        let db = fresh_db();
+        db.conn
+            .execute(
+                "INSERT INTO wal_observations (
+                    generation_id, host, db_file_path,
+                    wal_present, wal_bytes, wal_mtime,
+                    db_bytes, db_mtime,
+                    proc_access,
+                    pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/d.db',
+                    1, 1024, '2026-05-26T14:00:00Z',
+                    2048, '2026-05-26T13:59:00Z',
+                    'unavailable',
+                    NULL, NULL, NULL,
+                    '2026-05-26T14:00:00Z', NULL
+                 )",
+                [],
+            )
+            .expect("partial-capability row must insert cleanly");
+    }
+
+    #[test]
+    fn wal_observations_accepts_truncated_wal_path() {
+        // wal_present = 0 with wal_bytes = 0 and wal_mtime NULL is
+        // the honest truncated-WAL case (post-checkpoint reset).
+        // Must round-trip.
+        let db = fresh_db();
+        db.conn
+            .execute(
+                "INSERT INTO wal_observations (
+                    generation_id, host, db_file_path,
+                    wal_present, wal_bytes, wal_mtime,
+                    db_bytes, db_mtime,
+                    proc_access,
+                    pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/d.db',
+                    0, 0, NULL,
+                    2048, '2026-05-26T13:59:00Z',
+                    'observed',
+                    0, NULL, NULL,
+                    '2026-05-26T14:00:00Z', NULL
+                 )",
+                [],
+            )
+            .expect("truncated-WAL row must insert cleanly");
     }
 }
