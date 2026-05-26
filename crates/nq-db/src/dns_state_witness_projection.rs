@@ -55,6 +55,7 @@
 //!   body carries the kind.
 
 use crate::dns::DnsObservation;
+use crate::witness_projection_support::ProjectionRefusal;
 use nq_core::witness::{
     WitnessPacket, CUSTODY_BASIS_LEGACY_PROJECTION, PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY,
     WITNESS_SCHEMA,
@@ -78,24 +79,6 @@ pub const WITNESS_TYPE_DNS_RESOLVER: &str = "dns_resolver_legacy_projection";
 /// laundering shape parent invariant 2 refuses.
 pub const PROJECTION_LIMIT_DNS_OBSERVATION_RECOVERY: &str =
     "probe observation recovered from dns_observations row, not first-person witness emission";
-
-/// A refusal to project a dns_observation row. `source_ref` is the
-/// synthesized reference the caller would have used as
-/// `source_finding_ref` had the projection succeeded — preserved so the
-/// caller (e.g. the evaluator) can log or surface which row was refused.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectionRefusal {
-    pub reason: String,
-    pub source_ref: String,
-}
-
-impl std::fmt::Display for ProjectionRefusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} (source_ref={})", self.reason, self.source_ref)
-    }
-}
-
-impl std::error::Error for ProjectionRefusal {}
 
 /// Project a `dns_observations` row into a legacy-projection witness
 /// packet.

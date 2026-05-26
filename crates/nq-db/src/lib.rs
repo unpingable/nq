@@ -21,6 +21,7 @@ pub mod regime;
 pub mod retention;
 pub mod snapshot;
 pub mod views;
+pub(crate) mod witness_projection_support;
 
 pub use connect::{open_ro, open_rw, ReadDb, WriteDb};
 pub use export::{
