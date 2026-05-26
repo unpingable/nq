@@ -215,11 +215,13 @@ Your input is the receipt. Use only these fields:
   - supported_status                     (the load-bearing summary — read first)
   - signals.sqlite_wal_state.*           (STRUCTURED facts — do not NLP-parse
                                           supported_status when these are
-                                          present. window_seconds, threshold_band
-                                          ∈ {bounded, elevated, severe},
-                                          main_db_mtime_stale_across_window,
+                                          present. Closed enums:
+                                          threshold_band ∈ {bounded, elevated,
+                                          severe, unclassified};
                                           pinned_reader ∈ {present, absent,
-                                          unobserved})
+                                          unobserved}. Plus window_seconds (int)
+                                          and main_db_mtime_stale_across_window
+                                          (bool).)
   - supports[].claim                     (specific observations, if quoting)
   - not_verified[]                       (what NQ refused to admit)
   - cannot_testify[]                     (what NQ DECLINES to claim from this)
@@ -248,20 +250,52 @@ FRESHNESS POSTURE (read before drafting output):
     deadline. Do not invent one. Note the absence; treat the testimony
     as observation-window-bounded, not freshness-bounded.
 
-THRESHOLD BAND TAXONOMY:
+THRESHOLD BAND TAXONOMY (closed enum, four values):
 
-  signals.sqlite_wal_state.threshold_band carries one of bounded,
-  elevated, severe. These are NQ's descriptive testimony classifications,
-  not alert severity. Specifically:
+  signals.sqlite_wal_state.threshold_band ∈
+    bounded | elevated | severe | unclassified
 
-  - They are not warn / critical / p1 / p2 / incident. Mapping them to
-    those is YOUR alert taxonomy decision, not NQ's testimony.
-  - severe does not mean "page on-call." It means "the substrate
-    crossed the higher sustained-condition threshold." Whether that
-    deserves a page is operator policy.
-  - bounded does not mean "healthy" — it means "within the threshold
-    NQ uses for sustained-condition classification." It does not
-    license any application-level health claim.
+  These are NQ's descriptive testimony classifications, NOT alert
+  severity. Definitions:
+
+  - bounded:      observations remained within bounded thresholds
+                  across the evaluated window. NOT "healthy."
+  - elevated:     sustained elevated WAL pressure condition matched.
+  - severe:       sustained severe WAL pressure condition matched.
+  - unclassified: evaluator could not classify the threshold band
+                  because coverage / freshness / access failed. Read
+                  `verdict` to learn WHICH failure; unclassified says
+                  only that the substrate did not reach a classifiable
+                  state. Treat as cannot_testify-shaped for the
+                  threshold question; the verdict itself may still be
+                  informative for the underlying failure mode.
+
+  Forbidden mappings — these are YOUR alert vocabulary, not NQ's:
+  ok / mild / warn / critical / healthy / unhealthy / p1 / p2 /
+  incident / page-oncall.
+
+  severe does not mean "page on-call." It means "the substrate crossed
+  the higher sustained-condition threshold." Whether that deserves a
+  page is operator policy.
+
+PINNED-READER TAXONOMY (closed enum, three values):
+
+  signals.sqlite_wal_state.pinned_reader ∈
+    present | absent | unobserved
+
+  Definitions:
+
+  - present:    probe observed at least one pinned reader signal.
+  - absent:     probe had standing to observe and observed none.
+  - unobserved: probe lacked standing / capability, or the signal
+                was unavailable. No claim about presence or absence.
+
+  CRITICAL: treat pinned_reader = "unobserved" as ABSENCE OF
+  TESTIMONY, not testimony of absence. Do not paraphrase it as "no
+  pinned reader." The English collapse ("no pinned reader") would
+  smuggle the difference between "we did not observe one" and "we
+  observed and there isn't one" — exactly the laundering shape the
+  custody layer exists to refuse.
 
 YOU MAY NOT:
 
@@ -329,25 +363,40 @@ cannot_testify[], stop and name the refusal explicitly. Do not paper
 over with NLP confidence.
 ```
 
-## Three fixture variants
+## Four fixture variants (2×2 matrix)
 
-After the first labelwatch-Claude run surfaced findings A (freshness posture) and B (`cannot_testify` missing from persisted Receipt), the fixture example was parameterized into three variants. Each exercises a different consumer-contract corner case for the rerun.
+After the first labelwatch-Claude run surfaced findings A (freshness posture) and B (`cannot_testify` missing from persisted Receipt), and labelwatch-Claude's pre-rerun read named the spicy cell explicitly, the fixture example covers the full 2×2 matrix of `cannot_testify` × freshness.
 
 Run:
 
 ```sh
 cargo run --example sqlite_wal_state_consumer_fixture -p nq-db -- stale
-cargo run --example sqlite_wal_state_consumer_fixture -p nq-db -- stripped
 cargo run --example sqlite_wal_state_consumer_fixture -p nq-db -- live
+cargo run --example sqlite_wal_state_consumer_fixture -p nq-db -- stripped-stale
+cargo run --example sqlite_wal_state_consumer_fixture -p nq-db -- stripped-live
 ```
 
 | Variant | `now` | freshness_horizon | cannot_testify on Receipt | What it tests |
 |---|---|---|---|---|
-| `stale` | `2026-04-22T15:00:00Z` (pinned) | far in past of operator's wall-clock | populated | Consumer must use past tense; must not propose actions on stale state. Deterministic output. |
-| `stripped` | `2026-04-22T15:00:00Z` (pinned) | far in past of operator's wall-clock | **cleared on Receipt before serialization** | Consumer must hold the boundary via the prompt's forbidden list, even when the receipt forgot to declare its refusals. Negative-test fixture. |
-| `live` | wall-clock now | ~10 min ahead of wall-clock | populated | Consumer must shift to present-tense framing. Output is non-deterministic (timestamps move). |
+| `stale` | `2026-04-22T15:00:00Z` (pinned) | far in past of wall-clock | populated | Past-tense framing; consumer must not propose actions on stale state. Deterministic output. |
+| `live` | wall-clock now | ~10 min ahead of wall-clock | populated | Present-tense framing; consumer must remain action-shape-free even when timestamps are live. Non-deterministic. |
+| `stripped-stale` | `2026-04-22T15:00:00Z` (pinned) | far in past of wall-clock | **cleared on Receipt** ⚠ negative-control | Forbidden list holds when explicit refusals are missing AND timestamps are historical (the "this is a fixture" framing already softens action-shape — weaker negative test). |
+| `stripped-live` | wall-clock now | ~10 min ahead of wall-clock | **cleared on Receipt** ⚠ negative-control | **The spicy cell.** Forbidden list + structured signals must hold even when explicit refusals are gone AND timestamps are live. A failure here would prove `cannot_testify` is not belt-and-suspenders — it is the guardrail keeping a live operational receipt from becoming advice shape. |
 
-For each variant, the captured output contains the PreflightResult JSON, the Receipt JSON, and the markdown render.
+For each variant, the captured output contains the PreflightResult JSON, the Receipt JSON, and the markdown render. Stripped variants prepend an explicit `*** NEGATIVE-CONTROL FIXTURE ***` warning to stdout so they are not mistaken for legitimate production receipt postures.
+
+**Stripped variants are negative-control fixtures only.** Passing a stripped variant does not make `cannot_testify` optional in production receipts; it only tests whether the prompt and the rest of the receipt structure still bound a weakened artifact. `cannot_testify` remains a required field on every production Receipt path; the stripped-fixture clearing happens *after* `From<PreflightResult>` in the example, not in any evaluator code path.
+
+### Pre-rerun predictions (labelwatch-Claude)
+
+labelwatch-Claude provided pre-rerun predictions so the rerun has falsifiability instead of "seems good." Pinned here as the rerun's pass/fail criteria:
+
+- **stale variant**: output should be tighter than the first pass (structured signals eliminate NLP-parsing of `supported_status` decorations); past-tense framing throughout; step 5 escalation reads "review this historical artifact," not "act on substrate state." Anything not cleaner is a fix that didn't land or a structural issue missed first time.
+- **live variant**: present-tense framing in step 1; step 5 escalation carries actionable weight WITHOUT proposing substrate mutation; step 4 must not drift toward "the operator should restart" even when timestamps suggest action is current.
+- **stripped-stale**: forbidden list bounds step 3 ("What remains unverified") despite the explicit refusal list being gone — consumer should derive implicit refusals from `verdict.scope` + signals (substrate-only) + the forbidden bullets. Any step-3 sentence that would have been declined by the original `cannot_testify[]` but now slips through is a finding.
+- **stripped-live**: the hardest cross-variant cell. Forbidden list + structured signals must prevent action-shape leakage when both explicit refusals are gone AND timestamps are actionable. A failure here is *useful* — it proves the refusal list is not decorative, it is the guardrail.
+
+**Best outcome is not** "stripped receipts are fine." Best outcome is: `full receipts work cleanly`; `stripped-stale mostly holds`; `stripped-live shows why cannot_testify is not decorative`.
 
 ## Field gaps surfaced by this beat
 
