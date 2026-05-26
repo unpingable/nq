@@ -1,9 +1,11 @@
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
     response::Html,
     routing::{get, post, delete},
     Json, Router,
 };
+use nq_db::sqlite_wal_state::{evaluate_sqlite_wal_state_preflight, SqliteWalTarget};
 use nq_db::{overview, host_detail, query_read_only, evaluate_disk_state_preflight, evaluate_dns_state_preflight, evaluate_ingest_state_preflight, DnsObservationTuple, QueryLimits, ReadDb, WriteDb};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -86,6 +88,10 @@ pub fn router(db: Db) -> Router {
         .route("/api/preflight/disk-state/{host}", get(api_preflight_disk_state))
         .route("/api/preflight/ingest-state", get(api_preflight_ingest_state))
         .route("/api/preflight/dns-state", get(api_preflight_dns_state))
+        .route(
+            "/api/preflight/sqlite-wal-state",
+            get(api_preflight_sqlite_wal_state),
+        )
         .route("/finding/{kind}/{host}", get(finding_detail))
         .route("/finding/{kind}/{host}/{subject}", get(finding_detail_with_subject))
         .with_state(db)
@@ -861,6 +867,69 @@ async fn api_preflight_dns_state(
             Err(e) => Json(serde_json::json!({"error": e.to_string()})),
         },
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+/// Required query params for the `sqlite_wal_state` route. Both fields
+/// are load-bearing for target identity: the witness is the SQLite WAL
+/// probe at one vantage observing one main DB file. Empty values are
+/// 400 (request error), not evaluator verdicts — see preflight §6.
+///
+/// The HTTP param name is `db`; the internal substrate field is
+/// `db_file_path`. The HTTP surface uses the shorter form for operator
+/// ergonomics; the wire-side preflight result still names the field
+/// fully under `target.id`.
+#[derive(Debug, serde::Deserialize)]
+struct PreflightSqliteWalStateQuery {
+    host: String,
+    db: String,
+}
+
+/// Bounded `sqlite_wal_state` preflight surfaced over the monitor HTTP path.
+///
+/// Emits the typed `PreflightResult` DTO (`nq.preflight.sqlite_wal_state.v1`).
+/// One envelope per `(host, db_file_path)` target. Missing query params
+/// fall through to axum's default 400 response with a deserialization
+/// error in the body; empty params return a 400 with an explicit error
+/// message (so consumers can distinguish "param missing" from "param
+/// present but empty").
+///
+/// V0 reads only existing `wal_observations` rows; the HTTP path does
+/// no probing of its own. The probe is a later slice; this surface is
+/// the reader.
+async fn api_preflight_sqlite_wal_state(
+    State(db): State<Db>,
+    Query(params): Query<PreflightSqliteWalStateQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let host = params.host.trim();
+    let db_file_path = params.db.trim();
+    if host.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "query parameter `host` is required and must not be empty"
+            })),
+        ));
+    }
+    if db_file_path.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "query parameter `db` is required and must not be empty"
+            })),
+        ));
+    }
+    let db = db.lock().await;
+    let target = SqliteWalTarget {
+        host,
+        db_file_path,
+    };
+    match evaluate_sqlite_wal_state_preflight(&db, &target) {
+        Ok(result) => match serde_json::to_value(&result) {
+            Ok(v) => Ok(Json(v)),
+            Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
+        },
+        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
     }
 }
 

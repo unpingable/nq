@@ -2095,3 +2095,374 @@ async fn preflight_disk_state_http_time_basis_suspect_when_observed_at_in_far_fu
          verdict: got {verdict:?}"
     );
 }
+
+// =============================================================================
+// `sqlite_wal_state` HTTP route — slice 5.
+//
+// Mirrors the dns_state route shape. The route only loads target params,
+// calls the existing evaluator, and serializes the existing
+// PreflightResult. No probe, no temporal-algebra in the route layer.
+// =============================================================================
+
+/// Seed one `wal_observations` row at `observed_at`. Mirrors
+/// `seed_dns_observation` for the parallel kind. Defaults are the
+/// "clean substrate" shape — small WAL, fresh main DB, proc_access
+/// observed with no pinned reader.
+fn seed_wal_observation(
+    conn: &rusqlite::Connection,
+    gen_id: i64,
+    host: &str,
+    db_file_path: &str,
+    observed_at: &str,
+    wal_bytes: i64,
+) {
+    let obs = nq_db::sqlite_wal_state::WalObservation {
+        observation_id: None,
+        generation_id: gen_id,
+        host: host.to_string(),
+        db_file_path: db_file_path.to_string(),
+        wal_present: true,
+        wal_bytes,
+        wal_mtime: Some(observed_at.to_string()),
+        db_bytes: 26_000_000_000,
+        db_mtime: observed_at.to_string(),
+        proc_access: nq_db::sqlite_wal_state::ProcAccess::Observed,
+        pinned_reader_present: Some(false),
+        pinned_reader_pid: None,
+        pinned_reader_command: None,
+        observed_at: observed_at.to_string(),
+        error_detail: None,
+    };
+    nq_db::sqlite_wal_state::insert_observation(conn, &obs).unwrap();
+}
+
+/// Phrases that must never appear in any verdict_note or support
+/// claim emitted by sqlite_wal_state. The route exists exactly so
+/// consumers can map NQ's testimony to their own alert language;
+/// the wire must not pre-judge the mapping.
+const SQLITE_WAL_FORBIDDEN_PHRASES: &[&str] = &[
+    "warn",
+    "critical",
+    "alert",
+    "incident",
+    " p1 ",
+    " p2 ",
+    "page on-call",
+    "wake the oncall",
+];
+
+fn assert_sqlite_wal_response_bounded(resp: &serde_json::Value) {
+    let supports = resp["supports"].as_array().expect("supports array");
+    for support in supports {
+        let claim = support["claim"].as_str().unwrap_or("").to_ascii_lowercase();
+        for forbidden in SQLITE_WAL_FORBIDDEN_PHRASES {
+            assert!(
+                !claim.contains(forbidden),
+                "support claim must not use alert vocabulary {forbidden:?}: {claim}"
+            );
+        }
+    }
+    let note = resp["verdict_note"]
+        .as_str()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    for forbidden in SQLITE_WAL_FORBIDDEN_PHRASES {
+        assert!(
+            !note.contains(forbidden),
+            "verdict_note must not use alert vocabulary {forbidden:?}: {note}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn sqlite_wal_state_http_no_rows_emits_insufficient_coverage() {
+    // Empty wal_observations table → evaluator returns
+    // insufficient_coverage with the full constitutional refusal
+    // surface. Confirms route wiring + schema + cannot_testify.
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    {
+        let write_db = open_rw(&db_path).unwrap();
+        seed_fresh_generation(write_db.conn(), 100, "complete", 1, 0);
+        drop(write_db);
+    }
+
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let url = format!(
+        "{base}/api/preflight/sqlite-wal-state\
+         ?host=labelwatch.neutral.zone&db=/var/lib/labelwatch/discovery.db"
+    );
+    let http_resp = client.get(&url).send().await.unwrap();
+    assert_eq!(http_resp.status(), reqwest::StatusCode::OK);
+    let resp: serde_json::Value = http_resp.json().await.unwrap();
+
+    // Wire contract.
+    assert_eq!(resp["schema"], "nq.preflight.sqlite_wal_state.v1");
+    assert_eq!(resp["contract_version"], 1);
+    assert_eq!(resp["claim_kind"], "sqlite_wal_state");
+    assert_eq!(resp["target"]["host"], "labelwatch.neutral.zone");
+    assert_eq!(resp["target"]["scope"], "sqlite_wal");
+    assert_eq!(resp["target"]["id"], "/var/lib/labelwatch/discovery.db");
+
+    // Verdict: no rows → insufficient_coverage.
+    assert_eq!(resp["verdict"], "insufficient_coverage");
+    assert!(resp["verdict_note"]
+        .as_str()
+        .unwrap()
+        .contains("No SQLite WAL probe has run"));
+
+    // Constitutional refusal surface present alongside the absence
+    // verdict.
+    let cannot_testify = resp["cannot_testify"]
+        .as_array()
+        .expect("cannot_testify array");
+    let joined = cannot_testify
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for needle in [
+        "application that owns this DB",
+        "queries against this DB",
+        "WAL state will degrade in the future",
+        "checkpoint operations",
+        "repoint, kill the pinned reader, or page",
+    ] {
+        assert!(
+            joined.contains(needle),
+            "cannot_testify must name {needle:?}; got: {joined}"
+        );
+    }
+
+    // No supports (no rows to admit).
+    let supports = resp["supports"].as_array().expect("supports array");
+    assert!(supports.is_empty());
+
+    // Coverage standing for absent witness.
+    let coverage = resp["coverage"].as_array().expect("coverage array");
+    let probe = coverage
+        .iter()
+        .find(|c| c["witness"] == "sqlite_wal_probe")
+        .expect("sqlite_wal_probe coverage entry");
+    assert_eq!(probe["standing"], "absent");
+
+    // Anti-laundering at the wire layer.
+    assert_sqlite_wal_response_bounded(&resp);
+}
+
+#[tokio::test]
+async fn sqlite_wal_state_http_inserted_rows_return_supports_with_witness_packet() {
+    // Seed a few fresh wal_observations rows. The latest is within
+    // the staleness threshold, but row count is below the
+    // sample-floor, so verdict is insufficient_coverage. The point
+    // of this test is that supports[] populates with one entry per
+    // admitted row and each carries the projected packet's identity
+    // (the kind-4 preflight acceptance criterion 5).
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    {
+        let write_db = open_rw(&db_path).unwrap();
+        seed_fresh_generation(write_db.conn(), 100, "complete", 1, 0);
+        // 5 rows, 60s apart, ending at "now". The latest row is
+        // fresh against the 600s staleness threshold.
+        let now = time::OffsetDateTime::now_utc();
+        for i in 0..5 {
+            let t = now - time::Duration::seconds((4 - i) as i64 * 60);
+            let observed_at = t
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap();
+            seed_wal_observation(
+                write_db.conn(),
+                100,
+                "labelwatch.neutral.zone",
+                "/var/lib/labelwatch/discovery.db",
+                &observed_at,
+                1_000_000, // 1 MB — well under the elevated threshold
+            );
+        }
+        drop(write_db);
+    }
+
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let url = format!(
+        "{base}/api/preflight/sqlite-wal-state\
+         ?host=labelwatch.neutral.zone&db=/var/lib/labelwatch/discovery.db"
+    );
+    let http_resp = client.get(&url).send().await.unwrap();
+    assert_eq!(http_resp.status(), reqwest::StatusCode::OK);
+    let resp: serde_json::Value = http_resp.json().await.unwrap();
+
+    assert_eq!(resp["schema"], "nq.preflight.sqlite_wal_state.v1");
+    // Five rows is below the elevated sample floor (100); verdict
+    // is insufficient_coverage with a sample-count note.
+    assert_eq!(resp["verdict"], "insufficient_coverage");
+    assert!(resp["verdict_note"]
+        .as_str()
+        .unwrap()
+        .contains("accumulated only 5 samples"));
+
+    // Supports nonetheless populate from the admitted rows. Each
+    // carries witness_packet identity from the projector.
+    let supports = resp["supports"].as_array().expect("supports array");
+    assert_eq!(supports.len(), 5, "one support per admitted row");
+    for s in supports {
+        let wp = s
+            .get("witness_packet")
+            .expect("admitted support must carry witness_packet");
+        assert_eq!(wp["witness_type"], "sqlite_wal_legacy_projection");
+        assert_eq!(wp["custody_basis"], "legacy_projection");
+        let digest = wp["digest"].as_str().expect("digest is a string");
+        assert!(!digest.is_empty());
+    }
+
+    // observed_at envelope present (supports non-empty).
+    assert!(resp.get("observed_at_min").is_some());
+    assert!(resp.get("observed_at_max").is_some());
+
+    // Anti-laundering at the wire layer.
+    assert_sqlite_wal_response_bounded(&resp);
+}
+
+#[tokio::test]
+async fn sqlite_wal_state_http_missing_host_returns_400() {
+    // axum auto-400 on missing required query param.
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let url = format!("{base}/api/preflight/sqlite-wal-state?db=/some.db");
+    let http_resp = client.get(&url).send().await.unwrap();
+    assert_eq!(http_resp.status(), reqwest::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn sqlite_wal_state_http_missing_db_returns_400() {
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let url = format!("{base}/api/preflight/sqlite-wal-state?host=labelwatch");
+    let http_resp = client.get(&url).send().await.unwrap();
+    assert_eq!(http_resp.status(), reqwest::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn sqlite_wal_state_http_empty_host_returns_400() {
+    // Explicit empty-string 400 with a JSON error body. Distinct
+    // from axum's auto-400 (which fires on missing params) so
+    // consumers can tell "param missing" from "param empty."
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let url = format!("{base}/api/preflight/sqlite-wal-state?host=&db=/some.db");
+    let http_resp = client.get(&url).send().await.unwrap();
+    assert_eq!(http_resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = http_resp.json().await.unwrap();
+    assert!(body["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("`host` is required"));
+}
+
+#[tokio::test]
+async fn sqlite_wal_state_http_empty_db_returns_400() {
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let url = format!("{base}/api/preflight/sqlite-wal-state?host=labelwatch&db=");
+    let http_resp = client.get(&url).send().await.unwrap();
+    assert_eq!(http_resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = http_resp.json().await.unwrap();
+    assert!(body["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("`db` is required"));
+}
+
+#[tokio::test]
+async fn sqlite_wal_state_http_whitespace_host_returns_400() {
+    // Whitespace-only host is the same shape as empty: the trim
+    // step in the handler reduces it to "", and the empty branch
+    // fires.
+    use nq::http::routes::router;
+
+    let (_dir, db_path) = temp_db();
+    let read_db = open_ro(&db_path).unwrap();
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    let client = reqwest::Client::new();
+    let url = format!("{base}/api/preflight/sqlite-wal-state?host=%20%20%20&db=/some.db");
+    let http_resp = client.get(&url).send().await.unwrap();
+    assert_eq!(http_resp.status(), reqwest::StatusCode::BAD_REQUEST);
+}
