@@ -279,7 +279,14 @@ impl Receipt {
 /// submitted claim.
 impl From<PreflightResult> for Receipt {
     fn from(pr: PreflightResult) -> Receipt {
-        let claim = "disk_state".to_string();
+        // Derive the claim kind from the originating PreflightResult.
+        // Earlier versions hardcoded "disk_state" here — that worked
+        // for the disk_state-only world but mis-claimed for every
+        // later Track A kind (ingest_state, dns_state, sqlite_wal_state).
+        // The Receipt's `evaluator` binding (built below at line ~378)
+        // already uses pr.claim_kind.as_str() correctly; the `claim`
+        // field now matches.
+        let claim = pr.claim_kind.as_str().to_string();
         let subject = render_subject(&pr.target);
         let (status, mut status_reasons) = map_verdict(pr.verdict);
 
@@ -519,6 +526,48 @@ mod tests {
         assert!(r.status_reasons.contains(&StatusReason::AllRequirementsVerified));
         assert!(!r.verified.is_empty());
         assert!(r.suggested_weaker_claims.is_empty());
+    }
+
+    #[test]
+    fn receipt_claim_derives_from_originating_claim_kind() {
+        // Pre-2026-05-26 the conversion hardcoded "disk_state" here,
+        // so a non-disk_state PreflightResult produced a mis-claimed
+        // Receipt. This test pins the fix across all four Track A
+        // kinds — Receipt.claim must equal ClaimKind.as_str() of the
+        // originating PreflightResult.
+        //
+        // The Receipt's `evaluator` binding has always derived from
+        // pr.claim_kind correctly; the `claim` field now matches.
+        // Discrepancy between the two fields was the consumer-
+        // preflight beat's headline field gap (see
+        // docs/architecture/SQLITE_WAL_STATE_CONSUMER_PREFLIGHT.md
+        // gap #1).
+        for kind in [
+            ClaimKind::DiskState,
+            ClaimKind::IngestState,
+            ClaimKind::DnsState,
+            ClaimKind::SqliteWalState,
+        ] {
+            let pr = PreflightResult::skeleton(
+                kind,
+                host_target("h1"),
+                "2026-05-26T14:00:00Z".into(),
+            );
+            let r: Receipt = pr.into();
+            assert_eq!(
+                r.claim,
+                kind.as_str(),
+                "Receipt.claim must equal ClaimKind.as_str() for kind {kind:?}"
+            );
+            let ev = r
+                .evaluator
+                .as_ref()
+                .expect("evaluator binding must be sealed");
+            assert_eq!(
+                ev.evaluator, r.claim,
+                "Receipt.evaluator.evaluator must match Receipt.claim for kind {kind:?}"
+            );
+        }
     }
 
     #[test]
