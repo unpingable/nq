@@ -796,12 +796,35 @@ fn make_support(obs: &WalObservation) -> PreflightSupport {
 /// field names. Untyped on purpose — typed cross-kind signals would
 /// force the registry-shape question prematurely.
 ///
-/// **Not alert taxonomy.** `threshold_band` carries one of
-/// `bounded` / `elevated` / `severe` — descriptive testimony
-/// classifications, not alert severity. Consumers map these to their
-/// own alert vocabulary (`warn` / `critical` / `incident` / etc.) if
-/// they have one. NQ does not. See `KIND_4_SQLITE_WAL_STATE.md` §5
-/// and the consumer-preflight beat doc for the boundary.
+/// ## Closed enums
+///
+/// `threshold_band` takes one of four values:
+///
+/// - `bounded` — observations remained within bounded thresholds
+///   across the evaluated window (no sustained-condition match).
+/// - `elevated` — sustained elevated WAL pressure matched.
+/// - `severe` — sustained severe WAL pressure matched.
+/// - `unclassified` — evaluator could not classify the threshold
+///   band because coverage / freshness / access failed (no rows,
+///   stale latest row, insufficient samples, inaccessible DB,
+///   contradictory substrate). Consumers should read the verdict
+///   to learn *which* failure; `unclassified` says only that the
+///   substrate did not reach a classifiable state.
+///
+/// `pinned_reader` takes one of three values:
+///
+/// - `present` — probe observed at least one pinned reader signal.
+/// - `absent` — probe had standing to observe and observed none.
+/// - `unobserved` — probe lacked standing/capability or the signal
+///   was unavailable; no claim about presence or absence.
+///
+/// **Not alert taxonomy.** Both enums are descriptive testimony
+/// classifications. Consumers map them to their own alert vocabulary
+/// (`warn` / `critical` / `incident` / etc.) if they have one. NQ
+/// does not. Forbidden values: `ok` / `mild` / `warn` / `critical` /
+/// `healthy` / `unhealthy` for `threshold_band`. See
+/// `KIND_4_SQLITE_WAL_STATE.md` §5 and the consumer-preflight beat
+/// doc for the boundary.
 ///
 /// **Not a consequence field.** This payload does not say
 /// `action_required`, `should_restart`, `escalate_to_oncall`, or
@@ -810,38 +833,38 @@ fn make_support(obs: &WalObservation) -> PreflightSupport {
 fn build_signals(classification: &WalClassification) -> serde_json::Value {
     let inner = match classification {
         WalClassification::NoRowsInWindow => serde_json::json!({
-            "threshold_band": null,
+            "threshold_band": "unclassified",
             "window_seconds": null,
             "main_db_mtime_stale_across_window": null,
-            "pinned_reader": null,
+            "pinned_reader": "unobserved",
         }),
         WalClassification::LatestRowStale { age_seconds, .. } => serde_json::json!({
-            "threshold_band": null,
+            "threshold_band": "unclassified",
             "window_seconds": null,
             "main_db_mtime_stale_across_window": null,
-            "pinned_reader": null,
+            "pinned_reader": "unobserved",
             "latest_observation_age_seconds": age_seconds,
         }),
         WalClassification::InsufficientSamples { count, needed } => serde_json::json!({
-            "threshold_band": null,
+            "threshold_band": "unclassified",
             "window_seconds": null,
             "main_db_mtime_stale_across_window": null,
-            "pinned_reader": null,
+            "pinned_reader": "unobserved",
             "samples": count,
             "samples_required": needed,
         }),
         WalClassification::InaccessibleDb { error_detail } => serde_json::json!({
-            "threshold_band": null,
+            "threshold_band": "unclassified",
             "window_seconds": null,
             "main_db_mtime_stale_across_window": null,
-            "pinned_reader": null,
+            "pinned_reader": "unobserved",
             "inaccessible_db_detail": error_detail,
         }),
         WalClassification::Contradictory { reason } => serde_json::json!({
-            "threshold_band": null,
+            "threshold_band": "unclassified",
             "window_seconds": null,
             "main_db_mtime_stale_across_window": null,
-            "pinned_reader": null,
+            "pinned_reader": "unobserved",
             "contradiction_reason": reason,
         }),
         WalClassification::BoundedWal {
@@ -1682,20 +1705,29 @@ mod tests {
     }
 
     #[test]
-    fn evaluator_signals_pre_sustained_classifications_null_band() {
-        // For NoRowsInWindow / LatestRowStale / InsufficientSamples,
-        // the threshold_band is null (the substrate didn't reach a
-        // sustained-condition classification at all). The signals
-        // payload still surfaces — what's there is the per-
-        // classification carry (e.g., samples count for
-        // InsufficientSamples).
+    fn evaluator_signals_pre_sustained_classifications_emit_unclassified_band() {
+        // Per the closed `threshold_band` enum:
+        //
+        //   bounded | elevated | severe | unclassified
+        //
+        // For NoRowsInWindow / LatestRowStale / InsufficientSamples /
+        // InaccessibleDb / Contradictory, the band is `"unclassified"`
+        // (not null). The closed-string contract is cleaner for
+        // consumers — they pattern-match on a known set, no null-
+        // checking branch. The verdict carries *which* failure;
+        // `unclassified` says only that the substrate did not reach
+        // a classifiable state.
+        //
+        // Similarly, pinned_reader is "unobserved" (not null) for all
+        // pre-sustained paths — same closed-enum discipline.
         let db = make_db();
 
         // No rows.
         let r1 =
             evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
         let s1 = signals_for(&r1);
-        assert!(s1["threshold_band"].is_null());
+        assert_eq!(s1["threshold_band"], "unclassified");
+        assert_eq!(s1["pinned_reader"], "unobserved");
 
         // Insufficient samples.
         let rows = build_window(NOW, 60, 50, |_| 1024);
@@ -1703,8 +1735,44 @@ mod tests {
         let r2 =
             evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
         let s2 = signals_for(&r2);
-        assert!(s2["threshold_band"].is_null());
+        assert_eq!(s2["threshold_band"], "unclassified");
+        assert_eq!(s2["pinned_reader"], "unobserved");
         assert_eq!(s2["samples"].as_i64().unwrap(), 50);
+    }
+
+    #[test]
+    fn evaluator_signals_threshold_band_uses_no_alert_values() {
+        // Belt-and-braces against `ok` / `mild` / `warn` / `critical` /
+        // `healthy` / `unhealthy` ever leaking into the threshold_band
+        // field across any classification.
+        let cases: &[(usize, i64, &str)] = &[
+            (0, 0, "unclassified"),     // no rows
+            (50, 1_000_000, "unclassified"), // insufficient samples
+            (200, 1_000_000, "bounded"),
+            (361, 3_000_000_000, "elevated"),
+            (721, 15_000_000_000, "severe"),
+        ];
+        for &(count, wal_bytes, expected_band) in cases {
+            let db = make_db();
+            if count > 0 {
+                let rows = build_window(NOW, 60, count, |_| wal_bytes);
+                insert_all(&db.conn, &rows);
+            }
+            let r =
+                evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt())
+                    .unwrap();
+            let s = signals_for(&r);
+            assert_eq!(
+                s["threshold_band"], expected_band,
+                "count={count} wal_bytes={wal_bytes} expected band {expected_band:?}"
+            );
+            for forbidden in ["ok", "mild", "warn", "critical", "healthy", "unhealthy"] {
+                assert_ne!(
+                    s["threshold_band"], forbidden,
+                    "threshold_band must not take alert-taxonomy value {forbidden:?}"
+                );
+            }
+        }
     }
 
     #[test]

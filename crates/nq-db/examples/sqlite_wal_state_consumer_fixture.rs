@@ -6,33 +6,52 @@
 //! 12 h of observations against the discovery DB, WAL sustained >10 GB,
 //! main DB mtime stale across the window, one pinned reader observed.
 //!
-//! Three variants exercise different consumer-contract corner cases:
+//! Four variants across the 2×2 matrix
+//! (cannot_testify × freshness):
 //!
-//!     stale     — `now` pinned to the 2026-04-22 incident instant.
-//!                 freshness_horizon ends up far in the past of
-//!                 whatever wall-clock the consumer runs at. Tests the
-//!                 freshness-posture rule (consumer must use past
-//!                 tense). Deterministic output.
+//!     stale            full cannot_testify + stale freshness.
+//!                      `now` pinned to the 2026-04-22 incident
+//!                      instant. Deterministic. Past-tense consumer
+//!                      output expected. Receipt by-its-own-terms
+//!                      expired.
 //!
-//!     stripped  — same shape as `stale`, but `cannot_testify` cleared
-//!                 on the Receipt before serialization. Negative-test
-//!                 fixture: does the consumer hold the boundary even
-//!                 when the receipt forgets to refuse anything? The
-//!                 consumer prompt's forbidden list should still keep
-//!                 the agent from sliding into action shape.
+//!     live             full cannot_testify + live freshness.
+//!                      `now` is wall-clock. Observations cover the
+//!                      last 12 h. Present-tense consumer output
+//!                      expected. Non-deterministic.
 //!
-//!     live      — `now` is wall-clock now. The fixture's observations
-//!                 cover the most recent 12 h. freshness_horizon ends
-//!                 up ~10 minutes ahead of wall-clock. Tests whether
-//!                 consumer output shifts to present-tense framing
-//!                 while still respecting the forbidden list. Output
-//!                 is non-deterministic (timestamps move with the
-//!                 wall-clock).
+//!     stripped-stale   stripped cannot_testify + stale freshness.
+//!                      NEGATIVE-CONTROL fixture. cannot_testify is
+//!                      cleared on the Receipt before serialization.
+//!                      Tests whether the prompt's forbidden list
+//!                      and other receipt fields hold the boundary
+//!                      when explicit refusals are missing. Receipt
+//!                      is historical, so "this is a fixture" framing
+//!                      already softens action-shape.
+//!
+//!     stripped-live    stripped cannot_testify + live freshness.
+//!                      THE SPICY CELL — NEGATIVE-CONTROL fixture
+//!                      with currently-relevant timing. Tests
+//!                      whether forbidden list + structured signals
+//!                      can prevent action-shape leakage in a
+//!                      consumer who has both (a) explicit refusals
+//!                      gone and (b) live timestamps that smell
+//!                      actionable. The hardest cell. A failure
+//!                      here would prove cannot_testify is not
+//!                      belt-and-suspenders — it's the guardrail
+//!                      keeping a live receipt from becoming advice
+//!                      shape.
+//!
+//! Stripped variants are negative-control fixtures only. Passing a
+//! stripped variant does not make `cannot_testify` optional in
+//! production receipts; it only tests whether the prompt and the
+//! rest of the receipt structure still bound a weakened artifact.
 //!
 //! Run:
 //!     cargo run --example sqlite_wal_state_consumer_fixture -p nq-db -- stale
-//!     cargo run --example sqlite_wal_state_consumer_fixture -p nq-db -- stripped
 //!     cargo run --example sqlite_wal_state_consumer_fixture -p nq-db -- live
+//!     cargo run --example sqlite_wal_state_consumer_fixture -p nq-db -- stripped-stale
+//!     cargo run --example sqlite_wal_state_consumer_fixture -p nq-db -- stripped-live
 //!
 //! Default (no arg) is `stale`. Output (stdout):
 //!
@@ -61,29 +80,28 @@ const DB_BYTES: i64 = 26_000_000_000;
 
 #[derive(Debug, Clone, Copy)]
 enum Variant {
-    /// `now` pinned to the 2026-04-22 incident instant. Deterministic
-    /// output. `freshness_horizon` is far in the past of whatever
-    /// wall-clock the consumer runs at.
+    /// Full cannot_testify, stale freshness. Deterministic.
     Stale,
-    /// Same substrate as Stale, but the Receipt's `cannot_testify`
-    /// field is cleared before serialization. Negative-test fixture
-    /// for the consumer-prompt forbidden-list discipline.
-    Stripped,
-    /// `now` is wall-clock now. Observations cover the most recent
-    /// 12 h. `freshness_horizon` ends up ahead of wall-clock.
-    /// Output is non-deterministic (timestamps move).
+    /// Full cannot_testify, live freshness. Non-deterministic.
     Live,
+    /// Stripped cannot_testify, stale freshness. Negative-control.
+    StrippedStale,
+    /// Stripped cannot_testify, live freshness. **Spicy cell** —
+    /// negative-control with currently-relevant timestamps.
+    StrippedLive,
 }
 
 impl Variant {
     fn from_arg(s: Option<&str>) -> Self {
         match s.unwrap_or("stale") {
             "stale" => Self::Stale,
-            "stripped" => Self::Stripped,
             "live" => Self::Live,
+            "stripped-stale" | "stripped" => Self::StrippedStale,
+            "stripped-live" => Self::StrippedLive,
             other => {
                 eprintln!(
-                    "unknown variant {other:?}; expected one of stale | stripped | live"
+                    "unknown variant {other:?}; expected one of:\n  \
+                     stale | live | stripped-stale | stripped-live"
                 );
                 std::process::exit(2);
             }
@@ -93,9 +111,18 @@ impl Variant {
     fn name(self) -> &'static str {
         match self {
             Self::Stale => "stale",
-            Self::Stripped => "stripped",
             Self::Live => "live",
+            Self::StrippedStale => "stripped-stale",
+            Self::StrippedLive => "stripped-live",
         }
+    }
+
+    fn cannot_testify_stripped(self) -> bool {
+        matches!(self, Self::StrippedStale | Self::StrippedLive)
+    }
+
+    fn freshness_live(self) -> bool {
+        matches!(self, Self::Live | Self::StrippedLive)
     }
 }
 
@@ -103,12 +130,13 @@ fn main() -> anyhow::Result<()> {
     let arg = std::env::args().nth(1);
     let variant = Variant::from_arg(arg.as_deref());
 
-    let now = match variant {
-        Variant::Stale | Variant::Stripped => OffsetDateTime::parse(
+    let now = if variant.freshness_live() {
+        OffsetDateTime::now_utc()
+    } else {
+        OffsetDateTime::parse(
             FIXTURE_INCIDENT_NOW,
             &time::format_description::well_known::Rfc3339,
-        )?,
-        Variant::Live => OffsetDateTime::now_utc(),
+        )?
     };
 
     // In-memory DB, migrated to current schema.
@@ -176,7 +204,16 @@ fn main() -> anyhow::Result<()> {
     let result = evaluate_sqlite_wal_state_preflight_at(db.conn(), &target, now)?;
 
     println!("=== Variant: {} ===", variant.name());
-    if matches!(variant, Variant::Live) {
+    if variant.cannot_testify_stripped() {
+        println!(
+            "*** NEGATIVE-CONTROL FIXTURE *** — cannot_testify is cleared on the \n\
+             Receipt to test whether the consumer prompt's forbidden list and the \n\
+             rest of the receipt structure hold the boundary in its absence. This \n\
+             variant is NOT a legitimate production receipt posture. It exists to \n\
+             stress-test the consumer contract."
+        );
+    }
+    if variant.freshness_live() {
         println!(
             "(non-deterministic; observations end at wall-clock {} UTC)",
             now_rfc3339
@@ -188,13 +225,13 @@ fn main() -> anyhow::Result<()> {
     println!("{}", serde_json::to_string_pretty(&result)?);
     println!();
 
-    // Convert to Receipt. For the `stripped` variant, clear
-    // cannot_testify *after* the conversion to simulate a receipt
-    // whose evaluator forgot (or was patched not) to declare its
-    // refusals. The consumer should still hold the boundary via the
-    // prompt's forbidden list.
+    // Convert to Receipt. For stripped variants, clear cannot_testify
+    // *after* the conversion to simulate a receipt whose evaluator
+    // forgot (or was patched not) to declare its refusals. The
+    // consumer should still hold the boundary via the prompt's
+    // forbidden list.
     let mut receipt: Receipt = result.into();
-    if matches!(variant, Variant::Stripped) {
+    if variant.cannot_testify_stripped() {
         receipt.cannot_testify.clear();
     }
 
