@@ -7,7 +7,7 @@
 //! in the evaluator's typed surface; conversion happens at the receipt
 //! boundary.
 
-use crate::preflight::{PreflightResult, Verdict};
+use crate::preflight::{PreflightResult, PreflightTarget, Verdict};
 use crate::witness::{DigestError, DIGEST_ALGORITHM_PREFIX};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -129,12 +129,40 @@ pub struct Receipt {
     pub schema: String,
     pub claim: String,
     pub subject: String,
+    /// Structured target identity carried verbatim from the originating
+    /// `PreflightResult.target` when the receipt comes from a Track A
+    /// evaluator. Consumers that want `host` / `scope` / `id` as
+    /// separate fields should read from `target`, not parse `subject`
+    /// (whose path-style format collides visually with embedded slashes
+    /// in DB paths and other absolute identifiers).
+    ///
+    /// Optional for backwards compatibility with receipts minted before
+    /// this field landed and for Track B receipts (where the claim is
+    /// composed across multiple targets and a single structured target
+    /// is not meaningful).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<PreflightTarget>,
     pub status: Status,
     pub status_reasons: Vec<StatusReason>,
     pub verified: Vec<String>,
     pub not_verified: Vec<NotVerifiedEntry>,
     pub suggested_weaker_claims: Vec<String>,
     pub supported_status: String,
+    /// Constitutional refusal surface carried verbatim from the
+    /// originating `PreflightResult.cannot_testify`. The persistent
+    /// receipt must surface this so consumers reading a stored receipt
+    /// can see which claims the evaluator explicitly declines to
+    /// authorize — without falling back to the (HTTP-route-only)
+    /// PreflightResult.
+    ///
+    /// Defaults to an empty list during deserialization for receipts
+    /// minted before this field landed; the empty-list case is
+    /// indistinguishable from "this evaluator declared no
+    /// constitutional refusals," which is itself a substantive
+    /// statement and worth preserving as the wire default. Always
+    /// populated by `From<PreflightResult>` going forward.
+    #[serde(default)]
+    pub cannot_testify: Vec<String>,
     pub witnesses: Vec<WitnessRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observed_at_min: Option<String>,
@@ -170,6 +198,34 @@ pub struct Receipt {
     /// today, no new failure modes shipped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub freshness_horizon: Option<String>,
+    /// Receipt-side consumer-convenience field carrying structured
+    /// signals computed by the originating evaluator, so downstream
+    /// consumers do not have to NLP-parse `supported_status` to recover
+    /// booleans / enumerations / numeric facts the evaluator already
+    /// knows.
+    ///
+    /// **Namespaced by claim kind from day one.** Today the only
+    /// populated namespace is `signals.sqlite_wal_state`. The flat
+    /// shape (`signals.window_seconds` etc.) was deliberately rejected
+    /// to prevent cross-kind field-name collisions when a second kind
+    /// adopts structured signals later.
+    ///
+    /// **Untyped (`Option<Value>`) on purpose.** Each claim kind
+    /// defines its own keys. A typed cross-kind enum would force the
+    /// registry-shape question (CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP)
+    /// before there is enough evidence about what the right typing is;
+    /// `Option<Value>` is the deliberately-humble move per
+    /// [[feedback_name_broadly_build_narrowly]].
+    ///
+    /// **Not a claim-definition surface, not a predicate algebra, not
+    /// a cross-kind schema contract.** This field is for consumer
+    /// convenience; it does not authorize any claim that
+    /// `cannot_testify` refuses, and it must not carry alert taxonomy
+    /// or consequence fields. Adding (for example)
+    /// `signals.sqlite_wal_state.action_required` would launder
+    /// consequence into the receipt and is out of scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signals: Option<serde_json::Value>,
     /// `sha256:<lowercase-hex-64>` over the JCS-canonicalized form of
     /// this receipt with `content_hash` itself omitted from the hashed
     /// bytes. Anchors *receipt identity* — the exact emitted envelope
@@ -201,18 +257,21 @@ impl Receipt {
             schema: RECEIPT_SCHEMA.to_string(),
             claim: claim.into(),
             subject: subject.into(),
+            target: None,
             status: Status::NotVerified,
             status_reasons: vec![],
             verified: vec![],
             not_verified: vec![],
             suggested_weaker_claims: vec![],
             supported_status: String::new(),
+            cannot_testify: vec![],
             witnesses: vec![],
             observed_at_min: None,
             observed_at_max: None,
             generated_at: generated_at.into(),
             evaluator: None,
             freshness_horizon: None,
+            signals: None,
             content_hash: None,
         }
     }
@@ -390,12 +449,22 @@ impl From<PreflightResult> for Receipt {
             schema: RECEIPT_SCHEMA.to_string(),
             claim,
             subject,
+            // Carry the structured target so consumers don't have to
+            // parse `subject` (whose path-style format collides with
+            // slashes inside absolute IDs like SQLite DB file paths).
+            target: Some(pr.target),
             status,
             status_reasons,
             verified,
             not_verified,
             suggested_weaker_claims,
             supported_status,
+            // Carry the constitutional refusal surface onto the
+            // persistent receipt. Without this, consumers reading a
+            // stored receipt cannot see which claims the evaluator
+            // explicitly declines — a load-bearing field for any
+            // agent/MCP consumer bounded by the receipt's testimony.
+            cannot_testify: pr.cannot_testify,
             witnesses,
             observed_at_min,
             observed_at_max,
@@ -406,6 +475,9 @@ impl From<PreflightResult> for Receipt {
             freshness_horizon: pr.freshness_horizon,
             generated_at: pr.generated_at,
             evaluator: None,
+            // Carry structured signals through; today only populated by
+            // sqlite_wal_state, namespaced under `signals.sqlite_wal_state`.
+            signals: pr.signals,
             content_hash: None,
         };
         // Fail-soft seal: per the Receipt::content_hash doc comment,
@@ -526,6 +598,217 @@ mod tests {
         assert!(r.status_reasons.contains(&StatusReason::AllRequirementsVerified));
         assert!(!r.verified.is_empty());
         assert!(r.suggested_weaker_claims.is_empty());
+    }
+
+    #[test]
+    fn receipt_carries_structured_target_from_preflight_result() {
+        // Consumer-contract field: the persistent receipt exposes
+        // target as a structured object so consumers don't have to
+        // parse `subject` (whose path-style format breaks on absolute
+        // IDs that contain slashes — see consumer-preflight beat
+        // gap #5). Pinned across all four current Track A kinds.
+        let cases = [
+            (
+                ClaimKind::DiskState,
+                PreflightTarget {
+                    host: "storage01".into(),
+                    scope: "host".into(),
+                    id: None,
+                },
+            ),
+            (
+                ClaimKind::IngestState,
+                PreflightTarget {
+                    host: "monitor".into(),
+                    scope: "ingest".into(),
+                    id: None,
+                },
+            ),
+            (
+                ClaimKind::DnsState,
+                PreflightTarget {
+                    host: "sushi-k".into(),
+                    scope: "dns_query".into(),
+                    id: Some("resolver=8.8.8.8;name=nq.neutral.zone;type=A".into()),
+                },
+            ),
+            (
+                ClaimKind::SqliteWalState,
+                PreflightTarget {
+                    host: "labelwatch.neutral.zone".into(),
+                    scope: "sqlite_wal".into(),
+                    id: Some("/var/lib/labelwatch/discovery.db".into()),
+                },
+            ),
+        ];
+        for (kind, target) in cases {
+            let pr = PreflightResult::skeleton(kind, target.clone(), "2026-05-26T14:00:00Z".into());
+            let r: Receipt = pr.into();
+            let t = r
+                .target
+                .as_ref()
+                .expect("Track A receipts must carry structured target");
+            assert_eq!(t.host, target.host, "{kind:?} host");
+            assert_eq!(t.scope, target.scope, "{kind:?} scope");
+            assert_eq!(t.id, target.id, "{kind:?} id");
+        }
+    }
+
+    #[test]
+    fn receipt_carries_cannot_testify_from_preflight_result() {
+        // Consumer-contract field: the persistent receipt surfaces the
+        // constitutional refusal list so consumers reading a stored
+        // receipt (not the HTTP-route-only PreflightResult) can see
+        // which claims the evaluator declines to authorize. Pin a
+        // characteristic refusal phrase per kind.
+        let cases = [
+            (ClaimKind::DiskState, "Physical disk death"),
+            (
+                ClaimKind::IngestState,
+                "Upstream source substrate health",
+            ),
+            (ClaimKind::DnsState, "Endpoint reachability"),
+            (
+                ClaimKind::SqliteWalState,
+                "application that owns this DB",
+            ),
+        ];
+        for (kind, needle) in cases {
+            let pr = PreflightResult::skeleton(
+                kind,
+                host_target("h1"),
+                "2026-05-26T14:00:00Z".into(),
+            );
+            let r: Receipt = pr.into();
+            assert!(
+                !r.cannot_testify.is_empty(),
+                "{kind:?} receipt must carry cannot_testify"
+            );
+            assert!(
+                r.cannot_testify.iter().any(|s| s.contains(needle)),
+                "{kind:?} cannot_testify must include {needle:?}; got {:?}",
+                r.cannot_testify
+            );
+        }
+    }
+
+    #[test]
+    fn receipt_signals_carries_through_when_populated() {
+        // PreflightResult.signals is Option<Value>; when set, it
+        // carries through to Receipt.signals unchanged. The
+        // sqlite_wal_state evaluator is the only producer today, but
+        // the carry-through is generic.
+        let mut pr = PreflightResult::skeleton(
+            ClaimKind::SqliteWalState,
+            PreflightTarget {
+                host: "labelwatch.neutral.zone".into(),
+                scope: "sqlite_wal".into(),
+                id: Some("/var/lib/labelwatch/discovery.db".into()),
+            },
+            "2026-05-26T14:00:00Z".into(),
+        );
+        pr.signals = Some(serde_json::json!({
+            "sqlite_wal_state": {
+                "threshold_band": "severe",
+                "window_seconds": 43200,
+                "main_db_mtime_stale_across_window": true,
+                "pinned_reader": "present"
+            }
+        }));
+        let r: Receipt = pr.into();
+        let s = r
+            .signals
+            .as_ref()
+            .expect("signals must carry through when set");
+        // Namespaced by claim kind — the slice's "no flat shape" rule.
+        let inner = s
+            .get("sqlite_wal_state")
+            .expect("signals namespaced under sqlite_wal_state");
+        assert_eq!(inner["threshold_band"], "severe");
+        assert_eq!(inner["window_seconds"], 43200);
+        assert_eq!(inner["main_db_mtime_stale_across_window"], true);
+        assert_eq!(inner["pinned_reader"], "present");
+    }
+
+    #[test]
+    fn receipt_signals_absent_for_kinds_that_do_not_populate() {
+        // disk_state / ingest_state / dns_state today populate
+        // pr.signals = None. The Receipt must reflect that absence
+        // honestly — Option::is_none, not Some(empty).
+        for kind in [
+            ClaimKind::DiskState,
+            ClaimKind::IngestState,
+            ClaimKind::DnsState,
+        ] {
+            let pr = PreflightResult::skeleton(
+                kind,
+                host_target("h1"),
+                "2026-05-26T14:00:00Z".into(),
+            );
+            let r: Receipt = pr.into();
+            assert!(
+                r.signals.is_none(),
+                "{kind:?} must not populate signals today; got {:?}",
+                r.signals
+            );
+        }
+    }
+
+    #[test]
+    fn receipt_signals_must_not_carry_alert_taxonomy() {
+        // Wire-surface guard: the signals payload must not include
+        // alert/consequence fields. The build is the wire is the
+        // contract — adding `action_required` / `should_restart` /
+        // similar would launder consequence into the receipt.
+        //
+        // Belt-and-braces — the evaluator's `build_signals` function
+        // (in nq-db) is the only producer today, but the receipt
+        // shouldn't depend on producer discipline alone. Synthesize
+        // and check what comes out.
+        let mut pr = PreflightResult::skeleton(
+            ClaimKind::SqliteWalState,
+            PreflightTarget {
+                host: "h".into(),
+                scope: "sqlite_wal".into(),
+                id: Some("/d.db".into()),
+            },
+            "2026-05-26T14:00:00Z".into(),
+        );
+        pr.signals = Some(serde_json::json!({
+            "sqlite_wal_state": {
+                "threshold_band": "severe",
+                "window_seconds": 43200,
+                "main_db_mtime_stale_across_window": true,
+                "pinned_reader": "present"
+            }
+        }));
+        let r: Receipt = pr.into();
+        let body = r
+            .signals
+            .as_ref()
+            .and_then(|v| v.get("sqlite_wal_state"))
+            .and_then(|v| v.as_object())
+            .expect("signals.sqlite_wal_state must be an object");
+        for forbidden in [
+            "action_required",
+            "should_restart",
+            "should_kill_reader",
+            "should_checkpoint",
+            "should_vacuum",
+            "escalate",
+            "page_oncall",
+            "warn",
+            "critical",
+            "incident",
+            "p1",
+            "p2",
+            "severity",
+        ] {
+            assert!(
+                !body.contains_key(forbidden),
+                "signals.sqlite_wal_state must not contain alert/consequence field {forbidden:?}: {body:?}"
+            );
+        }
     }
 
     #[test]

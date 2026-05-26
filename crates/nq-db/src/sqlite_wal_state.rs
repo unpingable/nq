@@ -377,6 +377,13 @@ pub fn evaluate_sqlite_wal_state_preflight_at(
     result.verdict = verdict;
     result.verdict_note = Some(note);
 
+    // Consumer-grade structured signals. Namespaced by claim kind from
+    // day one (`signals.sqlite_wal_state.<field>`) so future kinds with
+    // their own structured signals do not collide on field names.
+    // Untyped on purpose — each kind defines its own keys; cross-kind
+    // typing is registry-shape territory (deferred).
+    result.signals = Some(build_signals(&classification));
+
     result.compute_time_basis();
 
     // `projected_packets` is currently unused after the support loop;
@@ -780,6 +787,92 @@ fn make_support(obs: &WalObservation) -> PreflightSupport {
         // Stamped by the caller from the projected packet.
         witness_packet: None,
     }
+}
+
+/// Build the structured `signals` payload for a sqlite_wal_state result.
+///
+/// **Namespaced under `signals.sqlite_wal_state`** from day one so a
+/// future kind with its own structured signals does not collide on
+/// field names. Untyped on purpose — typed cross-kind signals would
+/// force the registry-shape question prematurely.
+///
+/// **Not alert taxonomy.** `threshold_band` carries one of
+/// `bounded` / `elevated` / `severe` — descriptive testimony
+/// classifications, not alert severity. Consumers map these to their
+/// own alert vocabulary (`warn` / `critical` / `incident` / etc.) if
+/// they have one. NQ does not. See `KIND_4_SQLITE_WAL_STATE.md` §5
+/// and the consumer-preflight beat doc for the boundary.
+///
+/// **Not a consequence field.** This payload does not say
+/// `action_required`, `should_restart`, `escalate_to_oncall`, or
+/// anything similar. Adding such a field would launder consequence
+/// into the receipt and is out of scope.
+fn build_signals(classification: &WalClassification) -> serde_json::Value {
+    let inner = match classification {
+        WalClassification::NoRowsInWindow => serde_json::json!({
+            "threshold_band": null,
+            "window_seconds": null,
+            "main_db_mtime_stale_across_window": null,
+            "pinned_reader": null,
+        }),
+        WalClassification::LatestRowStale { age_seconds, .. } => serde_json::json!({
+            "threshold_band": null,
+            "window_seconds": null,
+            "main_db_mtime_stale_across_window": null,
+            "pinned_reader": null,
+            "latest_observation_age_seconds": age_seconds,
+        }),
+        WalClassification::InsufficientSamples { count, needed } => serde_json::json!({
+            "threshold_band": null,
+            "window_seconds": null,
+            "main_db_mtime_stale_across_window": null,
+            "pinned_reader": null,
+            "samples": count,
+            "samples_required": needed,
+        }),
+        WalClassification::InaccessibleDb { error_detail } => serde_json::json!({
+            "threshold_band": null,
+            "window_seconds": null,
+            "main_db_mtime_stale_across_window": null,
+            "pinned_reader": null,
+            "inaccessible_db_detail": error_detail,
+        }),
+        WalClassification::Contradictory { reason } => serde_json::json!({
+            "threshold_band": null,
+            "window_seconds": null,
+            "main_db_mtime_stale_across_window": null,
+            "pinned_reader": null,
+            "contradiction_reason": reason,
+        }),
+        WalClassification::BoundedWal {
+            window_duration_seconds,
+            signals,
+        } => serde_json::json!({
+            "threshold_band": "bounded",
+            "window_seconds": window_duration_seconds,
+            "main_db_mtime_stale_across_window": signals.main_db_mtime_stale_across_window,
+            "pinned_reader": signals.pinned_reader.as_note_text(),
+        }),
+        WalClassification::ElevatedSustained {
+            window_duration_seconds,
+            signals,
+        } => serde_json::json!({
+            "threshold_band": "elevated",
+            "window_seconds": window_duration_seconds,
+            "main_db_mtime_stale_across_window": signals.main_db_mtime_stale_across_window,
+            "pinned_reader": signals.pinned_reader.as_note_text(),
+        }),
+        WalClassification::SevereSustained {
+            window_duration_seconds,
+            signals,
+        } => serde_json::json!({
+            "threshold_band": "severe",
+            "window_seconds": window_duration_seconds,
+            "main_db_mtime_stale_across_window": signals.main_db_mtime_stale_across_window,
+            "pinned_reader": signals.pinned_reader.as_note_text(),
+        }),
+    };
+    serde_json::json!({ "sqlite_wal_state": inner })
 }
 
 fn map_classification_to_verdict(
@@ -1538,6 +1631,120 @@ mod tests {
         let r3 = evaluate_sqlite_wal_state_preflight_at(&db3.conn, &default_target(), now_dt())
             .unwrap();
         assert_no_alert_vocabulary(&r3.verdict_note);
+    }
+
+    // ---- consumer-contract signals (kind-4 hardening slice) ------------
+
+    fn signals_for(r: &PreflightResult) -> &serde_json::Map<String, serde_json::Value> {
+        r.signals
+            .as_ref()
+            .and_then(|v| v.get("sqlite_wal_state"))
+            .and_then(|v| v.as_object())
+            .expect("sqlite_wal_state result must carry signals.sqlite_wal_state object")
+    }
+
+    #[test]
+    fn evaluator_signals_severe_payload_is_structured() {
+        let db = make_db();
+        let rows = build_window(NOW, 60, 721, |_| 15_000_000_000);
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        let s = signals_for(&r);
+        assert_eq!(s["threshold_band"], "severe");
+        assert!(s["window_seconds"].as_i64().unwrap() >= 12 * 3600);
+        assert!(s["main_db_mtime_stale_across_window"].is_boolean());
+        assert!(s["pinned_reader"].is_string());
+    }
+
+    #[test]
+    fn evaluator_signals_elevated_payload_is_structured() {
+        let db = make_db();
+        let rows = build_window(NOW, 60, 361, |_| 3_000_000_000);
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        let s = signals_for(&r);
+        assert_eq!(s["threshold_band"], "elevated");
+        assert!(s["main_db_mtime_stale_across_window"].is_boolean());
+    }
+
+    #[test]
+    fn evaluator_signals_bounded_payload_is_structured() {
+        let db = make_db();
+        let rows = build_window(NOW, 60, 200, |_| 1_000_000);
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        let s = signals_for(&r);
+        assert_eq!(s["threshold_band"], "bounded");
+        assert!(s["main_db_mtime_stale_across_window"].is_boolean());
+    }
+
+    #[test]
+    fn evaluator_signals_pre_sustained_classifications_null_band() {
+        // For NoRowsInWindow / LatestRowStale / InsufficientSamples,
+        // the threshold_band is null (the substrate didn't reach a
+        // sustained-condition classification at all). The signals
+        // payload still surfaces — what's there is the per-
+        // classification carry (e.g., samples count for
+        // InsufficientSamples).
+        let db = make_db();
+
+        // No rows.
+        let r1 =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        let s1 = signals_for(&r1);
+        assert!(s1["threshold_band"].is_null());
+
+        // Insufficient samples.
+        let rows = build_window(NOW, 60, 50, |_| 1024);
+        insert_all(&db.conn, &rows);
+        let r2 =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        let s2 = signals_for(&r2);
+        assert!(s2["threshold_band"].is_null());
+        assert_eq!(s2["samples"].as_i64().unwrap(), 50);
+    }
+
+    #[test]
+    fn evaluator_signals_pinned_reader_unobserved_when_proc_access_absent() {
+        // Pinned-reader carries Present/Absent/Unobserved honestly;
+        // the wire-string mirrors the existing verdict_note vocabulary.
+        let db = make_db();
+        let mut rows = build_window(NOW, 60, 721, |_| 15_000_000_000);
+        for r in &mut rows {
+            r.proc_access = ProcAccess::Unavailable;
+            r.pinned_reader_present = None;
+            r.pinned_reader_pid = None;
+            r.pinned_reader_command = None;
+        }
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        let s = signals_for(&r);
+        assert_eq!(s["pinned_reader"], "unobserved");
+    }
+
+    #[test]
+    fn evaluator_signals_use_no_alert_taxonomy() {
+        // threshold_band uses bounded/elevated/severe — descriptive
+        // testimony classifications, not alert vocabulary. The wire
+        // must never carry warn/critical/alert/incident/p1/p2/etc.
+        // The build_signals function is the only producer; this
+        // test belt-and-braces against accidental drift.
+        let db = make_db();
+        let rows = build_window(NOW, 60, 721, |_| 15_000_000_000);
+        insert_all(&db.conn, &rows);
+        let r =
+            evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
+        let rendered = serde_json::to_string(&r.signals).unwrap().to_ascii_lowercase();
+        for forbidden in ["warn", "critical", "alert", "incident", "\"p1\"", "\"p2\""] {
+            assert!(
+                !rendered.contains(forbidden),
+                "signals must not carry alert vocabulary {forbidden:?}: {rendered}"
+            );
+        }
     }
 
     fn assert_no_alert_vocabulary(note: &Option<String>) {
