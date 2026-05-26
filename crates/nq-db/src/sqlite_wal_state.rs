@@ -1100,7 +1100,7 @@ mod tests {
             observation_id: None,
             generation_id: 1,
             host: "labelwatch.neutral.zone".into(),
-            db_file_path: "/var/lib/labelwatch/discovery.db".into(),
+            db_file_path: "/var/lib/labelwatch/labelwatch.db".into(),
             wal_present: true,
             wal_bytes,
             wal_mtime: Some(at.into()),
@@ -1139,7 +1139,7 @@ mod tests {
         }
         let target = SqliteWalTarget {
             host: "labelwatch.neutral.zone",
-            db_file_path: "/var/lib/labelwatch/discovery.db",
+            db_file_path: "/var/lib/labelwatch/labelwatch.db",
         };
         let window = load_recent_wal_observations(&db.conn, &target, "2026-05-26T02:00:00Z")
             .unwrap();
@@ -1160,12 +1160,12 @@ mod tests {
 
         let target = SqliteWalTarget {
             host: "labelwatch.neutral.zone",
-            db_file_path: "/var/lib/labelwatch/discovery.db",
+            db_file_path: "/var/lib/labelwatch/labelwatch.db",
         };
         let window = load_recent_wal_observations(&db.conn, &target, "2026-05-26T00:00:00Z")
             .unwrap();
         assert_eq!(window.len(), 1);
-        assert_eq!(window[0].db_file_path, "/var/lib/labelwatch/discovery.db");
+        assert_eq!(window[0].db_file_path, "/var/lib/labelwatch/labelwatch.db");
     }
 
     #[test]
@@ -1179,7 +1179,7 @@ mod tests {
         insert_observation(&db.conn, &row).unwrap();
         let target = SqliteWalTarget {
             host: "labelwatch.neutral.zone",
-            db_file_path: "/var/lib/labelwatch/discovery.db",
+            db_file_path: "/var/lib/labelwatch/labelwatch.db",
         };
         let window = load_recent_wal_observations(&db.conn, &target, "2026-05-26T00:00:00Z")
             .unwrap();
@@ -1198,7 +1198,7 @@ mod tests {
         insert_observation(&db.conn, &row).unwrap();
         let target = SqliteWalTarget {
             host: "labelwatch.neutral.zone",
-            db_file_path: "/var/lib/labelwatch/discovery.db",
+            db_file_path: "/var/lib/labelwatch/labelwatch.db",
         };
         let window = load_recent_wal_observations(&db.conn, &target, "2026-05-26T00:00:00Z")
             .unwrap();
@@ -1247,7 +1247,7 @@ mod tests {
                     observation_id: None,
                     generation_id: 1,
                     host: "labelwatch.neutral.zone".into(),
-                    db_file_path: "/var/lib/labelwatch/discovery.db".into(),
+                    db_file_path: "/var/lib/labelwatch/labelwatch.db".into(),
                     wal_present: true,
                     wal_bytes: wal_bytes_for(i),
                     wal_mtime: Some(t_s.clone()),
@@ -1279,7 +1279,7 @@ mod tests {
     fn default_target() -> SqliteWalTarget<'static> {
         SqliteWalTarget {
             host: "labelwatch.neutral.zone",
-            db_file_path: "/var/lib/labelwatch/discovery.db",
+            db_file_path: "/var/lib/labelwatch/labelwatch.db",
         }
     }
 
@@ -1578,7 +1578,7 @@ mod tests {
         assert_eq!(r.target.scope, "sqlite_wal");
         assert_eq!(
             r.target.id.as_deref(),
-            Some("/var/lib/labelwatch/discovery.db")
+            Some("/var/lib/labelwatch/labelwatch.db")
         );
     }
 

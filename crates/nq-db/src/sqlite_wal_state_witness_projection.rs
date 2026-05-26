@@ -276,7 +276,7 @@ mod tests {
             observation_id: Some(observation_id),
             generation_id: 100,
             host: "labelwatch.neutral.zone".into(),
-            db_file_path: "/var/lib/labelwatch/discovery.db".into(),
+            db_file_path: "/var/lib/labelwatch/labelwatch.db".into(),
             wal_present: true,
             wal_bytes: 38_000_000_000,
             wal_mtime: Some(WAL_MTIME.into()),
@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(pkt.witness_type, WITNESS_TYPE_SQLITE_WAL);
         assert_eq!(
             pkt.subject,
-            "host:labelwatch.neutral.zone/db:/var/lib/labelwatch/discovery.db",
+            "host:labelwatch.neutral.zone/db:/var/lib/labelwatch/labelwatch.db",
             "preflight §6: host:{{h}}/db:{{path}} (disk_state aesthetic, no fifth vocabulary)"
         );
         assert_eq!(pkt.access_path, "legacy_wal_observation_projection");
@@ -397,7 +397,7 @@ mod tests {
         );
         assert_eq!(
             body.get("db_file_path").and_then(|v| v.as_str()),
-            Some("/var/lib/labelwatch/discovery.db")
+            Some("/var/lib/labelwatch/labelwatch.db")
         );
         assert_eq!(
             body.get("wal_present").and_then(|v| v.as_bool()),

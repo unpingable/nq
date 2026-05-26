@@ -639,7 +639,7 @@ mod tests {
         let target = PreflightTarget {
             host: "labelwatch.neutral.zone".into(),
             scope: "sqlite_wal".into(),
-            id: Some("/var/lib/labelwatch/discovery.db".into()),
+            id: Some("/var/lib/labelwatch/labelwatch.db".into()),
         };
         let r = PreflightResult::skeleton(
             ClaimKind::SqliteWalState,

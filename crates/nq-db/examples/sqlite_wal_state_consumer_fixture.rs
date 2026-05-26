@@ -73,7 +73,7 @@ use time::OffsetDateTime;
 
 const FIXTURE_INCIDENT_NOW: &str = "2026-04-22T15:00:00Z";
 const TARGET_HOST: &str = "labelwatch.neutral.zone";
-const TARGET_DB: &str = "/var/lib/labelwatch/discovery.db";
+const TARGET_DB: &str = "/var/lib/labelwatch/labelwatch.db";
 
 const WAL_BYTES: i64 = 38_000_000_000;
 const DB_BYTES: i64 = 26_000_000_000;
