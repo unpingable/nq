@@ -74,7 +74,8 @@ For a one-host install both can run on the same machine.
   "prometheus_targets": [
     { "name": "node", "url": "http://localhost:9100/metrics" }
   ],
-  "sqlite_paths": []
+  "sqlite_paths": [],
+  "sqlite_wal_targets": []
 }
 ```
 
@@ -140,6 +141,33 @@ Deploy the publisher on each new host. Append a source to the aggregator's `sour
 ```
 
 Restart `nq-serve`. The new host appears in the next generation (default 60s).
+
+### Probing SQLite WAL targets
+
+NQ can observe SQLite databases that aren't NQ's own — typically the storage of another service running on the same host as the publisher (labelwatch, your own app, etc.). The probe stat()s the `.db`, `.db-wal`, and (for a future `/proc/locks` cross-check) `.db-shm` files; it never opens the database, never issues PRAGMAs, and never reads the application's data.
+
+Add targets to the publisher config:
+
+```json
+"sqlite_wal_targets": [
+  {
+    "host": "labelwatch.example.internal",
+    "db_file_path": "/var/lib/labelwatch/labelwatch.db"
+  }
+]
+```
+
+`host` should match the publisher's self-reported hostname (the aggregator uses it as the target's identity). `db_file_path` is the absolute path to the main DB file; the probe locates the `-wal` sidecar relative to it.
+
+What you get:
+
+- One `wal_observations` row per target per pulse cycle (default 60s), persisted with the cycle's `generation_id`.
+- A new claim kind, `sqlite_wal_state`, that the aggregator can evaluate (via `nq preflight sqlite-wal-state --host=H --db=PATH` or the HTTP route `/api/preflight/sqlite-wal-state`).
+- Honest error rows when the path is missing or the publisher's user lacks read on it: an `observation_status` of `target_missing` / `permission_denied` / `stat_error` plus an `error_detail` string, with all stat-derived fields NULL (the probe will not encode "I couldn't see" as "the file is empty").
+
+Permissions: the publisher runs as the `nq` user by default; on a typical Debian install `/var/lib/<service>/` is owned by the service's group and not world-readable. Either add `nq` to that group, loosen the dir permissions, or accept that the probe will emit `permission_denied` rows (which the aggregator surfaces as `cannot_testify` — useful operational signal in its own right).
+
+See [`CLAIM_CATALOG.md`](CLAIM_CATALOG.md) for the `sqlite_wal_state` verdict shapes and `RECEIPTS.md` for how to read the resulting receipts.
 
 ### Notifications
 

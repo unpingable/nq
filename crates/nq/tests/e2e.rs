@@ -2468,3 +2468,196 @@ async fn sqlite_wal_state_http_whitespace_host_returns_400() {
     let http_resp = client.get(&url).send().await.unwrap();
     assert_eq!(http_resp.status(), reqwest::StatusCode::BAD_REQUEST);
 }
+
+// =====================================================================
+// Slice 6c — operator-config + end-to-end pipeline smoke.
+//
+// Exercises the full publisher → batch → persist → load round trip
+// for the sqlite_wal probe, using the actual publisher-side collector
+// (not a hand-constructed WalObservationSet). The smoke proves:
+//
+//   1. PublisherConfig.sqlite_wal_targets drives the collector.
+//   2. The collector produces rows in the shape publish_batch accepts
+//      (no manual mediation needed past the canonical wire types).
+//   3. publish_batch persists the rows into wal_observations with the
+//      cycle's generation_id (via the §6b INSERT path).
+//   4. load_recent_wal_observations reads them back with the expected
+//      observation_status closed-enum discrimination, including the
+//      observed-vs-target_missing distinction the operator's framing
+//      pinned as load-bearing.
+//
+// The HTTP layer is exercised by the dedicated route tests above;
+// not this smoke's responsibility. The evaluator-side classification
+// is exercised by nq-db's sqlite_wal_state::tests; also not this
+// smoke's responsibility. This smoke is about the seam.
+// =====================================================================
+
+#[test]
+fn sqlite_wal_probe_pipeline_end_to_end_smoke() {
+    use nq::collect::sqlite_wal_probe;
+    use nq_core::batch::WalObservationSet;
+    use nq_core::config::SqliteWalTargetConfig;
+    use nq_core::PublisherConfig;
+    use nq_db::sqlite_wal_state::{
+        load_recent_wal_observations, ObservationStatus, SqliteWalTarget,
+    };
+    use std::str::FromStr;
+
+    // Tempdir with two declared targets: one real (existing .db with
+    // a .db-wal sidecar), one missing (path that doesn't resolve).
+    let dir = tempfile::tempdir().unwrap();
+    let real_db = dir.path().join("real.db");
+    let real_wal = dir.path().join("real.db-wal");
+    std::fs::write(&real_db, b"sqlite-ish header bytes").unwrap();
+    std::fs::write(&real_wal, b"wal bytes").unwrap();
+    let missing_db = dir.path().join("does_not_exist.db");
+
+    let canonical_host = "smoke-host.example.internal";
+
+    // Publisher config drives the collector.
+    let publisher_cfg = PublisherConfig {
+        bind_addr: "127.0.0.1:0".into(),
+        sqlite_paths: vec![],
+        service_health_urls: vec![],
+        prometheus_targets: vec![],
+        log_sources: vec![],
+        zfs_witness: None,
+        smart_witness: None,
+        sqlite_wal_targets: vec![
+            SqliteWalTargetConfig {
+                host: canonical_host.into(),
+                db_file_path: real_db.to_string_lossy().to_string(),
+            },
+            SqliteWalTargetConfig {
+                host: canonical_host.into(),
+                db_file_path: missing_db.to_string_lossy().to_string(),
+            },
+        ],
+    };
+
+    // Drive the actual publisher-side collector.
+    let payload = sqlite_wal_probe::collect(&publisher_cfg);
+    assert!(matches!(payload.status, CollectorStatus::Ok));
+    let rows = payload.data.expect("collector emits a Vec");
+    assert_eq!(rows.len(), 2, "one row per declared target");
+
+    // Smoke the per-target shape inline (the collector's unit tests
+    // pin the details; this is just the seam-level evidence).
+    let observed_row = rows
+        .iter()
+        .find(|r| r.observation_status == "observed")
+        .expect("real DB target observed");
+    assert_eq!(observed_row.wal_present, Some(true));
+    assert!(observed_row.wal_bytes.unwrap() > 0);
+    assert!(observed_row.db_bytes.unwrap() > 0);
+    assert_eq!(observed_row.proc_access, "not_attempted");
+    assert!(observed_row.error_detail.is_none());
+
+    let missing_row = rows
+        .iter()
+        .find(|r| r.observation_status == "target_missing")
+        .expect("missing DB target produces target_missing row");
+    assert!(missing_row.wal_present.is_none());
+    assert!(missing_row.wal_bytes.is_none());
+    assert!(missing_row.db_bytes.is_none());
+    assert!(missing_row.error_detail.is_some());
+
+    // Build a minimal Batch carrying the collector output.
+    let collected_at = payload.collected_at.unwrap();
+    let batch = Batch {
+        cycle_started_at: collected_at,
+        cycle_completed_at: collected_at,
+        sources_expected: 1,
+        source_runs: vec![SourceRun {
+            source: canonical_host.into(),
+            status: SourceStatus::Ok,
+            received_at: collected_at,
+            collected_at: Some(collected_at),
+            duration_ms: Some(1),
+            error_message: None,
+        }],
+        collector_runs: vec![CollectorRun {
+            source: canonical_host.into(),
+            collector: CollectorKind::SqliteWalProbe,
+            status: CollectorStatus::Ok,
+            collected_at: Some(collected_at),
+            entity_count: Some(rows.len() as u32),
+            error_message: None,
+        }],
+        host_rows: vec![],
+        service_sets: vec![],
+        sqlite_db_sets: vec![],
+        metric_sets: vec![],
+        log_sets: vec![],
+        zfs_witness_rows: vec![],
+        smart_witness_rows: vec![],
+        wal_observation_sets: vec![WalObservationSet {
+            host: canonical_host.into(),
+            collected_at,
+            rows: rows.clone(),
+        }],
+    };
+
+    // Persist via the production publish_batch path. This is the
+    // §6b INSERT exercising the migration 049 conditional CHECK.
+    let (_dir, db_path) = temp_db();
+    {
+        let mut wdb = open_rw(&db_path).unwrap();
+        migrate(&mut wdb).unwrap();
+        let result = publish_batch(&mut wdb, &batch).expect("publish accepts the batch");
+        assert!(result.generation_id > 0);
+    }
+
+    // Load back via the production loader. Confirms the round trip
+    // through the substrate's closed-enum dispatch (observation_status
+    // mediates the verdict path; the loader must read it correctly).
+    let rdb = open_ro(&db_path).unwrap();
+    let target = SqliteWalTarget {
+        host: canonical_host,
+        db_file_path: &real_db.to_string_lossy(),
+    };
+    let loaded = load_recent_wal_observations(rdb.conn(), &target, "2026-01-01T00:00:00Z")
+        .expect("loader succeeds");
+    assert_eq!(
+        loaded.len(),
+        1,
+        "exactly the observed-target row round-trips for (host, db_file_path)"
+    );
+    let row = &loaded[0];
+    assert_eq!(
+        row.observation_status,
+        ObservationStatus::Observed,
+        "round-trip preserves the closed-enum value"
+    );
+    assert_eq!(row.wal_present, Some(true));
+    assert!(row.error_detail.is_none());
+
+    // The target_missing row went into wal_observations too, under
+    // its own (host, db_file_path) tuple. The loader filters by tuple
+    // so the missing-target rows are invisible to a query for the
+    // observed target — but they're queryable for their own path.
+    let missing_target = SqliteWalTarget {
+        host: canonical_host,
+        db_file_path: &missing_db.to_string_lossy(),
+    };
+    let loaded_missing =
+        load_recent_wal_observations(rdb.conn(), &missing_target, "2026-01-01T00:00:00Z")
+            .expect("loader succeeds for missing-target path");
+    assert_eq!(loaded_missing.len(), 1);
+    assert_eq!(
+        loaded_missing[0].observation_status,
+        ObservationStatus::TargetMissing,
+        "missing-target rows survive the round trip — the operator's 'no row vs error row' \
+         distinction is preserved at the substrate boundary"
+    );
+    assert!(loaded_missing[0].error_detail.is_some());
+
+    // Closed-enum sanity: every persisted observation_status parses
+    // cleanly from the substrate string form. Guards against silent
+    // schema-string drift.
+    for r in loaded.iter().chain(loaded_missing.iter()) {
+        let _ =
+            ObservationStatus::from_str(r.observation_status.as_str()).expect("known enum value");
+    }
+}
+
