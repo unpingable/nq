@@ -2525,11 +2525,9 @@ fn sqlite_wal_probe_pipeline_end_to_end_smoke() {
         smart_witness: None,
         sqlite_wal_targets: vec![
             SqliteWalTargetConfig {
-                host: canonical_host.into(),
                 db_file_path: real_db.to_string_lossy().to_string(),
             },
             SqliteWalTargetConfig {
-                host: canonical_host.into(),
                 db_file_path: missing_db.to_string_lossy().to_string(),
             },
         ],
