@@ -377,11 +377,11 @@ The probe does NOT testify to which of the three caused a given `wal_present=fal
 
 This is the gap #9 shape applied to the WAL sidecar: filesystem state observed at one moment does not pin the substrate's identity at that moment. The slice 6d empirical case is the first one in the wild.
 
-**Probe-side `cannot_testify` addition (proposed):**
+**`cannot_testify` addition (landed):**
 
-> "Why the `-wal` sidecar is absent — journal_mode, post-checkpoint cleanup, and post-close cleanup all produce `wal_present=false` and the probe cannot distinguish them from substrate state alone."
+> "Why the `-wal` sidecar is absent on a given observation (a non-WAL `journal_mode`, post-checkpoint cleanup, and post-close cleanup all produce `wal_present=false`; the probe stat()s the path and cannot distinguish them from substrate state alone — see `KIND_4_SQLITE_WAL_PROBE.md` §8)"
 
-Lands as a one-line addition to §9 below when slice 6e (or any follow-up touching this surface) ships. Not blocking the V0 acceptance — the rule is documented here as forward note.
+Landed at the kind level in `sqlite_wal_state_cannot_testify()` (so every receipt carries the refusal, not just slice-side documentation). Mirrored as a bullet in §9 below.
 
 ## 9. Probe-side `cannot_testify`
 
@@ -389,6 +389,7 @@ The probe's constitutional refusals (independent of substrate state at any one o
 
 - "Whether the SQLite DB at this path is the one the operator declared yesterday" — substrate identity at observation time only (see §8).
 - "Whether processes that hold fcntl locks on `.db-shm` are *applications*, *backups*, or *the probe itself*" — V0 does not classify lock-holder identity (constraint 4); even V1 does not classify intent.
+- "Why the `-wal` sidecar is absent on a given observation" — substrate-state-vs-cause refusal from §8; carried at the kind level in [`sqlite_wal_state_cannot_testify`](../../../../crates/nq-core/src/preflight.rs).
 - "Whether the WAL state implies the application is healthy / unhealthy" — application-layer claim, refused at the kind level (already in [`sqlite_wal_state_cannot_testify`](../../../../crates/nq-core/src/preflight.rs)).
 - "Whether the operator should run `PRAGMA wal_checkpoint`" — consequence claim, forbidden ([`SQLITE_WAL_STATE_CONSUMER_PREFLIGHT.md`](SQLITE_WAL_STATE_CONSUMER_PREFLIGHT.md) finding E).
 - "Whether the absence of a `.db-wal` file means the DB is in journal_mode=DELETE or that WAL has been truncated" — both can produce the observed substrate state; the substrate does not testify to mode.
