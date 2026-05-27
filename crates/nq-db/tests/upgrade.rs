@@ -211,5 +211,6 @@ fn make_batch(t: OffsetDateTime) -> Batch {
         log_sets: vec![],
         zfs_witness_rows: vec![],
         smart_witness_rows: vec![],
+        wal_observation_sets: vec![],
     }
 }

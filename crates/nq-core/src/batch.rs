@@ -1,5 +1,5 @@
 use crate::status::{CollectorKind, CollectorStatus, GenerationStatus, ServiceStatus, SourceStatus};
-use crate::wire::{SmartWitnessReport, ZfsWitnessReport};
+use crate::wire::{SmartWitnessReport, WalObservationData, ZfsWitnessReport};
 use time::OffsetDateTime;
 
 /// A fully collected batch ready for atomic publish.
@@ -19,6 +19,12 @@ pub struct Batch {
     pub log_sets: Vec<LogObsSet>,
     pub zfs_witness_rows: Vec<ZfsWitnessRow>,
     pub smart_witness_rows: Vec<SmartWitnessRow>,
+    /// Slice 6b: per-host sqlite_wal probe observations. Each set is
+    /// one publisher's worth of `WalObservationData` rows from this
+    /// cycle. The aggregator inserts every row into `wal_observations`
+    /// with the just-allocated `generation_id`. Empty sets are fine —
+    /// publishers without declared targets emit zero rows.
+    pub wal_observation_sets: Vec<WalObservationSet>,
 }
 
 /// A single conforming witness report keyed to its publisher host.
@@ -35,6 +41,17 @@ pub struct SmartWitnessRow {
     pub host: String,
     pub collected_at: OffsetDateTime,
     pub report: SmartWitnessReport,
+}
+
+/// One publisher's worth of sqlite_wal probe observations for this
+/// cycle. The wire-side `WalObservationData` carries everything the
+/// aggregator needs to insert into `wal_observations`; only the
+/// per-set context (which host, when collected) lives here.
+#[derive(Debug, Clone)]
+pub struct WalObservationSet {
+    pub host: String,
+    pub collected_at: OffsetDateTime,
+    pub rows: Vec<WalObservationData>,
 }
 
 impl Batch {

@@ -238,6 +238,7 @@ mod tests {
                 timeout_ms,
             }),
             smart_witness: None,
+            sqlite_wal_targets: vec![],
         }
     }
 
@@ -368,6 +369,7 @@ mod tests {
             log_sources: vec![],
             zfs_witness: None,
             smart_witness: None,
+            sqlite_wal_targets: vec![],
         };
         let payload = collect(&config);
         assert_eq!(payload.status, CollectorStatus::Skipped);

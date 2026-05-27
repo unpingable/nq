@@ -4,6 +4,7 @@ pub mod prometheus;
 pub mod services;
 pub mod smart;
 pub mod sqlite_health;
+pub mod sqlite_wal_probe;
 pub mod zfs;
 
 use nq_core::wire::{Collectors, PublisherState};
@@ -26,6 +27,7 @@ pub fn collect_state(config: &PublisherConfig) -> PublisherState {
             logs: Some(logs::collect(config)),
             zfs_witness: Some(zfs::collect(config)),
             smart_witness: Some(smart::collect(config)),
+            sqlite_wal_observations: Some(sqlite_wal_probe::collect(config)),
         },
     }
 }
