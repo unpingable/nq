@@ -1,10 +1,10 @@
 # Dns_state Witness Packet Cut-over — Design Preflight
 
-**Status:** `design-preflight` — drafted 2026-05-25. Pins dns_state-specific decisions before any code lands. Does not authorize implementation.
+**Status:** **shipped 2026-05-25.** The `dns_state` cut-over described by this preflight landed; `dns_state_witness_projection.rs` is in-tree and `evaluate_dns_state_preflight` consumes the projected packets. With this slice, the third (and last pre-greenfield-kind-4) Track A evaluator cut over. Track A.0 retirement followed on 2026-05-27 — see [`../TRACK_A_0_RETIREMENT.md`](../TRACK_A_0_RETIREMENT.md) (the "its own follow-up" this preflight noted). This document is the design record; invariants are now upheld by code.
 **Parent:** [`TRACK_A_WITNESS_PACKET_CUTOVER.md`](TRACK_A_WITNESS_PACKET_CUTOVER.md). Shared invariants (1–5), the transitional projection rule, the wire deadbolt, and the Slice 2 rule all defer to the parent. **This document only enumerates what is different for `dns_state` and the registry-shape question the third evaluator concretizes.**
 **Sibling:** [`INGEST_STATE_WITNESS_PACKET_CUTOVER.md`](INGEST_STATE_WITNESS_PACKET_CUTOVER.md). Where dns_state and ingest_state agree, this doc cites and does not re-argue.
-**Scope:** `dns_state` only. The third (and after this slice, final pre-registry) Track A evaluator to cut over. Track A.0 retirement is unlocked by this slice but is its own follow-up.
-**Last updated:** 2026-05-25
+**Scope:** `dns_state` only.
+**Last updated:** 2026-05-27 (status flipped to shipped + Track A.0 retirement note linked).
 
 ## One-line claim
 

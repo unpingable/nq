@@ -1,10 +1,10 @@
 # Gap: `disk_state` cut-over to the shared spine
 
-**Status:** `proposed` — drafted 2026-05-19. Calibration record only. Does not authorize implementation, schema migration, evaluator rewrite, claim-registry expansion, or any change to the currently shipped Track A.0 path.
-**Depends on:** `../architecture/SHARED_SPINE.md` (pipeline definition), `CLAIM_KIND_DISK_STATE_GAP.md` (Track A.0 claim-kind spec), `../WITNESS_PACKET.md` (witness-side constraints), `CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md` (registry-shape guardrails)
+**Status:** **landed / retired 2026-05-27.** Cut-over shipped via [`TRACK_A_WITNESS_PACKET_CUTOVER`](../decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md) (Slice 2, 2026-05-24); Track A.0 carry is paid down. See [`TRACK_A_0_RETIREMENT.md`](../decisions/TRACK_A_0_RETIREMENT.md) for the timeline and the architectural close-out. This gap is preserved as the calibration record that named the work — the body below is historically accurate but no longer load-bearing.
+**Depends on:** `../architecture/SHARED_SPINE.md` (pipeline definition), `CLAIM_KIND_DISK_STATE_GAP.md` (claim-kind spec), `../WITNESS_PACKET.md` (witness-side constraints), `CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md` (registry-shape guardrails)
 **Related:** `../CLAIM_PREFLIGHT.md`, `../VERDICTS.md`, `TESTIMONY_DEPENDENCY_GAP.md`
-**Blocks:** nothing right now — Track A.0 is honest and serves operators; the cut-over is the path to retire a bespoke evaluator, not a fix for a broken one
-**Last updated:** 2026-05-19
+**Blocks:** nothing — closed by the cut-over.
+**Last updated:** 2026-05-27 (status flipped to landed/retired).
 
 ## Keeper
 

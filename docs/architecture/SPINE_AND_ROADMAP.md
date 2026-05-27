@@ -124,9 +124,10 @@ A receipt binds: requested claim, evaluated claim, witness references, evaluator
 
 | Claim | Track | Evaluator path | Wire surface |
 |---|---|---|---|
-| `disk_state` | A.0 | `crates/nq-db/src/preflight.rs::evaluate_disk_state_preflight` (reads `FindingSnapshot` directly — see carry, seam #4) | CLI, HTTP, nested on `/api/host/{name}` |
-| `ingest_state` | A | `crates/nq-db/src/preflight.rs::evaluate_ingest_state_preflight` (reads `generations` + `source_runs`) | HTTP |
-| `dns_state` | A | `crates/nq-db/src/dns.rs::evaluate_dns_state_preflight` (reads `dns_observations`) | HTTP, CLI probe (`nq probe dns`) |
+| `disk_state` | A | `crates/nq-db/src/preflight.rs::evaluate_disk_state_preflight` (projects ZFS/SMART findings through `disk_state_witness_projection.rs` into `legacy_projection` witness packets before admitting them) | CLI, HTTP, nested on `/api/host/{name}` |
+| `ingest_state` | A | `crates/nq-db/src/preflight.rs::evaluate_ingest_state_preflight` (projects `generations` + `source_runs` rows through `ingest_state_witness_projection.rs`) | HTTP |
+| `dns_state` | A | `crates/nq-db/src/dns.rs::evaluate_dns_state_preflight` (projects `dns_observations` rows through `dns_state_witness_projection.rs`) | HTTP, CLI probe (`nq probe dns`) |
+| `sqlite_wal_state` | A | `crates/nq-db/src/sqlite_wal_state.rs::evaluate_sqlite_wal_state_preflight` (projects `wal_observations` rows through `sqlite_wal_state_witness_projection.rs`) | HTTP |
 | `repo_clean` | B (Leaf) | `claim_registry::evaluate` over `git_status` witness | `nq verify`, GitHub Action |
 | `tests_passed` | B (Leaf) | `claim_registry::evaluate` over `pytest` witness | `nq verify`, GitHub Action |
 | `diff_scope_matches_claim` | B (Leaf) | `claim_registry::evaluate` over `diff_scope` witness | `nq verify`, GitHub Action |
@@ -151,7 +152,7 @@ These are surfaces a future audit would otherwise call "incomplete" — they are
 
 3. **nq and nq-witness version independently.** nq's consumer-side `nq.witness.v1` and nq-witness's producer-side `nq.witness.v0` are contract-compatible today. Bump nq-witness when the producer contract itself changes or hardens — not for aesthetic alignment.
 
-4. **Track A.0 reads `FindingSnapshot` directly.** The `disk_state` evaluator currently shortcuts the witness-packet projection. **This is acknowledged carry pending the A.1 cut-over** (`../working/gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md`) — **not a doctrine exception.** The keeper rule ("Witnesses observe. They do not promote.") stands. Track A.0 will retire or become a thin renderer over the shared spine when the cut-over lands. Do not weaken the keeper to absorb the shortcut; that turns temporary scaffolding into architecture by adverse possession.
+4. **Track A.0 — retired 2026-05-27.** Historical: the `disk_state` evaluator originally read `FindingSnapshot` directly, bypassing the witness-packet projection. That carry is paid down. Each Track A evaluator (`disk_state`, `ingest_state`, `dns_state`) now projects substrate rows through a per-kind projector into `legacy_projection` witness packets before admitting them; `sqlite_wal_state` was greenfield kind 4, never had a Track A.0 phase. The keeper rule ("Witnesses observe. They do not promote.") is upheld uniformly across Track A and Track B. See [`../working/decisions/TRACK_A_0_RETIREMENT.md`](../working/decisions/TRACK_A_0_RETIREMENT.md) for the timeline and how to read older "Track A.0" references in the working/ tree.
 
 ## Roadmap — audit-corrected
 
