@@ -562,6 +562,7 @@ pub fn sqlite_wal_state_cannot_testify() -> Vec<String> {
         "Whether the WAL state on a different DB file is healthy (single-target jurisdiction)".to_string(),
         "Whether the WAL state will degrade in the future (future-state claim)".to_string(),
         "Whether checkpoint operations succeeded (the operation itself is below substrate; absence of effect is testifiable, the operation is not)".to_string(),
+        "Why the `-wal` sidecar is absent on a given observation (a non-WAL `journal_mode`, post-checkpoint cleanup, and post-close cleanup all produce `wal_present=false`; the probe stat()s the path and cannot distinguish them from substrate state alone — see `KIND_4_SQLITE_WAL_PROBE.md` §8)".to_string(),
         "Whether the reader holding a pinned transaction is the right reader to hold it (operational-context claim)".to_string(),
         "Whether SQLite's behavior is correct given its inputs (DB engine correctness is below substrate)".to_string(),
         "Whether to restart, repoint, kill the pinned reader, or page (consequence claim)".to_string(),
@@ -664,6 +665,12 @@ mod tests {
             .cannot_testify
             .iter()
             .any(|s| s.contains("checkpoint operations")));
+        assert!(
+            r.cannot_testify
+                .iter()
+                .any(|s| s.contains("`wal_present=false`")),
+            "WAL-absence ambiguity refusal must be present (slice 6d wrinkle)"
+        );
         assert!(r
             .cannot_testify
             .iter()

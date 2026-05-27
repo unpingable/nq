@@ -80,6 +80,7 @@ This is what `GET /api/preflight/sqlite-wal-state?host=...&db=...` returns. Abbr
     "Whether the WAL state on a different DB file is healthy (single-target jurisdiction)",
     "Whether the WAL state will degrade in the future (future-state claim)",
     "Whether checkpoint operations succeeded (the operation itself is below substrate; absence of effect is testifiable, the operation is not)",
+    "Why the `-wal` sidecar is absent on a given observation (a non-WAL `journal_mode`, post-checkpoint cleanup, and post-close cleanup all produce `wal_present=false`; the probe stat()s the path and cannot distinguish them from substrate state alone — see `KIND_4_SQLITE_WAL_PROBE.md` §8)",
     "Whether the reader holding a pinned transaction is the right reader to hold it (operational-context claim)",
     "Whether SQLite's behavior is correct given its inputs (DB engine correctness is below substrate)",
     "Whether to restart, repoint, kill the pinned reader, or page (consequence claim)"
