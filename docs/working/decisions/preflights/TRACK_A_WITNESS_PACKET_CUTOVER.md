@@ -1,10 +1,10 @@
 # Track A Witness Packet Cut-over — Design Preflight
 
-**Status:** `design-preflight` — drafted 2026-05-24. Pins invariants and decision space before any code lands. Does not authorize implementation, schema migration, evaluator rewrite, or registry expansion.
-**Scope:** `disk_state` first. `ingest_state` and `dns_state` follow only after `disk_state` proves the shape.
-**Depends on:** [`../../gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md`](../../gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md) (calibration record), [`SHARED_SPINE.md`](../../../architecture/SHARED_SPINE.md) (the pipeline this targets), [`CLAIM_CUSTODY.md`](../../../architecture/CLAIM_CUSTODY.md) (the category this preserves), [`PATH_TO_1_0.md`](../PATH_TO_1_0.md) (Slice 2)
+**Status:** **shipped 2026-05-24, retired-as-current-state 2026-05-27.** The disk-state cut-over described by this preflight landed as Slice 2 in 2026-05-24; ingest_state and dns_state cut-overs followed within the same week. Track A.0 is retired (see [`../TRACK_A_0_RETIREMENT.md`](../TRACK_A_0_RETIREMENT.md)). This document is the design record of the cut-over and reads as historical context; the invariants it pins are now upheld by code, not by this doc's prescriptions.
+**Scope:** `disk_state` first. `ingest_state` and `dns_state` followed within the same week (per [`INGEST_STATE_WITNESS_PACKET_CUTOVER.md`](INGEST_STATE_WITNESS_PACKET_CUTOVER.md) + [`DNS_STATE_WITNESS_PACKET_CUTOVER.md`](DNS_STATE_WITNESS_PACKET_CUTOVER.md)).
+**Depends on:** [`../../gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md`](../../gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md) (calibration record, now retired), [`SHARED_SPINE.md`](../../../architecture/SHARED_SPINE.md) (the pipeline this targeted), [`CLAIM_CUSTODY.md`](../../../architecture/CLAIM_CUSTODY.md) (the category this preserves), [`PATH_TO_1_0.md`](../PATH_TO_1_0.md) (Slice 2)
 **Related:** [`../CLAIM_PREFLIGHT.md`](../CLAIM_PREFLIGHT.md), [`../CLAIM_PREFLIGHT_EXISTING_WITNESSES.md`](../CLAIM_PREFLIGHT_EXISTING_WITNESSES.md), [`../../gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`](../../gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md)
-**Last updated:** 2026-05-24
+**Last updated:** 2026-05-27 (status flipped to shipped + retired-as-current-state).
 
 ## One-line claim
 

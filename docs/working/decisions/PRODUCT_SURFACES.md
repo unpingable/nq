@@ -3,6 +3,8 @@
 **Status:** roadmap orientation. One engine, two costumes. Names the launch surfaces and the shared core that prevents them from diverging.
 **Last updated:** 2026-05-15
 
+> **Note on Track A.0 / A.1 distinctions below:** the "coexistence during transition" framing in §"Track A.0 / Track A.1" was correct at filing (2026-05-15). The cut-overs have since landed; Track A.0 is retired as of 2026-05-27. See [`TRACK_A_0_RETIREMENT.md`](TRACK_A_0_RETIREMENT.md) for the current state. The body below stays as the historical roadmap-snapshot.
+
 ## One engine, two costumes
 
 NQ is a claim-verification receipt engine. The engine produces structured receipts that say what evidence was supplied, what claims that evidence verifies, and what claims remain unverified.

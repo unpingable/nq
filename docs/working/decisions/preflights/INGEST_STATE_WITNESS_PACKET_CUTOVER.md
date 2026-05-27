@@ -1,9 +1,9 @@
 # Ingest_state Witness Packet Cut-over — Design Preflight
 
-**Status:** `design-preflight` — drafted 2026-05-25. Pins ingest_state-specific decisions before any code lands. Does not authorize implementation.
+**Status:** **shipped 2026-05-25.** The `ingest_state` cut-over described by this preflight landed; `ingest_state_witness_projection.rs` is in-tree and `evaluate_ingest_state_preflight` consumes the projected packets. Track A.0 retirement followed on 2026-05-27 — see [`../TRACK_A_0_RETIREMENT.md`](../TRACK_A_0_RETIREMENT.md). This document is the design record of the cut-over; invariants are now upheld by code.
 **Parent:** [`TRACK_A_WITNESS_PACKET_CUTOVER.md`](TRACK_A_WITNESS_PACKET_CUTOVER.md). Shared invariants (1–5), the transitional projection rule, the wire deadbolt, and the Slice 2 rule all defer to the parent. **This document only enumerates what is different for `ingest_state`.**
-**Scope:** `ingest_state` only. `dns_state` explicitly stays pre-cut-over per the parent's "third evaluator forces the registry shape" boundary.
-**Last updated:** 2026-05-25
+**Scope:** `ingest_state` only. `dns_state` cut-over followed in [`DNS_STATE_WITNESS_PACKET_CUTOVER.md`](DNS_STATE_WITNESS_PACKET_CUTOVER.md).
+**Last updated:** 2026-05-27 (status flipped to shipped).
 
 ## One-line claim
 
