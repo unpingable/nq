@@ -1,11 +1,45 @@
 # NQ-side response to NS advisory: claim-support classification
 
-**Status:** candidate / non-binding. Producer-side response to nightshift's [ADVISORY-nq-claim-support](file:///home/jbeck/git/scheduler/docs/working/decisions/ADVISORY-nq-claim-support.md) (filed 2026-05-27). This doc does the recognition pass NS asked for and surfaces one disagreeable claim before NQ commits to any wire-shape work. No code, schema, or wire change authorized by this doc.
+**Status:** **resolved 2026-05-27 as outcome (2)** — recognition that the distinction already lives in NQ's existing wire surface (`claim_kind` + `finding_kind` + `cannot_testify`). NS agreed with the cut; no NQ wire change requested today; this doc stays as the named seam. Producer-side response to nightshift's [ADVISORY-nq-claim-support](file:///home/jbeck/git/scheduler/docs/working/decisions/ADVISORY-nq-claim-support.md) (filed 2026-05-27).
 
 **Owner:** NQ (this repo).
 **Recipient:** Nightshift (via the ADVISORY round-trip).
 **Filed:** 2026-05-27.
-**Origin:** NS-Claude's advisory framed the request in both consumer vocabulary (proxy-channel / consequence-channel) and producer vocabulary (claim-support classification). This response engages on the producer-side framing.
+**Closed:** 2026-05-27 (same day; NS-Claude returned with the cut accepted).
+**Origin:** NS-Claude's advisory framed the request in both consumer vocabulary (proxy-channel / consequence-channel) and producer vocabulary (claim-support classification). This response engaged on the producer-side framing.
+
+## Resolution (closed 2026-05-27)
+
+NS agreed with NQ's cut. From NS-Claude's close-out message (via operator):
+
+> NQ findings are substrate-state observations, not consequence-bearing testimony. The earlier NS advisory framed the missing input too broadly as "channel classification"; corrected diagnosis is:
+>
+> - NQ already provides enough substrate claim-support material through `cannot_testify + claim_kind + finding_kind`.
+> - NS will encode the local mapping on its side.
+> - The still-missing Gate 1 input is a **non-NQ consequence witness** for customer-impact / downstream-effect / application-layer closure evidence.
+>
+> So: no NQ wire change requested today. Close this as outcome (2): distinction recognized in existing NQ surface for substrate claims; consequence-bearing testimony remains out of NQ scope.
+
+**NS-side change recorded for cross-reference:** NS is renaming `UnassessableMissingChannelClassification` → `UnassessableMissingConsequenceWitness` so the operator surface reflects the corrected diagnosis. The rename is NS-internal; NQ has no reciprocal action required.
+
+### What this resolution means for NQ
+
+- **No wire-shape change.** No new `claim_support_kind` field, no per-finding flavor tag, no `substrate_category` enum. The wire stays as-is.
+- **No implementation ticket.** This doc is the named seam, not a ticket queue.
+- **No NQ design of the consequence-witness source.** Customer-impact / downstream-effect / application-layer evidence is **explicitly not NQ's layer**. If a future NQ session is tempted to design it (under names like `nq_consequence_witness`, `nq_application_state`, or any variant), refuse the design: that surface belongs to NS's integration of non-NQ inputs, or to a different system entirely. NQ testifies about substrate. Substrate is the floor.
+- **The disagreeable claim NQ filed survives the close.** NQ findings are substrate-state observations, full stop. The proxy/consequence axis runs perpendicular to NQ's surface; every NQ finding sits on the same side of that cut. This stays true going forward — Tier 1, Tier 2, and any future NQ-on-NQ kinds inherit it.
+
+### Forward-compat note for future sessions
+
+If NS (or any future consumer) returns with a new request shape and the temptation is "maybe NQ should produce a consequence witness now," re-read this resolution before drafting. The 2026-05-27 round-trip closed cleanly because both sides held the boundary; reopening it requires a forcing case that this resolution does not currently contemplate.
+
+The forcing conditions for shipping `substrate_category` (kind-level, not per-finding) remain as filed in §"Forcing conditions for NQ to ship `substrate_category`" — second consumer asking for the same distinction, NS finding per-consumer mapping tables burdensome, pre-Gate-1 incident turning on collapsed substrate classification. None has fired.
+
+---
+
+## Historical context (preserved below)
+
+The recognition pass and disagreeable claim that produced the resolution are kept intact for future readers tracing how the cut landed.
 
 ## TL;DR
 
