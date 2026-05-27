@@ -1,0 +1,78 @@
+{
+    "cannot_testify": [
+        "Whether the application that owns this DB will recover (application-state claim; the WAL substrate does not testify to it)",
+        "Whether queries against this DB will return correct results (query correctness is below substrate)",
+        "Whether reports / downstream artifacts derived from this DB are stale (application-layer claim, not WAL substrate)",
+        "Whether the WAL state on a different DB file is healthy (single-target jurisdiction)",
+        "Whether the WAL state will degrade in the future (future-state claim)",
+        "Whether checkpoint operations succeeded (the operation itself is below substrate; absence of effect is testifiable, the operation is not)",
+        "Whether the reader holding a pinned transaction is the right reader to hold it (operational-context claim)",
+        "Whether SQLite's behavior is correct given its inputs (DB engine correctness is below substrate)",
+        "Whether to restart, repoint, kill the pinned reader, or page (consequence claim)"
+    ],
+    "claim_kind": "sqlite_wal_state",
+    "contract_version": 1,
+    "coverage": [
+        {
+            "standing": "observable",
+            "witness": "sqlite_wal_probe"
+        }
+    ],
+    "excludes": [],
+    "freshness_horizon": "2026-05-27T05:15:55.558489196Z",
+    "generated_at": "2026-05-27T05:06:05.743543167Z",
+    "observed_at_max": "2026-05-27T05:05:55.558489196Z",
+    "observed_at_min": "2026-05-27T05:04:55.233036921Z",
+    "schema": "nq.preflight.sqlite_wal_state.v1",
+    "signals": {
+        "sqlite_wal_state": {
+            "main_db_mtime_stale_across_window": null,
+            "pinned_reader": "unobserved",
+            "samples": 2,
+            "samples_required": 100,
+            "threshold_band": "unclassified",
+            "window_seconds": null
+        }
+    },
+    "supports": [
+        {
+            "admissibility_state": "observable",
+            "claim": "Probe observed WAL state for host labelwatch-host db /var/lib/labelwatch/labelwatch.db at observed_at 2026-05-27T05:04:55.233036921Z (wal_present=false, wal_bytes=0, db_bytes=31189176320, proc_access=not_attempted)",
+            "finding_kind": "sqlite_wal_observation",
+            "observed_at": "2026-05-27T05:04:55.233036921Z",
+            "subject": "host:labelwatch-host/db:/var/lib/labelwatch/labelwatch.db",
+            "witness_packet": {
+                "custody_basis": "legacy_projection",
+                "digest": "sha256:b01e2bac607186b01fcc8207f66e18215c4399540552f30bccd66b972b69c6b1",
+                "observed_at": "2026-05-27T05:04:55.233036921Z",
+                "witness_type": "sqlite_wal_legacy_projection"
+            }
+        },
+        {
+            "admissibility_state": "observable",
+            "claim": "Probe observed WAL state for host labelwatch-host db /var/lib/labelwatch/labelwatch.db at observed_at 2026-05-27T05:05:55.558489196Z (wal_present=false, wal_bytes=0, db_bytes=31189176320, proc_access=not_attempted)",
+            "finding_kind": "sqlite_wal_observation",
+            "observed_at": "2026-05-27T05:05:55.558489196Z",
+            "subject": "host:labelwatch-host/db:/var/lib/labelwatch/labelwatch.db",
+            "witness_packet": {
+                "custody_basis": "legacy_projection",
+                "digest": "sha256:7f078b630e38ec72f10ba797104ca96c23cf68decf3b545f28cba9049907ad1b",
+                "observed_at": "2026-05-27T05:05:55.558489196Z",
+                "witness_type": "sqlite_wal_legacy_projection"
+            }
+        }
+    ],
+    "target": {
+        "host": "labelwatch-host",
+        "id": "/var/lib/labelwatch/labelwatch.db",
+        "scope": "sqlite_wal"
+    },
+    "time_basis": {
+        "max_observation_delta_ms": 0,
+        "status": "unknown",
+        "suspicion_kinds": [],
+        "threshold_ms": 300000
+    },
+    "verdict": "insufficient_coverage",
+    "verdict_note": "Probe has accumulated only 2 samples for (host=labelwatch-host, db=/var/lib/labelwatch/labelwatch.db) in the last 12h (need at least 100); window-based testimony requires sustained coverage."
+}
