@@ -150,14 +150,11 @@ Add targets to the publisher config:
 
 ```json
 "sqlite_wal_targets": [
-  {
-    "host": "labelwatch.example.internal",
-    "db_file_path": "/var/lib/labelwatch/labelwatch.db"
-  }
+  { "db_file_path": "/var/lib/labelwatch/labelwatch.db" }
 ]
 ```
 
-`host` should match the publisher's self-reported hostname (the aggregator uses it as the target's identity). `db_file_path` is the absolute path to the main DB file; the probe locates the `-wal` sidecar relative to it.
+`db_file_path` is the absolute path to the main DB file; the probe locates the `-wal` sidecar relative to it. Host identity is stamped by the aggregator from the matching `sources[].name` entry — it does not need to be declared on the publisher.
 
 What you get:
 

@@ -102,15 +102,13 @@ Sketch:
 
 ```toml
 [[sqlite_wal_targets]]
-host = "labelwatch.neutral.zone"
 db_file_path = "/var/lib/labelwatch/labelwatch.db"
 
 [[sqlite_wal_targets]]
-host = "labelwatch.neutral.zone"
 db_file_path = "/var/lib/some-other-service/state.db"
 ```
 
-`host` should match the host's self-reported identity (the same `host` value the aggregator stamps on the row). Probably defaults to the local host when unset; the explicit form is preserved for the (anticipated, low-priority) "one NQ host probes a remote DB over NFS" path which is **not in V0** but is not designed against either.
+No `host` field on the publisher side: the probe runs on the publisher and only stats local paths, and the aggregator stamps each row with its canonical host name from the matching `sources[].name`. (A future "one NQ host probes a remote DB over NFS" path would re-open this question, but is **not in V0** and not designed against here.)
 
 ### Discriminator rule
 

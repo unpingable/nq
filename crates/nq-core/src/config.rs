@@ -205,15 +205,15 @@ pub struct PublisherConfig {
     pub sqlite_wal_targets: Vec<SqliteWalTargetConfig>,
 }
 
-/// One target for the sqlite_wal probe. The `host` field is the
-/// operator's declared identity for the host (typically matches the
-/// publisher's self-reported hostname). Per `KIND_4_SQLITE_WAL_PROBE.md`
-/// §2, the per-target discriminator is `(host, db_file_path)`; no
-/// process-name field — substrate testimony is keyed to the file, not
-/// to its readers.
+/// One target for the sqlite_wal probe. The probe runs on the publisher
+/// and only stats local paths, so host identity is not a publisher
+/// concern — the aggregator stamps each row with its canonical host name
+/// (the `source.name` from aggregator config). Per
+/// `KIND_4_SQLITE_WAL_PROBE.md` §2, the per-target discriminator is
+/// `(host, db_file_path)`; no process-name field — substrate testimony
+/// is keyed to the file, not to its readers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SqliteWalTargetConfig {
-    pub host: String,
     pub db_file_path: String,
 }
 
