@@ -112,7 +112,9 @@ Any of:
 - A second sustained-condition evaluator (any of `nq_probe_freshness`, `nq_receipt_emission_state`, `nq_projection_failure_state`) is being implemented — which would also trip `CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`'s temporal-machinery threshold at the same time.
 - A peer-NQ instance wants to monitor another NQ as external witness.
 
-Until one of those is on the table, this gap is a handle for review, not a build instruction.
+**Tier 0 fired 2026-05-27.** The smallest forcing case is the kind-4 `sqlite_wal_state` claim over `/var/lib/nq/nq.db` — observed by the existing publisher probe via filesystem stat (external to `nq serve` under SIGSTOP), evaluated by the existing aggregator code. Config-only; no new claim kind. See [`../decisions/preflights/NQ_SELF_SQLITE_WAL.md`](../decisions/preflights/NQ_SELF_SQLITE_WAL.md). The sixth keeper is **exercised and recorded** in this gap doc by Tier 0; it is **not yet promoted** into `SPINE_AND_ROADMAP.md` — promotion waits for a kind that requires the rule as an invariant rather than merely exercising it.
+
+Until additional cases land, this gap remains a handle for review, not a build instruction.
 
 ## On enterprise framing (orientation, not scope)
 
