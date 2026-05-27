@@ -65,8 +65,8 @@
 
 use nq_core::{render_markdown, Receipt};
 use nq_db::sqlite_wal_state::{
-    evaluate_sqlite_wal_state_preflight_at, insert_observation, ProcAccess, SqliteWalTarget,
-    WalObservation,
+    evaluate_sqlite_wal_state_preflight_at, insert_observation, ObservationStatus, ProcAccess,
+    SqliteWalTarget, WalObservation,
 };
 use nq_db::{migrate, open_rw};
 use time::OffsetDateTime;
@@ -177,11 +177,12 @@ fn main() -> anyhow::Result<()> {
             generation_id: 100,
             host: TARGET_HOST.into(),
             db_file_path: TARGET_DB.into(),
-            wal_present: true,
-            wal_bytes: WAL_BYTES,
+            observation_status: ObservationStatus::Observed,
+            wal_present: Some(true),
+            wal_bytes: Some(WAL_BYTES),
             wal_mtime: Some(wal_mtime_s),
-            db_bytes: DB_BYTES,
-            db_mtime: db_mtime.clone(),
+            db_bytes: Some(DB_BYTES),
+            db_mtime: Some(db_mtime.clone()),
             proc_access: ProcAccess::Observed,
             pinned_reader_present: Some(pinned),
             pinned_reader_pid: if pinned { Some(12345) } else { None },

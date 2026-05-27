@@ -5,7 +5,7 @@ use tracing::info;
 /// with the last entry of `MIGRATIONS` below. Exposed for consumer
 /// surfaces (e.g. the finding export path) so they can preflight
 /// against a DB whose schema is older than the code was built for.
-pub const CURRENT_SCHEMA_VERSION: u32 = 48;
+pub const CURRENT_SCHEMA_VERSION: u32 = 49;
 
 /// Read `PRAGMA user_version` from an arbitrary connection. Returns 0
 /// for a freshly-opened SQLite file that's never been migrated.
@@ -64,6 +64,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (46, include_str!("../migrations/046_durable_artifact_substrate.sql")),
     (47, include_str!("../migrations/047_dns_observations.sql")),
     (48, include_str!("../migrations/048_wal_observations.sql")),
+    (49, include_str!("../migrations/049_wal_observation_status.sql")),
 ];
 
 pub fn migrate(db: &mut WriteDb) -> anyhow::Result<()> {
@@ -112,7 +113,7 @@ mod tests {
             .conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 48);
+        assert_eq!(version, 49);
 
         // Verify tables exist
         let count: i64 = db
@@ -549,5 +550,258 @@ mod tests {
                 [],
             )
             .expect("truncated-WAL row must insert cleanly");
+    }
+
+    // -----------------------------------------------------------------
+    // Migration 049 — wal_observations observation_status closed enum
+    // + conditional CHECK on stat-derived nullability.
+    //
+    // Existing migration-048 tests (above) continue to exercise the
+    // "observation_status defaults to observed" path implicitly via
+    // every INSERT they perform without naming the column.
+    //
+    // The tests below pin the new invariant matrix: observed rows must
+    // have all stat-derived fields populated and error_detail NULL;
+    // non-observed rows must have all stat-derived fields NULL and
+    // error_detail populated. Closed-enum CHECK rejects unknown values.
+    // -----------------------------------------------------------------
+
+    /// Insert a row at the named observation_status with explicit
+    /// values for the conditional-CHECK governed fields. Returns the
+    /// rusqlite result so callers assert on Ok/Err shape.
+    fn insert_status_row(
+        conn: &rusqlite::Connection,
+        observation_status: &str,
+        wal_present: Option<i64>,
+        wal_bytes: Option<i64>,
+        wal_mtime: Option<&str>,
+        db_bytes: Option<i64>,
+        db_mtime: Option<&str>,
+        error_detail: Option<&str>,
+    ) -> rusqlite::Result<usize> {
+        conn.execute(
+            "INSERT INTO wal_observations (
+                generation_id, host, db_file_path,
+                observation_status,
+                wal_present, wal_bytes, wal_mtime,
+                db_bytes, db_mtime,
+                proc_access,
+                pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                observed_at, error_detail
+             ) VALUES (
+                1, 'h', '/d.db',
+                ?1,
+                ?2, ?3, ?4,
+                ?5, ?6,
+                'not_attempted',
+                NULL, NULL, NULL,
+                '2026-05-26T14:00:00Z', ?7
+             )",
+            rusqlite::params![
+                observation_status,
+                wal_present,
+                wal_bytes,
+                wal_mtime,
+                db_bytes,
+                db_mtime,
+                error_detail,
+            ],
+        )
+    }
+
+    #[test]
+    fn mig049_observed_row_with_full_stat_inserts_cleanly() {
+        let db = fresh_db();
+        insert_status_row(
+            &db.conn,
+            "observed",
+            Some(1),
+            Some(1024),
+            Some("2026-05-26T14:00:00Z"),
+            Some(2048),
+            Some("2026-05-26T13:59:00Z"),
+            None,
+        )
+        .expect("observed row with full stat must accept");
+    }
+
+    #[test]
+    fn mig049_observed_row_rejects_null_db_mtime() {
+        // observation_status=observed ⇒ db_mtime IS NOT NULL. NULL on
+        // an observed row would mean "we observed but have no
+        // timestamp" — substrate-impossible.
+        let db = fresh_db();
+        let err = insert_status_row(
+            &db.conn,
+            "observed",
+            Some(1),
+            Some(1024),
+            Some("2026-05-26T14:00:00Z"),
+            Some(2048),
+            None, // <-- the violation
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK violation, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig049_observed_row_rejects_error_detail_set() {
+        // observation_status=observed ⇒ error_detail IS NULL. An
+        // observed row carrying an error string is the conflated shape
+        // the slice exists to forbid.
+        let db = fresh_db();
+        let err = insert_status_row(
+            &db.conn,
+            "observed",
+            Some(1),
+            Some(1024),
+            Some("2026-05-26T14:00:00Z"),
+            Some(2048),
+            Some("2026-05-26T13:59:00Z"),
+            Some("phantom error on a happy row"),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK violation, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig049_target_missing_row_with_all_stat_null_and_error_detail_inserts() {
+        let db = fresh_db();
+        insert_status_row(
+            &db.conn,
+            "target_missing",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("main DB file does not exist at declared path"),
+        )
+        .expect("target_missing with all stat NULL + error_detail must accept");
+    }
+
+    #[test]
+    fn mig049_target_missing_rejects_wal_present_set() {
+        // Encoding "permission denied" as wal_present=0 is the lying
+        // shape §6 exists to forbid. Same shape applies to
+        // target_missing (no substrate observed).
+        let db = fresh_db();
+        let err = insert_status_row(
+            &db.conn,
+            "target_missing",
+            Some(0), // <-- substrate field on a non-observed row
+            None,
+            None,
+            None,
+            None,
+            Some("absent path"),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK violation, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig049_target_missing_rejects_missing_error_detail() {
+        // Non-observed rows MUST carry error_detail. Silent non-observed
+        // rows lose the testimony about the probe's standing.
+        let db = fresh_db();
+        let err = insert_status_row(
+            &db.conn,
+            "target_missing",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None, // <-- the violation
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK violation, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig049_permission_denied_with_all_stat_null_and_error_detail_inserts() {
+        let db = fresh_db();
+        insert_status_row(
+            &db.conn,
+            "permission_denied",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("permission denied reading main DB metadata"),
+        )
+        .expect("permission_denied with all stat NULL + error_detail must accept");
+    }
+
+    #[test]
+    fn mig049_stat_error_with_all_stat_null_and_error_detail_inserts() {
+        let db = fresh_db();
+        insert_status_row(
+            &db.conn,
+            "stat_error",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("EIO from filesystem"),
+        )
+        .expect("stat_error with all stat NULL + error_detail must accept");
+    }
+
+    #[test]
+    fn mig049_rejects_unknown_observation_status_value() {
+        // Closed-enum CHECK: only the four named values are admissible.
+        let db = fresh_db();
+        let err = insert_status_row(
+            &db.conn,
+            "wat",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("test"),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK violation, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig049_default_observation_status_is_observed() {
+        // INSERT without naming observation_status applies the DEFAULT
+        // 'observed' — which is the path the pre-mig-049 fixture rows
+        // and the rusqlite::insert_observation helper both rely on.
+        // Verifies the migration's backward compatibility for callers
+        // that did not yet know about the column.
+        let db = fresh_db();
+        insert_clean_wal_row(&db.conn).expect("default-applied row must insert");
+        let status: String = db
+            .conn
+            .query_row(
+                "SELECT observation_status FROM wal_observations LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "observed");
     }
 }

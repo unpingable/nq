@@ -116,6 +116,29 @@ pub fn project_wal_observation(
         ));
     }
 
+    // Slice 6a: non-observed rows are testimony about the probe's
+    // standing, not about the substrate. They go to the evaluator's
+    // cannot_testify lane directly (the evaluator detects them in the
+    // window via observation_status and classifies as InaccessibleDb).
+    // The projector refuses them so the support-emission path never
+    // tries to anchor positive testimony against a row that did not
+    // observe substrate. The migration 049 CHECK guarantees that
+    // non-observed rows have all stat-derived fields NULL, so the
+    // refusal here is the only correct shape.
+    if !obs.observation_status.is_observed() {
+        return Err(refuse(&format!(
+            "observation_status is {:?}; projection would forge substrate fields \
+             the probe never observed",
+            obs.observation_status.as_str()
+        )));
+    }
+
+    // From here on, observation_status == Observed. By the migration's
+    // conditional CHECK, the stat-derived fields are all Some. We
+    // unwrap with explicit refusals (defensive — the substrate should
+    // never let an observed row through with NULLs in those columns,
+    // but the projector cannot itself rely on a CHECK that lives in
+    // a different layer).
     let host = obs.host.trim();
     let db_file_path = obs.db_file_path.trim();
     if host.is_empty() {
@@ -127,16 +150,33 @@ pub fn project_wal_observation(
         ));
     }
 
-    if obs.wal_bytes < 0 {
+    let wal_present = obs.wal_present.ok_or_else(|| {
+        refuse(
+            "observation_status=observed but wal_present is NULL; substrate \
+             CHECK constraint was bypassed",
+        )
+    })?;
+    let wal_bytes = obs.wal_bytes.ok_or_else(|| {
+        refuse(
+            "observation_status=observed but wal_bytes is NULL; substrate \
+             CHECK constraint was bypassed",
+        )
+    })?;
+    let db_bytes = obs.db_bytes.ok_or_else(|| {
+        refuse(
+            "observation_status=observed but db_bytes is NULL; substrate \
+             CHECK constraint was bypassed",
+        )
+    })?;
+
+    if wal_bytes < 0 {
         return Err(refuse(&format!(
-            "wal_bytes is negative ({}); projection would record impossible substrate",
-            obs.wal_bytes
+            "wal_bytes is negative ({wal_bytes}); projection would record impossible substrate"
         )));
     }
-    if obs.db_bytes < 0 {
+    if db_bytes < 0 {
         return Err(refuse(&format!(
-            "db_bytes is negative ({}); projection would record impossible substrate",
-            obs.db_bytes
+            "db_bytes is negative ({db_bytes}); projection would record impossible substrate"
         )));
     }
 
@@ -158,7 +198,13 @@ pub fn project_wal_observation(
         ))
     })?;
 
-    let db_mtime = obs.db_mtime.trim();
+    let db_mtime_raw = obs.db_mtime.as_deref().ok_or_else(|| {
+        refuse(
+            "observation_status=observed but db_mtime is NULL; substrate \
+             CHECK constraint was bypassed",
+        )
+    })?;
+    let db_mtime = db_mtime_raw.trim();
     if db_mtime.is_empty() {
         return Err(refuse(
             "wal_observations row has no substrate-time db_mtime (empty); \
@@ -204,8 +250,8 @@ pub fn project_wal_observation(
     //                         main DB is at observation time; the
     //                         "main DB hasn't moved" condition reads
     //                         this).
-    let wal_db_ratio: Option<f64> = if obs.db_bytes > 0 {
-        Some(obs.wal_bytes as f64 / obs.db_bytes as f64)
+    let wal_db_ratio: Option<f64> = if db_bytes > 0 {
+        Some(wal_bytes as f64 / db_bytes as f64)
     } else {
         None
     };
@@ -219,12 +265,12 @@ pub fn project_wal_observation(
         "type": "sqlite_wal_observation_projected",
         "host": host,
         "db_file_path": db_file_path,
-        "wal_present": obs.wal_present,
-        "wal_bytes": obs.wal_bytes,
-        "db_bytes": obs.db_bytes,
+        "wal_present": wal_present,
+        "wal_bytes": wal_bytes,
+        "db_bytes": db_bytes,
         "wal_db_ratio": wal_db_ratio,
         "wal_mtime": obs.wal_mtime,
-        "db_mtime": obs.db_mtime,
+        "db_mtime": db_mtime,
         "mtime_delta_seconds": mtime_delta_seconds,
         "proc_access": obs.proc_access.as_str(),
         "pinned_reader_present": obs.pinned_reader_present,
@@ -277,11 +323,12 @@ mod tests {
             generation_id: 100,
             host: "labelwatch.neutral.zone".into(),
             db_file_path: "/var/lib/labelwatch/labelwatch.db".into(),
-            wal_present: true,
-            wal_bytes: 38_000_000_000,
+            observation_status: crate::sqlite_wal_state::ObservationStatus::Observed,
+            wal_present: Some(true),
+            wal_bytes: Some(38_000_000_000),
             wal_mtime: Some(WAL_MTIME.into()),
-            db_bytes: 26_000_000_000,
-            db_mtime: DB_MTIME.into(),
+            db_bytes: Some(26_000_000_000),
+            db_mtime: Some(DB_MTIME.into()),
             proc_access: ProcAccess::Observed,
             pinned_reader_present: Some(true),
             pinned_reader_pid: Some(12345),
@@ -341,8 +388,8 @@ mod tests {
     #[test]
     fn observation_body_carries_derived_wal_db_ratio() {
         let mut obs = observed_obs(1);
-        obs.wal_bytes = 13;
-        obs.db_bytes = 26;
+        obs.wal_bytes = Some(13);
+        obs.db_bytes = Some(26);
         let pkt = project_wal_observation(&obs, GENERATED_AT).unwrap();
         let body = &pkt.observations[0];
         let ratio = body.get("wal_db_ratio").and_then(|v| v.as_f64()).unwrap();
@@ -354,9 +401,9 @@ mod tests {
         // db_bytes == 0 means main DB is empty; ratio is undefined.
         // Reporting it as null is honest; computing wal_bytes/0 is not.
         let mut obs = observed_obs(1);
-        obs.wal_bytes = 0;
-        obs.db_bytes = 0;
-        obs.wal_present = false;
+        obs.wal_bytes = Some(0);
+        obs.db_bytes = Some(0);
+        obs.wal_present = Some(false);
         obs.wal_mtime = None;
         let pkt = project_wal_observation(&obs, GENERATED_AT).unwrap();
         let body = &pkt.observations[0];
@@ -458,8 +505,8 @@ mod tests {
         // wal_present = false ⇒ wal_mtime = None (substrate invariant).
         // The body carries that absence as JSON null.
         let mut obs = observed_obs(1);
-        obs.wal_present = false;
-        obs.wal_bytes = 0;
+        obs.wal_present = Some(false);
+        obs.wal_bytes = Some(0);
         obs.wal_mtime = None;
         let pkt = project_wal_observation(&obs, GENERATED_AT).unwrap();
         let body = &pkt.observations[0];
@@ -506,7 +553,7 @@ mod tests {
     #[test]
     fn refuses_negative_wal_bytes() {
         let mut obs = observed_obs(1);
-        obs.wal_bytes = -1;
+        obs.wal_bytes = Some(-1);
         let err = project_wal_observation(&obs, GENERATED_AT).unwrap_err();
         assert!(err.reason.contains("wal_bytes"));
         assert!(
@@ -518,7 +565,7 @@ mod tests {
     #[test]
     fn refuses_negative_db_bytes() {
         let mut obs = observed_obs(1);
-        obs.db_bytes = -1;
+        obs.db_bytes = Some(-1);
         let err = project_wal_observation(&obs, GENERATED_AT).unwrap_err();
         assert!(err.reason.contains("db_bytes"));
     }
@@ -546,7 +593,7 @@ mod tests {
     #[test]
     fn refuses_empty_db_mtime() {
         let mut obs = observed_obs(1);
-        obs.db_mtime = "".into();
+        obs.db_mtime = Some("".into());
         let err = project_wal_observation(&obs, GENERATED_AT).unwrap_err();
         assert!(err.reason.contains("db_mtime"));
     }
@@ -554,7 +601,7 @@ mod tests {
     #[test]
     fn refuses_unparseable_db_mtime() {
         let mut obs = observed_obs(1);
-        obs.db_mtime = "soon".into();
+        obs.db_mtime = Some("soon".into());
         let err = project_wal_observation(&obs, GENERATED_AT).unwrap_err();
         assert!(err.reason.contains("RFC3339"));
     }
