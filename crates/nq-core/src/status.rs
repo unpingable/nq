@@ -61,6 +61,7 @@ pub enum CollectorKind {
     Logs,
     ZfsWitness,
     SmartWitness,
+    SqliteWalProbe,
 }
 
 impl CollectorKind {
@@ -73,6 +74,7 @@ impl CollectorKind {
             Self::Logs => "logs",
             Self::ZfsWitness => "zfs_witness",
             Self::SmartWitness => "smart_witness",
+            Self::SqliteWalProbe => "sqlite_wal_probe",
         }
     }
 }

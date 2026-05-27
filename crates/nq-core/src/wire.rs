@@ -31,6 +31,13 @@ pub struct Collectors {
     pub zfs_witness: Option<CollectorPayload<ZfsWitnessReport>>,
     #[serde(default)]
     pub smart_witness: Option<CollectorPayload<SmartWitnessReport>>,
+    /// Slice 6b: publisher-side sqlite_wal probe observations. Each
+    /// row is one `(host, db_file_path)` target observed in this cycle.
+    /// The aggregator persists them into the `wal_observations`
+    /// substrate table with the cycle's `generation_id`.
+    /// Additive; older payloads without this field deserialize cleanly.
+    #[serde(default)]
+    pub sqlite_wal_observations: Option<CollectorPayload<Vec<WalObservationData>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +105,60 @@ pub struct SqliteDbData {
     /// None when the -wal sidecar is absent.
     #[serde(default, with = "time::serde::rfc3339::option")]
     pub wal_mtime: Option<OffsetDateTime>,
+}
+
+/// One observation of a single `(host, db_file_path)` sqlite WAL
+/// target, produced by the publisher-side probe (slice 6b).
+///
+/// Host is carried at the `PublisherState` level (every collector in a
+/// payload shares the host); this struct carries the per-row substrate
+/// state. The aggregator stamps `generation_id` and `observation_id` on
+/// insert into `wal_observations`.
+///
+/// `observation_status` is the closed enum from the kind-4 probe
+/// preflight §6 (`observed | target_missing | permission_denied |
+/// stat_error`). Wire-side it is `String`; the aggregator validates
+/// via `ObservationStatus::from_str` on insert. Same posture for
+/// `proc_access`.
+///
+/// All stat-derived fields (`wal_present`, `wal_bytes`, `wal_mtime`,
+/// `db_bytes`, `db_mtime`) are populated when `observation_status =
+/// "observed"`; NULL otherwise. Permission-denied / target-missing /
+/// stat-error rows MUST set `error_detail` and leave the stat-derived
+/// fields NULL — the migration 049 conditional CHECK enforces this at
+/// the substrate boundary.
+///
+/// V0 slice 6b leaves `proc_access = "not_attempted"` and the
+/// pinned-reader fields NULL. The `/proc/locks` enrichment lands as a
+/// follow-up slice; the wire shape already accommodates it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalObservationData {
+    pub db_file_path: String,
+    pub observation_status: String,
+    #[serde(default)]
+    pub wal_present: Option<bool>,
+    #[serde(default)]
+    pub wal_bytes: Option<i64>,
+    /// RFC3339 UTC. None when observation_status != observed, or when
+    /// observed but the WAL sidecar is absent.
+    #[serde(default)]
+    pub wal_mtime: Option<String>,
+    #[serde(default)]
+    pub db_bytes: Option<i64>,
+    /// RFC3339 UTC. None when observation_status != observed.
+    #[serde(default)]
+    pub db_mtime: Option<String>,
+    pub proc_access: String,
+    #[serde(default)]
+    pub pinned_reader_present: Option<bool>,
+    #[serde(default)]
+    pub pinned_reader_pid: Option<i64>,
+    #[serde(default)]
+    pub pinned_reader_command: Option<String>,
+    /// RFC3339 UTC. Probe wall-clock at the moment of the stat.
+    pub observed_at: String,
+    #[serde(default)]
+    pub error_detail: Option<String>,
 }
 
 /// Reduced log observation for a bounded window. Not raw logs —

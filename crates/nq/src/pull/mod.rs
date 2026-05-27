@@ -5,6 +5,7 @@ use nq_core::batch::*;
 use nq_core::status::*;
 use nq_core::wire::PublisherState;
 use nq_core::{Config, SmartWitnessRow, SourceConfig, ZfsWitnessRow};
+use nq_core::batch::WalObservationSet;
 use time::OffsetDateTime;
 use tracing::warn;
 
@@ -26,6 +27,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
     let mut log_sets = Vec::new();
     let mut zfs_witness_rows = Vec::new();
     let mut smart_witness_rows = Vec::new();
+    let mut wal_observation_sets = Vec::new();
 
     for handle in handles {
         let result = handle.await?;
@@ -40,6 +42,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
                 log_set,
                 zfs_witness_row,
                 smart_witness_row,
+                wal_observation_set,
             } => {
                 source_runs.push(source_run);
                 collector_runs.extend(coll_runs);
@@ -64,6 +67,9 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
                 if let Some(sw) = smart_witness_row {
                     smart_witness_rows.push(sw);
                 }
+                if let Some(ws) = wal_observation_set {
+                    wal_observation_sets.push(ws);
+                }
             }
             PullResult::Failed(source_run) => {
                 source_runs.push(source_run);
@@ -86,6 +92,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
         log_sets,
         zfs_witness_rows,
         smart_witness_rows,
+        wal_observation_sets,
     })
 }
 
@@ -100,6 +107,7 @@ enum PullResult {
         log_set: Option<LogObsSet>,
         zfs_witness_row: Option<ZfsWitnessRow>,
         smart_witness_row: Option<SmartWitnessRow>,
+        wal_observation_set: Option<WalObservationSet>,
     },
     Failed(SourceRun),
 }
@@ -180,6 +188,7 @@ async fn pull_one(source: SourceConfig) -> PullResult {
     let mut log_set = None;
     let mut zfs_witness_row = None;
     let mut smart_witness_row = None;
+    let mut wal_observation_set = None;
 
     // Host collector
     if let Some(ref payload) = state.collectors.host {
@@ -413,6 +422,29 @@ async fn pull_one(source: SourceConfig) -> PullResult {
         }
     }
 
+    // sqlite_wal probe collector
+    if let Some(ref payload) = state.collectors.sqlite_wal_observations {
+        let entity_count = payload.data.as_ref().map(|d| d.len() as u32);
+        coll_runs.push(CollectorRun {
+            source: canonical_host.clone(),
+            collector: CollectorKind::SqliteWalProbe,
+            status: payload.status,
+            collected_at: payload.collected_at,
+            entity_count,
+            error_message: payload.error_message.clone(),
+        });
+        if payload.status == CollectorStatus::Ok {
+            if let Some(ref data) = payload.data {
+                let collected_at = payload.collected_at.unwrap_or(state.collected_at);
+                wal_observation_set = Some(WalObservationSet {
+                    host: canonical_host.clone(),
+                    collected_at,
+                    rows: data.clone(),
+                });
+            }
+        }
+    }
+
     PullResult::Ok {
         source_run,
         coll_runs,
@@ -423,5 +455,6 @@ async fn pull_one(source: SourceConfig) -> PullResult {
         log_set,
         zfs_witness_row,
         smart_witness_row,
+        wal_observation_set,
     }
 }

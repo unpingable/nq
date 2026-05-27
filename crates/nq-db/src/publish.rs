@@ -217,6 +217,56 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
         }
     }
 
+    // 6b. Append-only insert of sqlite_wal probe observations (slice 6b).
+    //
+    // Unlike `monitored_dbs_current` above (delete+replace; "current
+    // state, one row per (host, db_path)"), `wal_observations` is
+    // append-only — the evaluator reasons over a window of recent rows
+    // to detect sustained conditions, not a single latest row. Old
+    // rows age out via the existing generation cascade
+    // (ON DELETE CASCADE on generation_id; mig 048).
+    //
+    // The migration's conditional CHECK enforces every invariant the
+    // probe must respect (observation_status closed enum, stat-derived
+    // nullability tied to status, error_detail required on non-observed
+    // rows). Bad rows surface as constraint violations and abort the
+    // transaction — that's the "let the DB speak" discipline from
+    // `sqlite_wal_state::insert_observation`'s doc comment.
+    {
+        let mut ins = tx.prepare_cached(
+            "INSERT INTO wal_observations (
+                generation_id, host, db_file_path,
+                observation_status,
+                wal_present, wal_bytes, wal_mtime,
+                db_bytes, db_mtime,
+                proc_access,
+                pinned_reader_present, pinned_reader_pid, pinned_reader_command,
+                observed_at, error_detail
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        )?;
+        for ws in &batch.wal_observation_sets {
+            for row in &ws.rows {
+                ins.execute(rusqlite::params![
+                    generation_id,
+                    &ws.host,
+                    &row.db_file_path,
+                    &row.observation_status,
+                    row.wal_present.map(|b| if b { 1 } else { 0 }),
+                    row.wal_bytes,
+                    &row.wal_mtime,
+                    row.db_bytes,
+                    &row.db_mtime,
+                    &row.proc_access,
+                    row.pinned_reader_present.map(|b| if b { 1 } else { 0 }),
+                    row.pinned_reader_pid,
+                    &row.pinned_reader_command,
+                    &row.observed_at,
+                    &row.error_detail,
+                ])?;
+            }
+        }
+    }
+
     // 7. Upsert series dictionary + delete+replace metrics_current
     {
         let mut series_upsert = tx.prepare_cached(
@@ -1881,6 +1931,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            wal_observation_sets: vec![],
         };
         let result = publish_batch(&mut db, &batch).unwrap();
         assert_eq!(result.sources_ok, 0);
@@ -1932,6 +1983,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            wal_observation_sets: vec![],
         };
         let result = publish_batch(&mut db, &batch).unwrap();
         assert_eq!(result.sources_ok, 1);
@@ -2011,6 +2063,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            wal_observation_sets: vec![],
         };
         publish_batch(&mut db, &batch1).unwrap();
 
@@ -2067,6 +2120,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            wal_observation_sets: vec![],
         };
         publish_batch(&mut db, &batch2).unwrap();
 
@@ -2129,6 +2183,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            wal_observation_sets: vec![],
         };
         let r1 = publish_batch(&mut db, &batch1).unwrap();
 
@@ -2153,6 +2208,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            wal_observation_sets: vec![],
         };
         let r2 = publish_batch(&mut db, &batch2).unwrap();
         assert!(r2.generation_id > r1.generation_id);
@@ -4428,6 +4484,7 @@ mod tests {
                 report,
             }],
             smart_witness_rows: vec![],
+            wal_observation_sets: vec![],
         }
     }
 

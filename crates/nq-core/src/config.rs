@@ -196,6 +196,25 @@ pub struct PublisherConfig {
     pub zfs_witness: Option<ZfsWitnessConfig>,
     #[serde(default)]
     pub smart_witness: Option<SmartWitnessConfig>,
+    /// Slice 6b: operator-declared SQLite WAL probe targets. Each entry
+    /// is one `(host, db_file_path)` tuple per `KIND_4_SQLITE_WAL_PROBE.md`
+    /// §2 (operator-declared only; no auto-discovery). Empty by default
+    /// — publishers without explicit targets emit an empty observations
+    /// payload, and the aggregator persists nothing.
+    #[serde(default)]
+    pub sqlite_wal_targets: Vec<SqliteWalTargetConfig>,
+}
+
+/// One target for the sqlite_wal probe. The `host` field is the
+/// operator's declared identity for the host (typically matches the
+/// publisher's self-reported hostname). Per `KIND_4_SQLITE_WAL_PROBE.md`
+/// §2, the per-target discriminator is `(host, db_file_path)`; no
+/// process-name field — substrate testimony is keyed to the file, not
+/// to its readers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SqliteWalTargetConfig {
+    pub host: String,
+    pub db_file_path: String,
 }
 
 /// Invokes a conforming `nq-witness` ZFS reference implementation as a

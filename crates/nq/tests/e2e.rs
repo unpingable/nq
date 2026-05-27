@@ -340,6 +340,7 @@ fn state_to_batch(state: &PublisherState, canonical_host: &str) -> Batch {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            wal_observation_sets: vec![],
     }
 }
 
