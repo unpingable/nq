@@ -413,6 +413,30 @@ V0 ships when each of these holds:
 10. **Pulse-cost guard.** A target list of 10 entries probes in well under the 500ms guard; a slow-probe-cycle log fires when artificially stalled.
 11. **Linode three-host smoke.** Probe runs on the Linode VM against `/var/lib/labelwatch/labelwatch.db`; emits rows; evaluator returns the expected verdict shape; receipt reaches a JSON consumer cleanly; the `pinned_reader_present` value matches independent verification (e.g., `cat /proc/locks | grep <shm-inode>` matches the row).
 
+## 10a. SQLite-specific by design (future-compat)
+
+`sqlite_wal_state` is **SQLite-specific.** Future MySQL/Postgres
+support should arrive as separate claim kinds with engine-specific
+observation grammars, sharing only the witness/receipt/signals
+envelope. The `/proc/locks` enrichment observes SQLite SHM lock
+signals; it is not a generic database pinned-reader abstraction.
+
+Do not refactor `sqlite_wal_state` into a generic `db_wal_state` or
+introduce shared types named `DatabaseWalObservation` /
+`DbWalSignals`. The shared abstraction is the **receipt-and-signals
+envelope**, not the substrate vocabulary. A future Postgres claim
+would more likely care about replication-slot retention, archiver
+failures, checkpoint-age, and replica lag — none of which map
+cleanly onto `.db-shm` locks or `wal_present`. MySQL/InnoDB would
+care about redo-log pressure, binlog retention, undo-tablespace
+growth, history-list length. Different engine grammars, same
+testimony envelope.
+
+Names like `SqliteWalTargetConfig`, `WalObservationData` (carried
+inside `nq.collector.sqlite_wal_observations.v1`), and the
+`pinned_reader_present` field stay coupled to SQLite vocabulary by
+intent. Cross-engine reuse is a recognition error, not a feature.
+
 ## 11. What this slice does NOT do
 
 Explicit non-goals — the operator can read this list and know what to expect at V0:
