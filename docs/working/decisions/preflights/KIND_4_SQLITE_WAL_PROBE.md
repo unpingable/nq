@@ -339,6 +339,15 @@ Per §3 + §6: the probe emits a `WalObservation` row with `observation_status =
 
 The probe does NOT attempt to elevate privilege, suggest the operator change permissions, or skip the target silently.
 
+### Beyond the stock-Debian default
+
+The default-deny posture above assumes the labelwatch-shaped deployment: `/var/lib/<service>/` owned by `root` and a service-user-owned group, mode `0750`. Other deployment shapes have different ownership patterns and the grant strategy is per-case:
+
+- **Docker-mounted volumes** (e.g. driftwatch's `/opt/driftwatch/deploy/data/` and `/mnt/zonestorage/driftwatch/data/`) typically have Docker-UID ownership rather than service-user ownership. The `nq` user may need a group membership against the container-host UID, or a host-side ACL grant, depending on how the container's volume is mounted and which UID writes the DB. The capabilities-table grants still apply (read+execute on the parent dir, read on the file); the *mechanism* for granting them is container-convention-specific and documented per case.
+- **Tmpfs / ramfs DBs** and **NFS/SMB-mounted DBs** are out of scope for V0 (V0 is local-host only; remote DBs over network filesystems are a deferred shape).
+
+No code change is needed for the Docker-volume case beyond the symlink-aware sidecar resolution from §3. The heads-up here is just that the next operator declaration may exercise a permission topology this §7 doesn't sketch in detail; the closed-enum `observation_status = permission_denied` row keeps the substrate honest while the grant strategy gets worked out.
+
 ## 8. Gap #9 — substrate state vs identity at observation time
 
 Filed in [SQLITE_WAL_STATE_CONSUMER_PREFLIGHT.md](SQLITE_WAL_STATE_CONSUMER_PREFLIGHT.md) finding D-category. The probe slice is where it surfaces operationally.
