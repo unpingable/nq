@@ -203,6 +203,19 @@ pub struct PublisherConfig {
     /// payload, and the aggregator persists nothing.
     #[serde(default)]
     pub sqlite_wal_targets: Vec<SqliteWalTargetConfig>,
+    /// Publisher-global opt-out for the `/proc/locks` enrichment in the
+    /// sqlite_wal probe (§4 of `KIND_4_SQLITE_WAL_PROBE.md`). When
+    /// `false`, every observed row records `proc_access = not_attempted`
+    /// regardless of substrate state — honest silence, not testimony of
+    /// absence. Default `true`; the knob exists for operators who want
+    /// to defer the enrichment (sandboxes without `/proc`, audit
+    /// concerns, etc.) without disabling the probe entirely.
+    #[serde(default = "default_true")]
+    pub sqlite_wal_proc_locks_enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// One target for the sqlite_wal probe. The probe runs on the publisher
