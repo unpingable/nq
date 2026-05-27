@@ -122,13 +122,13 @@ For each declared target `(host, db_file_path)`, the probe performs:
 
 ### File trio
 
-The probe stat()s three paths:
+The probe stat()s three paths. Sidecar paths are derived from the **canonical** form of the declared `db_file_path` (see "Symlink handling" below), because SQLite writes `-wal` / `-shm` next to the canonical file, not next to a symlink that points at it:
 
 | Path | Required? | Used for |
 |---|---|---|
-| `db_file_path` (the `.db`) | Yes — absence is `observation_status = target_missing` | `db_bytes`, `db_mtime` |
-| `db_file_path` + `-wal` | No | `wal_present` (1 if exists), `wal_bytes`, `wal_mtime` |
-| `db_file_path` + `-shm` | No — but **required for the `/proc/locks` enrichment** (need the inode) | `.db-shm` inode for §4's enrichment; not recorded as a substrate column in V0 |
+| `db_file_path` (the `.db`) — resolved via `canonicalize()` | Yes — absence is `observation_status = target_missing` | `db_bytes`, `db_mtime` |
+| `canonical(db_file_path)` + `-wal` | No | `wal_present` (1 if exists), `wal_bytes`, `wal_mtime` |
+| `canonical(db_file_path)` + `-shm` | No — but **required for the `/proc/locks` enrichment** (need the inode) | `.db-shm` inode for §4's enrichment; not recorded as a substrate column in V0 |
 
 ### Closed enum of per-target probe outcomes
 
@@ -157,6 +157,18 @@ Those are different evidentiary states. NQ preserves the distinction.
 ### Symlink handling
 
 `stat` follows symlinks (the labelwatch deployment's `labelwatch.db` is a symlink). `lstat` is **not** used — the operator declared the path; the probe testifies about the substrate that path resolves to at observation time. Symlink-target changes between observations are a gap-#9 concern (§8).
+
+**Sidecar path resolution is canonical, not declaration-relative.** SQLite creates the `-wal` and `-shm` sidecars next to the resolved file, not next to a symlink that points at it. The probe `canonicalize()`s the declared `db_file_path` once per cycle and constructs sidecar paths from the canonical result. Without this, the labelwatch-style deployment shape
+
+```text
+/var/lib/labelwatch/labelwatch.db    → symlink → /mnt/zone/.../labelwatch.db
+/var/lib/labelwatch/labelwatch.db-wal      ENOENT (does not exist)
+/mnt/zone/.../labelwatch.db-wal            <real WAL file>
+```
+
+would silently falsify the observation: stat()-ing the declaration-relative `-wal` path would ENOENT, and the row would emit `wal_present=false, wal_bytes=0` despite a real WAL existing at the canonical location. The same hazard applies to `.db-shm` (and would defeat the `/proc/locks` enrichment, which keys on the SHM inode).
+
+**Row identity stays at the declared path.** The substrate row's `db_file_path` field carries the operator-declared identity — the operational handle the operator wrote in the config — not the canonical resolution. This keeps target identity stable across symlink retargets (gap-#9) while still recovering the actual sidecars. A retargeted symlink produces a row whose stat-derived fields reflect the new target, tied to the same declared identity, on the next cycle.
 
 ## 4. `/proc/locks` enrichment (V0)
 
@@ -412,6 +424,7 @@ V0 ships when each of these holds:
 9. **No per-PID `/proc` reads.** No code path reads `/proc/<pid>/comm`, `/proc/<pid>/maps`, `/proc/<pid>/fd/`, or any per-PID path. (Static check: grep the probe module.) `pinned_reader_pid` and `pinned_reader_command` are always `NULL` in V0.
 10. **Pulse-cost guard.** A target list of 10 entries probes in well under the 500ms guard; a slow-probe-cycle log fires when artificially stalled.
 11. **Linode three-host smoke.** Probe runs on the Linode VM against `/var/lib/labelwatch/labelwatch.db`; emits rows; evaluator returns the expected verdict shape; receipt reaches a JSON consumer cleanly; the `pinned_reader_present` value matches independent verification (e.g., `cat /proc/locks | grep <shm-inode>` matches the row).
+12. **Symlinked-target sidecar resolution.** A probe target whose declared `db_file_path` is a symlink pointing into a different directory (the labelwatch-shaped deployment: `/var/lib/labelwatch/labelwatch.db → /mnt/zone/.../labelwatch.db`) produces `wal_present = 1` and a non-NULL `wal_bytes` when the WAL exists at the canonical sidecar location. Tested via tempfile-injected symlinks (the probe canonicalizes once per cycle and constructs sidecar paths from the canonical result). Row identity stays at the operator-declared path; the canonical resolution is implementation detail.
 
 ## 10a. SQLite-specific by design (future-compat)
 

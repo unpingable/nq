@@ -150,13 +150,39 @@ pub fn collect(config: &PublisherConfig) -> CollectorPayload<Vec<WalObservationD
 /// entirely; every observed row reports `proc_access = not_attempted`.
 /// `proc_locks_path = Some(path)` ⇒ stat `.db-shm`, read the given
 /// file, count inode matches.
+///
+/// **Symlink-aware sidecar resolution.** SQLite writes `-wal` and
+/// `-shm` sidecars next to the *canonical* file, not next to a
+/// symlink that points to it. The operator-declared path may be a
+/// symlinked operational handle (e.g.
+/// `/var/lib/labelwatch/labelwatch.db → /mnt/zone/.../labelwatch.db`);
+/// constructing sidecar paths by string-concatenating on the
+/// declared path would stat the wrong location and falsely emit
+/// `wal_present=0`. We canonicalize once per cycle to recover the
+/// real sidecar location, then keep the operator-declared
+/// `db_file_path` as the row identity so target identity and receipt
+/// subject stay path-shaped from the operator's vantage. A
+/// retargeted symlink produces a row tied to the new target's
+/// sidecars on the next observation; declared identity stays stable
+/// (gap #9, [`KIND_4_SQLITE_WAL_PROBE.md`] §8).
 pub(crate) fn probe_one(
     db_file_path: &str,
     proc_locks_path: Option<&Path>,
     observed_at: OffsetDateTime,
 ) -> WalObservationData {
     let observed_at_s = format_rfc3339(observed_at);
-    let main_metadata = match std::fs::metadata(db_file_path) {
+
+    // Resolve the declared path through any symlinks. canonicalize()
+    // also serves as the file-exists check; if the declared path
+    // does not resolve (missing target, dangling symlink, EACCES on
+    // an intermediate dir), the existing error_row classifier maps
+    // the io::ErrorKind into the closed observation_status enum.
+    let canonical = match std::fs::canonicalize(db_file_path) {
+        Ok(p) => p,
+        Err(e) => return error_row(db_file_path, observed_at_s, &e),
+    };
+
+    let main_metadata = match std::fs::metadata(&canonical) {
         Ok(m) => m,
         Err(e) => return error_row(db_file_path, observed_at_s, &e),
     };
@@ -170,9 +196,11 @@ pub(crate) fn probe_one(
         }
     };
 
-    // WAL sidecar — absence is honest substrate (clean checkpoint
-    // state or non-WAL journal mode), not an error.
-    let wal_path = format!("{db_file_path}-wal");
+    // WAL sidecar — constructed from canonical, not the declared
+    // path. Absence is honest substrate (clean checkpoint state or
+    // non-WAL journal mode), not an error.
+    let canonical_str = canonical.to_string_lossy();
+    let wal_path = format!("{canonical_str}-wal");
     let (wal_present, wal_bytes, wal_mtime) = match std::fs::metadata(&wal_path) {
         Ok(m) => {
             let mtime = m
@@ -185,9 +213,11 @@ pub(crate) fn probe_one(
         Err(e) => return error_row(db_file_path, observed_at_s, &e),
     };
 
+    // SHM sidecar — same canonical-relative construction as -wal.
+    let shm_path = format!("{canonical_str}-shm");
     let proc_outcome = match proc_locks_path {
         None => ProcOutcome::not_attempted(),
-        Some(path) => check_proc_locks(db_file_path, path),
+        Some(path) => check_proc_locks(&shm_path, path),
     };
 
     WalObservationData {
@@ -241,9 +271,8 @@ fn error_row(db_file_path: &str, observed_at: String, err: &io::Error) -> WalObs
 /// | Ok | ENOENT / other err | `unavailable` | `None` |
 /// | Ok | Ok, ≥1 match | `observed` | `Some(true)` |
 /// | Ok | Ok, 0 matches | `observed` | `Some(false)` |
-fn check_proc_locks(db_file_path: &str, proc_locks_path: &Path) -> ProcOutcome {
-    let shm_path = format!("{db_file_path}-shm");
-    let (shm_dev, shm_ino) = match stat_for_proc_match(&shm_path) {
+fn check_proc_locks(shm_path: &str, proc_locks_path: &Path) -> ProcOutcome {
+    let (shm_dev, shm_ino) = match stat_for_proc_match(shm_path) {
         Ok(pair) => pair,
         Err(outcome) => return outcome,
     };
@@ -762,6 +791,110 @@ mod tests {
         let outcome = classify_proc_locks_read_error(&err);
         assert_eq!(outcome.proc_access, "unavailable");
         assert!(outcome.pinned_reader_present.is_none());
+    }
+
+    #[test]
+    fn symlinked_db_resolves_sidecars_at_canonical_location() {
+        // labelwatch-style deployment: operator declares the symlink
+        // as the target's operational handle; SQLite places the
+        // -wal / -shm sidecars next to the canonical file. Naive
+        // string-concat sidecar paths would stat the wrong location
+        // and falsely report wal_present=false. The probe must
+        // canonicalize the declared path and construct sidecar
+        // paths from the canonical, while keeping the
+        // operator-declared db_file_path as the row identity.
+        let canonical_dir = tempfile::tempdir().unwrap();
+        let link_dir = tempfile::tempdir().unwrap();
+
+        let canonical_db = canonical_dir.path().join("labelwatch.db");
+        let canonical_wal = canonical_dir.path().join("labelwatch.db-wal");
+        fs::write(&canonical_db, b"SQLITE bytes").unwrap();
+        fs::write(&canonical_wal, b"WAL bytes here").unwrap();
+
+        let declared_db = link_dir.path().join("labelwatch.db");
+        std::os::unix::fs::symlink(&canonical_db, &declared_db).unwrap();
+        // Deliberately: the declared dir has NO -wal sidecar. If the
+        // probe constructs the WAL path by concatenating onto the
+        // declared (symlink) path, the stat would ENOENT and the row
+        // would falsely emit wal_present=false.
+
+        let row = probe_one(declared_db.to_str().unwrap(), None, fixed_now());
+
+        assert_eq!(row.observation_status, "observed");
+        assert_eq!(
+            row.db_file_path,
+            declared_db.to_str().unwrap(),
+            "row identity stays at the operator-declared path"
+        );
+        assert_eq!(
+            row.wal_present,
+            Some(true),
+            "WAL exists at the canonical sidecar location"
+        );
+        assert!(
+            row.wal_bytes.unwrap() > 0,
+            "WAL bytes reflect the canonical sidecar's content"
+        );
+        assert!(row.wal_mtime.is_some());
+        assert!(row.error_detail.is_none());
+    }
+
+    #[test]
+    fn symlinked_db_resolves_shm_for_proc_locks_at_canonical_location() {
+        // Same shape as the previous test but exercises the
+        // /proc/locks enrichment path: the declared path is a
+        // symlink; the .db-shm sidecar lives at the canonical
+        // location; the synth /proc/locks entry references the
+        // canonical .db-shm's inode. Without canonical-resolution
+        // the SHM stat would ENOENT and check_proc_locks would
+        // return observed/false instead of observed/true.
+        let canonical_dir = tempfile::tempdir().unwrap();
+        let link_dir = tempfile::tempdir().unwrap();
+
+        let canonical_db = canonical_dir.path().join("real.db");
+        let canonical_shm = canonical_dir.path().join("real.db-shm");
+        fs::write(&canonical_db, b"SQLITE bytes").unwrap();
+        fs::write(&canonical_shm, b"shm bytes").unwrap();
+
+        let declared_db = link_dir.path().join("real.db");
+        std::os::unix::fs::symlink(&canonical_db, &declared_db).unwrap();
+
+        let (dev, ino) = shm_dev_ino(&canonical_shm);
+        let (major, minor) = decode_dev(dev);
+        let locks_path = link_dir.path().join("proc_locks");
+        fs::write(&locks_path, format!("{}\n", synth_lock_line(major, minor, ino))).unwrap();
+
+        let row = probe_one(
+            declared_db.to_str().unwrap(),
+            Some(&locks_path),
+            fixed_now(),
+        );
+
+        assert_eq!(row.observation_status, "observed");
+        assert_eq!(row.db_file_path, declared_db.to_str().unwrap());
+        assert_eq!(row.proc_access, "observed");
+        assert_eq!(
+            row.pinned_reader_present,
+            Some(true),
+            "SHM lock signal observed at the canonical sidecar inode"
+        );
+    }
+
+    #[test]
+    fn dangling_symlink_emits_target_missing() {
+        // Declared path is a symlink whose target does not exist.
+        // canonicalize() returns NotFound; the row maps to
+        // target_missing with the operator-declared path as identity.
+        let link_dir = tempfile::tempdir().unwrap();
+        let declared_db = link_dir.path().join("dangling.db");
+        std::os::unix::fs::symlink("/nonexistent/dangling/target.db", &declared_db).unwrap();
+
+        let row = probe_one(declared_db.to_str().unwrap(), None, fixed_now());
+
+        assert_eq!(row.observation_status, "target_missing");
+        assert_eq!(row.db_file_path, declared_db.to_str().unwrap());
+        assert!(row.wal_present.is_none());
+        assert!(row.error_detail.is_some());
     }
 
     #[test]
