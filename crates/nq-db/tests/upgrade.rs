@@ -34,7 +34,16 @@ const PREVIOUS_SCHEMA_VERSION: u32 = CURRENT_SCHEMA_VERSION - 1;
 /// part of the upgrade fixture. If a migration that only alters or renames
 /// existing tables becomes the latest, this constant becomes wrong and the
 /// test stops representing the upgrade path it claims to.
-const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["wal_observations"];
+///
+/// Migration 049 is a TRANSFORM (not ADD) of `wal_observations`: it adds
+/// the `observation_status` closed enum, relaxes stat-derived field
+/// nullability, and adds a conditional CHECK. No table added; the
+/// constant is empty. The test still exercises the path of "rollback
+/// user_version to N-1, publish data, migrate forward, verify version
+/// bump + data survival." The rollback no longer needs to drop a table
+/// because mig 049's INSERT-FROM-SELECT requires `wal_observations` to
+/// exist at the source.
+const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &[];
 
 #[test]
 fn upgrade_from_previous_version_preserves_data() {

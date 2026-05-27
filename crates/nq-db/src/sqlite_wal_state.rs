@@ -88,6 +88,68 @@ impl std::fmt::Display for UnknownProcAccess {
 
 impl std::error::Error for UnknownProcAccess {}
 
+/// Closed-enum probe outcome per `(host, db_file_path)` target per
+/// cycle. Mirrors `ProcAccess`'s discipline at a different layer.
+///
+/// - `Observed`: probe stat-ed the substrate and recorded a full row.
+/// - `TargetMissing`: the declared `db_file_path` does not exist.
+/// - `PermissionDenied`: probe lacked read on the path or its parent.
+/// - `StatError`: stat() failed for any other reason (EIO, ENOTCONN,
+///   filesystem unavailable, etc.).
+///
+/// See `docs/working/decisions/preflights/KIND_4_SQLITE_WAL_PROBE.md`
+/// §6 for the discipline. Migration 049 enforces the conditional CHECK
+/// at the substrate boundary; this enum is the in-Rust mirror.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservationStatus {
+    Observed,
+    TargetMissing,
+    PermissionDenied,
+    StatError,
+}
+
+impl ObservationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Observed => "observed",
+            Self::TargetMissing => "target_missing",
+            Self::PermissionDenied => "permission_denied",
+            Self::StatError => "stat_error",
+        }
+    }
+
+    /// True when the probe successfully observed the substrate and the
+    /// stat-derived fields on the row are populated. Inverse of
+    /// `is_error`.
+    pub fn is_observed(self) -> bool {
+        matches!(self, Self::Observed)
+    }
+}
+
+impl FromStr for ObservationStatus {
+    type Err = UnknownObservationStatus;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "observed" => Ok(Self::Observed),
+            "target_missing" => Ok(Self::TargetMissing),
+            "permission_denied" => Ok(Self::PermissionDenied),
+            "stat_error" => Ok(Self::StatError),
+            other => Err(UnknownObservationStatus(other.to_string())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownObservationStatus(pub String);
+
+impl std::fmt::Display for UnknownObservationStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown sqlite_wal observation_status: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for UnknownObservationStatus {}
+
 /// One `wal_observations` row.
 ///
 /// `observation_id` is `None` for an unwritten record; `insert_observation`
@@ -96,7 +158,19 @@ impl std::error::Error for UnknownProcAccess {}
 /// Invariants that mirror the migration's `CHECK` constraints (kept
 /// here as in-process discipline so the projector can rely on them):
 ///
-/// - `wal_present == false` ⇒ `wal_bytes == 0` and `wal_mtime.is_none()`.
+/// - `observation_status == Observed` ⇒ `wal_present.is_some()`,
+///   `wal_bytes.is_some()`, `db_bytes.is_some()`, `db_mtime.is_some()`,
+///   and `error_detail.is_none()`.
+/// - `observation_status != Observed` ⇒ all stat-derived fields
+///   (`wal_present`, `wal_bytes`, `wal_mtime`, `db_bytes`, `db_mtime`)
+///   are `None` and `error_detail.is_some()`. Permission-denied,
+///   target-missing, and stat-error rows are testimony about the
+///   probe's standing, not substrate observation — they must NOT be
+///   encoded as `wal_present = Some(false), wal_bytes = Some(0)`,
+///   which would lie.
+/// - `wal_present == Some(false)` ⇒ `wal_bytes == Some(0)` and
+///   `wal_mtime.is_none()`. (Only meaningful when observation_status
+///   is Observed.)
 /// - `proc_access == ProcAccess::Observed` ⇒ `pinned_reader_present.is_some()`.
 /// - `proc_access != ProcAccess::Observed` ⇒ all three `pinned_reader_*` fields are `None`.
 /// - `pinned_reader_present == Some(false)` ⇒ `pinned_reader_pid` and `pinned_reader_command` are `None`.
@@ -113,11 +187,12 @@ pub struct WalObservation {
     pub generation_id: i64,
     pub host: String,
     pub db_file_path: String,
-    pub wal_present: bool,
-    pub wal_bytes: i64,
+    pub observation_status: ObservationStatus,
+    pub wal_present: Option<bool>,
+    pub wal_bytes: Option<i64>,
     pub wal_mtime: Option<String>,
-    pub db_bytes: i64,
-    pub db_mtime: String,
+    pub db_bytes: Option<i64>,
+    pub db_mtime: Option<String>,
     pub proc_access: ProcAccess,
     pub pinned_reader_present: Option<bool>,
     pub pinned_reader_pid: Option<i64>,
@@ -161,6 +236,7 @@ pub fn load_recent_wal_observations(
 ) -> anyhow::Result<Vec<WalObservation>> {
     let mut stmt = conn.prepare(
         "SELECT observation_id, generation_id, host, db_file_path,
+                observation_status,
                 wal_present, wal_bytes, wal_mtime,
                 db_bytes, db_mtime,
                 proc_access,
@@ -183,32 +259,43 @@ pub fn load_recent_wal_observations(
 }
 
 fn row_to_observation(r: &Row<'_>) -> rusqlite::Result<WalObservation> {
-    let proc_access_str: String = r.get(9)?;
+    // Column indices follow the SELECT in load_recent_wal_observations.
+    let observation_status_str: String = r.get(4)?;
+    let observation_status =
+        ObservationStatus::from_str(&observation_status_str).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                4,
+                rusqlite::types::Type::Text,
+                Box::new(e),
+            )
+        })?;
+    let proc_access_str: String = r.get(10)?;
     let proc_access = ProcAccess::from_str(&proc_access_str).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(
-            9,
+            10,
             rusqlite::types::Type::Text,
             Box::new(e),
         )
     })?;
-    let wal_present_int: i64 = r.get(4)?;
-    let pinned_reader_present_opt: Option<i64> = r.get(10)?;
+    let wal_present_opt: Option<i64> = r.get(5)?;
+    let pinned_reader_present_opt: Option<i64> = r.get(11)?;
     Ok(WalObservation {
         observation_id: Some(r.get(0)?),
         generation_id: r.get(1)?,
         host: r.get(2)?,
         db_file_path: r.get(3)?,
-        wal_present: wal_present_int != 0,
-        wal_bytes: r.get(5)?,
-        wal_mtime: r.get(6)?,
-        db_bytes: r.get(7)?,
-        db_mtime: r.get(8)?,
+        observation_status,
+        wal_present: wal_present_opt.map(|v| v != 0),
+        wal_bytes: r.get(6)?,
+        wal_mtime: r.get(7)?,
+        db_bytes: r.get(8)?,
+        db_mtime: r.get(9)?,
         proc_access,
         pinned_reader_present: pinned_reader_present_opt.map(|v| v != 0),
-        pinned_reader_pid: r.get(11)?,
-        pinned_reader_command: r.get(12)?,
-        observed_at: r.get(13)?,
-        error_detail: r.get(14)?,
+        pinned_reader_pid: r.get(12)?,
+        pinned_reader_command: r.get(13)?,
+        observed_at: r.get(14)?,
+        error_detail: r.get(15)?,
     })
 }
 
@@ -263,12 +350,11 @@ const SQLITE_WAL_STATE_SEVERE_BYTES: i64 = 10_000_000_000;
 /// 2026-04-22 incident.
 const SQLITE_WAL_STATE_SEVERE_RATIO: f64 = 0.5;
 
-/// Error-detail prefix the probe uses when it could not stat the main
-/// DB file. The evaluator routes any window containing a row with this
-/// prefix to `cannot_testify`. (No probe writes such rows today; the
-/// convention is fixed here so a future probe slice has a stable
-/// substrate vocabulary to opt into.)
-const ERROR_DETAIL_INACCESSIBLE_DB_PREFIX: &str = "cannot_stat_db:";
+// Slice 6a retired the pre-migration-049
+// `ERROR_DETAIL_INACCESSIBLE_DB_PREFIX = "cannot_stat_db:"` discipline.
+// `first_inaccessible_db` now reads the closed `observation_status`
+// enum directly. `error_detail` stays as a human-readable supplement
+// but no longer carries structural meaning.
 
 // ---------------------------------------------------------------------------
 // Public evaluator entry points.
@@ -563,11 +649,20 @@ fn classify_window(window: &[WalObservation], now: time::OffsetDateTime) -> WalC
 }
 
 /// `ALL(observations).wal_bytes > ELEVATED_BYTES`.
+///
+/// Slice 6a: post-classifier `first_inaccessible_db()` guard,
+/// every row reaching this helper has `observation_status = Observed`,
+/// so `wal_bytes` is guaranteed `Some` by the migration's conditional
+/// CHECK. `.unwrap_or(0)` is the defensive default for the
+/// substrate-bypass case (CHECK constraint disabled in a test
+/// environment, etc.); zero never satisfies the elevated threshold,
+/// so a bypass row degrades to "not elevated" rather than spurious
+/// signal.
 fn all_elevated(window: &[WalObservation]) -> bool {
     !window.is_empty()
         && window
             .iter()
-            .all(|o| o.wal_bytes > SQLITE_WAL_STATE_ELEVATED_BYTES)
+            .all(|o| o.wal_bytes.unwrap_or(0) > SQLITE_WAL_STATE_ELEVATED_BYTES)
 }
 
 /// `ALL(observations).wal_bytes > SEVERE_BYTES OR
@@ -575,15 +670,20 @@ fn all_elevated(window: &[WalObservation]) -> bool {
 /// Parenthesisation per preflight §4 (the `OR` binds inside the `ALL`
 /// after the size/ratio choice; the choice is per-observation, the
 /// `ALL` applies after).
+///
+/// Same `.unwrap_or(0)` discipline as `all_elevated` — see its doc
+/// comment.
 fn all_severe(window: &[WalObservation]) -> bool {
     if window.is_empty() {
         return false;
     }
     let all_above_bytes = window
         .iter()
-        .all(|o| o.wal_bytes > SQLITE_WAL_STATE_SEVERE_BYTES);
+        .all(|o| o.wal_bytes.unwrap_or(0) > SQLITE_WAL_STATE_SEVERE_BYTES);
     let all_above_ratio = window.iter().all(|o| {
-        o.db_bytes > 0 && (o.wal_bytes as f64 / o.db_bytes as f64) > SQLITE_WAL_STATE_SEVERE_RATIO
+        let wal = o.wal_bytes.unwrap_or(0);
+        let db = o.db_bytes.unwrap_or(0);
+        db > 0 && (wal as f64 / db as f64) > SQLITE_WAL_STATE_SEVERE_RATIO
     });
     all_above_bytes || all_above_ratio
 }
@@ -611,7 +711,7 @@ fn compute_signals(window: &[WalObservation], window_duration_seconds: i64) -> W
     let main_db_mtime_stale_across_window = !window.is_empty()
         && window.iter().all(|o| {
             let observed = parse_rfc3339(&o.observed_at);
-            let db_mtime = parse_rfc3339(&o.db_mtime);
+            let db_mtime = o.db_mtime.as_deref().and_then(parse_rfc3339);
             match (observed, db_mtime) {
                 (Some(obs), Some(mt)) => (obs - mt).whole_seconds() >= window_duration_seconds,
                 _ => false,
@@ -643,11 +743,21 @@ fn compute_signals(window: &[WalObservation], window_duration_seconds: i64) -> W
 }
 
 fn first_inaccessible_db(window: &[WalObservation]) -> Option<String> {
+    // Slice 6a: detection via the closed `observation_status` enum
+    // instead of the pre-migration-049 `cannot_stat_db:` error_detail
+    // prefix. Any non-observed row (target_missing, permission_denied,
+    // stat_error) routes the whole window's verdict to
+    // `cannot_testify` via the InaccessibleDb classification.
+    //
+    // The returned string composes observation_status + error_detail
+    // so the verdict_note carries both the closed-enum reason and the
+    // human-readable supplement.
     window.iter().find_map(|o| {
-        o.error_detail
-            .as_deref()
-            .filter(|d| d.starts_with(ERROR_DETAIL_INACCESSIBLE_DB_PREFIX))
-            .map(|d| d.to_string())
+        if o.observation_status.is_observed() {
+            return None;
+        }
+        let detail = o.error_detail.as_deref().unwrap_or("(no detail)");
+        Some(format!("{}: {}", o.observation_status.as_str(), detail))
     })
 }
 
@@ -657,14 +767,21 @@ fn first_contradiction(window: &[WalObservation]) -> Option<String> {
             Some(t) => t,
             None => continue,
         };
-        let db_mtime = match parse_rfc3339(&o.db_mtime) {
+        // Post-classifier `first_inaccessible_db()` guard rules out
+        // non-observed rows; for observed rows db_mtime is Some by
+        // the migration's conditional CHECK.
+        let db_mtime_raw = match o.db_mtime.as_deref() {
+            Some(s) => s,
+            None => continue,
+        };
+        let db_mtime = match parse_rfc3339(db_mtime_raw) {
             Some(t) => t,
             None => continue,
         };
         if db_mtime > observed_at {
             return Some(format!(
                 "row observation_id={:?} reports db_mtime {} after observed_at {} (file mtime in the future of observation is impossible substrate physics)",
-                o.observation_id, o.db_mtime, o.observed_at,
+                o.observation_id, db_mtime_raw, o.observed_at,
             ));
         }
         if let Some(raw) = o.wal_mtime.as_deref() {
@@ -766,15 +883,20 @@ fn classification_exclusion_reason(classification: &WalClassification) -> String
 }
 
 fn make_support(obs: &WalObservation) -> PreflightSupport {
+    // make_support runs after first_inaccessible_db routes non-observed
+    // rows out, so wal_present / wal_bytes / db_bytes are Some by the
+    // migration's conditional CHECK. `.unwrap_or` defaults are
+    // defensive — they never fire in practice because the classifier
+    // already excluded the only rows that could be None.
     let claim = format!(
         "Probe observed WAL state for host {} db {} at observed_at {} \
          (wal_present={}, wal_bytes={}, db_bytes={}, proc_access={})",
         obs.host,
         obs.db_file_path,
         obs.observed_at,
-        obs.wal_present,
-        obs.wal_bytes,
-        obs.db_bytes,
+        obs.wal_present.unwrap_or(false),
+        obs.wal_bytes.unwrap_or(0),
+        obs.db_bytes.unwrap_or(0),
         obs.proc_access.as_str(),
     );
     PreflightSupport {
@@ -1012,17 +1134,19 @@ pub fn insert_observation(conn: &Connection, obs: &WalObservation) -> anyhow::Re
     conn.execute(
         "INSERT INTO wal_observations (
             generation_id, host, db_file_path,
+            observation_status,
             wal_present, wal_bytes, wal_mtime,
             db_bytes, db_mtime,
             proc_access,
             pinned_reader_present, pinned_reader_pid, pinned_reader_command,
             observed_at, error_detail
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             obs.generation_id,
             obs.host,
             obs.db_file_path,
-            if obs.wal_present { 1 } else { 0 },
+            obs.observation_status.as_str(),
+            obs.wal_present.map(|b| if b { 1 } else { 0 }),
             obs.wal_bytes,
             obs.wal_mtime,
             obs.db_bytes,
@@ -1101,11 +1225,12 @@ mod tests {
             generation_id: 1,
             host: "labelwatch.neutral.zone".into(),
             db_file_path: "/var/lib/labelwatch/labelwatch.db".into(),
-            wal_present: true,
-            wal_bytes,
+            observation_status: ObservationStatus::Observed,
+            wal_present: Some(true),
+            wal_bytes: Some(wal_bytes),
             wal_mtime: Some(at.into()),
-            db_bytes: 26_000_000_000,
-            db_mtime: "2026-05-26T10:00:00Z".into(),
+            db_bytes: Some(26_000_000_000),
+            db_mtime: Some("2026-05-26T10:00:00Z".into()),
             proc_access: ProcAccess::Observed,
             pinned_reader_present: Some(false),
             pinned_reader_pid: None,
@@ -1176,6 +1301,8 @@ mod tests {
         row.pinned_reader_present = None;
         row.pinned_reader_pid = None;
         row.pinned_reader_command = None;
+        // observation_status remains Observed — the probe stat-ed the
+        // DB substrate fine; only the /proc cross-check was refused.
         insert_observation(&db.conn, &row).unwrap();
         let target = SqliteWalTarget {
             host: "labelwatch.neutral.zone",
@@ -1192,8 +1319,8 @@ mod tests {
     fn loader_round_trips_truncated_wal_path() {
         let db = make_db();
         let mut row = observed_obs("2026-05-26T13:00:00Z", 0);
-        row.wal_present = false;
-        row.wal_bytes = 0;
+        row.wal_present = Some(false);
+        row.wal_bytes = Some(0);
         row.wal_mtime = None;
         insert_observation(&db.conn, &row).unwrap();
         let target = SqliteWalTarget {
@@ -1203,8 +1330,8 @@ mod tests {
         let window = load_recent_wal_observations(&db.conn, &target, "2026-05-26T00:00:00Z")
             .unwrap();
         assert_eq!(window.len(), 1);
-        assert!(!window[0].wal_present);
-        assert_eq!(window[0].wal_bytes, 0);
+        assert_eq!(window[0].wal_present, Some(false));
+        assert_eq!(window[0].wal_bytes, Some(0));
         assert_eq!(window[0].wal_mtime, None);
     }
 
@@ -1248,11 +1375,12 @@ mod tests {
                     generation_id: 1,
                     host: "labelwatch.neutral.zone".into(),
                     db_file_path: "/var/lib/labelwatch/labelwatch.db".into(),
-                    wal_present: true,
-                    wal_bytes: wal_bytes_for(i),
+                    observation_status: ObservationStatus::Observed,
+                    wal_present: Some(true),
+                    wal_bytes: Some(wal_bytes_for(i)),
                     wal_mtime: Some(t_s.clone()),
-                    db_bytes: 26_000_000_000,
-                    db_mtime: "2026-05-26T01:00:00Z".into(),
+                    db_bytes: Some(26_000_000_000),
+                    db_mtime: Some("2026-05-26T01:00:00Z".into()),
                     proc_access: ProcAccess::Observed,
                     pinned_reader_present: Some(false),
                     pinned_reader_pid: None,
@@ -1405,7 +1533,7 @@ mod tests {
         let db = make_db();
         let mut rows = build_window(NOW, 60, 721, |_| 6_000_000_000);
         for r in &mut rows {
-            r.db_bytes = 10_000_000_000;
+            r.db_bytes = Some(10_000_000_000);
         }
         insert_all(&db.conn, &rows);
         let r =
@@ -1425,7 +1553,7 @@ mod tests {
         let db = make_db();
         let mut rows = build_window(NOW, 60, 721, |_| 15_000_000_000);
         for r in &mut rows {
-            r.db_mtime = "2026-05-25T14:00:00Z".into();
+            r.db_mtime = Some("2026-05-25T14:00:00Z".into());
         }
         insert_all(&db.conn, &rows);
         let r =
@@ -1481,11 +1609,20 @@ mod tests {
 
     #[test]
     fn evaluator_inaccessible_db_yields_cannot_testify() {
-        // Latest row has the cannot_stat_db: prefix in error_detail.
+        // Latest row has observation_status = target_missing, simulating
+        // a probe run that found the declared db_file_path missing.
+        // The migration's conditional CHECK requires all stat-derived
+        // fields to be NULL when status != observed.
         let db = make_db();
         let mut rows = build_window(NOW, 60, 200, |_| 1024);
-        rows.last_mut().unwrap().error_detail =
-            Some("cannot_stat_db: ENOENT main DB file missing".into());
+        let last = rows.last_mut().unwrap();
+        last.observation_status = ObservationStatus::TargetMissing;
+        last.wal_present = None;
+        last.wal_bytes = None;
+        last.wal_mtime = None;
+        last.db_bytes = None;
+        last.db_mtime = None;
+        last.error_detail = Some("main DB file does not exist at declared path".into());
         insert_all(&db.conn, &rows);
         let r =
             evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
@@ -1506,7 +1643,7 @@ mod tests {
         // impossible substrate physics.
         let db = make_db();
         let mut rows = build_window(NOW, 60, 200, |_| 1024);
-        rows[100].db_mtime = "2027-05-26T14:00:00Z".into(); // year in the future
+        rows[100].db_mtime = Some("2027-05-26T14:00:00Z".into()); // year in the future
         insert_all(&db.conn, &rows);
         let r =
             evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
