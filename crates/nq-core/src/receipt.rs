@@ -1137,4 +1137,168 @@ mod tests {
         b.seal(bind).unwrap();
         assert_ne!(a.content_hash, b.content_hash);
     }
+
+    // -----------------------------------------------------------------
+    // Slice 1b coverage extension — the consumer-contract hardening
+    // added three optional fields (`target`, `cannot_testify`,
+    // `signals`). All three are serialized by serde without `skip`
+    // markers (modulo `skip_serializing_if = Option::is_none` for the
+    // Option-typed ones), so they are part of the canonical bytes that
+    // feed `compute_content_hash`. These tests pin that contract: any
+    // change to any of the three new fields must change the receipt's
+    // content_hash. Without these tests, a future refactor that
+    // accidentally adds `#[serde(skip)]` to one of them would silently
+    // produce sealed receipts whose hashes don't cover those fields —
+    // a verification gap discoverable only during incident.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn content_hash_changes_when_target_changes() {
+        let mut a = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        let mut b = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        // a: no target. b: structured target. Hash must differ —
+        // `target` is part of receipt identity even though it's
+        // Option-typed (skip_serializing_if applies only to the None
+        // case; Some(...) is always in the bytes).
+        b.target = Some(host_target("h1"));
+        let bind = EvaluatorBinding {
+            evaluator: "claim_registry".into(),
+            version: 1,
+        };
+        a.seal(bind.clone()).unwrap();
+        b.seal(bind.clone()).unwrap();
+        assert_ne!(a.content_hash, b.content_hash);
+
+        // Two non-None targets that differ on `host` must also differ.
+        let mut c = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        c.target = Some(host_target("h2"));
+        c.seal(bind.clone()).unwrap();
+        assert_ne!(b.content_hash, c.content_hash);
+
+        // Differ on `scope`.
+        let mut d = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        d.target = Some(PreflightTarget {
+            host: "h1".into(),
+            scope: "sqlite_wal".into(),
+            id: None,
+        });
+        d.seal(bind.clone()).unwrap();
+        assert_ne!(b.content_hash, d.content_hash);
+
+        // Differ on `id`.
+        let mut e = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        e.target = Some(PreflightTarget {
+            host: "h1".into(),
+            scope: "host".into(),
+            id: Some("/var/lib/x.db".into()),
+        });
+        e.seal(bind).unwrap();
+        assert_ne!(a.content_hash, e.content_hash);
+    }
+
+    #[test]
+    fn content_hash_changes_when_cannot_testify_changes() {
+        // cannot_testify carries the constitutional refusals. Without
+        // sealing coverage, an adversary (or a future refactor) could
+        // strip refusals from a stored receipt without invalidating
+        // the hash — and consumers reading the stripped receipt would
+        // see fewer refused-claim-classes than the evaluator actually
+        // emitted. That's the laundering shape the seal must prevent.
+        let mut a = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        let mut b = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        a.cannot_testify = vec![];
+        b.cannot_testify = vec!["Whether X is true (out of scope)".into()];
+        let bind = EvaluatorBinding {
+            evaluator: "claim_registry".into(),
+            version: 1,
+        };
+        a.seal(bind.clone()).unwrap();
+        b.seal(bind.clone()).unwrap();
+        assert_ne!(
+            a.content_hash, b.content_hash,
+            "adding an entry to cannot_testify must change the hash"
+        );
+
+        // Same length, different content.
+        let mut c = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        c.cannot_testify = vec!["Whether Y is true (out of scope)".into()];
+        c.seal(bind.clone()).unwrap();
+        assert_ne!(
+            b.content_hash, c.content_hash,
+            "different refusal text at the same index must change the hash"
+        );
+
+        // Adding a second entry to a populated list.
+        let mut d = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        d.cannot_testify = vec![
+            "Whether X is true (out of scope)".into(),
+            "Whether Z is true (out of scope)".into(),
+        ];
+        d.seal(bind).unwrap();
+        assert_ne!(
+            b.content_hash, d.content_hash,
+            "adding a second refusal must change the hash"
+        );
+    }
+
+    #[test]
+    fn content_hash_changes_when_signals_changes() {
+        // signals carries per-kind structured signals (sqlite_wal_state
+        // threshold_band, pinned_reader, etc.). The hash must cover
+        // them so consumers cannot be silently re-served a receipt
+        // whose signal-band has been tampered with.
+        let mut a = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        let mut b = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        a.signals = None;
+        b.signals = Some(serde_json::json!({
+            "sqlite_wal_state": {
+                "threshold_band": "bounded",
+                "pinned_reader": "unobserved",
+            }
+        }));
+        let bind = EvaluatorBinding {
+            evaluator: "claim_registry".into(),
+            version: 1,
+        };
+        a.seal(bind.clone()).unwrap();
+        b.seal(bind.clone()).unwrap();
+        assert_ne!(
+            a.content_hash, b.content_hash,
+            "setting signals from None to Some must change the hash"
+        );
+
+        // Different threshold_band: same envelope shape, different
+        // value. This is the field consumers will read most often —
+        // tamper resistance here is what stops a stripped-of-band
+        // receipt from claiming "bounded" while the evaluator said
+        // "severe."
+        let mut c = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        c.signals = Some(serde_json::json!({
+            "sqlite_wal_state": {
+                "threshold_band": "severe",
+                "pinned_reader": "unobserved",
+            }
+        }));
+        c.seal(bind.clone()).unwrap();
+        assert_ne!(
+            b.content_hash, c.content_hash,
+            "changing threshold_band must change the hash"
+        );
+
+        // Different pinned_reader at the same threshold_band — also
+        // load-bearing for the consumer prompt that reads this value
+        // (per the closed-enum doc on the field).
+        let mut d = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
+        d.signals = Some(serde_json::json!({
+            "sqlite_wal_state": {
+                "threshold_band": "bounded",
+                "pinned_reader": "present",
+            }
+        }));
+        d.seal(bind).unwrap();
+        assert_ne!(
+            b.content_hash, d.content_hash,
+            "changing pinned_reader must change the hash"
+        );
+    }
 }
