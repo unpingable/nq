@@ -10,13 +10,13 @@
 
 ## 0. The Tier 0 wager
 
-Use the existing `sqlite_wal_state` claim kind, the existing publisher probe, the existing aggregator evaluator, and the existing HTTP route to observe NQ's own aggregator SQLite DB at `/var/lib/nq/nq.db`. **Zero new claim kinds, zero new schemas, zero new code.** The slice is a target added to the Linode publisher's `sqlite_wal_targets` list.
+Use the existing `sqlite_wal_state` claim kind, the existing publisher probe, the existing aggregator evaluator, and the existing HTTP route to observe NQ's own aggregator SQLite DB at `/opt/notquery/nq.db`. **Zero new claim kinds, zero new schemas, zero new code.** The slice is a target added to the Linode publisher's `sqlite_wal_targets` list.
 
 The wager: an existing operational claim kind that observes one substrate (labelwatch's DB) can observe NQ's own substrate without modification, because the substrate-physics is identical (SQLite WAL state on a filesystem path) and the witness shape is identical (filesystem stat by an external process). The "operational claim-state monitoring" abstraction recognized in the gap doc is not new theory; it's recognition that the existing kind-4 machinery already implements it for any substrate.
 
 ## 1. What the claimed component is — and what it is not
 
-**Claimed component (Tier 0):** the NQ aggregator/evaluator SQLite DB substrate at `/var/lib/nq/nq.db`. Specifically: the *WAL state* of that file as observable by an external `stat()` of `nq.db`, `nq.db-wal`, `nq.db-shm`, plus an `/proc/locks` cross-check against `nq.db-shm`.
+**Claimed component (Tier 0):** the NQ aggregator/evaluator SQLite DB substrate at `/opt/notquery/nq.db`. Specifically: the *WAL state* of that file as observable by an external `stat()` of `nq.db`, `nq.db-wal`, `nq.db-shm`, plus an `/proc/locks` cross-check against `nq.db-shm`.
 
 **Claimed component is NOT:**
 
@@ -39,9 +39,9 @@ A reader looking at "Tier 0 ships an NQ-on-NQ receipt" might infer:
 
 ```text
 sqlite_wal_state receipt
-target: (host=linode.neutral.zone, db_file_path=/var/lib/nq/nq.db)
+target: (host=labelwatch-host, db_file_path=/opt/notquery/nq.db)
 verdict: bounded | admissible_with_scope | insufficient_coverage | cannot_testify
-verdict_note: "SQLite WAL has exceeded the ... threshold ... for (host=..., db=/var/lib/nq/nq.db). ..."
+verdict_note: "SQLite WAL has exceeded the ... threshold ... for (host=..., db=/opt/notquery/nq.db). ..."
 ```
 
 It does **not** produce, and will not produce in this slice:
@@ -77,7 +77,7 @@ For Tier 0:
 
 ```text
 Component being claimed about:  nq.db (the aggregator's SQLite DB
-                                substrate at /var/lib/nq/nq.db)
+                                substrate at /opt/notquery/nq.db)
 Witness sources:                filesystem stat of the .db / .db-wal /
                                 .db-shm trio + /proc/locks read
 Process performing the stat:    nq publish (publisher) on the same host
@@ -131,7 +131,7 @@ Tier 0 does not authorize Tier 1, 2, or 3. Each future tier ratifies its own ext
 
 ### Authorized as a follow-up ops slice (not by this doc)
 
-- Adding `{ "db_file_path": "/var/lib/nq/nq.db" }` to Linode's `publisher.json` `sqlite_wal_targets` list.
+- Adding the appropriate target entry to Linode's `publisher.json` `sqlite_wal_targets` list. The path on Linode is `/opt/notquery/nq.db` (per the live `aggregator.json::db_path`, NOT the operator-guide example path `/var/lib/nq/nq.db`). Resolve the actual path from each host's `aggregator.json::db_path` before applying; per-host deployment shapes vary (Linode is `/opt/notquery/`, the operator-guide example is `/var/lib/nq/`).
 - The same target may eventually go on `sushi-k` and `lil-nas-x` for symmetry per `project_three_host_discipline`, but that's separate per-host config and follows the existing deploy ritual.
 
 ### Explicitly not authorized
@@ -158,9 +158,9 @@ The fourth pressure that would *otherwise* be required — "operator wants opera
 
 When the follow-up ops slice (not authorized by this doc) lands:
 
-1. The Linode publisher emits `wal_observations` rows for `/var/lib/nq/nq.db` once per cycle.
+1. The Linode publisher emits `wal_observations` rows for `/opt/notquery/nq.db` once per cycle.
 2. The aggregator persists those rows (same `wal_observations` table as labelwatch's).
-3. `GET /api/preflight/sqlite-wal-state?host=linode.neutral.zone&db=/var/lib/nq/nq.db` returns a well-formed `nq.preflight.sqlite_wal_state.v1` PreflightResult.
+3. `GET /api/preflight/sqlite-wal-state?host=labelwatch-host&db=/opt/notquery/nq.db` returns a well-formed `nq.preflight.sqlite_wal_state.v1` PreflightResult.
 4. The first ~100 cycles produce `verdict: insufficient_coverage` (same first-cycle shape as slice 6d's V0 acceptance receipt).
 5. Subsequent cycles produce `verdict: bounded` while NQ is operating normally — the aggregator's own DB does not spend its life under sustained WAL pressure.
 
