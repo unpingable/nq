@@ -92,6 +92,12 @@ pub enum SmokeAction {
     /// nested `disk_state_preflight` envelope, and validates it
     /// against the `nq.preflight.disk_state.v1` contract.
     PreflightDiskState(SmokePreflightDiskStateCmd),
+    /// Smoke the ingest_state preflight surface. Hits
+    /// `<url>/api/preflight/ingest-state` on the running monitor.
+    /// The route is not host-scoped — the witness is the monitor's
+    /// own pull-cycle substrate. Validates the response against the
+    /// `nq.preflight.ingest_state.v1` contract.
+    PreflightIngestState(SmokePreflightIngestStateCmd),
 }
 
 #[derive(Debug, Args)]
@@ -104,6 +110,17 @@ pub struct SmokePreflightDiskStateCmd {
     /// `<url>/api/host/<host>`.
     #[arg(long)]
     pub host: String,
+    /// Per-request timeout in seconds.
+    #[arg(long, default_value_t = 5)]
+    pub timeout_seconds: u64,
+}
+
+#[derive(Debug, Args)]
+pub struct SmokePreflightIngestStateCmd {
+    /// Base URL of the running monitor (e.g. `http://127.0.0.1:9848`).
+    /// Trailing slash is tolerated.
+    #[arg(long)]
+    pub url: String,
     /// Per-request timeout in seconds.
     #[arg(long, default_value_t = 5)]
     pub timeout_seconds: u64,

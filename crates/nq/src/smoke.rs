@@ -18,6 +18,29 @@ pub const EXPECTED_DISK_STATE_SCHEMA: &str = "nq.preflight.disk_state.v1";
 /// Contract version the disk_state preflight envelope must advertise.
 pub const EXPECTED_DISK_STATE_CONTRACT_VERSION: u64 = 1;
 
+/// Wire schema the ingest_state preflight envelope must advertise.
+pub const EXPECTED_INGEST_STATE_SCHEMA: &str = "nq.preflight.ingest_state.v1";
+
+/// Contract version the ingest_state preflight envelope must advertise.
+pub const EXPECTED_INGEST_STATE_CONTRACT_VERSION: u64 = 1;
+
+/// Substrings that must not appear in any `supports[].claim` on an
+/// `ingest_state` envelope. Mirrors the constitutional `cannot_testify`
+/// surface for ingest_state: a support that names restart /
+/// reconfigure / deactivate / recover has laundered consequence
+/// vocabulary onto substrate testimony. Upstream-source-health and
+/// future-state laundering is harder to substring-match defensively
+/// — those rely on the cannot_testify presence check rather than the
+/// support-vocabulary anti-laundering scan.
+pub const INGEST_FORBIDDEN_SUPPORT_SUBSTRINGS: &[&str] = &[
+    "restart",
+    "reconfigure",
+    "deactivate",
+    "recover",
+    "closure",
+    "incident closed",
+];
+
 /// Substrings that must not appear in any `supports[].claim`. Mirrors
 /// the constitutional `cannot_testify` surface for disk_state: a
 /// support that names physical death, replacement, recovery /
@@ -158,6 +181,130 @@ pub fn validate_disk_state_envelope(envelope: &Value) -> Result<DiskStateSmokeRe
     }
 
     Ok(DiskStateSmokeReport {
+        verdict,
+        supports_count: supports.len(),
+        cannot_testify_count: cannot_testify.len(),
+        coverage_count: coverage.len(),
+    })
+}
+
+/// Summary returned on `ingest_state` contract success. Same shape as
+/// `DiskStateSmokeReport`; the type is kept distinct so the CLI can
+/// label the output appropriately and so future per-kind smokes don't
+/// have to retrofit a generic envelope.
+#[derive(Debug, Clone)]
+pub struct IngestStateSmokeReport {
+    pub verdict: String,
+    pub supports_count: usize,
+    pub cannot_testify_count: usize,
+    pub coverage_count: usize,
+}
+
+/// Validate an `ingest_state` PreflightResult envelope against the
+/// contract. Same posture as [`validate_disk_state_envelope`]: an
+/// envelope carrying `verdict: cannot_testify` with a populated
+/// constitutional refusal surface is a contract success. The
+/// vocabulary-laundering scan uses [`INGEST_FORBIDDEN_SUPPORT_SUBSTRINGS`];
+/// the schema/contract_version/supports/coverage/cannot_testify shape
+/// is otherwise identical.
+pub fn validate_ingest_state_envelope(envelope: &Value) -> Result<IngestStateSmokeReport> {
+    let schema = envelope
+        .get("schema")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("envelope missing `schema`"))?;
+    if schema != EXPECTED_INGEST_STATE_SCHEMA {
+        return Err(anyhow!(
+            "schema mismatch: expected {EXPECTED_INGEST_STATE_SCHEMA:?}, got {schema:?}"
+        ));
+    }
+
+    let contract_version = envelope
+        .get("contract_version")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("envelope missing `contract_version`"))?;
+    if contract_version != EXPECTED_INGEST_STATE_CONTRACT_VERSION {
+        return Err(anyhow!(
+            "contract_version mismatch: expected {EXPECTED_INGEST_STATE_CONTRACT_VERSION}, got {contract_version}"
+        ));
+    }
+
+    let verdict = envelope
+        .get("verdict")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("envelope missing `verdict`"))?
+        .to_string();
+
+    let supports = envelope
+        .get("supports")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("envelope missing `supports[]`"))?;
+
+    envelope
+        .get("excludes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("envelope missing `excludes[]`"))?;
+
+    let coverage = envelope
+        .get("coverage")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("envelope missing `coverage[]`"))?;
+
+    let cannot_testify = envelope
+        .get("cannot_testify")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("envelope missing `cannot_testify[]`"))?;
+    if cannot_testify.is_empty() {
+        return Err(anyhow!(
+            "cannot_testify is empty; the constitutional refusal surface must always be populated"
+        ));
+    }
+
+    for (i, support) in supports.iter().enumerate() {
+        let claim = support
+            .get("claim")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("supports[{i}] missing `claim`"))?;
+        let lower = claim.to_ascii_lowercase();
+        for needle in INGEST_FORBIDDEN_SUPPORT_SUBSTRINGS {
+            if lower.contains(needle) {
+                return Err(anyhow!(
+                    "supports[{i}].claim laundered consequence vocabulary ({needle:?}): {claim:?}"
+                ));
+            }
+        }
+    }
+
+    // Observation-window discipline. Same shape as disk_state: empty
+    // supports must omit both window fields; non-empty supports must
+    // carry both with min <= max.
+    let observed_min = envelope.get("observed_at_min");
+    let observed_max = envelope.get("observed_at_max");
+    if supports.is_empty() {
+        if observed_min.is_some() {
+            return Err(anyhow!(
+                "observed_at_min present with empty supports; absent testimony must not advertise a window"
+            ));
+        }
+        if observed_max.is_some() {
+            return Err(anyhow!(
+                "observed_at_max present with empty supports; absent testimony must not advertise a window"
+            ));
+        }
+    } else {
+        let min = observed_min
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("supports is non-empty but observed_at_min is missing"))?;
+        let max = observed_max
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("supports is non-empty but observed_at_max is missing"))?;
+        if min > max {
+            return Err(anyhow!(
+                "observed_at_min ({min}) exceeds observed_at_max ({max})"
+            ));
+        }
+    }
+
+    Ok(IngestStateSmokeReport {
         verdict,
         supports_count: supports.len(),
         cannot_testify_count: cannot_testify.len(),
@@ -390,5 +537,148 @@ mod tests {
         env["supports"][0].as_object_mut().unwrap().remove("claim");
         let err = validate_disk_state_envelope(&env).unwrap_err();
         assert!(err.to_string().contains("missing `claim`"), "{err}");
+    }
+
+    // -----------------------------------------------------------------
+    // ingest_state smoke — V2 symmetry with disk_state. The witness is
+    // the monitor itself (own pull-cycle substrate), so the route is
+    // host-agnostic and the body is the PreflightResult directly (no
+    // nested `*_preflight` envelope key).
+    // -----------------------------------------------------------------
+
+    fn ingest_admissible_envelope() -> Value {
+        json!({
+            "schema": "nq.preflight.ingest_state.v1",
+            "contract_version": 1,
+            "claim_kind": "ingest_state",
+            "target": { "host": "monitor", "scope": "ingest" },
+            "verdict": "admissible_with_scope",
+            "supports": [
+                {
+                    "claim": "Monitor recorded successful pull cycle at observed_at 2026-05-14T00:00:00Z (source=labelwatch-host, status=ok)",
+                    "finding_kind": "source_pull_ok",
+                    "subject": "labelwatch-host",
+                    "observed_at": "2026-05-14T00:00:00Z"
+                }
+            ],
+            "excludes": [],
+            "cannot_testify": [
+                "Upstream source substrate health",
+                "Future ingest success or failure",
+                "Semantic correctness of ingested data"
+            ],
+            "coverage": [
+                { "witness": "monitor_pull_cycles", "standing": "observable" }
+            ],
+            "generated_at": "2026-05-14T00:01:00Z",
+            "observed_at_min": "2026-05-14T00:00:00Z",
+            "observed_at_max": "2026-05-14T00:00:00Z"
+        })
+    }
+
+    fn ingest_cannot_testify_envelope() -> Value {
+        json!({
+            "schema": "nq.preflight.ingest_state.v1",
+            "contract_version": 1,
+            "claim_kind": "ingest_state",
+            "target": { "host": "monitor", "scope": "ingest" },
+            "verdict": "cannot_testify",
+            "verdict_note": "No pull cycles in the observation window",
+            "supports": [],
+            "excludes": [],
+            "cannot_testify": [
+                "Upstream source substrate health",
+                "Future ingest success or failure",
+                "Whether ingest will recover from the current failure shape"
+            ],
+            "coverage": [
+                { "witness": "monitor_pull_cycles", "standing": "no_rows" }
+            ],
+            "generated_at": "2026-05-14T00:01:00Z"
+        })
+    }
+
+    #[test]
+    fn ingest_admissible_response_passes_contract() {
+        let r =
+            validate_ingest_state_envelope(&ingest_admissible_envelope()).expect("contract ok");
+        assert_eq!(r.verdict, "admissible_with_scope");
+        assert_eq!(r.supports_count, 1);
+        assert!(r.cannot_testify_count >= 1);
+        assert_eq!(r.coverage_count, 1);
+    }
+
+    #[test]
+    fn ingest_cannot_testify_response_passes_contract() {
+        let r = validate_ingest_state_envelope(&ingest_cannot_testify_envelope())
+            .expect("contract ok");
+        assert_eq!(r.verdict, "cannot_testify");
+        assert_eq!(r.supports_count, 0);
+    }
+
+    #[test]
+    fn ingest_wrong_schema_fails() {
+        let mut env = ingest_admissible_envelope();
+        env["schema"] = json!("nq.preflight.disk_state.v1");
+        let err = validate_ingest_state_envelope(&env).unwrap_err();
+        assert!(err.to_string().contains("schema mismatch"), "{err}");
+    }
+
+    #[test]
+    fn ingest_empty_cannot_testify_fails() {
+        let mut env = ingest_admissible_envelope();
+        env["cannot_testify"] = json!([]);
+        let err = validate_ingest_state_envelope(&env).unwrap_err();
+        assert!(
+            err.to_string().contains("constitutional refusal surface"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn ingest_laundering_restart_vocabulary_fails() {
+        // ingest_state's cannot_testify refuses "restart, reconfigure,
+        // or deactivate a failing source" as consequence. A support
+        // claim that names that is laundering.
+        let mut env = ingest_admissible_envelope();
+        env["supports"][0]["claim"] = json!("operator should restart the failing source");
+        let err = validate_ingest_state_envelope(&env).unwrap_err();
+        assert!(
+            err.to_string().contains("laundered consequence vocabulary"),
+            "{err}"
+        );
+        assert!(err.to_string().contains("\"restart\""), "{err}");
+    }
+
+    #[test]
+    fn ingest_laundering_recover_vocabulary_fails() {
+        let mut env = ingest_admissible_envelope();
+        env["supports"][0]["claim"] = json!("ingest will recover when the source returns");
+        let err = validate_ingest_state_envelope(&env).unwrap_err();
+        assert!(
+            err.to_string().contains("laundered consequence vocabulary"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn ingest_observed_at_min_with_empty_supports_fails() {
+        let mut env = ingest_cannot_testify_envelope();
+        env["observed_at_min"] = json!("2026-05-14T00:00:00Z");
+        let err = validate_ingest_state_envelope(&env).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("absent testimony must not advertise a window"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn ingest_observed_at_min_exceeds_max_fails() {
+        let mut env = ingest_admissible_envelope();
+        env["observed_at_min"] = json!("2026-05-14T00:10:00Z");
+        env["observed_at_max"] = json!("2026-05-14T00:00:00Z");
+        let err = validate_ingest_state_envelope(&env).unwrap_err();
+        assert!(err.to_string().contains("exceeds observed_at_max"), "{err}");
     }
 }
