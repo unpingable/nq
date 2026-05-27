@@ -360,6 +360,31 @@ This is a consumer-prompt iteration deferred to the consumer-side slice, not a p
 
 A future probe revision MAY record `inode` (and `device`) as a substrate column to make identity-change detection explicit. V0 does not. The receipt cannot retroactively gain that field; consumers should not infer identity-tracking from absence of the column.
 
+### WAL absence has multiple causes (empirical, slice 6d)
+
+Surfaced by the slice-6d Linode deploy 2026-05-27 — receipt captured during a brief post-checkpoint window where the probe observed `wal_present=false` against a live WAL-mode DB. The substrate state was honest; the receipt's reading was not unique.
+
+The probe's `wal_present` field distinguishes two filesystem states cleanly:
+
+- `stat(.db-wal) == ENOENT` → `wal_present=false, wal_bytes=0, wal_mtime=None`
+- `stat(.db-wal) == Ok(0 bytes)` → `wal_present=true, wal_bytes=0, wal_mtime=Some(...)`
+
+But the *semantics* of `wal_present=false` is ambiguous on the wire — at least three substrate situations produce it:
+
+1. **Non-WAL-mode DB.** `journal_mode != WAL`; no `-wal` file ever exists. Steady-state.
+2. **WAL-mode DB, no active connections.** SQLite cleans up `-wal` when the last connection closes (per [SQLite WAL docs](https://www.sqlite.org/wal.html) §"Read-Only Databases"). Transient; the file reappears on the next write.
+3. **WAL-mode DB, post-checkpoint state where SQLite removed the file.** Distinct from "truncate-checkpoint to 0 bytes" which leaves `wal_present=true, wal_bytes=0`. Some SQLite versions / pragmas remove the file outright.
+
+The probe does NOT testify to which of the three caused a given `wal_present=false` row. A consumer that reads `wal_present=false` and infers "this DB doesn't use WAL" can be wrong; a consumer that infers "WAL was truncated by a checkpoint" can also be wrong.
+
+This is the gap #9 shape applied to the WAL sidecar: filesystem state observed at one moment does not pin the substrate's identity at that moment. The slice 6d empirical case is the first one in the wild.
+
+**Probe-side `cannot_testify` addition (proposed):**
+
+> "Why the `-wal` sidecar is absent — journal_mode, post-checkpoint cleanup, and post-close cleanup all produce `wal_present=false` and the probe cannot distinguish them from substrate state alone."
+
+Lands as a one-line addition to §9 below when slice 6e (or any follow-up touching this surface) ships. Not blocking the V0 acceptance — the rule is documented here as forward note.
+
 ## 9. Probe-side `cannot_testify`
 
 The probe's constitutional refusals (independent of substrate state at any one observation):
