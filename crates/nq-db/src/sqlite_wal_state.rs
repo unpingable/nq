@@ -1098,7 +1098,7 @@ fn map_classification_to_verdict(
             format!(
                 "SQLite WAL has exceeded the elevated threshold sustained across {}s of observation \
                  for (host={}, db={}). The substrate is bloated but does not meet the higher threshold. \
-                 Main DB mtime stale across window: {}; pinned reader: {}.",
+                 Main DB mtime stale across window: {}; pinned-reader lock signal: {}.",
                 window_duration_seconds,
                 target.host,
                 target.db_file_path,
@@ -1113,7 +1113,7 @@ fn map_classification_to_verdict(
             Verdict::AdmissibleWithScope,
             format!(
                 "SQLite WAL has exceeded the severe threshold sustained across {}s of observation \
-                 for (host={}, db={}). Main DB mtime stale across window: {}; pinned reader: {}.",
+                 for (host={}, db={}). Main DB mtime stale across window: {}; pinned-reader lock signal: {}.",
                 window_duration_seconds,
                 target.host,
                 target.db_file_path,
@@ -1578,7 +1578,7 @@ mod tests {
             evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
         let note = r.verdict_note.as_deref().unwrap();
         assert!(
-            note.contains("pinned reader: present"),
+            note.contains("pinned-reader lock signal: present"),
             "got: {note:?}"
         );
     }
@@ -1600,7 +1600,7 @@ mod tests {
             evaluate_sqlite_wal_state_preflight_at(&db.conn, &default_target(), now_dt()).unwrap();
         let note = r.verdict_note.as_deref().unwrap();
         assert!(
-            note.contains("pinned reader: unobserved"),
+            note.contains("pinned-reader lock signal: unobserved"),
             "proc_access unobserved across the window must not silently report 'absent': {note:?}"
         );
     }

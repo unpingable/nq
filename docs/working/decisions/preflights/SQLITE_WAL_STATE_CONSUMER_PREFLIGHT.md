@@ -55,7 +55,7 @@ This is what `GET /api/preflight/sqlite-wal-state?host=...&db=...` returns. Abbr
     "id": "/var/lib/labelwatch/labelwatch.db"
   },
   "verdict": "admissible_with_scope",
-  "verdict_note": "SQLite WAL has exceeded the severe threshold sustained across 43200s of observation for (host=labelwatch.neutral.zone, db=/var/lib/labelwatch/labelwatch.db). Main DB mtime stale across window: true; pinned reader: present.",
+  "verdict_note": "SQLite WAL has exceeded the severe threshold sustained across 43200s of observation for (host=labelwatch.neutral.zone, db=/var/lib/labelwatch/labelwatch.db). Main DB mtime stale across window: true; pinned-reader lock signal: present.",
   "supports": [
     {
       "claim": "Probe observed WAL state for host labelwatch.neutral.zone db /var/lib/labelwatch/labelwatch.db at observed_at 2026-04-22T03:00:00Z (wal_present=true, wal_bytes=38000000000, db_bytes=26000000000, proc_access=observed)",
@@ -121,7 +121,7 @@ Abbreviated. This is the **post-consumer-contract-hardening** receipt shape (gap
   "suggested_weaker_claims": [
     "Probe observed WAL state ... (same 721 statements, mirrored because the verdict is admissible_with_scope)"
   ],
-  "supported_status": "SQLite WAL has exceeded the severe threshold sustained across 43200s of observation for (host=labelwatch.neutral.zone, db=/var/lib/labelwatch/labelwatch.db). Main DB mtime stale across window: true; pinned reader: present.",
+  "supported_status": "SQLite WAL has exceeded the severe threshold sustained across 43200s of observation for (host=labelwatch.neutral.zone, db=/var/lib/labelwatch/labelwatch.db). Main DB mtime stale across window: true; pinned-reader lock signal: present.",
   "cannot_testify": [
     "Whether the application that owns this DB will recover ...",
     "Whether queries against this DB will return correct results ...",
@@ -182,7 +182,7 @@ Abbreviated. This is the **post-consumer-contract-hardening** receipt shape (gap
 
 ### Supported status
 
-> SQLite WAL has exceeded the severe threshold sustained across 43200s of observation for (host=labelwatch.neutral.zone, db=/var/lib/labelwatch/labelwatch.db). Main DB mtime stale across window: true; pinned reader: present.
+> SQLite WAL has exceeded the severe threshold sustained across 43200s of observation for (host=labelwatch.neutral.zone, db=/var/lib/labelwatch/labelwatch.db). Main DB mtime stale across window: true; pinned-reader lock signal: present.
 
 ### Witnesses
 
@@ -535,7 +535,7 @@ For now: the consumer prompt explicitly tells the agent to ignore supports / wit
 The kind-4 evaluator's structured decorations (`main_db_mtime_stale_across_window: bool`, `pinned_reader: Present | Absent | Unobserved`) are computed but emitted only as English inside `verdict_note` / `supported_status`:
 
 ```
-"Main DB mtime stale across window: true; pinned reader: present."
+"Main DB mtime stale across window: true; pinned-reader lock signal: present."
 ```
 
 The labelwatch-Claude consumer has to NLP this string to recover the structured signals. Brittle.
@@ -619,7 +619,7 @@ The first labelwatch-Claude run against the `stale` fixture produced an operator
 
 - **A. Freshness posture absent from the schema.** A receipt whose `freshness_horizon` is in the past of now has expired by its own terms. Neither the receipt nor the prompt told the consumer how to handle that. → **Closed in the consumer prompt** (post-hardening prompt has an explicit FRESHNESS POSTURE section). Schema-level mitigation (`freshness.posture` field) deferred.
 - **B. `cannot_testify[]` was in `PreflightResult` but not in `Receipt`.** Consumer reading the persistent receipt had no view of the constitutional refusals. → **Closed by the hardening slice.** `Receipt.cannot_testify` now carries through. Tested across all four current Track A kinds.
-- **C. Gap #4 was real friction.** Consumer had to NLP-parse "Main DB mtime stale across window: true; pinned reader: present." to recover booleans. → **Closed by the hardening slice.** `signals.sqlite_wal_state.*` carries them structurally now.
+- **C. Gap #4 was real friction.** Consumer had to NLP-parse "Main DB mtime stale across window: true; pinned reader: present." to recover booleans (the verdict-note wording at the time; later corrected to "pinned-reader lock signal: present" — same parsing friction, regardless of wording). → **Closed by the hardening slice.** `signals.sqlite_wal_state.*` carries them structurally now.
 - **D. Gap #5 (subject formatting) bit immediately.** Consumer fell back to `PreflightResult.target` to get clean structured identity. → **Closed by the hardening slice (consumer-impact half).** `Receipt.target` is now structured. Cosmetic `subject` formatting still open.
 - **E. The forbidden list is structurally load-bearing, not decorative.** Consumer caught itself drifting toward action-shape during steps 4–5; the forbidden list pinned it back. **Recommendation: do not trim the forbidden list for token budget later.** Preserved verbatim in the post-hardening prompt.
 - **F. Gap #3 (verbosity) was mitigated by the prompt, not the schema.** Consumer ignores `supports[]` / `witnesses[]` for narrative purposes per the prompt instruction. The schema-level mitigation (separate summary receipt shape) still deferred.
