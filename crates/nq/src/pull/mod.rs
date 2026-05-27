@@ -6,8 +6,29 @@ use nq_core::status::*;
 use nq_core::wire::PublisherState;
 use nq_core::{Config, SmartWitnessRow, SourceConfig, ZfsWitnessRow};
 use nq_core::batch::WalObservationSet;
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 use time::OffsetDateTime;
 use tracing::warn;
+
+/// Dedupe set for the hostname-mismatch warning. Keys are
+/// `(source_name, payload_host)` pairs; an entry is inserted the
+/// first time NQ sees a publisher report a different self-host than
+/// the configured source name. Subsequent cycles with the same pair
+/// stay silent. A new pair (payload_host changes) triggers a fresh
+/// warning.
+///
+/// Why this exists: the identity contract is correct (canonical
+/// source name from config always wins as the DB key); only the
+/// per-cycle log volume was a problem (~1140 entries / 19h on
+/// Linode). Keeping the warning on first sighting preserves the
+/// custody signal — "configured source disagrees with publisher's
+/// hostname" is real testimony, just not testimony that needs to
+/// repeat every minute.
+fn logged_mismatches() -> &'static Mutex<HashSet<(String, String)>> {
+    static LOGGED: OnceLock<Mutex<HashSet<(String, String)>>> = OnceLock::new();
+    LOGGED.get_or_init(|| Mutex::new(HashSet::new()))
+}
 
 pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
     let cycle_started_at = OffsetDateTime::now_utc();
@@ -162,13 +183,25 @@ async fn pull_one(source: SourceConfig) -> PullResult {
 
     // Identity contract: the configured source name is the canonical host identity.
     // The payload's self-reported host is logged for debugging but never used as a DB key.
+    //
+    // The warning is deduped per (source, payload_host) pair — see
+    // logged_mismatches() above. The mismatch shape is real testimony
+    // (the publisher and the config disagree), but a once-per-cycle
+    // repeat of a stable disagreement is noise. A new payload_host
+    // triggers a fresh warning.
     let canonical_host = source.name.clone();
     if state.host != canonical_host {
-        warn!(
-            source = %canonical_host,
-            payload_host = %state.host,
-            "publisher self-reported hostname differs from configured source name"
-        );
+        let key = (canonical_host.clone(), state.host.clone());
+        let mut seen = logged_mismatches().lock().unwrap();
+        if seen.insert(key) {
+            drop(seen);
+            warn!(
+                source = %canonical_host,
+                payload_host = %state.host,
+                "publisher self-reported hostname differs from configured source name \
+                 (logging once per unique pair; subsequent cycles with the same pair stay silent)"
+            );
+        }
     }
 
     let source_run = SourceRun {
