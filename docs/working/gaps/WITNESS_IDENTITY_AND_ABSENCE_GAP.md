@@ -102,14 +102,17 @@ Not strictly an identity rule, but the rule without which the other four don't p
 
 ---
 
-## 2. The absence taxonomy (closed 5-state enum)
+## 2. The absence taxonomy (closed enum)
+
+The taxonomy is the cross-substrate cut. Five states cover packet-shaped witness absence; the sixth (`CoverageUnknown`) is added by the 2026-05-28 reconciliation with the NS-spike's heartbeat-shaped use case, where "no coverage has been declared" is a meaningfully different state from "coverage declared, never received."
 
 ```text
 NeverObserved
     NQ has no accepted packet for this (target, claim_kind).
     No prior testimony exists. Distinct from expiry (which requires
-    prior acceptance) and from source-declared-absent (which requires
-    a reachable, refusing source).
+    prior acceptance), from source-declared-absent (which requires
+    a reachable, testifying source), and from coverage-unknown
+    (which requires no declared expectation).
 
 PreviouslyObservedExpired
     NQ had accepted testimony for this target, but freshness/expiry
@@ -125,7 +128,10 @@ SourceDeclaredAbsent
     denial, registry "yanked," CT log "revoked," service-discovery
     "endpoint removed." Different from NeverObserved (which is a
     passive lack); different from SourceUnreachable (which is a
-    communication failure, not a content failure).
+    communication failure, not a content failure). Substrate-
+    generic; not all witness kinds can produce this state (a
+    heartbeat-style component-testimony witness, for example,
+    cannot authenticatively deny its own existence).
 
 SourceUnreachable
     NQ could not reach the source/witness channel within timeout.
@@ -133,6 +139,18 @@ SourceUnreachable
     have been about to declare presence, absence, or anything else;
     we don't have the bytes. Catastrophically distinct from
     SourceDeclaredAbsent on the alerting side.
+
+    NS-spike (2026-05-28) introduces a finer-grained cut: the
+    channel may have been reachable but actively refused NQ's read
+    attempt (HTTP 403, RPC permission denied, deliberate "go away"
+    response). For some consumer surfaces — particularly
+    standing-bound component-testimony — distinguishing
+    SourceUnreachable from SourceRefused matters: the former is
+    plausibly a substrate problem, the latter is plausibly a
+    standing problem. Implementations MAY split SourceUnreachable
+    into SourceUnreachable + SourceRefused at the wire boundary
+    when the consumer needs to discriminate; the parent state name
+    stays valid as a coarser summary.
 
 ReportedButRefused
     The source returned bytes, but NQ refused to admit them: schema
@@ -142,9 +160,31 @@ ReportedButRefused
     collapsed in production observability tools: a misconfigured
     source looks identical to a dead source looks identical to a
     network partition.
+
+CoverageUnknown                                       (added 2026-05-28)
+    NQ has no declared coverage for this scope — no expectation
+    that testimony of this kind SHOULD arrive at any cadence. The
+    absence is meaningless until coverage is declared.
+
+    Distinct from NeverObserved (coverage exists, no packet has
+    arrived) and from every other state (which presume coverage).
+    Required for any heartbeat-shaped or component-testimony-shaped
+    witness where "I haven't seen one in a while" is interpretable
+    only against a declared interval.
+
+    NQ today has no coverage-declaration primitive at the witness
+    layer; this state exists at the wire surface as a placeholder
+    until coverage declaration arrives. Until then, every
+    component-testimony absence is CoverageUnknown by default,
+    which is itself a refusal of laundering: NQ does not infer
+    "should have been heard from" without an operator-declared
+    cadence. See [`NQ_NS_CHANNEL_SPLIT_NQ_SIDE.md`](NQ_NS_CHANNEL_SPLIT_NQ_SIDE.md)
+    for the NQ-side coverage-primitive question.
 ```
 
-**Type-level discipline:** these states must be distinguishable at the wire surface, not via best-effort string matching on an `error_detail` field. Adopting them as a closed enum is what prevents the next iteration from inventing a sixth implicit state.
+**Type-level discipline:** these states must be distinguishable at the wire surface, not via best-effort string matching on an `error_detail` field. Adopting them as a closed enum is what prevents the next iteration from inventing a seventh implicit state.
+
+**Reconciliation note (2026-05-28).** The NS-spike (`~/git/cartography/coordination/NQ-NS-CHANNEL-SPLIT.md`) filed a six-state heartbeat-coverage taxonomy in parallel with this candidate's five-state packet-witness taxonomy. The cross-cut: `reported_but_refused` already matches `ReportedButRefused`; `coverage_unknown` is genuinely new and lands here as `CoverageUnknown`; `source_refused` is a finer cut of `SourceUnreachable` named (above) as an implementation MAY-split; `SourceDeclaredAbsent` stays substrate-generic and is not applicable at the heartbeat layer (heartbeats don't authenticatively-deny). Both NQ-side and NS-side candidates reference this taxonomy as canonical.
 
 **Current state in NQ:** Scattered. `observation_status` on `WalObservationData` carries a substrate-boundary version (`observed | target_missing | permission_denied | stat_error`) that maps adjacent-but-not-equal to the absence taxonomy. `cannot_testify` carries kind-level constitutional refusals (≈ `ReportedButRefused` at the kind level, before any specific report). Coverage standing carries a partial `NeverObserved` shape. `freshness_horizon` carries `PreviouslyObservedExpired` for receipts that have outrun their stale-after.
 
@@ -288,7 +328,11 @@ For the operator who skipped to the bottom:
 3. Projection identity includes policy_hash + schema_version + evaluated_at.
 4. `latest` is a pointer, never a value.
 5. Absence has scope: NeverObserved | PreviouslyObservedExpired |
-   SourceDeclaredAbsent | SourceUnreachable | ReportedButRefused.
+   SourceDeclaredAbsent | SourceUnreachable | ReportedButRefused |
+   CoverageUnknown.
+   (SourceUnreachable may split into SourceUnreachable + SourceRefused
+   at the wire boundary when consumers need to discriminate substrate
+   failures from standing failures.)
 ```
 
 Plus the discipline rule:
