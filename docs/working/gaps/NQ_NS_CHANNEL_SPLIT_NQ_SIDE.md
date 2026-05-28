@@ -41,9 +41,20 @@ The spike's "Prompt to hand NQ-Claude" requested NQ-side positions on five items
 
 These say: NQ produces findings about NS. Resolving those findings is consequence-bearing authority that lives downstream of NQ. The same line applies symmetrically when the subject is NQ-itself.
 
-**The NQ-on-NQ wrinkle (filed separately):** when the subject is NQ, the spike's stake collapses — NQ findings about NQ have no external reconciler in the current architecture. That's the same self-subject-collapse as `GOV_GAP_BASIS_001` family, surfacing on the NQ-self plane. **It is not solved in this slice.** Filed as a cross-component shared gap at `~/git/cartography/coordination/SELF-SUBJECT-COLLAPSE.md`.
+**Two prohibition classes — wire vs standing.** The self-subject stake names a **standing** prohibition: the lifecycle-mutation surface exists; what refuses the action is the actor's identity matching the subject's component. This is structurally distinct from the **wire** prohibition the spike pins above (*"The cycle-closing channel does not exist"*), which refuses an emission shape at the type/wire layer.
 
-**Forward guardrail on NQ side:** refuse claim-kind names like `nq_self_health`, `nq_application_state`, `nq_global_status`. Substrate-state observation of NQ-self phases (e.g., `nq_binary_mtime_state`, `nq_self_sqlite_wal_state`) is admissible; aggregated-self-verdict shapes are not.
+The two classes have different futures:
+
+- **Wire prohibitions are doctrinal forever.** NS posture / closure verdicts are not wire-acceptable substrate-truth claim kinds, and no future actor identity changes that. The shape is structurally absent in NQ's substrate-truth ingestion forever.
+- **Standing prohibitions are doctrinal until an external reconciler exists.** A finding whose subject is NQ today refuses self-resolution because the only `actor.component_id` available is NQ itself. When a qualified external actor exists (per `SELF-SUBJECT-COLLAPSE.md` resolution paths), the same code path admits the same transition under the different actor identity — the prohibition *expires for the legitimate-external-actor case* while remaining structurally enforced for the self-loop.
+
+**Lie 2 sits between them.** Bounded testimony emitted under standing-bound coverage may not be composed into health absolution. *"NQ's `observation_loop_alive` heartbeat at T"* is admissible bounded testimony; *"NQ is healthy because heartbeats are arriving"* is the lie that wire and standing prohibitions alone cannot prevent. Lie 2 is refused at a third layer: the kind-level `cannot_testify` discipline (the forward guardrail below) and the composition rule (§4 — composition is read-side projection only, never re-emittable as a claim).
+
+> **The forbidden edges are not implementation TODOs. They are the doctrine. Wire-prohibited paths must be unrepresentable. Standing-prohibited paths may exist but must refuse when the claimant is the subject/resolver of its own finding.**
+
+**The NQ-on-NQ wrinkle (filed separately):** when the subject is NQ, the spike's stake collapses — NQ findings about NQ have no external reconciler in the current architecture. That's the same self-subject-collapse as `GOV_GAP_BASIS_001` family, surfacing on the NQ-self plane. **It is not solved in this slice.** Filed as a cross-component shared gap at `~/git/cartography/coordination/SELF-SUBJECT-COLLAPSE.md`. The shared gap now anchors the two-class split as its structural framework; this section composes against it.
+
+**Forward guardrail on NQ side:** refuse claim-kind names like `nq_self_health`, `nq_application_state`, `nq_global_status`. Substrate-state observation of NQ-self phases (e.g., `nq_binary_mtime_state`, `nq_self_sqlite_wal_state`) is admissible; aggregated-self-verdict shapes are not. *This forward guardrail is itself a wire prohibition at the kind-registration layer* — those kind names are not just discouraged; the wire surface refuses to register them. A future PR that proposes adding `nq_self_health` to the `ClaimKind` enum is refused on this gap's authority.
 
 ### 2. Six-state absence semantics — RECONCILED INTO PARKED GAP
 
