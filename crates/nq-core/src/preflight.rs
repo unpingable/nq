@@ -37,6 +37,15 @@ pub const PREFLIGHT_DNS_STATE_SCHEMA: &str = "nq.preflight.dns_state.v1";
 /// constitutional, see `sqlite_wal_state_cannot_testify`.
 pub const PREFLIGHT_SQLITE_WAL_STATE_SCHEMA: &str = "nq.preflight.sqlite_wal_state.v1";
 
+/// Wire schema identifier for `component_testimony_observation_loop_alive`
+/// preflight results. One envelope per `(component_id, subject_id)` target.
+/// First component-testimony kind in the namespace; emitted by a component
+/// about its own observation-loop pulse and consumed externally to classify
+/// absence under declared coverage. Refusals are constitutional, see
+/// `component_testimony_observation_loop_alive_cannot_testify`.
+pub const PREFLIGHT_COMPONENT_TESTIMONY_OBSERVATION_LOOP_ALIVE_SCHEMA: &str =
+    "nq.preflight.component_testimony_observation_loop_alive.v1";
+
 /// Contract version for the preflight wire shape. Bumps on breaking change.
 pub const PREFLIGHT_CONTRACT_VERSION: u32 = 1;
 
@@ -64,6 +73,13 @@ pub enum ClaimKind {
     IngestState,
     DnsState,
     SqliteWalState,
+    /// First component-testimony kind. NQ-on-NQ observation-loop heartbeat;
+    /// see `docs/working/decisions/preflights/NQ_ON_NQ_COMPONENT_TESTIMONY_FOUNDATION.md`.
+    /// The `component_testimony_` prefix is a **claim namespace**, not an
+    /// axis declaration — discriminates this kind family from future
+    /// external-component / app-level observers that might otherwise
+    /// collide on bare names (operator decision 2026-05-28, scope question A).
+    ComponentTestimonyObservationLoopAlive,
 }
 
 impl ClaimKind {
@@ -76,6 +92,9 @@ impl ClaimKind {
             Self::IngestState => "ingest_state",
             Self::DnsState => "dns_state",
             Self::SqliteWalState => "sqlite_wal_state",
+            Self::ComponentTestimonyObservationLoopAlive => {
+                "component_testimony_observation_loop_alive"
+            }
         }
     }
 }
@@ -394,6 +413,10 @@ impl PreflightResult {
                 PREFLIGHT_SQLITE_WAL_STATE_SCHEMA.to_string(),
                 sqlite_wal_state_cannot_testify(),
             ),
+            ClaimKind::ComponentTestimonyObservationLoopAlive => (
+                PREFLIGHT_COMPONENT_TESTIMONY_OBSERVATION_LOOP_ALIVE_SCHEMA.to_string(),
+                component_testimony_observation_loop_alive_cannot_testify(),
+            ),
         };
         Self {
             schema,
@@ -569,6 +592,28 @@ pub fn sqlite_wal_state_cannot_testify() -> Vec<String> {
     ]
 }
 
+/// Constitutional refusal surface for
+/// `component_testimony_observation_loop_alive`. Each entry corresponds
+/// to a conclusion the heartbeat does not license, regardless of how
+/// often it arrives. Mirrors the cannot_testify list pinned in the
+/// foundation preflight §4 (`NQ_ON_NQ_COMPONENT_TESTIMONY_FOUNDATION.md`).
+///
+/// The disciplinary line: the heartbeat says *the observation loop reached
+/// a checkpoint at time T*. It says nothing else.
+pub fn component_testimony_observation_loop_alive_cannot_testify() -> Vec<String> {
+    vec![
+        "Whether NQ is healthy (the observation loop running is one signal among many; an alive loop emitting heartbeats does not testify to NQ standing as a whole)".to_string(),
+        "Whether other NQ loops (reconciler, ack, ingest, export) are alive (this kind testifies only to the observation loop; sibling loops need their own component-testimony kinds)".to_string(),
+        "Whether NQ's stored claims are semantically correct (substrate observation only)".to_string(),
+        "Whether NQ's ingested witnesses are truthful (NQ does not certify producer truthfulness)".to_string(),
+        "Whether SQLite is an admissible architecture for this deployment (substrate-state observation does not endorse substrate-choice)".to_string(),
+        "Whether to escalate, restart, or page (consequence claim; per the escalation_target field, lifecycle resolution lives outside NQ when the subject is NQ-self)".to_string(),
+        "Whether absence of this testimony means NQ is unhealthy (absence under declared coverage is one of seven absence states; only the consumer routes it to escalation, NQ does not)".to_string(),
+        "Whether NQ's future operation is safe (no future-state testimony)".to_string(),
+        "Whether composed verdicts derived from this testimony may be re-emitted as claims (composition is read-side projection only; see NQ_NS_CHANNEL_SPLIT_NQ_SIDE §4 composition rule)".to_string(),
+    ]
+}
+
 /// Constitutional refusal surface for `disk_state`. Each entry corresponds to
 /// a conclusion no combination of ZFS / SMART / disk-pressure witness output
 /// licenses, regardless of how many findings light up. Mirrors the
@@ -633,6 +678,93 @@ mod tests {
         let k = ClaimKind::SqliteWalState;
         let s = serde_json::to_string(&k).unwrap();
         assert_eq!(s, "\"sqlite_wal_state\"");
+        let k = ClaimKind::ComponentTestimonyObservationLoopAlive;
+        let s = serde_json::to_string(&k).unwrap();
+        assert_eq!(s, "\"component_testimony_observation_loop_alive\"");
+        // as_str matches the serde form.
+        assert_eq!(
+            k.as_str(),
+            "component_testimony_observation_loop_alive"
+        );
+    }
+
+    #[test]
+    fn claim_kind_round_trips_through_serde() {
+        // Every variant survives serialize → deserialize. Pinned for the
+        // new ComponentTestimonyObservationLoopAlive variant in particular
+        // — if a future serde rename accidentally drops the prefix, this
+        // would catch it before the wire surface diverges from the
+        // claim-namespace discipline.
+        for k in [
+            ClaimKind::DiskState,
+            ClaimKind::IngestState,
+            ClaimKind::DnsState,
+            ClaimKind::SqliteWalState,
+            ClaimKind::ComponentTestimonyObservationLoopAlive,
+        ] {
+            let s = serde_json::to_string(&k).unwrap();
+            let back: ClaimKind = serde_json::from_str(&s).unwrap();
+            assert_eq!(back, k);
+        }
+    }
+
+    #[test]
+    fn component_testimony_observation_loop_alive_skeleton_has_constitutional_refusals() {
+        let target = PreflightTarget {
+            host: "nq.local".into(),
+            scope: "component_testimony".into(),
+            id: Some("observation_loop".into()),
+        };
+        let r = PreflightResult::skeleton(
+            ClaimKind::ComponentTestimonyObservationLoopAlive,
+            target,
+            "2026-05-28T00:00:00Z".into(),
+        );
+        assert_eq!(
+            r.schema,
+            PREFLIGHT_COMPONENT_TESTIMONY_OBSERVATION_LOOP_ALIVE_SCHEMA
+        );
+        assert_eq!(r.contract_version, PREFLIGHT_CONTRACT_VERSION);
+        // The pinned refusals must be present (sample from the §4 list).
+        assert!(r.cannot_testify.iter().any(|s| s.contains("NQ is healthy")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("other NQ loops")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("composed verdicts")));
+        // Verdict starts at InsufficientCoverage like other kinds.
+        assert!(matches!(r.verdict, Verdict::InsufficientCoverage));
+    }
+
+    #[test]
+    fn component_testimony_observation_loop_alive_cannot_testify_uses_no_alert_taxonomy() {
+        // Wire-discipline test: the refusal list must not import alert /
+        // health vocabulary as the renderer's own words. The phrase
+        // "NQ is healthy" appears as a REFUSED claim, which is itself
+        // a denial — not a positive assertion of vocabulary. Check that
+        // no entry starts with a verdict-shaped word.
+        let refusals = component_testimony_observation_loop_alive_cannot_testify();
+        for entry in &refusals {
+            let lower = entry.to_lowercase();
+            // The refusal entries describe what NQ does NOT testify to;
+            // they may MENTION verdict words inside denials, but they
+            // must not be authored AS verdicts.
+            assert!(
+                entry.starts_with("Whether ") || entry.starts_with("Why "),
+                "refusal entry must be phrased as a 'Whether/Why ...' \
+                 (denial-shaped), got: {entry}"
+            );
+            // Hard-prohibit overtly action-shaped words at the start.
+            for forbidden_lead in ["alert", "page", "escalate", "warn", "critical"] {
+                assert!(
+                    !lower.starts_with(forbidden_lead),
+                    "refusal entry must not lead with action-vocabulary {forbidden_lead:?}, got: {entry}"
+                );
+            }
+        }
     }
 
     #[test]
