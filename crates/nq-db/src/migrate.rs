@@ -5,7 +5,7 @@ use tracing::info;
 /// with the last entry of `MIGRATIONS` below. Exposed for consumer
 /// surfaces (e.g. the finding export path) so they can preflight
 /// against a DB whose schema is older than the code was built for.
-pub const CURRENT_SCHEMA_VERSION: u32 = 50;
+pub const CURRENT_SCHEMA_VERSION: u32 = 51;
 
 /// Read `PRAGMA user_version` from an arbitrary connection. Returns 0
 /// for a freshly-opened SQLite file that's never been migrated.
@@ -66,6 +66,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (48, include_str!("../migrations/048_wal_observations.sql")),
     (49, include_str!("../migrations/049_wal_observation_status.sql")),
     (50, include_str!("../migrations/050_collector_runs_sqlite_wal_probe.sql")),
+    (51, include_str!("../migrations/051_coverage_rules.sql")),
 ];
 
 pub fn migrate(db: &mut WriteDb) -> anyhow::Result<()> {
@@ -114,7 +115,7 @@ mod tests {
             .conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 50);
+        assert_eq!(version, 51);
 
         // Verify tables exist
         let count: i64 = db
@@ -804,5 +805,237 @@ mod tests {
             )
             .unwrap();
         assert_eq!(status, "observed");
+    }
+
+    // -----------------------------------------------------------------
+    // Migration 051 — coverage_rules.
+    //
+    // The migration is schema-only; the loader and emit-side wiring
+    // live in later commits in the NQ_ON_NQ_COMPONENT_TESTIMONY
+    // foundation slice. These tests pin the substrate-boundary
+    // invariants from the preflight (§2):
+    //   - CHECK on expected_interval_s > 0
+    //   - CHECK on grace_multiplier >= 1.0
+    //   - CHECK on (valid_until > coverage_start) when valid_until is set
+    //   - Unique active rule per (component_id, subject_id, claim_kind)
+    //   - Replacement is admissible only after the prior row's
+    //     valid_until is set (append-only history).
+    // -----------------------------------------------------------------
+
+    fn insert_coverage_rule(
+        conn: &rusqlite::Connection,
+        component_id: &str,
+        subject_id: &str,
+        claim_kind: &str,
+        valid_until: Option<&str>,
+    ) -> rusqlite::Result<()> {
+        conn.execute(
+            "INSERT INTO coverage_rules (
+                component_id, subject_id, claim_kind,
+                expected_interval_s, grace_multiplier,
+                coverage_start, valid_until,
+                standing_resolver_id, escalation_target,
+                declared_by, declared_at,
+                coverage_rule_hash
+            ) VALUES (?1, ?2, ?3, 60, 2.0,
+                      '2026-05-28T00:00:00Z', ?4,
+                      'nq.local.static_config', 'operator',
+                      'operator', '2026-05-28T00:00:00Z',
+                      'sha256:0000000000000000000000000000000000000000000000000000000000000000')",
+            rusqlite::params![component_id, subject_id, claim_kind, valid_until],
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn mig051_clean_rule_inserts() {
+        let db = fresh_db();
+        insert_coverage_rule(
+            &db.conn,
+            "nq.local",
+            "observation_loop",
+            "component_testimony_observation_loop_alive",
+            None,
+        )
+        .expect("clean coverage rule must insert");
+    }
+
+    #[test]
+    fn mig051_rejects_zero_interval() {
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO coverage_rules (
+                    component_id, subject_id, claim_kind,
+                    expected_interval_s, grace_multiplier,
+                    coverage_start, valid_until,
+                    standing_resolver_id, escalation_target,
+                    declared_by, declared_at, coverage_rule_hash
+                ) VALUES ('nq.local', 'observation_loop',
+                          'component_testimony_observation_loop_alive',
+                          0, 2.0,
+                          '2026-05-28T00:00:00Z', NULL,
+                          'nq.local.static_config', 'operator',
+                          'operator', '2026-05-28T00:00:00Z',
+                          'sha256:0')",
+                [],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK violation for interval=0, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig051_rejects_sub_unit_grace_multiplier() {
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO coverage_rules (
+                    component_id, subject_id, claim_kind,
+                    expected_interval_s, grace_multiplier,
+                    coverage_start, valid_until,
+                    standing_resolver_id, escalation_target,
+                    declared_by, declared_at, coverage_rule_hash
+                ) VALUES ('nq.local', 'observation_loop',
+                          'component_testimony_observation_loop_alive',
+                          60, 0.5,
+                          '2026-05-28T00:00:00Z', NULL,
+                          'nq.local.static_config', 'operator',
+                          'operator', '2026-05-28T00:00:00Z',
+                          'sha256:0')",
+                [],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK violation for grace<1.0, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig051_rejects_valid_until_before_coverage_start() {
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO coverage_rules (
+                    component_id, subject_id, claim_kind,
+                    expected_interval_s, grace_multiplier,
+                    coverage_start, valid_until,
+                    standing_resolver_id, escalation_target,
+                    declared_by, declared_at, coverage_rule_hash
+                ) VALUES ('nq.local', 'observation_loop',
+                          'component_testimony_observation_loop_alive',
+                          60, 2.0,
+                          '2026-05-28T00:00:00Z', '2026-05-27T00:00:00Z',
+                          'nq.local.static_config', 'operator',
+                          'operator', '2026-05-28T00:00:00Z',
+                          'sha256:0')",
+                [],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK violation for valid_until<=coverage_start, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig051_unique_active_rule_per_tuple() {
+        let db = fresh_db();
+        // First rule for the tuple: admissible.
+        insert_coverage_rule(
+            &db.conn,
+            "nq.local",
+            "observation_loop",
+            "component_testimony_observation_loop_alive",
+            None,
+        )
+        .unwrap();
+        // Second active rule for the same tuple: refused by the
+        // partial unique index.
+        let err = insert_coverage_rule(
+            &db.conn,
+            "nq.local",
+            "observation_loop",
+            "component_testimony_observation_loop_alive",
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("unique"),
+            "expected UNIQUE violation for duplicate active rule, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig051_replacement_admissible_after_valid_until_set() {
+        // Per the append-only history discipline: superseding a rule
+        // requires setting the previous row's valid_until first, then
+        // inserting the replacement. The partial unique index allows
+        // the replacement because the prior row is no longer active.
+        let db = fresh_db();
+        insert_coverage_rule(
+            &db.conn,
+            "nq.local",
+            "observation_loop",
+            "component_testimony_observation_loop_alive",
+            None,
+        )
+        .unwrap();
+        // Operator-shaped supersession: set valid_until on the prior
+        // row, then insert the new one.
+        db.conn
+            .execute(
+                "UPDATE coverage_rules SET valid_until = '2026-05-28T12:00:00Z'
+                 WHERE component_id = 'nq.local'
+                   AND subject_id = 'observation_loop'
+                   AND claim_kind = 'component_testimony_observation_loop_alive'",
+                [],
+            )
+            .unwrap();
+        insert_coverage_rule(
+            &db.conn,
+            "nq.local",
+            "observation_loop",
+            "component_testimony_observation_loop_alive",
+            None,
+        )
+        .expect("replacement after valid_until set on prior row must insert");
+    }
+
+    #[test]
+    fn mig051_multiple_active_rules_admissible_across_tuples() {
+        // The uniqueness rule is per-(component, subject, kind). Active
+        // rules for different tuples coexist.
+        let db = fresh_db();
+        insert_coverage_rule(
+            &db.conn,
+            "nq.local",
+            "observation_loop",
+            "component_testimony_observation_loop_alive",
+            None,
+        )
+        .unwrap();
+        insert_coverage_rule(
+            &db.conn,
+            "ns.local",
+            "observation_loop",
+            "component_testimony_observation_loop_alive",
+            None,
+        )
+        .expect("different component_id must coexist as active");
+        insert_coverage_rule(
+            &db.conn,
+            "nq.local",
+            "reconciler_loop",
+            "component_testimony_observation_loop_alive",
+            None,
+        )
+        .expect("different subject_id must coexist as active");
     }
 }
