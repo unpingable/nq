@@ -1,4 +1,5 @@
 pub mod connect;
+pub mod coverage_rules;
 pub mod declarations;
 pub mod detect;
 pub mod digest;
