@@ -6,6 +6,7 @@ use axum::{
     Json, Router,
 };
 use nq_db::sqlite_wal_state::{evaluate_sqlite_wal_state_preflight, SqliteWalTarget};
+use nq_db::component_testimony::evaluate_observation_loop_alive_preflight;
 use nq_db::{overview, host_detail, query_read_only, evaluate_disk_state_preflight, evaluate_dns_state_preflight, evaluate_ingest_state_preflight, DnsObservationTuple, QueryLimits, ReadDb, WriteDb};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -91,6 +92,10 @@ pub fn router(db: Db) -> Router {
         .route(
             "/api/preflight/sqlite-wal-state",
             get(api_preflight_sqlite_wal_state),
+        )
+        .route(
+            "/api/preflight/component-testimony-observation-loop-alive",
+            get(api_preflight_component_testimony_observation_loop_alive),
         )
         .route("/finding/{kind}/{host}", get(finding_detail))
         .route("/finding/{kind}/{host}/{subject}", get(finding_detail_with_subject))
@@ -897,6 +902,63 @@ struct PreflightSqliteWalStateQuery {
 /// V0 reads only existing `wal_observations` rows; the HTTP path does
 /// no probing of its own. The probe is a later slice; this surface is
 /// the reader.
+/// Required query params for the
+/// `component_testimony_observation_loop_alive` route. Both fields are
+/// load-bearing for target identity; empty values are 400 (request
+/// error), not evaluator verdicts.
+#[derive(Debug, serde::Deserialize)]
+struct PreflightComponentTestimonyObservationLoopAliveQuery {
+    component: String,
+    subject: String,
+}
+
+/// Bounded `component_testimony_observation_loop_alive` preflight
+/// surfaced over the monitor HTTP path. Emits the typed
+/// `nq.preflight.component_testimony_observation_loop_alive.v1`
+/// PreflightResult. One envelope per `(component_id, subject_id)`
+/// target.
+async fn api_preflight_component_testimony_observation_loop_alive(
+    State(db): State<Db>,
+    Query(params): Query<PreflightComponentTestimonyObservationLoopAliveQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let component = params.component.trim();
+    let subject = params.subject.trim();
+    if component.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "query parameter `component` is required and must not be empty"
+            })),
+        ));
+    }
+    if subject.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "query parameter `subject` is required and must not be empty"
+            })),
+        ));
+    }
+    let db = db.lock().await;
+    let evaluation_engine_id = format!(
+        "nq:{}",
+        nq_db::build_commit().unwrap_or(env!("CARGO_PKG_VERSION"))
+    );
+    match evaluate_observation_loop_alive_preflight(
+        db.conn(),
+        component,
+        subject,
+        &time::OffsetDateTime::now_utc(),
+        &evaluation_engine_id,
+    ) {
+        Ok(result) => match serde_json::to_value(&result) {
+            Ok(v) => Ok(Json(v)),
+            Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
+        },
+        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
 async fn api_preflight_sqlite_wal_state(
     State(db): State<Db>,
     Query(params): Query<PreflightSqliteWalStateQuery>,
