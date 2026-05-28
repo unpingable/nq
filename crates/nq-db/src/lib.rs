@@ -1,3 +1,4 @@
+pub mod component_testimony;
 pub mod connect;
 pub mod coverage_rules;
 pub mod declarations;

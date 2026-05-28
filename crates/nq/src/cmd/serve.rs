@@ -3,6 +3,8 @@ use crate::http;
 use crate::pull;
 use nq_core::config::NotificationChannel;
 use nq_core::Config;
+use nq_db::component_testimony::{try_emit_observation_loop_alive, EmitContext, EmitInputs};
+use nq_db::coverage_rules::{load_coverage_rules, reconcile_coverage_rules, LoadOutcome};
 use nq_db::{
     active_declarations, load_declarations, migrate, open_ro, open_rw, publish_batch,
     run_declaration_hygiene, update_warning_state_with_declarations, CURRENT_SCHEMA_VERSION,
@@ -43,6 +45,18 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
     tokio::spawn(async move {
         let interval = std::time::Duration::from_secs(pull_config.interval_s);
         let mut cycle: u64 = 0;
+        // Component-testimony heartbeat state. Tracks last_success_at
+        // across pulses so each emit's last_success_at reflects the
+        // PREVIOUS successful emit's observed_at, never the current one.
+        let mut testimony_ctx = EmitContext::default();
+        // Evaluator/component identifiers used in heartbeat emits.
+        // build_commit is the canonical content-anchored identifier; fall
+        // back to package version when unavailable (test builds).
+        let evaluation_engine_id = format!(
+            "nq:{}",
+            nq_db::build_commit().unwrap_or(env!("CARGO_PKG_VERSION"))
+        );
+        let component_version = env!("CARGO_PKG_VERSION").to_string();
         loop {
             cycle += 1;
             match pull::pull_all(&pull_config).await {
@@ -162,6 +176,71 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                                 };
                                 if let Err(e) = nq_db::write_liveness(&path, &artifact) {
                                     warn!(err = %e, path = %liveness_path, "liveness artifact write failed");
+                                }
+                            }
+
+                            // Coverage-rule reconciliation + component-
+                            // testimony heartbeat emit. Per the NQ-on-NQ
+                            // foundation preflight §3 + §5 wire-prohibition
+                            // discipline: emit is skipped when no active
+                            // rule is loaded (CoverageUnknown is the
+                            // steady state until coverage is declared).
+                            // The heartbeat says ONLY that the observation
+                            // loop reached a checkpoint — not "NQ is
+                            // healthy."
+                            let coverage_path = pull_config
+                                .coverage
+                                .path
+                                .as_deref()
+                                .map(std::path::Path::new);
+                            let cov_outcome = load_coverage_rules(coverage_path);
+                            match &cov_outcome {
+                                LoadOutcome::Loaded { valid, invalid } => {
+                                    for bad in invalid {
+                                        warn!(
+                                            rule = bad.identification.as_deref().unwrap_or("?"),
+                                            reason = %bad.reason,
+                                            "coverage rule rejected by loader"
+                                        );
+                                    }
+                                    if let Err(e) = reconcile_coverage_rules(
+                                        &mut db,
+                                        valid,
+                                        &time::OffsetDateTime::now_utc(),
+                                    ) {
+                                        error!(err = %e, "coverage_rules reconcile failed");
+                                    }
+                                }
+                                LoadOutcome::Unreadable { path, reason } => {
+                                    warn!(path = %path.display(), reason, "coverage.json unreadable");
+                                }
+                                LoadOutcome::Missing { .. } | LoadOutcome::Disabled => {
+                                    // No coverage declared yet; emit
+                                    // is skipped downstream. Honest
+                                    // absence under CoverageUnknown.
+                                }
+                            }
+
+                            let emit_inputs = EmitInputs {
+                                generation_id: result.generation_id,
+                                observed_at: time::OffsetDateTime::now_utc(),
+                                component_version: component_version.clone(),
+                                schema_version: "v1".into(),
+                                evaluation_engine_id: evaluation_engine_id.clone(),
+                            };
+                            match try_emit_observation_loop_alive(
+                                &mut db,
+                                &mut testimony_ctx,
+                                &emit_inputs,
+                            ) {
+                                Ok(Some(_id)) => {}
+                                Ok(None) => {
+                                    // No active coverage rule — emit
+                                    // skipped. Honest under
+                                    // CoverageUnknown.
+                                }
+                                Err(e) => {
+                                    warn!(err = %e, "component-testimony heartbeat emit failed");
                                 }
                             }
                         }
