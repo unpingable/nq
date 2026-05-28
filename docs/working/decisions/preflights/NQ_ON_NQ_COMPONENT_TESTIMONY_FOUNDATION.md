@@ -224,28 +224,50 @@ Semantics:
 - `node_unobservable` is host-scoped — "this host's testimony as a whole is structurally missing." Cause candidates: `agent_stopped`, `agent_unreachable`, `host_unreachable`.
 - `coverage_testimony_absent` is per-`(component_id, subject_id, claim_kind)`-scoped — "this *specific* testimony class from this *specific* component is absent under this *specific* coverage rule." A node may be observable in aggregate while one expected testimony class is missing. Collapsing the two is exactly how APM mush begins.
 
-**Finding-row required fields** (in addition to NQ's existing finding columns):
+**Storage shape — detail table, not sparse nullable columns (operator-revised 2026-05-28).** The base finding rows (`warning_state`, `finding_observations`) stay generic; coverage-specific fields live in a narrow per-kind detail table.
+
+Naming: **`coverage_testimony_absence_details`**.
+
+Rationale (operator + revised review):
+
+- Most finding kinds will never use these fields. Adding them as nullable columns on `warning_state` / `finding_observations` bakes a component-testimony absence vocabulary into the generic finding substrate — that's the kind of "seemed simpler at the time" move that later becomes schema folklore.
+- Before consumers exist (renderers, HTTP output, fixtures, receipts, dashboards, NS expectations growing around sparse columns) is exactly when a schema correction is cheapest. Future-you does not get to excavate sediment with a spoon.
+- This is a **surgical per-kind detail table**, not a generic extension framework. The mig038 sparse-column precedent still stands for cross-kind envelope vocabulary (degradation_kind, recovery_state, etc.); it does not apply to per-kind absence vocabulary.
 
 ```text
-component_id            (subject of the missing testimony)
-subject_id              (inside that component)
-claim_kind              (which testimony class is missing)
-coverage_rule_id        (which expectation made absence meaningful)
-coverage_rule_hash      (rule content at evaluation time, per §F)
-absence_state           (one of six: NeverObserved | PreviouslyObservedExpired |
-                        SourceUnreachable | SourceRefused | ReportedButRefused |
-                        SourceDeclaredAbsent — never CoverageUnknown,
-                        which doesn't reach finding creation)
-last_observed_at        (RFC3339 UTC; NULL when absence_state is NeverObserved)
-expected_by             (RFC3339 UTC; computed from coverage rule)
-standing_resolver_id    (propagated from coverage rule)
-escalation_target       (propagated from coverage rule)
-evaluation_engine_id    (which evaluator code produced this finding)
+Base table (existing):
+  warning_state / finding_observations rows with
+    kind = 'coverage_testimony_absent'
+
+Detail table (new in commit 7):
+  coverage_testimony_absence_details (
+    finding_key            TEXT PRIMARY KEY,
+    coverage_rule_id       INTEGER NOT NULL,
+    coverage_rule_hash     TEXT NOT NULL,
+    component_id           TEXT NOT NULL,
+    subject_id             TEXT NOT NULL,
+    claim_kind             TEXT NOT NULL,
+    absence_state          TEXT NOT NULL,  -- six-state subset of the seven
+                                           -- (never CoverageUnknown)
+    expected_after         TEXT,           -- RFC3339 UTC; coverage_start when known
+    expected_by            TEXT,           -- RFC3339 UTC; computed from rule
+    last_observed_at       TEXT,           -- RFC3339 UTC; NULL when NeverObserved
+    last_emission_id       TEXT,           -- prior emission_id, when one existed
+    standing_resolver_id   TEXT NOT NULL,
+    escalation_target      TEXT NOT NULL,
+    evaluation_engine_id   TEXT NOT NULL,
+    source_detail          TEXT,           -- optional refusal / unreachable detail
+    FOREIGN KEY (finding_key) REFERENCES finding_observations(finding_key)
+  )
 ```
 
-These are denormalized onto the finding row at creation time (per §1's propagation discipline). A coverage rule that is later mutated/deleted does not invalidate the finding's record of what was expected.
+The base finding records *the existence and state of the finding*; the detail table records *why this expected testimony is absent under which rule*. Clean boundary, narrow surface, no sediment in the generic finding substrate.
 
-**Finding lifecycle.** When a `coverage_testimony_absent` finding has `escalation_target = operator` AND `subject_component_id = actor.component_id`, lifecycle transitions are refused per the §5 standing prohibition. This is what makes the slice's self-resolution refusal testable.
+The four resolver-split fields propagate to the detail row at creation time (per §1's propagation discipline). A coverage rule that is later mutated/deleted does not invalidate the detail row's record of what was expected.
+
+**Future component-testimony kinds** (e.g., `component_testimony_sqlite_wal_state`, `component_testimony_export_path_available`) each get their own per-kind detail table if their absence semantics differ from this one. If a follow-up review finds the per-kind detail-table pattern duplicating across many component-testimony kinds, file a refactor gap then — not a generic-extension-framework now.
+
+**Finding lifecycle.** When a `coverage_testimony_absent` finding has `escalation_target = operator` (queried via the detail table) AND `subject_component_id = actor.component_id`, lifecycle transitions are refused per the §5 standing prohibition. This is what makes the slice's self-resolution refusal testable.
 
 **The honest framing:** NQ emits standing-bound self-testimony that *the observation loop ran*. NQ does NOT emit "NQ is healthy" / "NQ is operational" / "all loops are alive." The single fact the packet testifies to: the loop ran, at this time, under this coverage rule.
 
@@ -360,7 +382,7 @@ When the implementation slice ships, the following must hold:
 6. **Absence classification.** Given a coverage rule and the current time, the absence resolver returns one of the seven states from `WITNESS_IDENTITY_AND_ABSENCE_GAP` §2.
 7. **`CoverageUnknown` default.** Querying absence for a `(component, subject, claim_kind)` triple with no active coverage rule returns `CoverageUnknown`, **not** `NeverObserved`. (This is what prevents the "NQ heartbeat missing → NQ unhealthy without coverage" laundering.)
 8. **Historical resolution (per §F).** A packet emitted under rule version `R1` (hash `H1`) continues to resolve through `R1` even after the rule is superseded by `R2` (hash `H2`). Re-evaluation under `R2` produces a new evaluation/receipt; the original receipt is not retroactively mutated.
-9. **New finding kind.** Absence resolving to any of the six finding-producing states (i.e., not `CoverageUnknown`) produces a `coverage_testimony_absent` finding distinct from `node_unobservable`. The finding row carries `absence_state` plus all four resolver-split fields denormalized.
+9. **New finding kind with detail table.** Absence resolving to any of the six finding-producing states (i.e., not `CoverageUnknown`) produces a `coverage_testimony_absent` finding distinct from `node_unobservable`. The base finding row stays generic; coverage-specific fields (absence_state, coverage_rule_id, coverage_rule_hash, four resolver-split fields, expected_by, last_observed_at, etc.) live in the `coverage_testimony_absence_details` per-kind detail table joined by `finding_key`. The base substrate is not contaminated with kind-specific vocabulary.
 10. **Lifecycle refusal — structural (Lie 3 refused).** A test case attempts to transition a `coverage_testimony_absent` finding via NQ's own lifecycle path; the transition is refused with a clear error naming `escalation_target`. The refusal is at the surface layer, not a feature flag.
 11. **Lifecycle refusal — escape.** The operator-shell CLI path can transition the finding because the requesting actor is `operator`, not `nq.local`. The refusal is keyed on actor identity, not on path.
 12. **Resolver-split independence.** Tests verify the four resolver-split fields are structurally independent — populating one does not implicitly populate another. A packet with `standing_resolver_id` set but `escalation_target` missing fails the row-construction step (not a runtime check).
@@ -375,7 +397,7 @@ When the implementation slice ships, the following must hold:
 The slice's checklist, in operator-given order:
 
 1. **`config/coverage.json`** with one rule: expect `component_testimony_observation_loop_alive` from `nq.local`, subject `observation_loop`, interval 60s, grace_multiplier 2.0 (expires_at = generated_at + 120s), `escalation_target = operator`.
-2. **Migrations:** `coverage_rules` table (per §2) + `observation_loop_alive_observations` table (per §3) + `coverage_testimony_absent` finding kind columns (per §3's finding subsection — typed columns on `warning_state` and `finding_observations` following the migration-038 pattern).
+2. **Migrations:** `coverage_rules` table (per §2) + `observation_loop_alive_observations` table (per §3) + `coverage_testimony_absence_details` per-kind detail table (per §3's finding subsection; operator-revised 2026-05-28 — NOT sparse nullable columns on `warning_state` / `finding_observations`). The base finding rows stay generic; coverage-specific fields live in the narrow detail table.
 3. **Coverage-rule loader:** read `config/coverage.json` on aggregator startup and once per pulse; compute `coverage_rule_hash` over canonical-JSON of defining fields; reconcile JSON declarations to DB rows via append-only operations.
 4. **Standing-bound heartbeat emit:** `nq serve` writes one `observation_loop_alive_observations` row per observation-loop pulse, with all four resolver-split fields denormalized from the active coverage rule. Row construction refuses NULL on any required field.
 5. **`ClaimKind::ComponentTestimonyObservationLoopAlive`** variant added to the enum; `as_str()` returns `"component_testimony_observation_loop_alive"`.
