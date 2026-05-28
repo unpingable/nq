@@ -21,6 +21,8 @@ pub struct Config {
     pub liveness: LivenessConfig,
     #[serde(default)]
     pub declarations: DeclarationsConfig,
+    #[serde(default)]
+    pub coverage: CoverageConfig,
 }
 
 /// Configuration for operational intent declarations.
@@ -33,6 +35,19 @@ pub struct Config {
 /// validates a declaration as malformed surfaces as a finding.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DeclarationsConfig {
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// Configuration for coverage rules (declared expectation of testimony).
+///
+/// `path` is the JSON file the aggregator re-reads each cycle. If unset,
+/// the coverage layer is disabled (no rules loaded, no heartbeats emitted,
+/// every absence query returns `CoverageUnknown`).
+///
+/// See `docs/working/decisions/preflights/NQ_ON_NQ_COMPONENT_TESTIMONY_FOUNDATION.md` §2.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CoverageConfig {
     #[serde(default)]
     pub path: Option<String>,
 }
