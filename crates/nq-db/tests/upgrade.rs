@@ -35,12 +35,17 @@ const PREVIOUS_SCHEMA_VERSION: u32 = CURRENT_SCHEMA_VERSION - 1;
 /// existing tables becomes the latest, this constant becomes wrong and the
 /// test stops representing the upgrade path it claims to.
 ///
-/// Migration 051 adds `coverage_rules` (the declared-expectation
-/// primitive for component-testimony emission per the NQ-on-NQ
-/// component-testimony foundation preflight). Per the upgrade-test
-/// fixture discipline, the table is dropped + user_version rolled back
-/// so the migration runs as part of the test's forward path.
-const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["coverage_rules"];
+/// Migration 052 adds `observation_loop_alive_observations` (the
+/// substrate table for the component_testimony_observation_loop_alive
+/// claim kind, per the NQ-on-NQ component-testimony foundation preflight).
+/// Per the upgrade-test fixture discipline, the table is dropped +
+/// user_version rolled back so the migration runs as part of the test's
+/// forward path.
+///
+/// Note: migration 051 (coverage_rules) was the latest in the previous
+/// commit; the upgrade test fixture only rolls back the SINGLE latest
+/// migration, so this constant tracks 052's added tables only.
+const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["observation_loop_alive_observations"];
 
 #[test]
 fn upgrade_from_previous_version_preserves_data() {

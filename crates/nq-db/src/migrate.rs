@@ -5,7 +5,7 @@ use tracing::info;
 /// with the last entry of `MIGRATIONS` below. Exposed for consumer
 /// surfaces (e.g. the finding export path) so they can preflight
 /// against a DB whose schema is older than the code was built for.
-pub const CURRENT_SCHEMA_VERSION: u32 = 51;
+pub const CURRENT_SCHEMA_VERSION: u32 = 52;
 
 /// Read `PRAGMA user_version` from an arbitrary connection. Returns 0
 /// for a freshly-opened SQLite file that's never been migrated.
@@ -67,6 +67,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (49, include_str!("../migrations/049_wal_observation_status.sql")),
     (50, include_str!("../migrations/050_collector_runs_sqlite_wal_probe.sql")),
     (51, include_str!("../migrations/051_coverage_rules.sql")),
+    (52, include_str!("../migrations/052_observation_loop_alive_observations.sql")),
 ];
 
 pub fn migrate(db: &mut WriteDb) -> anyhow::Result<()> {
@@ -115,7 +116,7 @@ mod tests {
             .conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 51);
+        assert_eq!(version, 52);
 
         // Verify tables exist
         let count: i64 = db
@@ -1037,5 +1038,376 @@ mod tests {
             None,
         )
         .expect("different subject_id must coexist as active");
+    }
+
+    // -----------------------------------------------------------------
+    // Migration 052 — observation_loop_alive_observations.
+    //
+    // Schema-only; emit path lands in a later commit. These tests pin
+    // the substrate-boundary invariants from the preflight §3 + the
+    // four-way resolver split per §1. They demonstrate that
+    // standing-free emission is unrepresentable (wire-prohibition
+    // class from preflight §5) at the table layer — every required
+    // resolver-split field is NOT NULL with a non-empty CHECK.
+    // -----------------------------------------------------------------
+
+    /// Seed a coverage rule (generation row is already created by
+    /// `fresh_db()` with generation_id = 1). Returns the IDs the
+    /// substrate table FKs to.
+    fn seed_for_loop_alive(
+        conn: &rusqlite::Connection,
+    ) -> (i64 /*generation_id*/, i64 /*coverage_rule_id*/) {
+        insert_coverage_rule(
+            conn,
+            "nq.local",
+            "observation_loop",
+            "component_testimony_observation_loop_alive",
+            None,
+        )
+        .unwrap();
+        let coverage_rule_id: i64 = conn
+            .query_row(
+                "SELECT coverage_rule_id FROM coverage_rules WHERE valid_until IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        (1, coverage_rule_id)
+    }
+
+    fn insert_clean_loop_alive_row(
+        conn: &rusqlite::Connection,
+        emission_id: &str,
+    ) -> rusqlite::Result<()> {
+        let cov_id: i64 = conn
+            .query_row(
+                "SELECT coverage_rule_id FROM coverage_rules WHERE valid_until IS NULL LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let gen_id: i64 = 1;
+        conn.execute(
+            "INSERT INTO observation_loop_alive_observations (
+                generation_id, component_id, subject_id,
+                observed_at, generated_at, expires_at,
+                standing_resolver_id, escalation_target,
+                coverage_rule_id, coverage_rule_hash, evaluation_engine_id,
+                loop_name, checkpoint_name, last_success_at,
+                component_version, schema_version, emission_id
+            ) VALUES (?1, 'nq.local', 'observation_loop',
+                      '2026-05-28T12:00:00Z', '2026-05-28T12:00:00Z',
+                      '2026-05-28T12:02:00Z',
+                      'nq.local.static_config', 'operator',
+                      ?2, 'sha256:abc', 'nq.v0+sha:abc123',
+                      'observation_loop', 'pulse_complete',
+                      '2026-05-28T11:59:00Z', 'nq-0.1.0', 'v1', ?3)",
+            rusqlite::params![gen_id, cov_id, emission_id],
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn mig052_clean_row_inserts() {
+        let db = fresh_db();
+        seed_for_loop_alive(&db.conn);
+        insert_clean_loop_alive_row(&db.conn, "emit-1")
+            .expect("clean observation_loop_alive row must insert");
+    }
+
+    #[test]
+    fn mig052_rejects_null_standing_resolver_id() {
+        let db = fresh_db();
+        let (gen_id, cov_id) = seed_for_loop_alive(&db.conn);
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO observation_loop_alive_observations (
+                    generation_id, component_id, subject_id,
+                    observed_at, generated_at, expires_at,
+                    standing_resolver_id, escalation_target,
+                    coverage_rule_id, coverage_rule_hash, evaluation_engine_id,
+                    loop_name, checkpoint_name,
+                    component_version, schema_version, emission_id
+                ) VALUES (?1, 'nq.local', 'observation_loop',
+                          '2026-05-28T12:00:00Z', '2026-05-28T12:00:00Z',
+                          '2026-05-28T12:02:00Z',
+                          NULL, 'operator',
+                          ?2, 'sha256:abc', 'nq.v0',
+                          'observation_loop', 'pulse_complete',
+                          'nq-0.1.0', 'v1', 'emit-x')",
+                rusqlite::params![gen_id, cov_id],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("not null"),
+            "expected NOT NULL violation on standing_resolver_id, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig052_rejects_empty_string_resolver_split_fields() {
+        // Empty-string is the laundering shape NOT NULL alone wouldn't
+        // catch; CHECK length > 0 closes it. Pinning the discipline
+        // here means an emit-time bug can't slip a placeholder past
+        // the substrate boundary.
+        let db = fresh_db();
+        let (gen_id, cov_id) = seed_for_loop_alive(&db.conn);
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO observation_loop_alive_observations (
+                    generation_id, component_id, subject_id,
+                    observed_at, generated_at, expires_at,
+                    standing_resolver_id, escalation_target,
+                    coverage_rule_id, coverage_rule_hash, evaluation_engine_id,
+                    loop_name, checkpoint_name,
+                    component_version, schema_version, emission_id
+                ) VALUES (?1, 'nq.local', 'observation_loop',
+                          '2026-05-28T12:00:00Z', '2026-05-28T12:00:00Z',
+                          '2026-05-28T12:02:00Z',
+                          '', 'operator',
+                          ?2, 'sha256:abc', 'nq.v0',
+                          'observation_loop', 'pulse_complete',
+                          'nq-0.1.0', 'v1', 'emit-x')",
+                rusqlite::params![gen_id, cov_id],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK violation on empty standing_resolver_id, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig052_rejects_null_escalation_target() {
+        let db = fresh_db();
+        let (gen_id, cov_id) = seed_for_loop_alive(&db.conn);
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO observation_loop_alive_observations (
+                    generation_id, component_id, subject_id,
+                    observed_at, generated_at, expires_at,
+                    standing_resolver_id, escalation_target,
+                    coverage_rule_id, coverage_rule_hash, evaluation_engine_id,
+                    loop_name, checkpoint_name,
+                    component_version, schema_version, emission_id
+                ) VALUES (?1, 'nq.local', 'observation_loop',
+                          '2026-05-28T12:00:00Z', '2026-05-28T12:00:00Z',
+                          '2026-05-28T12:02:00Z',
+                          'nq.local.static_config', NULL,
+                          ?2, 'sha256:abc', 'nq.v0',
+                          'observation_loop', 'pulse_complete',
+                          'nq-0.1.0', 'v1', 'emit-x')",
+                rusqlite::params![gen_id, cov_id],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("not null"),
+            "expected NOT NULL violation on escalation_target, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig052_rejects_null_coverage_rule_hash() {
+        let db = fresh_db();
+        let (gen_id, cov_id) = seed_for_loop_alive(&db.conn);
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO observation_loop_alive_observations (
+                    generation_id, component_id, subject_id,
+                    observed_at, generated_at, expires_at,
+                    standing_resolver_id, escalation_target,
+                    coverage_rule_id, coverage_rule_hash, evaluation_engine_id,
+                    loop_name, checkpoint_name,
+                    component_version, schema_version, emission_id
+                ) VALUES (?1, 'nq.local', 'observation_loop',
+                          '2026-05-28T12:00:00Z', '2026-05-28T12:00:00Z',
+                          '2026-05-28T12:02:00Z',
+                          'nq.local.static_config', 'operator',
+                          ?2, NULL, 'nq.v0',
+                          'observation_loop', 'pulse_complete',
+                          'nq-0.1.0', 'v1', 'emit-x')",
+                rusqlite::params![gen_id, cov_id],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("not null"),
+            "expected NOT NULL violation on coverage_rule_hash, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig052_rejects_expires_before_or_equal_generated_at() {
+        let db = fresh_db();
+        let (gen_id, cov_id) = seed_for_loop_alive(&db.conn);
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO observation_loop_alive_observations (
+                    generation_id, component_id, subject_id,
+                    observed_at, generated_at, expires_at,
+                    standing_resolver_id, escalation_target,
+                    coverage_rule_id, coverage_rule_hash, evaluation_engine_id,
+                    loop_name, checkpoint_name,
+                    component_version, schema_version, emission_id
+                ) VALUES (?1, 'nq.local', 'observation_loop',
+                          '2026-05-28T12:00:00Z', '2026-05-28T12:00:00Z',
+                          '2026-05-28T12:00:00Z',  -- expires_at == generated_at: physically impossible
+                          'nq.local.static_config', 'operator',
+                          ?2, 'sha256:abc', 'nq.v0',
+                          'observation_loop', 'pulse_complete',
+                          'nq-0.1.0', 'v1', 'emit-x')",
+                rusqlite::params![gen_id, cov_id],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK violation on expires_at <= generated_at, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig052_unique_emission_id() {
+        let db = fresh_db();
+        seed_for_loop_alive(&db.conn);
+        insert_clean_loop_alive_row(&db.conn, "emit-1").unwrap();
+        let err = insert_clean_loop_alive_row(&db.conn, "emit-1").unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("unique"),
+            "expected UNIQUE violation on duplicate emission_id, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig052_unique_emission_id_distinguishes_different_emits() {
+        let db = fresh_db();
+        seed_for_loop_alive(&db.conn);
+        insert_clean_loop_alive_row(&db.conn, "emit-1").unwrap();
+        insert_clean_loop_alive_row(&db.conn, "emit-2")
+            .expect("different emission_id must insert");
+    }
+
+    #[test]
+    fn mig052_fk_coverage_rule_id_enforces_reference() {
+        let db = fresh_db();
+        seed_for_loop_alive(&db.conn);
+        // Inserting with a non-existent coverage_rule_id must be refused
+        // by FK. SQLite needs PRAGMA foreign_keys ON for this; NQ's
+        // open path sets it.
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO observation_loop_alive_observations (
+                    generation_id, component_id, subject_id,
+                    observed_at, generated_at, expires_at,
+                    standing_resolver_id, escalation_target,
+                    coverage_rule_id, coverage_rule_hash, evaluation_engine_id,
+                    loop_name, checkpoint_name,
+                    component_version, schema_version, emission_id
+                ) VALUES (1, 'nq.local', 'observation_loop',
+                          '2026-05-28T12:00:00Z', '2026-05-28T12:00:00Z',
+                          '2026-05-28T12:02:00Z',
+                          'nq.local.static_config', 'operator',
+                          9999, 'sha256:abc', 'nq.v0',
+                          'observation_loop', 'pulse_complete',
+                          'nq-0.1.0', 'v1', 'emit-x')",
+                [],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("foreign"),
+            "expected FK violation on nonexistent coverage_rule_id, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mig052_cascades_on_generation_delete() {
+        let db = fresh_db();
+        seed_for_loop_alive(&db.conn);
+        insert_clean_loop_alive_row(&db.conn, "emit-1").unwrap();
+        let n_before: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM observation_loop_alive_observations",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_before, 1);
+
+        db.conn
+            .execute("DELETE FROM generations WHERE generation_id = 1", [])
+            .unwrap();
+
+        let n_after: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM observation_loop_alive_observations",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            n_after, 0,
+            "ON DELETE CASCADE must remove dependent observations when the generation is deleted"
+        );
+    }
+
+    #[test]
+    fn mig052_last_success_at_may_be_null() {
+        let db = fresh_db();
+        let (gen_id, cov_id) = seed_for_loop_alive(&db.conn);
+        db.conn
+            .execute(
+                "INSERT INTO observation_loop_alive_observations (
+                    generation_id, component_id, subject_id,
+                    observed_at, generated_at, expires_at,
+                    standing_resolver_id, escalation_target,
+                    coverage_rule_id, coverage_rule_hash, evaluation_engine_id,
+                    loop_name, checkpoint_name, last_success_at,
+                    component_version, schema_version, emission_id
+                ) VALUES (?1, 'nq.local', 'observation_loop',
+                          '2026-05-28T12:00:00Z', '2026-05-28T12:00:00Z',
+                          '2026-05-28T12:02:00Z',
+                          'nq.local.static_config', 'operator',
+                          ?2, 'sha256:abc', 'nq.v0',
+                          'observation_loop', 'pulse_complete', NULL,
+                          'nq-0.1.0', 'v1', 'emit-first')",
+                rusqlite::params![gen_id, cov_id],
+            )
+            .expect("first-ever emit with NULL last_success_at must insert");
+    }
+
+    #[test]
+    fn mig052_last_success_at_empty_string_refused() {
+        let db = fresh_db();
+        let (gen_id, cov_id) = seed_for_loop_alive(&db.conn);
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO observation_loop_alive_observations (
+                    generation_id, component_id, subject_id,
+                    observed_at, generated_at, expires_at,
+                    standing_resolver_id, escalation_target,
+                    coverage_rule_id, coverage_rule_hash, evaluation_engine_id,
+                    loop_name, checkpoint_name, last_success_at,
+                    component_version, schema_version, emission_id
+                ) VALUES (?1, 'nq.local', 'observation_loop',
+                          '2026-05-28T12:00:00Z', '2026-05-28T12:00:00Z',
+                          '2026-05-28T12:02:00Z',
+                          'nq.local.static_config', 'operator',
+                          ?2, 'sha256:abc', 'nq.v0',
+                          'observation_loop', 'pulse_complete', '',
+                          'nq-0.1.0', 'v1', 'emit-x')",
+                rusqlite::params![gen_id, cov_id],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK violation on empty last_success_at, got: {err}"
+        );
     }
 }
