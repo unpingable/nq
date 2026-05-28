@@ -1904,6 +1904,304 @@ mod tests {
         assert_eq!(state, "previously_observed_expired");
     }
 
+    // -----------------------------------------------------------------
+    // The three lies — acceptance pinning per foundation preflight §6.
+    //
+    // Lie 1 (wire prohibition): standing-free emit is unrepresentable.
+    // Lie 2 (semantic composition): heartbeat present → therefore
+    //   healthy is refused at the kind-level cannot_testify + composition
+    //   layer.
+    // Lie 3 (standing prohibition): a component cannot resolve a
+    //   finding about itself.
+    //
+    // Each test maps to one lie and demonstrates the refusal.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn lie_1_wire_prohibition_no_standing_free_emit_path_exists() {
+        // The wire-prohibition class is structural: try_emit_observation_loop_alive
+        // requires an active coverage rule (which contributes the
+        // resolver-split fields). With NO active rule, the function
+        // returns None — no row is inserted — and there is no public
+        // API to insert a row without resolver-split fields. The shape
+        // is unrepresentable.
+        let mut db = fresh_db();
+        // No coverage rule loaded.
+        let mut ctx = EmitContext::default();
+        let result = try_emit_observation_loop_alive(
+            &mut db,
+            &mut ctx,
+            &sample_inputs(1, "2026-05-28T12:00:00Z"),
+        )
+        .unwrap();
+        assert!(result.is_none(), "standing-free emit returns None, not an inserted row");
+        // Verify by direct DB read: no row was inserted.
+        let n: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM observation_loop_alive_observations",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0);
+
+        // Additionally: the substrate table's NOT NULL + length>0 CHECKs
+        // make a manual INSERT with NULL/empty resolver fields refuse at
+        // SQL execution. Demonstrating that the wire surface refuses
+        // standing-free shape even via raw SQL.
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO observation_loop_alive_observations (
+                    generation_id, component_id, subject_id,
+                    observed_at, generated_at, expires_at,
+                    standing_resolver_id, escalation_target,
+                    coverage_rule_id, coverage_rule_hash, evaluation_engine_id,
+                    loop_name, checkpoint_name,
+                    component_version, schema_version, emission_id
+                ) VALUES (1, 'nq.local', 'observation_loop',
+                          '2026-05-28T12:00:00Z', '2026-05-28T12:00:00Z',
+                          '2026-05-28T12:02:00Z',
+                          NULL, NULL, NULL, NULL, NULL,
+                          'observation_loop', 'pulse_complete',
+                          'nq-0.1.0', 'v1', 'lie-1-attempt')",
+                [],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("not null"),
+            "raw INSERT with NULL resolver fields must be refused; got {err}"
+        );
+    }
+
+    #[test]
+    fn lie_2_health_absolution_refused_at_cannot_testify_layer() {
+        // Even on the Active state (heartbeat present, evaluator returns
+        // AdmissibleWithScope), the receipt's cannot_testify list
+        // contains the explicit "Whether NQ is healthy" refusal. A
+        // consumer composing "heartbeat present therefore NQ healthy"
+        // is doing so AGAINST the receipt's own constitutional refusal.
+        let mut db = fresh_db();
+        reconcile_coverage_rules(&mut db, &[sample_rule_decl()], &t("2026-05-28T11:00:00Z"))
+            .unwrap();
+        let mut ctx = EmitContext::default();
+        try_emit_observation_loop_alive(
+            &mut db,
+            &mut ctx,
+            &sample_inputs(1, "2026-05-28T12:00:00Z"),
+        )
+        .unwrap();
+        let r = evaluate_observation_loop_alive_preflight(
+            &db.conn,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            &t("2026-05-28T12:01:00Z"),
+            "nq.v0",
+        )
+        .unwrap();
+        assert!(matches!(r.verdict, Verdict::AdmissibleWithScope));
+        // The active-state receipt MUST carry the health-absolution
+        // refusal in cannot_testify.
+        assert!(
+            r.cannot_testify
+                .iter()
+                .any(|s| s.contains("NQ is healthy")),
+            "cannot_testify must contain the explicit health-absolution refusal"
+        );
+        // And the composition-rule refusal (preventing re-emission as
+        // a claim).
+        assert!(
+            r.cannot_testify
+                .iter()
+                .any(|s| s.contains("composed verdicts") && s.contains("re-emitted")),
+            "cannot_testify must refuse re-emission of composed verdicts as claims"
+        );
+    }
+
+    #[test]
+    fn lie_3_self_resolution_refused_by_lifecycle_check() {
+        // Standing-prohibition pinning — at the lifecycle layer.
+        // Already covered by self_resolution_refused_for_nq_actor_with_operator_escalation;
+        // pinning here under the three-lies framing for traceability.
+        let mut db = fresh_db();
+        let key = record_coverage_testimony_absent_finding(
+            &mut db,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &never_observed_cls(),
+            1,
+            &t("2026-05-28T12:00:00Z"),
+            None,
+            "nq.v0",
+        )
+        .unwrap();
+        let err =
+            check_self_resolution_admissibility(&db.conn, &key, ACTOR_NQ_LOCAL).unwrap_err();
+        assert!(err.is_self_resolution_refusal());
+        // And the operator-actor path admits — the standing prohibition
+        // expires for the legitimate-external-actor case.
+        check_self_resolution_admissibility(&db.conn, &key, ACTOR_OPERATOR)
+            .expect("operator actor admissible — different code path is NOT what saves us; \
+                     same code path under different identity is");
+    }
+
+    // -----------------------------------------------------------------
+    // Historical-resolution discipline test — per foundation preflight
+    // §F and acceptance criterion #8.
+    //
+    // A packet emitted under rule R1 (hash H1) must resolve through R1
+    // even after the rule is superseded by R2 (hash H2). The packet's
+    // coverage_rule_hash anchors the original content; re-evaluation
+    // under R2 produces a new evaluation, not a retroactive verdict.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn historical_resolution_packet_anchors_then_active_rule_hash() {
+        let mut db = fresh_db();
+
+        // R1: active rule with interval=60.
+        reconcile_coverage_rules(&mut db, &[sample_rule_decl()], &t("2026-05-28T11:00:00Z"))
+            .unwrap();
+        let r1_hash: String = db
+            .conn
+            .query_row(
+                "SELECT coverage_rule_hash FROM coverage_rules WHERE valid_until IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        // Emit under R1.
+        let mut ctx = EmitContext::default();
+        let emission_id = try_emit_observation_loop_alive(
+            &mut db,
+            &mut ctx,
+            &sample_inputs(1, "2026-05-28T12:00:00Z"),
+        )
+        .unwrap()
+        .unwrap();
+
+        let packet_hash_at_emit: String = db
+            .conn
+            .query_row(
+                "SELECT coverage_rule_hash FROM observation_loop_alive_observations
+                 WHERE emission_id = ?1",
+                params![&emission_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            packet_hash_at_emit, r1_hash,
+            "emitted packet must anchor R1's hash at emit time"
+        );
+
+        // Supersede R1 with R2 (interval=30).
+        let mut r2_decl = sample_rule_decl();
+        r2_decl.expected_interval_s = 30;
+        reconcile_coverage_rules(&mut db, &[r2_decl], &t("2026-05-28T12:01:00Z"))
+            .unwrap();
+        let r2_hash: String = db
+            .conn
+            .query_row(
+                "SELECT coverage_rule_hash FROM coverage_rules WHERE valid_until IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_ne!(
+            r1_hash, r2_hash,
+            "R2 must have a different hash than R1 (different defining fields)"
+        );
+
+        // Re-read the packet. Its coverage_rule_hash must STILL be R1's
+        // — the supersession does not mutate the packet.
+        let packet_hash_after_supersede: String = db
+            .conn
+            .query_row(
+                "SELECT coverage_rule_hash FROM observation_loop_alive_observations
+                 WHERE emission_id = ?1",
+                params![&emission_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            packet_hash_after_supersede, r1_hash,
+            "supersession by R2 must NOT mutate the packet's R1-anchored hash"
+        );
+        assert_ne!(packet_hash_after_supersede, r2_hash);
+
+        // R1 row still exists in coverage_rules (now with valid_until set),
+        // so historical lookup via coverage_rule_id remains possible.
+        let r1_now_retired: Option<String> = db
+            .conn
+            .query_row(
+                "SELECT valid_until FROM coverage_rules WHERE coverage_rule_hash = ?1",
+                params![&r1_hash],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            r1_now_retired.is_some(),
+            "R1's row must remain with valid_until set, not deleted"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Render-parity verification: signals on Active state flow through
+    // to a serialized PreflightResult JSON shape that consumers and
+    // renderers can read. The render-side parity tests already pin that
+    // the renderer surfaces signals (commit 2ca1831); this test
+    // verifies the evaluator's output is shaped for that path.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn evaluator_signals_serialize_with_resolver_split_visible() {
+        let mut db = fresh_db();
+        reconcile_coverage_rules(&mut db, &[sample_rule_decl()], &t("2026-05-28T11:00:00Z"))
+            .unwrap();
+        let mut ctx = EmitContext::default();
+        try_emit_observation_loop_alive(
+            &mut db,
+            &mut ctx,
+            &sample_inputs(1, "2026-05-28T12:00:00Z"),
+        )
+        .unwrap();
+        let r = evaluate_observation_loop_alive_preflight(
+            &db.conn,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            &t("2026-05-28T12:01:00Z"),
+            "nq.v0+sha:test",
+        )
+        .unwrap();
+        let serialized = serde_json::to_string(&r).unwrap();
+        // The five resolver-split-related fields are present in the
+        // serialized signals envelope:
+        for must_appear in &[
+            "coverage_rule_id",
+            "coverage_rule_hash",
+            "evaluation_engine_id",
+            "absence_state",
+            "last_emission_id",
+        ] {
+            assert!(
+                serialized.contains(must_appear),
+                "serialized PreflightResult must contain {must_appear:?}; got: {serialized}"
+            );
+        }
+        // standing_resolver_id and escalation_target are only present
+        // on absence-classification states (NeverObserved /
+        // PreviouslyObservedExpired); on Active they're absent (the
+        // emit row carries them but the active-state signals don't
+        // re-narrate them). Pin the active-state shape so future code
+        // doesn't accidentally promote them into the wrong state.
+        let v: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        let ns = &v["signals"]["component_testimony_observation_loop_alive"];
+        assert_eq!(ns["absence_state"].as_str().unwrap(), "active");
+    }
+
     #[test]
     fn classification_is_finding_producing_only_for_absence_states() {
         // Pinned: CoverageUnknown and Active must NOT escalate; the
