@@ -521,6 +521,329 @@ pub fn write_coverage_testimony_absence_detail(
     Ok(())
 }
 
+// -----------------------------------------------------------------
+// Finding producer + lifecycle self-resolution refusal.
+// -----------------------------------------------------------------
+
+/// Canonical finding-key form for coverage_testimony_absent findings.
+/// Mirrors `compute_finding_key("local", host, kind, subject)` from
+/// publish.rs but is inlined here to avoid a cross-module dependency
+/// for the first-slice surface. `host` is the component_id; `kind` is
+/// `coverage_testimony_absent`; `subject` is the subject_id.
+fn finding_key_for_coverage_testimony_absent(component_id: &str, subject_id: &str) -> String {
+    format!(
+        "local/{}/{}/{}",
+        url_pct_encode(component_id),
+        url_pct_encode(KIND_COVERAGE_TESTIMONY_ABSENT),
+        url_pct_encode(subject_id),
+    )
+}
+
+/// Minimal percent-encoding for the slash-separated finding_key
+/// segments. Encodes anything outside ASCII alphanumerics + `-_.~` (RFC
+/// 3986 unreserved) so the segments never collide with the separator.
+fn url_pct_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        let unreserved = b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~');
+        if unreserved {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
+/// Finding kind string. Stable wire form; mirrors the row inserted
+/// into warning_state.kind and finding_observations.detector_id /
+/// detail-row claim_kind.
+pub const KIND_COVERAGE_TESTIMONY_ABSENT: &str = "coverage_testimony_absent";
+
+/// Default actor identity when the request originates from inside
+/// nq-serve. Used by the self-resolution refusal to recognize the
+/// "subject is myself" case. The first slice has no auth surface;
+/// operator-shell actor identity arrives in a later slice when the
+/// CLI transition verb lands.
+pub const ACTOR_NQ_LOCAL: &str = "nq.local";
+
+/// Operator-actor identity. Distinct from `nq.local` — the refusal
+/// keys on actor identity, not on path.
+pub const ACTOR_OPERATOR: &str = "operator";
+
+/// Record a coverage_testimony_absent finding for a finding-producing
+/// AbsenceClassification. Writes rows into warning_state,
+/// finding_observations, AND coverage_testimony_absence_details in a
+/// single transaction, so the detail row never orphans.
+///
+/// Refuses non-finding-producing classifications (`CoverageUnknown` /
+/// `Active`) at the function boundary — the same anti-laundering
+/// discipline as `write_coverage_testimony_absence_detail`.
+///
+/// Returns the canonical `finding_key`.
+pub fn record_coverage_testimony_absent_finding(
+    db: &mut WriteDb,
+    component_id: &str,
+    subject_id: &str,
+    claim_kind: &str,
+    classification: &AbsenceClassification,
+    generation_id: i64,
+    observed_at: &OffsetDateTime,
+    coverage_start: Option<&str>,
+    evaluation_engine_id: &str,
+) -> Result<String, EmitError> {
+    if !classification.is_finding_producing() {
+        return Err(EmitError::Db(format!(
+            "record_coverage_testimony_absent_finding refuses non-finding-producing \
+             classification {:?}",
+            classification.variant_name()
+        )));
+    }
+    let finding_key = finding_key_for_coverage_testimony_absent(component_id, subject_id);
+    let observed_at_str = observed_at
+        .format(&Rfc3339)
+        .map_err(|e| EmitError::TimeFormat(e.to_string()))?;
+    let message = match classification {
+        AbsenceClassification::NeverObserved { .. } => format!(
+            "Coverage rule expects {} from component {}; no testimony has been received.",
+            subject_id, component_id
+        ),
+        AbsenceClassification::PreviouslyObservedExpired {
+            last_observed_at, ..
+        } => format!(
+            "Coverage rule expects {} from component {}; last testimony at {} has expired.",
+            subject_id, component_id, last_observed_at
+        ),
+        _ => unreachable!("finding-producing guard above"),
+    };
+
+    let tx = db
+        .conn
+        .transaction()
+        .map_err(|e| EmitError::Db(e.to_string()))?;
+
+    // warning_state: upsert by (host, kind, subject). New first_seen
+    // values on first insertion; bump consecutive_gens on re-emit
+    // within the same finding identity.
+    tx.execute(
+        "INSERT INTO warning_state (
+            host, kind, subject,
+            first_seen_gen, first_seen_at,
+            last_seen_gen, last_seen_at,
+            consecutive_gens, message, severity, domain
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?4, ?5, 1, ?6, 'info', 'component_testimony')
+         ON CONFLICT(host, kind, subject) DO UPDATE SET
+            last_seen_gen = excluded.last_seen_gen,
+            last_seen_at = excluded.last_seen_at,
+            consecutive_gens = warning_state.consecutive_gens + 1,
+            message = excluded.message",
+        params![
+            component_id,
+            KIND_COVERAGE_TESTIMONY_ABSENT,
+            subject_id,
+            generation_id,
+            &observed_at_str,
+            &message,
+        ],
+    )
+    .map_err(|e| EmitError::Db(e.to_string()))?;
+
+    // finding_observations: append-only.
+    tx.execute(
+        "INSERT INTO finding_observations (
+            generation_id, finding_key, detector_id, host, subject,
+            domain, severity, message, observed_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, 'component_testimony', 'info', ?6, ?7)
+         ON CONFLICT(generation_id, finding_key) DO NOTHING",
+        params![
+            generation_id,
+            &finding_key,
+            KIND_COVERAGE_TESTIMONY_ABSENT,
+            component_id,
+            subject_id,
+            &message,
+            &observed_at_str,
+        ],
+    )
+    .map_err(|e| EmitError::Db(e.to_string()))?;
+
+    // detail row.
+    let (
+        absence_state,
+        coverage_rule_id,
+        coverage_rule_hash,
+        expected_by,
+        last_observed_at,
+        last_emission_id,
+        standing_resolver_id,
+        escalation_target,
+    ) = match classification {
+        AbsenceClassification::NeverObserved {
+            coverage_rule_id,
+            coverage_rule_hash,
+            expected_by,
+            standing_resolver_id,
+            escalation_target,
+        } => (
+            "never_observed",
+            *coverage_rule_id,
+            coverage_rule_hash.as_str(),
+            Some(expected_by.as_str()),
+            None,
+            None,
+            standing_resolver_id.as_str(),
+            escalation_target.as_str(),
+        ),
+        AbsenceClassification::PreviouslyObservedExpired {
+            coverage_rule_id,
+            coverage_rule_hash,
+            last_observed_at,
+            expires_at,
+            last_emission_id,
+            standing_resolver_id,
+            escalation_target,
+        } => (
+            "previously_observed_expired",
+            *coverage_rule_id,
+            coverage_rule_hash.as_str(),
+            Some(expires_at.as_str()),
+            Some(last_observed_at.as_str()),
+            Some(last_emission_id.as_str()),
+            standing_resolver_id.as_str(),
+            escalation_target.as_str(),
+        ),
+        _ => unreachable!("finding-producing guard above"),
+    };
+    tx.execute(
+        "INSERT OR REPLACE INTO coverage_testimony_absence_details (
+            finding_key, component_id, subject_id, claim_kind,
+            coverage_rule_id, coverage_rule_hash, absence_state,
+            expected_after, expected_by, last_observed_at, last_emission_id,
+            standing_resolver_id, escalation_target, evaluation_engine_id,
+            source_detail
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, NULL)",
+        params![
+            &finding_key,
+            component_id,
+            subject_id,
+            claim_kind,
+            coverage_rule_id,
+            coverage_rule_hash,
+            absence_state,
+            coverage_start,
+            expected_by,
+            last_observed_at,
+            last_emission_id,
+            standing_resolver_id,
+            escalation_target,
+            evaluation_engine_id,
+        ],
+    )
+    .map_err(|e| EmitError::Db(e.to_string()))?;
+
+    tx.commit()
+        .map_err(|e| EmitError::Db(e.to_string()))?;
+    Ok(finding_key)
+}
+
+/// Refusal returned when an actor attempts to transition a finding
+/// whose subject is the actor itself. Standing-prohibition class from
+/// the foundation preflight §5.
+#[derive(Debug, Error)]
+#[error(
+    "self-resolution refused for finding {finding_key:?}: actor {actor_component_id:?} \
+     is the subject component; escalation_target is {escalation_target:?}"
+)]
+pub struct SelfResolutionRefusal {
+    pub finding_key: String,
+    pub actor_component_id: String,
+    pub subject_component_id: String,
+    pub escalation_target: String,
+}
+
+/// Check whether the given actor may transition the given finding.
+/// Returns `Ok(())` when the transition is admissible at the
+/// standing layer; returns `Err(SelfResolutionRefusal)` when the
+/// actor is the subject component AND not the declared
+/// escalation_target.
+///
+/// V0 semantics: scoped to coverage_testimony_absent findings (the
+/// only kind whose detail table records subject_component_id +
+/// escalation_target). For other kinds the function returns
+/// `Ok(())` (no opinion). When the lifecycle-mutation surface
+/// generalizes to all findings in a later slice, this function's
+/// dispatch widens.
+pub fn check_self_resolution_admissibility(
+    conn: &rusqlite::Connection,
+    finding_key: &str,
+    actor_component_id: &str,
+) -> Result<(), CheckError> {
+    // Look up the kind from warning_state.
+    let kind_row: rusqlite::Result<String> = conn.query_row(
+        "SELECT kind FROM warning_state
+         WHERE host = (
+            SELECT component_id FROM coverage_testimony_absence_details
+            WHERE finding_key = ?1
+         )
+           AND subject = (
+            SELECT subject_id FROM coverage_testimony_absence_details
+            WHERE finding_key = ?1
+         )
+           AND kind = ?2",
+        params![finding_key, KIND_COVERAGE_TESTIMONY_ABSENT],
+        |r| r.get(0),
+    );
+    let kind = match kind_row {
+        Ok(k) => k,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+        Err(e) => return Err(CheckError::Db(e.to_string())),
+    };
+    if kind != KIND_COVERAGE_TESTIMONY_ABSENT {
+        return Ok(());
+    }
+    let (subject_component_id, escalation_target): (String, String) = conn
+        .query_row(
+            "SELECT component_id, escalation_target
+             FROM coverage_testimony_absence_details WHERE finding_key = ?1",
+            params![finding_key],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| CheckError::Db(e.to_string()))?;
+    if subject_component_id == actor_component_id && actor_component_id != escalation_target {
+        return Err(CheckError::from(SelfResolutionRefusal {
+            finding_key: finding_key.to_string(),
+            actor_component_id: actor_component_id.to_string(),
+            subject_component_id,
+            escalation_target,
+        }));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Error)]
+pub enum CheckError {
+    #[error("self-resolution refusal: {0}")]
+    SelfResolutionRefused(#[from] SelfResolutionRefusal),
+    #[error("db error: {0}")]
+    Db(String),
+}
+
+impl From<String> for CheckError {
+    fn from(s: String) -> Self {
+        Self::Db(s)
+    }
+}
+
+impl CheckError {
+    pub fn is_self_resolution_refusal(&self) -> bool {
+        matches!(self, Self::SelfResolutionRefused(_))
+    }
+}
+
+// CheckError is constructed via `From<String>` for DB-error fallbacks
+// from query helpers above; explicit re-export for symmetry with the
+// error-message taxonomy elsewhere in the crate.
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1002,6 +1325,232 @@ mod tests {
         assert_eq!(state, "previously_observed_expired");
         assert_eq!(last_obs.as_deref(), Some("2026-05-28T12:00:00Z"));
         assert_eq!(last_emit.as_deref(), Some("emit-prior"));
+    }
+
+    // -----------------------------------------------------------------
+    // Producer + self-resolution refusal tests.
+    // -----------------------------------------------------------------
+
+    fn never_observed_cls() -> AbsenceClassification {
+        AbsenceClassification::NeverObserved {
+            coverage_rule_id: 1,
+            coverage_rule_hash: "sha256:abc".into(),
+            expected_by: "2026-05-28T12:02:00Z".into(),
+            standing_resolver_id: "nq.local.static_config".into(),
+            escalation_target: "operator".into(),
+        }
+    }
+
+    #[test]
+    fn record_finding_inserts_warning_state_observation_and_detail() {
+        let mut db = fresh_db();
+        let key = record_coverage_testimony_absent_finding(
+            &mut db,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &never_observed_cls(),
+            1,
+            &t("2026-05-28T12:00:00Z"),
+            Some("2026-05-28T00:00:00Z"),
+            "nq.v0",
+        )
+        .expect("finding must record");
+        // finding_key is canonical.
+        assert!(key.starts_with("local/"));
+        assert!(key.contains(KIND_COVERAGE_TESTIMONY_ABSENT));
+
+        // warning_state row exists.
+        let (host, kind, subject, severity, domain): (String, String, String, String, String) = db
+            .conn
+            .query_row(
+                "SELECT host, kind, subject, severity, domain FROM warning_state
+                 WHERE kind = 'coverage_testimony_absent'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(host, COMPONENT_ID_NQ_LOCAL);
+        assert_eq!(kind, "coverage_testimony_absent");
+        assert_eq!(subject, SUBJECT_ID_OBSERVATION_LOOP);
+        assert_eq!(severity, "info");
+        assert_eq!(domain, "component_testimony");
+
+        // finding_observations row exists.
+        let n: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM finding_observations WHERE finding_key = ?1",
+                params![&key],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+
+        // detail row exists with escalation_target = operator.
+        let escalation: String = db
+            .conn
+            .query_row(
+                "SELECT escalation_target FROM coverage_testimony_absence_details
+                 WHERE finding_key = ?1",
+                params![&key],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(escalation, "operator");
+    }
+
+    #[test]
+    fn record_finding_refuses_active_classification() {
+        let mut db = fresh_db();
+        let err = record_coverage_testimony_absent_finding(
+            &mut db,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &AbsenceClassification::Active {
+                last_observed_at: "x".into(),
+                expires_at: "y".into(),
+                last_emission_id: "z".into(),
+                coverage_rule_id: 1,
+                coverage_rule_hash: "sha256:0".into(),
+            },
+            1,
+            &t("2026-05-28T12:00:00Z"),
+            None,
+            "nq.v0",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("non-finding-producing"));
+    }
+
+    #[test]
+    fn record_finding_is_idempotent_under_generation_replay() {
+        // Re-recording the same finding in the same generation should
+        // not produce duplicate finding_observations rows.
+        let mut db = fresh_db();
+        record_coverage_testimony_absent_finding(
+            &mut db,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &never_observed_cls(),
+            1,
+            &t("2026-05-28T12:00:00Z"),
+            None,
+            "nq.v0",
+        )
+        .unwrap();
+        record_coverage_testimony_absent_finding(
+            &mut db,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &never_observed_cls(),
+            1,
+            &t("2026-05-28T12:00:00Z"),
+            None,
+            "nq.v0",
+        )
+        .unwrap();
+        let n: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM finding_observations
+                 WHERE finding_key LIKE 'local/%' AND detector_id = 'coverage_testimony_absent'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn self_resolution_refused_for_nq_actor_with_operator_escalation() {
+        // Standing prohibition pinning. The lifecycle-mutation path
+        // refuses self-loops where actor.component_id ==
+        // subject.component_id AND actor != escalation_target.
+        let mut db = fresh_db();
+        let key = record_coverage_testimony_absent_finding(
+            &mut db,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &never_observed_cls(),
+            1,
+            &t("2026-05-28T12:00:00Z"),
+            None,
+            "nq.v0",
+        )
+        .unwrap();
+        let result = check_self_resolution_admissibility(
+            &db.conn,
+            &key,
+            ACTOR_NQ_LOCAL,
+        );
+        match result {
+            Err(CheckError::SelfResolutionRefused(refusal)) => {
+                assert_eq!(refusal.actor_component_id, "nq.local");
+                assert_eq!(refusal.subject_component_id, "nq.local");
+                assert_eq!(refusal.escalation_target, "operator");
+                assert!(refusal.finding_key.contains("coverage_testimony_absent"));
+            }
+            Err(e) => panic!("expected SelfResolutionRefused, got DB error: {e}"),
+            Ok(()) => panic!("expected self-resolution refusal, got Ok"),
+        }
+    }
+
+    #[test]
+    fn self_resolution_admissible_for_operator_actor() {
+        // The OTHER half: the standing prohibition expires for the
+        // legitimate-external-actor case. An operator actor may
+        // transition the same finding.
+        let mut db = fresh_db();
+        let key = record_coverage_testimony_absent_finding(
+            &mut db,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &never_observed_cls(),
+            1,
+            &t("2026-05-28T12:00:00Z"),
+            None,
+            "nq.v0",
+        )
+        .unwrap();
+        check_self_resolution_admissibility(&db.conn, &key, ACTOR_OPERATOR)
+            .expect("operator actor must be admissible (not the subject)");
+    }
+
+    #[test]
+    fn self_resolution_admissible_for_unknown_finding() {
+        // Findings not in the detail table (i.e., other kinds, or a
+        // wrong finding_key) get no opinion from this check.
+        let db = fresh_db();
+        check_self_resolution_admissibility(&db.conn, "fk-nonexistent", ACTOR_NQ_LOCAL)
+            .expect("unknown finding produces no refusal opinion");
+    }
+
+    #[test]
+    fn self_resolution_refusal_is_self_resolution_refusal_predicate() {
+        let mut db = fresh_db();
+        let key = record_coverage_testimony_absent_finding(
+            &mut db,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &never_observed_cls(),
+            1,
+            &t("2026-05-28T12:00:00Z"),
+            None,
+            "nq.v0",
+        )
+        .unwrap();
+        let err = check_self_resolution_admissibility(&db.conn, &key, ACTOR_NQ_LOCAL).unwrap_err();
+        assert!(
+            err.is_self_resolution_refusal(),
+            "predicate must classify the refusal as standing-prohibition"
+        );
     }
 
     #[test]
