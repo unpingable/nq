@@ -230,6 +230,184 @@ pub fn try_emit_observation_loop_alive(
     Ok(Some(emission_id))
 }
 
+// -----------------------------------------------------------------
+// Absence resolver.
+// -----------------------------------------------------------------
+
+/// Classification of expected-testimony state for one
+/// (component_id, subject_id, claim_kind) tuple at a given time.
+///
+/// Maps to the seven-state taxonomy from
+/// `WITNESS_IDENTITY_AND_ABSENCE_GAP` §2. Internal-emit heartbeats
+/// (the first slice) can produce at most three of the seven states:
+/// `Active` (not absent), `CoverageUnknown`, `NeverObserved`, and
+/// `PreviouslyObservedExpired`. The network-shaped states
+/// (`SourceUnreachable`, `SourceRefused`, `ReportedButRefused`,
+/// `SourceDeclaredAbsent`) require an ingestion boundary the
+/// self-emit path does not have. They land on this enum when
+/// network-shaped component-testimony adopters arrive in later
+/// slices.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AbsenceClassification {
+    /// Not absent — most recent emit is still within its grace
+    /// window. The heartbeat-presence half of the foundation
+    /// preflight §3 self-witness asymmetry.
+    Active {
+        last_observed_at: String,
+        expires_at: String,
+        last_emission_id: String,
+        coverage_rule_id: i64,
+        coverage_rule_hash: String,
+    },
+    /// No active coverage rule for this tuple. Steady state until
+    /// an operator declares coverage. **This state never escalates**
+    /// — it is the explicit refusal of the "missing heartbeat → NQ
+    /// unhealthy without coverage" laundering shape.
+    CoverageUnknown,
+    /// Active rule exists, but no observation has ever been recorded
+    /// for this tuple under any rule. Finding-producing.
+    NeverObserved {
+        coverage_rule_id: i64,
+        coverage_rule_hash: String,
+        expected_by: String,
+        standing_resolver_id: String,
+        escalation_target: String,
+    },
+    /// Active rule exists; the most recent observation's `expires_at`
+    /// has passed without a successor. Finding-producing.
+    PreviouslyObservedExpired {
+        coverage_rule_id: i64,
+        coverage_rule_hash: String,
+        last_observed_at: String,
+        expires_at: String,
+        last_emission_id: String,
+        standing_resolver_id: String,
+        escalation_target: String,
+    },
+}
+
+impl AbsenceClassification {
+    /// Stable string form for the absence_state column on findings.
+    /// Matches the seven-state taxonomy vocabulary from the parked
+    /// gap §2.
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::Active { .. } => "active",
+            Self::CoverageUnknown => "coverage_unknown",
+            Self::NeverObserved { .. } => "never_observed",
+            Self::PreviouslyObservedExpired { .. } => "previously_observed_expired",
+        }
+    }
+
+    /// True iff this classification warrants a `coverage_testimony_absent`
+    /// finding. `CoverageUnknown` does NOT warrant a finding — that is
+    /// the anti-laundering discipline. `Active` is not absent.
+    pub fn is_finding_producing(&self) -> bool {
+        matches!(
+            self,
+            Self::NeverObserved { .. } | Self::PreviouslyObservedExpired { .. }
+        )
+    }
+}
+
+/// Resolve absence for one (component_id, subject_id, claim_kind)
+/// tuple at the given evaluation time. Reads the active coverage rule
+/// (if any) and the most recent observation row from
+/// `observation_loop_alive_observations` (or future per-kind substrate
+/// tables) and classifies into one of the AbsenceClassification states.
+///
+/// V0 substrate: only `observation_loop_alive_observations`. Future
+/// component-testimony kinds add their own substrate tables; the
+/// resolver dispatches by claim_kind to the right table.
+pub fn classify_absence(
+    db: &WriteDb,
+    component_id: &str,
+    subject_id: &str,
+    claim_kind: &str,
+    now: &OffsetDateTime,
+) -> Result<AbsenceClassification, EmitError> {
+    let Some(rule) = lookup_active_rule(db, component_id, subject_id, claim_kind)? else {
+        return Ok(AbsenceClassification::CoverageUnknown);
+    };
+
+    // V0: only one claim_kind has a substrate table. Refuse cleanly
+    // when asked about a kind whose substrate doesn't exist yet — this
+    // catches drift between coverage-rule declarations and actual
+    // substrate support.
+    if claim_kind != KIND_OBSERVATION_LOOP_ALIVE {
+        return Err(EmitError::Db(format!(
+            "absence resolver: substrate table not yet wired for claim_kind {claim_kind:?}"
+        )));
+    }
+
+    let latest = db
+        .conn
+        .query_row(
+            "SELECT observed_at, expires_at, emission_id
+             FROM observation_loop_alive_observations
+             WHERE component_id = ?1 AND subject_id = ?2
+             ORDER BY observed_at DESC
+             LIMIT 1",
+            params![component_id, subject_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .map(Some);
+    let latest = match latest {
+        Ok(some) => some,
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => return Err(EmitError::Db(e.to_string())),
+    };
+
+    let now_iso = now
+        .format(&Rfc3339)
+        .map_err(|e| EmitError::TimeFormat(e.to_string()))?;
+
+    match latest {
+        None => {
+            let grace_secs = (rule.expected_interval_s as f64 * rule.grace_multiplier).round()
+                as i64;
+            let expected_by = (*now + time::Duration::seconds(grace_secs))
+                .format(&Rfc3339)
+                .map_err(|e| EmitError::TimeFormat(e.to_string()))?;
+            Ok(AbsenceClassification::NeverObserved {
+                coverage_rule_id: rule.coverage_rule_id,
+                coverage_rule_hash: rule.coverage_rule_hash,
+                expected_by,
+                standing_resolver_id: rule.standing_resolver_id,
+                escalation_target: rule.escalation_target,
+            })
+        }
+        Some((observed_at, expires_at, emission_id)) => {
+            // Active iff expires_at >= now.
+            if expires_at.as_str() >= now_iso.as_str() {
+                Ok(AbsenceClassification::Active {
+                    last_observed_at: observed_at,
+                    expires_at,
+                    last_emission_id: emission_id,
+                    coverage_rule_id: rule.coverage_rule_id,
+                    coverage_rule_hash: rule.coverage_rule_hash,
+                })
+            } else {
+                Ok(AbsenceClassification::PreviouslyObservedExpired {
+                    coverage_rule_id: rule.coverage_rule_id,
+                    coverage_rule_hash: rule.coverage_rule_hash,
+                    last_observed_at: observed_at,
+                    expires_at,
+                    last_emission_id: emission_id,
+                    standing_resolver_id: rule.standing_resolver_id,
+                    escalation_target: rule.escalation_target,
+                })
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,5 +643,160 @@ mod tests {
         assert_eq!(r.expected_interval_s, 60);
         assert!((r.grace_multiplier - 2.0).abs() < 1e-9);
         assert!(r.coverage_rule_hash.starts_with("sha256:"));
+    }
+
+    // -----------------------------------------------------------------
+    // Absence resolver tests.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn classify_absence_returns_coverage_unknown_without_rule() {
+        let db = fresh_db();
+        let cls = classify_absence(
+            &db,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &t("2026-05-28T12:00:00Z"),
+        )
+        .unwrap();
+        assert!(matches!(cls, AbsenceClassification::CoverageUnknown));
+        assert_eq!(cls.variant_name(), "coverage_unknown");
+        assert!(
+            !cls.is_finding_producing(),
+            "CoverageUnknown must NEVER produce a finding"
+        );
+    }
+
+    #[test]
+    fn classify_absence_returns_never_observed_when_rule_but_no_emit() {
+        let mut db = fresh_db();
+        reconcile_coverage_rules(&mut db, &[sample_rule_decl()], &t("2026-05-28T11:00:00Z"))
+            .unwrap();
+        let cls = classify_absence(
+            &db,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &t("2026-05-28T12:00:00Z"),
+        )
+        .unwrap();
+        match cls {
+            AbsenceClassification::NeverObserved {
+                coverage_rule_id,
+                escalation_target,
+                ..
+            } => {
+                assert!(coverage_rule_id > 0);
+                assert_eq!(escalation_target, "operator");
+            }
+            other => panic!("expected NeverObserved, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_absence_returns_active_when_emit_within_window() {
+        let mut db = fresh_db();
+        reconcile_coverage_rules(&mut db, &[sample_rule_decl()], &t("2026-05-28T11:00:00Z"))
+            .unwrap();
+        let mut ctx = EmitContext::default();
+        try_emit_observation_loop_alive(
+            &mut db,
+            &mut ctx,
+            &sample_inputs(1, "2026-05-28T12:00:00Z"),
+        )
+        .unwrap()
+        .unwrap();
+        // Evaluate at 12:01:00 — inside 60s * 2.0 = 120s window from
+        // observed_at = 12:00:00 (expires_at = 12:02:00).
+        let cls = classify_absence(
+            &db,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &t("2026-05-28T12:01:00Z"),
+        )
+        .unwrap();
+        match cls {
+            AbsenceClassification::Active {
+                last_observed_at,
+                expires_at,
+                ..
+            } => {
+                assert_eq!(last_observed_at, "2026-05-28T12:00:00Z");
+                assert_eq!(expires_at, "2026-05-28T12:02:00Z");
+            }
+            other => panic!("expected Active, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_absence_returns_previously_observed_expired_after_window() {
+        let mut db = fresh_db();
+        reconcile_coverage_rules(&mut db, &[sample_rule_decl()], &t("2026-05-28T11:00:00Z"))
+            .unwrap();
+        let mut ctx = EmitContext::default();
+        try_emit_observation_loop_alive(
+            &mut db,
+            &mut ctx,
+            &sample_inputs(1, "2026-05-28T12:00:00Z"),
+        )
+        .unwrap()
+        .unwrap();
+        // Evaluate at 12:03:00 — past the 12:02:00 expires_at.
+        let cls = classify_absence(
+            &db,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &t("2026-05-28T12:03:00Z"),
+        )
+        .unwrap();
+        match cls {
+            AbsenceClassification::PreviouslyObservedExpired {
+                last_observed_at,
+                expires_at,
+                escalation_target,
+                ..
+            } => {
+                assert_eq!(last_observed_at, "2026-05-28T12:00:00Z");
+                assert_eq!(expires_at, "2026-05-28T12:02:00Z");
+                assert_eq!(escalation_target, "operator");
+            }
+            other => panic!("expected PreviouslyObservedExpired, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classification_is_finding_producing_only_for_absence_states() {
+        // Pinned: CoverageUnknown and Active must NOT escalate; the
+        // two absence states MUST. Anti-laundering discipline.
+        let active = AbsenceClassification::Active {
+            last_observed_at: "x".into(),
+            expires_at: "y".into(),
+            last_emission_id: "z".into(),
+            coverage_rule_id: 1,
+            coverage_rule_hash: "sha256:0".into(),
+        };
+        assert!(!active.is_finding_producing());
+        assert!(!AbsenceClassification::CoverageUnknown.is_finding_producing());
+        assert!(AbsenceClassification::NeverObserved {
+            coverage_rule_id: 1,
+            coverage_rule_hash: "sha256:0".into(),
+            expected_by: "x".into(),
+            standing_resolver_id: "s".into(),
+            escalation_target: "e".into(),
+        }
+        .is_finding_producing());
+        assert!(AbsenceClassification::PreviouslyObservedExpired {
+            coverage_rule_id: 1,
+            coverage_rule_hash: "sha256:0".into(),
+            last_observed_at: "x".into(),
+            expires_at: "y".into(),
+            last_emission_id: "z".into(),
+            standing_resolver_id: "s".into(),
+            escalation_target: "e".into(),
+        }
+        .is_finding_producing());
     }
 }
