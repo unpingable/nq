@@ -408,6 +408,119 @@ pub fn classify_absence(
     }
 }
 
+// -----------------------------------------------------------------
+// coverage_testimony_absent detail-row writer.
+// -----------------------------------------------------------------
+
+/// Write a `coverage_testimony_absence_details` row for the given
+/// finding_key + classification. Idempotent: REPLACE semantics
+/// (PRIMARY KEY on finding_key); re-classifying the same finding
+/// produces a row that overwrites the prior detail entry.
+///
+/// Callers compute the `finding_key` via NQ's canonical
+/// `compute_finding_key("local", host, kind, subject)` so the detail
+/// row joins against the eventual `warning_state` / `finding_observations`
+/// row when commit 8 of this slice produces it.
+///
+/// The base finding row (in `warning_state` / `finding_observations`)
+/// is NOT written by this function. The detail table by itself does
+/// not produce a NQ-canonical "finding" — it provides the
+/// per-kind detail attached to a finding that an upstream producer
+/// creates. Commit 8 of the slice wires the upstream producer; this
+/// commit lands the detail-row writer + the table.
+pub fn write_coverage_testimony_absence_detail(
+    db: &mut WriteDb,
+    finding_key: &str,
+    component_id: &str,
+    subject_id: &str,
+    claim_kind: &str,
+    classification: &AbsenceClassification,
+    expected_after: Option<&str>,
+    evaluation_engine_id: &str,
+) -> Result<(), EmitError> {
+    let (
+        absence_state,
+        coverage_rule_id,
+        coverage_rule_hash,
+        expected_by,
+        last_observed_at,
+        last_emission_id,
+        standing_resolver_id,
+        escalation_target,
+    ) = match classification {
+        AbsenceClassification::CoverageUnknown | AbsenceClassification::Active { .. } => {
+            return Err(EmitError::Db(format!(
+                "detail-row writer refuses non-finding-producing classification {:?}; \
+                 CoverageUnknown / Active must not reach this path",
+                classification.variant_name()
+            )));
+        }
+        AbsenceClassification::NeverObserved {
+            coverage_rule_id,
+            coverage_rule_hash,
+            expected_by,
+            standing_resolver_id,
+            escalation_target,
+        } => (
+            "never_observed",
+            *coverage_rule_id,
+            coverage_rule_hash.as_str(),
+            Some(expected_by.as_str()),
+            None,
+            None,
+            standing_resolver_id.as_str(),
+            escalation_target.as_str(),
+        ),
+        AbsenceClassification::PreviouslyObservedExpired {
+            coverage_rule_id,
+            coverage_rule_hash,
+            last_observed_at,
+            expires_at,
+            last_emission_id,
+            standing_resolver_id,
+            escalation_target,
+        } => (
+            "previously_observed_expired",
+            *coverage_rule_id,
+            coverage_rule_hash.as_str(),
+            Some(expires_at.as_str()),
+            Some(last_observed_at.as_str()),
+            Some(last_emission_id.as_str()),
+            standing_resolver_id.as_str(),
+            escalation_target.as_str(),
+        ),
+    };
+
+    db.conn
+        .execute(
+            "INSERT OR REPLACE INTO coverage_testimony_absence_details (
+                finding_key, component_id, subject_id, claim_kind,
+                coverage_rule_id, coverage_rule_hash, absence_state,
+                expected_after, expected_by, last_observed_at, last_emission_id,
+                standing_resolver_id, escalation_target, evaluation_engine_id,
+                source_detail
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, NULL)",
+            params![
+                finding_key,
+                component_id,
+                subject_id,
+                claim_kind,
+                coverage_rule_id,
+                coverage_rule_hash,
+                absence_state,
+                expected_after,
+                expected_by,
+                last_observed_at,
+                last_emission_id,
+                standing_resolver_id,
+                escalation_target,
+                evaluation_engine_id,
+            ],
+        )
+        .map_err(|e| EmitError::Db(e.to_string()))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -765,6 +878,193 @@ mod tests {
             }
             other => panic!("expected PreviouslyObservedExpired, got {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------
+    // coverage_testimony_absent detail-row writer tests.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn write_detail_refuses_coverage_unknown() {
+        let mut db = fresh_db();
+        let err = write_coverage_testimony_absence_detail(
+            &mut db,
+            "fk-1",
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &AbsenceClassification::CoverageUnknown,
+            None,
+            "nq.v0",
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("CoverageUnknown") || msg.contains("coverage_unknown"),
+            "writer must refuse CoverageUnknown classification, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn write_detail_refuses_active() {
+        let mut db = fresh_db();
+        let err = write_coverage_testimony_absence_detail(
+            &mut db,
+            "fk-1",
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &AbsenceClassification::Active {
+                last_observed_at: "2026-05-28T12:00:00Z".into(),
+                expires_at: "2026-05-28T12:02:00Z".into(),
+                last_emission_id: "x".into(),
+                coverage_rule_id: 1,
+                coverage_rule_hash: "sha256:abc".into(),
+            },
+            None,
+            "nq.v0",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("active"),
+            "writer must refuse Active classification"
+        );
+    }
+
+    #[test]
+    fn write_detail_inserts_never_observed() {
+        let mut db = fresh_db();
+        write_coverage_testimony_absence_detail(
+            &mut db,
+            "fk-never",
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &AbsenceClassification::NeverObserved {
+                coverage_rule_id: 42,
+                coverage_rule_hash: "sha256:never".into(),
+                expected_by: "2026-05-28T12:02:00Z".into(),
+                standing_resolver_id: "nq.local.static_config".into(),
+                escalation_target: "operator".into(),
+            },
+            Some("2026-05-28T00:00:00Z"),
+            "nq.v0+sha:abc",
+        )
+        .expect("never_observed detail row must insert");
+
+        let (state, last_obs, last_emit, escalation): (String, Option<String>, Option<String>, String) =
+            db.conn
+                .query_row(
+                    "SELECT absence_state, last_observed_at, last_emission_id, escalation_target
+                     FROM coverage_testimony_absence_details WHERE finding_key = 'fk-never'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .unwrap();
+        assert_eq!(state, "never_observed");
+        assert!(last_obs.is_none(), "NeverObserved must have NULL last_observed_at");
+        assert!(last_emit.is_none(), "NeverObserved must have NULL last_emission_id");
+        assert_eq!(escalation, "operator");
+    }
+
+    #[test]
+    fn write_detail_inserts_previously_observed_expired() {
+        let mut db = fresh_db();
+        write_coverage_testimony_absence_detail(
+            &mut db,
+            "fk-expired",
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &AbsenceClassification::PreviouslyObservedExpired {
+                coverage_rule_id: 42,
+                coverage_rule_hash: "sha256:exp".into(),
+                last_observed_at: "2026-05-28T12:00:00Z".into(),
+                expires_at: "2026-05-28T12:02:00Z".into(),
+                last_emission_id: "emit-prior".into(),
+                standing_resolver_id: "nq.local.static_config".into(),
+                escalation_target: "operator".into(),
+            },
+            Some("2026-05-28T00:00:00Z"),
+            "nq.v0",
+        )
+        .expect("expired detail row must insert");
+
+        let (state, last_obs, last_emit): (String, Option<String>, Option<String>) = db
+            .conn
+            .query_row(
+                "SELECT absence_state, last_observed_at, last_emission_id
+                 FROM coverage_testimony_absence_details WHERE finding_key = 'fk-expired'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(state, "previously_observed_expired");
+        assert_eq!(last_obs.as_deref(), Some("2026-05-28T12:00:00Z"));
+        assert_eq!(last_emit.as_deref(), Some("emit-prior"));
+    }
+
+    #[test]
+    fn write_detail_is_idempotent_by_finding_key() {
+        let mut db = fresh_db();
+        let cls = AbsenceClassification::NeverObserved {
+            coverage_rule_id: 1,
+            coverage_rule_hash: "sha256:a".into(),
+            expected_by: "2026-05-28T12:02:00Z".into(),
+            standing_resolver_id: "nq.local.static_config".into(),
+            escalation_target: "operator".into(),
+        };
+        write_coverage_testimony_absence_detail(
+            &mut db,
+            "fk-idem",
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &cls,
+            None,
+            "nq.v0",
+        )
+        .unwrap();
+        // Re-write with a different classification (still finding-producing)
+        // — the row should be replaced, not duplicated.
+        let cls2 = AbsenceClassification::PreviouslyObservedExpired {
+            coverage_rule_id: 1,
+            coverage_rule_hash: "sha256:b".into(),
+            last_observed_at: "2026-05-28T12:00:00Z".into(),
+            expires_at: "2026-05-28T12:02:00Z".into(),
+            last_emission_id: "x".into(),
+            standing_resolver_id: "nq.local.static_config".into(),
+            escalation_target: "operator".into(),
+        };
+        write_coverage_testimony_absence_detail(
+            &mut db,
+            "fk-idem",
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &cls2,
+            None,
+            "nq.v0",
+        )
+        .unwrap();
+        let n: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM coverage_testimony_absence_details WHERE finding_key = 'fk-idem'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "duplicate finding_key must not produce duplicate rows");
+        let state: String = db
+            .conn
+            .query_row(
+                "SELECT absence_state FROM coverage_testimony_absence_details WHERE finding_key = 'fk-idem'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "previously_observed_expired");
     }
 
     #[test]
