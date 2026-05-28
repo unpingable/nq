@@ -165,6 +165,23 @@ Abbreviated. This is the **post-consumer-contract-hardening** receipt shape (gap
 
 **`signals.sqlite_wal_state.threshold_band` is descriptive testimony classification, not alert severity.** Values are `bounded` / `elevated` / `severe`. Consumers may map them to their own alert vocabulary (warn / critical / page-oncall / etc.); NQ does not. Adding alert/consequence fields (`action_required`, `should_restart`, `severity`) to this namespace would launder consequence into the receipt and is explicitly out of scope. The receipt-side test guard pins this.
 
+**`signals.sqlite_wal_state.pinned_reader = "present"` is deployment-shape-dependent, not anomalous on its own.** Any SQLite DB with a persistent service holding a long-running read transaction will report `present` steadily. Both production NQ deployments observe this as steady-state:
+
+- `labelwatch.db` — the labelwatch service holds a long-running writer connection (single-writer invariant) and the discovery sidecar holds read connections across full derive cycles (~60–80 min).
+- `nq.db` (NQ-on-NQ Tier 0) — `nq serve` legitimately holds a read transaction across pulse cycles. Same lock-pattern shape.
+
+That is design, not pathology. The WAL-bloat fingerprint per the 2026-04-22 incident lineage is the **combination**:
+
+```text
+pinned_reader: present
++ threshold_band: severe
++ main_db_mtime_stale_across_window: true
+```
+
+Two of the three alone is not the operationally meaningful signal — labelwatch always has the first signal but neither of the other two in steady-state, and the receipt should not be read as warning shape because the first field happens to be `present`.
+
+For substrates that do *not* have a known long-running reader (one-shot scripts, ephemeral migration scratchpads), `pinned_reader: present` IS substantively interesting — the calibration is deployment-shape-dependent, not universal. Future consumer prompts (a per-deployment calibration layer, a downstream nq-mcp's closure-eligibility predicate, NS's Gate 1 substrate input) should bake this in: surface the *triple*, not the single field, and flip the default interpretation per substrate type when the deployment shape is known.
+
 ## Captured Receipt markdown render (abbreviated)
 
 ```markdown
