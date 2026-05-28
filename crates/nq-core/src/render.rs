@@ -91,6 +91,14 @@ pub fn render_human(r: &Receipt) -> String {
         out.push_str(&format!("Observed:  {min} → {max}\n"));
     }
     out.push_str(&format!("Generated: {}\n", r.generated_at));
+    if let Some(ev) = &r.evaluator {
+        out.push_str(&format!("Evaluator: {} v{}\n", ev.evaluator, ev.version));
+    }
+    // Timestamp only. The renderer does not compute live/stale posture —
+    // that would require a clock injection it does not have.
+    if let Some(horizon) = &r.freshness_horizon {
+        out.push_str(&format!("Freshness horizon: {horizon}\n"));
+    }
 
     out
 }
@@ -116,6 +124,14 @@ pub fn render_markdown(r: &Receipt) -> String {
     out.push_str(&format!("**Claim:** `{}`  \n", r.claim));
     out.push_str(&format!("**Subject:** `{}`  \n", r.subject));
     out.push_str(&format!("**Status:** `{}`\n\n", status_word(r.status)));
+
+    // Freshness horizon is load-bearing for consumers that may otherwise
+    // read historical testimony as present-tense. Surface near the top
+    // metadata, not buried in the footer. Timestamp only — no live/stale
+    // computation in the renderer.
+    if let Some(horizon) = &r.freshness_horizon {
+        out.push_str(&format!("**Freshness horizon:** `{horizon}`\n\n"));
+    }
 
     if let Some(t) = &r.target {
         out.push_str("### Target\n\n");
@@ -192,6 +208,15 @@ pub fn render_markdown(r: &Receipt) -> String {
         "<sub>Generated `{}` from `{}`.</sub>\n",
         r.generated_at, r.schema
     ));
+    if let Some(ev) = &r.evaluator {
+        out.push_str(&format!(
+            "<sub>Evaluator: `{}` v{}</sub>\n",
+            ev.evaluator, ev.version
+        ));
+    }
+    if let Some(hash) = &r.content_hash {
+        out.push_str(&format!("<sub>Receipt hash: `{hash}`</sub>\n"));
+    }
 
     out
 }
@@ -296,7 +321,7 @@ fn reason_word(r: StatusReason) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::receipt::{NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef};
+    use crate::receipt::{EvaluatorBinding, NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef};
 
     fn sample() -> Receipt {
         Receipt {
@@ -414,6 +439,14 @@ mod tests {
                 "window_seconds": null,
             }
         }));
+        r.evaluator = Some(EvaluatorBinding {
+            evaluator: "sqlite_wal_state".into(),
+            version: 1,
+        });
+        r.freshness_horizon = Some("2026-05-28T14:32:00Z".into());
+        r.content_hash = Some(
+            "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".into(),
+        );
         r
     }
 
@@ -523,5 +556,109 @@ mod tests {
         assert!(!s.contains("Target:"));
         assert!(!s.contains("Refused claims:"));
         assert!(!s.contains("Signals:"));
+    }
+
+    // -----------------------------------------------------------------
+    // Receipt metadata parity — render freshness_horizon, evaluator,
+    // and content_hash. Per-surface policy:
+    //
+    //   human:    freshness_horizon (load-bearing) + evaluator (provenance).
+    //             content_hash omitted (terminal noise).
+    //   markdown: all three. freshness_horizon near top (consumer reads
+    //             top-down); evaluator + content_hash in the <sub> footer.
+    //
+    // External-vocabulary discipline holds: timestamp shown, no
+    // computed stale/live posture in the renderer.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn human_renders_freshness_horizon_when_present() {
+        let s = render_human(&sample_with_consumer_fields());
+        assert!(s.contains("Freshness horizon: 2026-05-28T14:32:00Z"));
+    }
+
+    #[test]
+    fn human_renders_evaluator_when_present() {
+        let s = render_human(&sample_with_consumer_fields());
+        assert!(s.contains("Evaluator: sqlite_wal_state v1"));
+    }
+
+    #[test]
+    fn human_does_not_render_content_hash() {
+        // content_hash is intentionally markdown-only — terminal noise
+        // when present, and consumers who need it can fall through to
+        // JSON. Pinning the omission so a well-meaning future edit
+        // doesn't sprinkle 64-hex characters across `nq` CLI output.
+        let s = render_human(&sample_with_consumer_fields());
+        assert!(!s.contains("Receipt hash"));
+        assert!(!s.contains("sha256:abcdef"));
+    }
+
+    #[test]
+    fn human_omits_horizon_and_evaluator_when_absent() {
+        let s = render_human(&sample());
+        assert!(!s.contains("Freshness horizon"));
+        assert!(!s.contains("Evaluator:"));
+    }
+
+    #[test]
+    fn markdown_renders_freshness_horizon_near_top() {
+        let s = render_markdown(&sample_with_consumer_fields());
+        assert!(s.contains("**Freshness horizon:** `2026-05-28T14:32:00Z`"));
+        // Top placement: horizon appears before any ### section header.
+        let horizon_idx = s.find("Freshness horizon").expect("horizon present");
+        if let Some(first_section) = s.find("###") {
+            assert!(
+                horizon_idx < first_section,
+                "freshness horizon must appear before the first ### section so \
+                 consumers reading top-down see it before substantive content"
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_renders_evaluator_in_footer() {
+        let s = render_markdown(&sample_with_consumer_fields());
+        assert!(s.contains("<sub>Evaluator: `sqlite_wal_state` v1</sub>"));
+    }
+
+    #[test]
+    fn markdown_renders_content_hash_in_footer() {
+        let s = render_markdown(&sample_with_consumer_fields());
+        assert!(s.contains(
+            "<sub>Receipt hash: `sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789`</sub>"
+        ));
+    }
+
+    #[test]
+    fn markdown_omits_horizon_evaluator_hash_when_absent() {
+        let s = render_markdown(&sample());
+        assert!(!s.contains("Freshness horizon"));
+        assert!(!s.contains("Evaluator:"));
+        assert!(!s.contains("Receipt hash"));
+    }
+
+    #[test]
+    fn renderer_does_not_compute_stale_or_live_from_horizon() {
+        // The renderer must not derive a stale/live verdict from the
+        // horizon. Doing so would turn the renderer into an evaluator
+        // with an implicit clock — exactly the kind of laundering the
+        // external-vocabulary discipline exists to refuse.
+        let h = render_human(&sample_with_consumer_fields());
+        let m = render_markdown(&sample_with_consumer_fields());
+        // "Fresh" is excluded because the field label itself is
+        // "Freshness horizon". The verdict-shaped words we're guarding
+        // against are derivations *from* the horizon ("stale", "live",
+        // "expired", etc.) — not the label naming the horizon.
+        for forbidden in ["stale", "live", "expired", "valid", "outdated"] {
+            assert!(
+                !h.to_lowercase().contains(forbidden),
+                "human renderer must not contain verdict-shaped freshness word {forbidden:?}"
+            );
+            assert!(
+                !m.to_lowercase().contains(forbidden),
+                "markdown renderer must not contain verdict-shaped freshness word {forbidden:?}"
+            );
+        }
     }
 }
