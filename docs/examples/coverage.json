@@ -1,0 +1,26 @@
+{
+  "_": "Example coverage-rules declaration. Place a real version at",
+  "_path": "config/coverage.json (or wherever your nq-aggregator config points).",
+  "_doc": "See docs/working/decisions/preflights/NQ_ON_NQ_COMPONENT_TESTIMONY_FOUNDATION.md §2.",
+  "_": "Per scope question D (resolved 2026-05-28): JSON is the V0 declaration",
+  "_": "surface. The aggregator re-reads the file each pulse and translates",
+  "_": "deltas to append-only DB operations on the coverage_rules table.",
+  "_": "Top-level keys starting with underscore are ignored.",
+
+  "coverage_rules": [
+    {
+      "component_id": "nq.local",
+      "subject_id": "observation_loop",
+      "claim_kind": "component_testimony_observation_loop_alive",
+      "expected_interval_s": 60,
+      "grace_multiplier": 2.0,
+      "coverage_start": "2026-05-28T00:00:00Z",
+      "valid_until": null,
+      "standing_resolver_id": "nq.local.static_config",
+      "escalation_target": "operator",
+      "declared_by": "operator",
+      "declared_at": "2026-05-28T00:00:00Z",
+      "notes": "First-slice NQ-on-NQ observation-loop heartbeat. Expires_at = generated_at + 120s (interval * grace). Operator is the only admissible escalation target while no external reconciler exists."
+    }
+  ]
+}
