@@ -35,17 +35,13 @@ const PREVIOUS_SCHEMA_VERSION: u32 = CURRENT_SCHEMA_VERSION - 1;
 /// existing tables becomes the latest, this constant becomes wrong and the
 /// test stops representing the upgrade path it claims to.
 ///
-/// Migration 052 adds `observation_loop_alive_observations` (the
-/// substrate table for the component_testimony_observation_loop_alive
-/// claim kind, per the NQ-on-NQ component-testimony foundation preflight).
-/// Per the upgrade-test fixture discipline, the table is dropped +
-/// user_version rolled back so the migration runs as part of the test's
-/// forward path.
-///
-/// Note: migration 051 (coverage_rules) was the latest in the previous
-/// commit; the upgrade test fixture only rolls back the SINGLE latest
-/// migration, so this constant tracks 052's added tables only.
-const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["observation_loop_alive_observations"];
+/// Migration 053 adds `coverage_testimony_absence_details` (the
+/// per-kind detail table for coverage_testimony_absent findings,
+/// per the NQ-on-NQ component-testimony foundation preflight §3 —
+/// operator-revised 2026-05-28 to use a detail table rather than
+/// sparse nullable columns on the generic finding substrate).
+const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] =
+    &["coverage_testimony_absence_details"];
 
 #[test]
 fn upgrade_from_previous_version_preserves_data() {
