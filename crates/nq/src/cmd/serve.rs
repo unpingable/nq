@@ -3,7 +3,11 @@ use crate::http;
 use crate::pull;
 use nq_core::config::NotificationChannel;
 use nq_core::Config;
-use nq_db::component_testimony::{try_emit_observation_loop_alive, EmitContext, EmitInputs};
+use nq_db::component_testimony::{
+    classify_absence, record_coverage_testimony_absent_finding, try_emit_observation_loop_alive,
+    AbsenceClassification, EmitContext, EmitInputs, COMPONENT_ID_NQ_LOCAL,
+    KIND_OBSERVATION_LOOP_ALIVE, SUBJECT_ID_OBSERVATION_LOOP,
+};
 use nq_db::coverage_rules::{load_coverage_rules, reconcile_coverage_rules, LoadOutcome};
 use nq_db::{
     active_declarations, load_declarations, migrate, open_ro, open_rw, publish_batch,
@@ -243,6 +247,56 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                                     warn!(err = %e, "component-testimony heartbeat emit failed");
                                 }
                             }
+
+                            // Defense-in-depth: ALSO run absence
+                            // classification in the pulse. Within a
+                            // pulse where the emit just succeeded the
+                            // classification returns Active and no
+                            // finding is produced. If a future hiccup
+                            // prevents the emit (e.g., DB transient
+                            // error), this path catches the
+                            // PreviouslyObservedExpired state on the
+                            // next pulse and produces the
+                            // coverage_testimony_absent finding.
+                            // CoverageUnknown / Active never produce
+                            // findings (anti-laundering discipline).
+                            let now = time::OffsetDateTime::now_utc();
+                            match classify_absence(
+                                db.conn(),
+                                COMPONENT_ID_NQ_LOCAL,
+                                SUBJECT_ID_OBSERVATION_LOOP,
+                                KIND_OBSERVATION_LOOP_ALIVE,
+                                &now,
+                            ) {
+                                Ok(cls) if cls.is_finding_producing() => {
+                                    if let Err(e) =
+                                        record_coverage_testimony_absent_finding(
+                                            &mut db,
+                                            COMPONENT_ID_NQ_LOCAL,
+                                            SUBJECT_ID_OBSERVATION_LOOP,
+                                            KIND_OBSERVATION_LOOP_ALIVE,
+                                            &cls,
+                                            result.generation_id,
+                                            &now,
+                                            None,
+                                            &evaluation_engine_id,
+                                        )
+                                    {
+                                        warn!(err = %e, "coverage_testimony_absent finding record failed");
+                                    }
+                                }
+                                Ok(_) => {
+                                    // Active or CoverageUnknown — no
+                                    // finding. The default path under
+                                    // normal operation.
+                                }
+                                Err(e) => {
+                                    warn!(err = %e, "absence classification failed");
+                                }
+                            }
+                            // Suppress unused warning when the import
+                            // is conditional below.
+                            let _ = AbsenceClassification::CoverageUnknown;
                         }
                         Err(e) => {
                             error!(err = %e, "publish failed");

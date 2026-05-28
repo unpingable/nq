@@ -90,13 +90,12 @@ pub enum EmitError {
 /// operator has declared coverage; equivalent to `CoverageUnknown`
 /// downstream). Returns `Err` only on DB failure.
 pub fn lookup_active_rule(
-    db: &WriteDb,
+    conn: &rusqlite::Connection,
     component_id: &str,
     subject_id: &str,
     claim_kind: &str,
 ) -> Result<Option<ActiveRule>, EmitError> {
-    let row = db
-        .conn
+    let row = conn
         .query_row(
             "SELECT coverage_rule_id, coverage_rule_hash,
                     expected_interval_s, grace_multiplier,
@@ -155,7 +154,7 @@ pub fn try_emit_observation_loop_alive(
     inputs: &EmitInputs,
 ) -> Result<Option<String>, EmitError> {
     let Some(rule) = lookup_active_rule(
-        db,
+        &db.conn,
         COMPONENT_ID_NQ_LOCAL,
         SUBJECT_ID_OBSERVATION_LOOP,
         KIND_OBSERVATION_LOOP_ALIVE,
@@ -320,13 +319,13 @@ impl AbsenceClassification {
 /// component-testimony kinds add their own substrate tables; the
 /// resolver dispatches by claim_kind to the right table.
 pub fn classify_absence(
-    db: &WriteDb,
+    conn: &rusqlite::Connection,
     component_id: &str,
     subject_id: &str,
     claim_kind: &str,
     now: &OffsetDateTime,
 ) -> Result<AbsenceClassification, EmitError> {
-    let Some(rule) = lookup_active_rule(db, component_id, subject_id, claim_kind)? else {
+    let Some(rule) = lookup_active_rule(conn, component_id, subject_id, claim_kind)? else {
         return Ok(AbsenceClassification::CoverageUnknown);
     };
 
@@ -340,8 +339,7 @@ pub fn classify_absence(
         )));
     }
 
-    let latest = db
-        .conn
+    let latest = conn
         .query_row(
             "SELECT observed_at, expires_at, emission_id
              FROM observation_loop_alive_observations
@@ -844,6 +842,156 @@ impl CheckError {
 // from query helpers above; explicit re-export for symmetry with the
 // error-message taxonomy elsewhere in the crate.
 
+// -----------------------------------------------------------------
+// Evaluator → PreflightResult.
+// -----------------------------------------------------------------
+
+use nq_core::preflight::{
+    ClaimKind, PreflightResult, PreflightTarget, Verdict,
+};
+
+/// Evaluate one (component_id, subject_id) tuple of the
+/// component_testimony_observation_loop_alive kind into a
+/// PreflightResult.
+///
+/// Verdict mapping:
+///
+/// - Active            → AdmissibleWithScope
+/// - CoverageUnknown   → InsufficientCoverage
+/// - NeverObserved     → InsufficientCoverage (no observations yet
+///                        under declared coverage)
+/// - PreviouslyObservedExpired → StaleTestimony
+///
+/// Signals carry the four resolver-split fields per the foundation
+/// preflight §1 propagation discipline (packets → findings → receipts).
+/// Consumers render these via the existing namespaced signals path.
+pub fn evaluate_observation_loop_alive_preflight(
+    conn: &rusqlite::Connection,
+    component_id: &str,
+    subject_id: &str,
+    now: &OffsetDateTime,
+    evaluation_engine_id: &str,
+) -> Result<PreflightResult, EmitError> {
+    let cls = classify_absence(conn, component_id, subject_id, KIND_OBSERVATION_LOOP_ALIVE, now)?;
+
+    let target = PreflightTarget {
+        host: component_id.to_string(),
+        scope: "component_testimony".to_string(),
+        id: Some(subject_id.to_string()),
+    };
+    let generated_at = now
+        .format(&Rfc3339)
+        .map_err(|e| EmitError::TimeFormat(e.to_string()))?;
+    let mut result = PreflightResult::skeleton(
+        ClaimKind::ComponentTestimonyObservationLoopAlive,
+        target,
+        generated_at,
+    );
+
+    let (verdict, verdict_note, signals) = build_evaluator_output(&cls, evaluation_engine_id);
+    result.verdict = verdict;
+    result.verdict_note = verdict_note;
+    result.signals = Some(signals);
+
+    Ok(result)
+}
+
+fn build_evaluator_output(
+    cls: &AbsenceClassification,
+    evaluation_engine_id: &str,
+) -> (Verdict, Option<String>, serde_json::Value) {
+    let kind_ns = KIND_OBSERVATION_LOOP_ALIVE;
+    match cls {
+        AbsenceClassification::Active {
+            last_observed_at,
+            expires_at,
+            last_emission_id,
+            coverage_rule_id,
+            coverage_rule_hash,
+        } => (
+            Verdict::AdmissibleWithScope,
+            Some(format!(
+                "Heartbeat observed at {last_observed_at}; admissible until {expires_at}."
+            )),
+            serde_json::json!({
+                kind_ns: {
+                    "absence_state": "active",
+                    "last_observed_at": last_observed_at,
+                    "expires_at": expires_at,
+                    "last_emission_id": last_emission_id,
+                    "coverage_rule_id": coverage_rule_id,
+                    "coverage_rule_hash": coverage_rule_hash,
+                    "evaluation_engine_id": evaluation_engine_id,
+                }
+            }),
+        ),
+        AbsenceClassification::CoverageUnknown => (
+            Verdict::InsufficientCoverage,
+            Some(
+                "No declared coverage rule for this (component, subject); absence is \
+                 not classifiable. Steady state until an operator declares coverage."
+                    .to_string(),
+            ),
+            serde_json::json!({
+                kind_ns: {
+                    "absence_state": "coverage_unknown",
+                    "evaluation_engine_id": evaluation_engine_id,
+                }
+            }),
+        ),
+        AbsenceClassification::NeverObserved {
+            coverage_rule_id,
+            coverage_rule_hash,
+            expected_by,
+            standing_resolver_id,
+            escalation_target,
+        } => (
+            Verdict::InsufficientCoverage,
+            Some(format!(
+                "Coverage rule active; no testimony has ever been received. Expected by {expected_by}."
+            )),
+            serde_json::json!({
+                kind_ns: {
+                    "absence_state": "never_observed",
+                    "coverage_rule_id": coverage_rule_id,
+                    "coverage_rule_hash": coverage_rule_hash,
+                    "expected_by": expected_by,
+                    "standing_resolver_id": standing_resolver_id,
+                    "escalation_target": escalation_target,
+                    "evaluation_engine_id": evaluation_engine_id,
+                }
+            }),
+        ),
+        AbsenceClassification::PreviouslyObservedExpired {
+            coverage_rule_id,
+            coverage_rule_hash,
+            last_observed_at,
+            expires_at,
+            last_emission_id,
+            standing_resolver_id,
+            escalation_target,
+        } => (
+            Verdict::StaleTestimony,
+            Some(format!(
+                "Last heartbeat at {last_observed_at} expired at {expires_at}."
+            )),
+            serde_json::json!({
+                kind_ns: {
+                    "absence_state": "previously_observed_expired",
+                    "coverage_rule_id": coverage_rule_id,
+                    "coverage_rule_hash": coverage_rule_hash,
+                    "last_observed_at": last_observed_at,
+                    "expires_at": expires_at,
+                    "last_emission_id": last_emission_id,
+                    "standing_resolver_id": standing_resolver_id,
+                    "escalation_target": escalation_target,
+                    "evaluation_engine_id": evaluation_engine_id,
+                }
+            }),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1052,7 +1200,7 @@ mod tests {
     fn lookup_active_rule_returns_none_when_absent() {
         let db = fresh_db();
         let r = lookup_active_rule(
-            &db,
+            &db.conn,
             COMPONENT_ID_NQ_LOCAL,
             SUBJECT_ID_OBSERVATION_LOOP,
             KIND_OBSERVATION_LOOP_ALIVE,
@@ -1067,7 +1215,7 @@ mod tests {
         reconcile_coverage_rules(&mut db, &[sample_rule_decl()], &t("2026-05-28T11:00:00Z"))
             .unwrap();
         let r = lookup_active_rule(
-            &db,
+            &db.conn,
             COMPONENT_ID_NQ_LOCAL,
             SUBJECT_ID_OBSERVATION_LOOP,
             KIND_OBSERVATION_LOOP_ALIVE,
@@ -1089,7 +1237,7 @@ mod tests {
     fn classify_absence_returns_coverage_unknown_without_rule() {
         let db = fresh_db();
         let cls = classify_absence(
-            &db,
+            &db.conn,
             COMPONENT_ID_NQ_LOCAL,
             SUBJECT_ID_OBSERVATION_LOOP,
             KIND_OBSERVATION_LOOP_ALIVE,
@@ -1110,7 +1258,7 @@ mod tests {
         reconcile_coverage_rules(&mut db, &[sample_rule_decl()], &t("2026-05-28T11:00:00Z"))
             .unwrap();
         let cls = classify_absence(
-            &db,
+            &db.conn,
             COMPONENT_ID_NQ_LOCAL,
             SUBJECT_ID_OBSERVATION_LOOP,
             KIND_OBSERVATION_LOOP_ALIVE,
@@ -1146,7 +1294,7 @@ mod tests {
         // Evaluate at 12:01:00 — inside 60s * 2.0 = 120s window from
         // observed_at = 12:00:00 (expires_at = 12:02:00).
         let cls = classify_absence(
-            &db,
+            &db.conn,
             COMPONENT_ID_NQ_LOCAL,
             SUBJECT_ID_OBSERVATION_LOOP,
             KIND_OBSERVATION_LOOP_ALIVE,
@@ -1181,7 +1329,7 @@ mod tests {
         .unwrap();
         // Evaluate at 12:03:00 — past the 12:02:00 expires_at.
         let cls = classify_absence(
-            &db,
+            &db.conn,
             COMPONENT_ID_NQ_LOCAL,
             SUBJECT_ID_OBSERVATION_LOOP,
             KIND_OBSERVATION_LOOP_ALIVE,
@@ -1529,6 +1677,146 @@ mod tests {
         let db = fresh_db();
         check_self_resolution_admissibility(&db.conn, "fk-nonexistent", ACTOR_NQ_LOCAL)
             .expect("unknown finding produces no refusal opinion");
+    }
+
+    // -----------------------------------------------------------------
+    // Evaluator tests.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn evaluator_returns_insufficient_coverage_when_no_rule() {
+        let db = fresh_db();
+        let r = evaluate_observation_loop_alive_preflight(
+            &db.conn,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            &t("2026-05-28T12:00:00Z"),
+            "nq.v0",
+        )
+        .unwrap();
+        assert!(matches!(r.verdict, Verdict::InsufficientCoverage));
+        // signals carry the absence_state.
+        let sig = r.signals.unwrap();
+        assert_eq!(
+            sig[KIND_OBSERVATION_LOOP_ALIVE]["absence_state"]
+                .as_str()
+                .unwrap(),
+            "coverage_unknown"
+        );
+    }
+
+    #[test]
+    fn evaluator_returns_admissible_with_scope_when_active() {
+        let mut db = fresh_db();
+        reconcile_coverage_rules(&mut db, &[sample_rule_decl()], &t("2026-05-28T11:00:00Z"))
+            .unwrap();
+        let mut ctx = EmitContext::default();
+        try_emit_observation_loop_alive(
+            &mut db,
+            &mut ctx,
+            &sample_inputs(1, "2026-05-28T12:00:00Z"),
+        )
+        .unwrap()
+        .unwrap();
+        let r = evaluate_observation_loop_alive_preflight(
+            &db.conn,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            &t("2026-05-28T12:01:00Z"),
+            "nq.v0",
+        )
+        .unwrap();
+        assert!(matches!(r.verdict, Verdict::AdmissibleWithScope));
+        let sig = r.signals.unwrap();
+        // Resolver-split fields propagate via signals (per §1 propagation).
+        assert!(sig[KIND_OBSERVATION_LOOP_ALIVE]["coverage_rule_hash"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert_eq!(
+            sig[KIND_OBSERVATION_LOOP_ALIVE]["evaluation_engine_id"]
+                .as_str()
+                .unwrap(),
+            "nq.v0"
+        );
+    }
+
+    #[test]
+    fn evaluator_returns_stale_testimony_when_expired() {
+        let mut db = fresh_db();
+        reconcile_coverage_rules(&mut db, &[sample_rule_decl()], &t("2026-05-28T11:00:00Z"))
+            .unwrap();
+        let mut ctx = EmitContext::default();
+        try_emit_observation_loop_alive(
+            &mut db,
+            &mut ctx,
+            &sample_inputs(1, "2026-05-28T12:00:00Z"),
+        )
+        .unwrap()
+        .unwrap();
+        let r = evaluate_observation_loop_alive_preflight(
+            &db.conn,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            &t("2026-05-28T12:03:00Z"),
+            "nq.v0",
+        )
+        .unwrap();
+        assert!(matches!(r.verdict, Verdict::StaleTestimony));
+        let sig = r.signals.unwrap();
+        assert_eq!(
+            sig[KIND_OBSERVATION_LOOP_ALIVE]["absence_state"]
+                .as_str()
+                .unwrap(),
+            "previously_observed_expired"
+        );
+        assert_eq!(
+            sig[KIND_OBSERVATION_LOOP_ALIVE]["escalation_target"]
+                .as_str()
+                .unwrap(),
+            "operator"
+        );
+    }
+
+    #[test]
+    fn evaluator_returns_insufficient_coverage_when_never_observed() {
+        let mut db = fresh_db();
+        reconcile_coverage_rules(&mut db, &[sample_rule_decl()], &t("2026-05-28T11:00:00Z"))
+            .unwrap();
+        let r = evaluate_observation_loop_alive_preflight(
+            &db.conn,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            &t("2026-05-28T12:00:00Z"),
+            "nq.v0",
+        )
+        .unwrap();
+        assert!(matches!(r.verdict, Verdict::InsufficientCoverage));
+        let sig = r.signals.unwrap();
+        assert_eq!(
+            sig[KIND_OBSERVATION_LOOP_ALIVE]["absence_state"]
+                .as_str()
+                .unwrap(),
+            "never_observed"
+        );
+    }
+
+    #[test]
+    fn evaluator_skeleton_carries_constitutional_cannot_testify() {
+        let db = fresh_db();
+        let r = evaluate_observation_loop_alive_preflight(
+            &db.conn,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            &t("2026-05-28T12:00:00Z"),
+            "nq.v0",
+        )
+        .unwrap();
+        assert!(!r.cannot_testify.is_empty());
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("NQ is healthy")));
     }
 
     #[test]
