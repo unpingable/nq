@@ -33,6 +33,8 @@ This gap proposes a sixth, specific to self-monitoring:
 
 That is the self-monitoring version of keeper #1 ("witnesses observe; they do not promote"). It says: NQ can emit witness observations about its own operational substrate (route hit, probe ran, receipt minted) — observations are fine. But the *standing* claim ("NQ is healthy," "the route is up") requires a witness from outside the component being claimed about.
 
+**2026-05-28 cross-component framing:** the sixth-keeper hypothesis named here is the **NQ-side local instance** of a cross-component pattern named in [`~/git/cartography/coordination/SELF-SUBJECT-COLLAPSE.md`](file:///home/jbeck/git/cartography/coordination/SELF-SUBJECT-COLLAPSE.md). Three forcing instances were identified that day: NS (heartbeat-shaped), NQ-on-NQ (substrate-state-shaped, this gap), and agent_gov `GOV_GAP_BASIS_001` (basis-discipline-shaped). The cross-component pattern is **recognized, not promoted**; resolution path (a/b/c) awaits operator decision. The local NQ-side sixth-keeper framing here remains correct as-is; it is now one instance of a broader recognized shape rather than a uniquely-NQ keeper.
+
 ### What this rule refuses
 
 - `nq_route_state` evaluator on NQ-A reading NQ-A's own HTTP request log to certify NQ-A's route is healthy. That is the tiny chapel of self-attestation. Charming, cursed.
