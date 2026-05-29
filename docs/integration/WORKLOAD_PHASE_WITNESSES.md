@@ -421,6 +421,37 @@ No adopter is required to ship in any order. Each adoption is independent. The g
 - **`[[feedback_nq_register_witness_not_governance]]` (pinned).** Workload-phase observation is witness discipline. Not governance. Vocabulary stays observational ("observed", "measured", "recorded"), not adjudicative ("ratified", "admitted", "canon").
 - **`[[project_nq_on_nq_second_consumer]]` (pinned).** NQ-on-NQ is the dogfood forcing surface. Workload-phase witnessing on NQ-self is one of two named NQ-on-NQ slices; the other is `sqlite_wal_state` (already shipped Tier 0).
 
+## 2026-05-29: held-status lift + severity decomposition refinement
+
+**Held-status lift.** The doctrinal-held framing on this integration draft (per `../working/gaps/NQ_NS_CHANNEL_SPLIT_NQ_SIDE.md` Non-goals + Provenance) was operator-acknowledged as lifted on 2026-05-29. The "second forcing consumer" gate the spike deferred on is satisfied by labelwatch Day-5 (the PHLR forcing case below) plus NQ-on-NQ as the second consumer surface ([[project_nq_on_nq_second_consumer]]). The doc moves toward v1-shaped status; the v0 packet spine above stands as the grammar, with the refinement below as part of v1 shape.
+
+**Severity decomposition refinement.** The `harm` block in the v0 packet spine above (lines 64–71) currently bundles axes that operator review on 2026-05-29 surfaced as distinct:
+
+- `drops_during` / `drops_after` / `rollback_lost` are **loss**.
+- `db_locked_during` / `db_locked_after` are **pressure** / contention.
+- `queue_full_during` is **pressure** / shedding.
+
+The labelwatch `update_author_day` / `update_author_labeler_day` Day-5 soak (2026-05-29) is the forcing case. Raw discovery drops over 24h were 757; unique DIDs affected were 5; top-3 concentration was ~94%; loss was recoverable by backstop scrape. The raw counter alone would have read as severe loss; the subject-aware decomposition reframed it as bounded pressure with recoverable loss. A `harm` block that mixes the four axes laundering-defeats this distinction at the wire boundary.
+
+v1 shape decomposes into four axis blocks in place of the current single `harm` block:
+
+- `pressure` — load / contention / retry amplification / backlog / resource stress.
+- `harm` — which operational obligation degraded.
+- `loss` — what distinct subjects / items were missed, corrupted, or discarded (subject-aware where possible; top-N concentration when retry/replay amplification is plausible).
+- `recoverability` — whether the loss can be reconstructed, replayed, or re-observed (with mechanism + expiration where applicable).
+
+Each axis carries per-axis `cannot_testify` discipline. Silent absence of an axis block is the laundering shape this refinement refuses.
+
+See [`../working/gaps/PRESSURE_HARM_LOSS_RECOVERABILITY_GAP.md`](../working/gaps/PRESSURE_HARM_LOSS_RECOVERABILITY_GAP.md) for the gap, forcing case, vocabulary definitions, witness-shape implications, and `can_testify` / `cannot_testify` discipline. See also [[project_pressure_harm_loss_recoverability_candidate]] and the parent [[project_axis_decomposition_doctrine_candidate]] (the broader frame: *NQ should not classify incidents; it should preserve the axes incidents collapse*).
+
+**Scope of this update.** The held-status lift and the PHLR refinement vocabulary are recorded here. The packet-structure restructure (folding the four axis blocks into the main spine in place of the current `harm` block) is a follow-up scope, not authorized by this amendment. Emitter implementation, schema, evaluators, and any new claim kinds remain unauthorized.
+
+The keepers this refinement preserves at the witness layer:
+
+- *Pressure is not harm. Harm is not loss. Loss is not unrecoverability.*
+- *Counters without subject identity collapse pressure into harm.*
+- *A green health check is meaningless unless it says what it cannot testify to.*
+
 ## Provenance
 
 Filed 2026-05-28 after a multi-turn operator-led generalization arc that began as "labelwatch soak needs APM-shaped exports" and trajectoried through four reframings:
