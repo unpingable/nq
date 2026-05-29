@@ -21,7 +21,7 @@ use time::OffsetDateTime;
 
 fn test_db() -> nq_db::WriteDb {
     let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.into_path().join("test.db");
+    let db_path = dir.keep().join("test.db");
     let mut db = open_rw(&db_path).unwrap();
     migrate(&mut db).unwrap();
     db
