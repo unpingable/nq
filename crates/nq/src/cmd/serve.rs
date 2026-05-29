@@ -53,13 +53,11 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
         // across pulses so each emit's last_success_at reflects the
         // PREVIOUS successful emit's observed_at, never the current one.
         let mut testimony_ctx = EmitContext::default();
-        // Evaluator/component identifiers used in heartbeat emits.
-        // build_commit is the canonical content-anchored identifier; fall
-        // back to package version when unavailable (test builds).
-        let evaluation_engine_id = format!(
-            "nq:{}",
-            nq_db::build_commit().unwrap_or(env!("CARGO_PKG_VERSION"))
-        );
+        // Evaluator identity stamped onto every heartbeat emit + every
+        // coverage_testimony_absent finding produced inside this loop.
+        // Centralized in nq_db so this path and the HTTP route cannot
+        // drift in format.
+        let evaluation_engine_id = nq_db::evaluation_engine_id();
         let component_version = env!("CARGO_PKG_VERSION").to_string();
         loop {
             cycle += 1;

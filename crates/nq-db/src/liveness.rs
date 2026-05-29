@@ -21,6 +21,28 @@ pub fn build_commit() -> Option<&'static str> {
     option_env!("NQ_BUILD_COMMIT")
 }
 
+/// Canonical NQ evaluation-engine identity string for receipts /
+/// packets / finding rows. Used by any code path that needs to stamp
+/// "which NQ binary evaluated this observation" onto an artifact.
+///
+/// Shape: `nq:<commit_or_version>` where the suffix is the build
+/// commit when `NQ_BUILD_COMMIT` is set at compile time, falling back
+/// to the workspace package version (e.g. `0.1.0`) when it isn't.
+///
+/// Both `nq` and `nq-db` crates carry `version.workspace = true`, so
+/// the `CARGO_PKG_VERSION` fallback resolves to the same workspace
+/// version regardless of which crate's compilation evaluates it. The
+/// helper lives here, next to `build_commit`, so call sites cannot
+/// drift in format (previously serve + the http route each formatted
+/// the string inline — see WITNESS_EVALUATOR_BOUNDARY_GAP for the
+/// evaluation-engine-identity contract).
+pub fn evaluation_engine_id() -> String {
+    format!(
+        "nq:{}",
+        build_commit().unwrap_or(env!("CARGO_PKG_VERSION"))
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LivenessArtifact {
     /// Format version of this artifact (not the DB schema version).

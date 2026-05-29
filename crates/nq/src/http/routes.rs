@@ -940,10 +940,7 @@ async fn api_preflight_component_testimony_observation_loop_alive(
         ));
     }
     let db = db.lock().await;
-    let evaluation_engine_id = format!(
-        "nq:{}",
-        nq_db::build_commit().unwrap_or(env!("CARGO_PKG_VERSION"))
-    );
+    let evaluation_engine_id = nq_db::evaluation_engine_id();
     match evaluate_observation_loop_alive_preflight(
         db.conn(),
         component,
