@@ -348,10 +348,18 @@ pub fn classify_absence(
 
     let latest = conn
         .query_row(
+            // Tiebreak on emission_id is hygiene, not a current bug:
+            // emission_id is unique per (component, subject, kind,
+            // generation, observed_at), and same-instant duplicates
+            // are not produced by the steady-state emit path. Pinning
+            // the secondary sort makes the query deterministic against
+            // any future writer that produces same-observed_at rows
+            // (clock-resolution coincidence, restored-from-snapshot
+            // double-emit, future external importer).
             "SELECT observed_at, expires_at, emission_id
              FROM observation_loop_alive_observations
              WHERE component_id = ?1 AND subject_id = ?2
-             ORDER BY observed_at DESC
+             ORDER BY observed_at DESC, emission_id DESC
              LIMIT 1",
             params![component_id, subject_id],
             |row| {
