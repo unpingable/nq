@@ -369,10 +369,6 @@ pub fn classify_absence(
         Err(e) => return Err(EmitError::Db(e.to_string())),
     };
 
-    let now_iso = now
-        .format(&Rfc3339)
-        .map_err(|e| EmitError::TimeFormat(e.to_string()))?;
-
     match latest {
         None => {
             let grace_secs = (rule.expected_interval_s as f64 * rule.grace_multiplier).round()
@@ -389,8 +385,17 @@ pub fn classify_absence(
             })
         }
         Some((observed_at, expires_at, emission_id)) => {
-            // Active iff expires_at >= now.
-            if expires_at.as_str() >= now_iso.as_str() {
+            // Active iff expires_at >= now. Parse the stored RFC3339
+            // string explicitly rather than lexicographic compare —
+            // string compare only works under a brittle invariant (no
+            // fractional seconds, identical timezone notation across
+            // writers, identical zero-padding). A future writer with a
+            // different format would silently misclassify here. The
+            // parse cost is negligible at NQ's QPS; the format-
+            // invariant footgun is not.
+            let expires_at_dt = OffsetDateTime::parse(&expires_at, &Rfc3339)
+                .map_err(|e| EmitError::TimeFormat(e.to_string()))?;
+            if expires_at_dt >= *now {
                 Ok(AbsenceClassification::Active {
                     last_observed_at: observed_at,
                     expires_at,
