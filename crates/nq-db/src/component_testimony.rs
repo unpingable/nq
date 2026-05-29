@@ -42,9 +42,16 @@ pub const COMPONENT_ID_NQ_LOCAL: &str = "nq.local";
 /// subject NQ-on-NQ coverage rules declare in their JSON.
 pub const SUBJECT_ID_OBSERVATION_LOOP: &str = "observation_loop";
 
-/// Default checkpoint name when the emit fires at the end of a
-/// successful pulse. Carried verbatim onto the observation row.
-pub const CHECKPOINT_PULSE_COMPLETE: &str = "pulse_complete";
+/// Checkpoint name carried on the observation row. The value is a
+/// coordinate — "the observation loop reached the emit point" — not
+/// an outcome claim. The earlier name `pulse_complete` overloaded what
+/// the heartbeat testifies to: in `serve.rs` the emit fires after
+/// publish_batch + several log-and-continue downstream steps, so
+/// "complete" was wider than the witness can honestly claim. The
+/// honest reading is GPS, not résumé. See
+/// `docs/working/gaps/WITNESS_EVALUATOR_BOUNDARY_GAP.md` §1 for the
+/// witness-contract framing.
+pub const CHECKPOINT_OBSERVATION_LOOP_REACHED_EMIT: &str = "observation_loop_reached_emit";
 
 /// Per-emit context the caller carries across pulses. Tracks
 /// `last_success_at` so each row's `last_success_at` reflects the
@@ -214,7 +221,7 @@ pub fn try_emit_observation_loop_alive(
                 &rule.coverage_rule_hash,
                 &inputs.evaluation_engine_id,
                 SUBJECT_ID_OBSERVATION_LOOP,
-                CHECKPOINT_PULSE_COMPLETE,
+                CHECKPOINT_OBSERVATION_LOOP_REACHED_EMIT,
                 last_success_at.as_deref(),
                 &inputs.component_version,
                 &inputs.schema_version,
@@ -765,6 +772,20 @@ pub struct SelfResolutionRefusal {
 /// actor is the subject component AND not the declared
 /// escalation_target.
 ///
+/// # INVARIANT
+///
+/// Any future finding lifecycle-mutation surface that can transition
+/// `coverage_testimony_absent` findings (or any future
+/// component-testimony finding kinds) MUST route through this
+/// admissibility check. Until such a surface exists, this refusal is
+/// preemptive boundary scaffolding, not production enforcement.
+///
+/// See `docs/working/gaps/WITNESS_EVALUATOR_BOUNDARY_GAP.md` §4 for
+/// the articulated discipline. The (currently unwritten)
+/// `FINDING_LIFECYCLE_MUTATION_SURFACE_GAP` is the surface this
+/// refusal will be wired to; until it is filed and built, the
+/// scaffolding has no production caller.
+///
 /// V0 semantics: scoped to coverage_testimony_absent findings (the
 /// only kind whose detail table records subject_component_id +
 /// escalation_target). For other kinds the function returns
@@ -1134,7 +1155,7 @@ mod tests {
         assert_eq!(evaluation_engine_id, "nq.v0+sha:test");
         // expires_at = observed_at + 60 * 2.0 = 12:02:00.
         assert_eq!(expires_at, "2026-05-28T12:02:00Z");
-        assert_eq!(checkpoint_name, CHECKPOINT_PULSE_COMPLETE);
+        assert_eq!(checkpoint_name, CHECKPOINT_OBSERVATION_LOOP_REACHED_EMIT);
         assert_eq!(schema_version, "v1");
     }
 
@@ -1964,7 +1985,7 @@ mod tests {
                           '2026-05-28T12:00:00Z', '2026-05-28T12:00:00Z',
                           '2026-05-28T12:02:00Z',
                           NULL, NULL, NULL, NULL, NULL,
-                          'observation_loop', 'pulse_complete',
+                          'observation_loop', 'observation_loop_reached_emit',
                           'nq-0.1.0', 'v1', 'lie-1-attempt')",
                 [],
             )

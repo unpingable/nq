@@ -1101,7 +1101,7 @@ mod tests {
                       '2026-05-28T12:02:00Z',
                       'nq.local.static_config', 'operator',
                       ?2, 'sha256:abc', 'nq.v0+sha:abc123',
-                      'observation_loop', 'pulse_complete',
+                      'observation_loop', 'observation_loop_reached_emit',
                       '2026-05-28T11:59:00Z', 'nq-0.1.0', 'v1', ?3)",
             rusqlite::params![gen_id, cov_id, emission_id],
         )?;
@@ -1135,7 +1135,7 @@ mod tests {
                           '2026-05-28T12:02:00Z',
                           NULL, 'operator',
                           ?2, 'sha256:abc', 'nq.v0',
-                          'observation_loop', 'pulse_complete',
+                          'observation_loop', 'observation_loop_reached_emit',
                           'nq-0.1.0', 'v1', 'emit-x')",
                 rusqlite::params![gen_id, cov_id],
             )
@@ -1169,7 +1169,7 @@ mod tests {
                           '2026-05-28T12:02:00Z',
                           '', 'operator',
                           ?2, 'sha256:abc', 'nq.v0',
-                          'observation_loop', 'pulse_complete',
+                          'observation_loop', 'observation_loop_reached_emit',
                           'nq-0.1.0', 'v1', 'emit-x')",
                 rusqlite::params![gen_id, cov_id],
             )
@@ -1199,7 +1199,7 @@ mod tests {
                           '2026-05-28T12:02:00Z',
                           'nq.local.static_config', NULL,
                           ?2, 'sha256:abc', 'nq.v0',
-                          'observation_loop', 'pulse_complete',
+                          'observation_loop', 'observation_loop_reached_emit',
                           'nq-0.1.0', 'v1', 'emit-x')",
                 rusqlite::params![gen_id, cov_id],
             )
@@ -1229,7 +1229,7 @@ mod tests {
                           '2026-05-28T12:02:00Z',
                           'nq.local.static_config', 'operator',
                           ?2, NULL, 'nq.v0',
-                          'observation_loop', 'pulse_complete',
+                          'observation_loop', 'observation_loop_reached_emit',
                           'nq-0.1.0', 'v1', 'emit-x')",
                 rusqlite::params![gen_id, cov_id],
             )
@@ -1259,7 +1259,7 @@ mod tests {
                           '2026-05-28T12:00:00Z',  -- expires_at == generated_at: physically impossible
                           'nq.local.static_config', 'operator',
                           ?2, 'sha256:abc', 'nq.v0',
-                          'observation_loop', 'pulse_complete',
+                          'observation_loop', 'observation_loop_reached_emit',
                           'nq-0.1.0', 'v1', 'emit-x')",
                 rusqlite::params![gen_id, cov_id],
             )
@@ -1313,7 +1313,7 @@ mod tests {
                           '2026-05-28T12:02:00Z',
                           'nq.local.static_config', 'operator',
                           9999, 'sha256:abc', 'nq.v0',
-                          'observation_loop', 'pulse_complete',
+                          'observation_loop', 'observation_loop_reached_emit',
                           'nq-0.1.0', 'v1', 'emit-x')",
                 [],
             )
@@ -1375,7 +1375,7 @@ mod tests {
                           '2026-05-28T12:02:00Z',
                           'nq.local.static_config', 'operator',
                           ?2, 'sha256:abc', 'nq.v0',
-                          'observation_loop', 'pulse_complete', NULL,
+                          'observation_loop', 'observation_loop_reached_emit', NULL,
                           'nq-0.1.0', 'v1', 'emit-first')",
                 rusqlite::params![gen_id, cov_id],
             )
@@ -1401,7 +1401,7 @@ mod tests {
                           '2026-05-28T12:02:00Z',
                           'nq.local.static_config', 'operator',
                           ?2, 'sha256:abc', 'nq.v0',
-                          'observation_loop', 'pulse_complete', '',
+                          'observation_loop', 'observation_loop_reached_emit', '',
                           'nq-0.1.0', 'v1', 'emit-x')",
                 rusqlite::params![gen_id, cov_id],
             )
