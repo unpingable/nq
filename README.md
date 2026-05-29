@@ -42,7 +42,7 @@ chmod +x nq
 sudo mv nq /usr/local/bin/
 ```
 
-Or build from source:
+Or build from source (requires **Rust ≥ 1.88** — pinned in `rust-toolchain.toml`):
 
 ```bash
 git clone https://github.com/unpingable/nq.git && cd nq

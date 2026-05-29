@@ -1,2 +1,10 @@
+# Pinned to NQ's current MSRV floor (Rust 1.88).
+#
+# The constellation MSRV floor is 1.85 (edition2024 / serde_jcs 0.2 / axum;
+# see ~/git/cartography/audit/2026-05-28-external-reproducibility-report.md
+# and Wicket's rust-toolchain.toml). NQ's lockfile pulls in time 0.3.47 /
+# time-core 0.1.8 / time-macros 0.2.27, which require rustc 1.88. Pinning
+# here makes that requirement an explicit MSRV message rather than an opaque
+# cascade of "rustc version not supported" errors at build time.
 [toolchain]
-channel = "stable"
+channel = "1.88"
