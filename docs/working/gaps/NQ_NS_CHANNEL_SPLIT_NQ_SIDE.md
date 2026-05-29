@@ -195,7 +195,7 @@ These remain after this gap files NQ's positions. They wait on convergent work w
 
 ## Non-goals
 
-- Not a generic workload-phase witness contract. (The integration-doc draft at `docs/integration/WORKLOAD_PHASE_WITNESSES.md` is held; per the spike's discipline, generic-grammar promotion waits for a second component forcing the same shape.)
+- Not a generic workload-phase witness contract. (The integration-doc draft at `docs/integration/WORKLOAD_PHASE_WITNESSES.md` had its held status lifted 2026-05-29 — second-forcing-consumer gate satisfied by labelwatch Day-5 + NQ-on-NQ; the PHLR axis decomposition refinement is part of v1 shape via [`PRESSURE_HARM_LOSS_RECOVERABILITY_GAP.md`](PRESSURE_HARM_LOSS_RECOVERABILITY_GAP.md). This gap remains scoped to channel-split; the workload-phase grammar is not under this gap's authority.)
 - Not a Standing-tool integration spec. (NQ's `StandingResolver` seam lives in `REMOTE_SURFACE_AUTH_AND_STANDING_GAP`; this gap composes against it.)
 - Not the implementation of any NQ-on-NQ external reconciler. (`SELF-SUBJECT-COLLAPSE.md` files the recognition; the architectural work to address it is deferred.)
 - Not a federation primitive. (NS↔NQ in this slice is bilateral, not federated.)
@@ -220,4 +220,4 @@ The disagreeable claim NS-Claude already accepted earlier in the same day (2026-
 
 The pin that pulled the self-subject-collapse out as its own shared gap was the operator's observation: *"NQ-on-NQ escalation has no external reconciler. When `threshold_band` drifts from bounded, the stake says NQ may not resolve it — and nothing external exists to. That's the same self-subject-collapse as `GOV_GAP_BASIS_001`."* The pin moved the unsolved structural problem out of this slice and into a cross-component gap so this slice could land cleanly. See `~/git/cartography/coordination/SELF-SUBJECT-COLLAPSE.md`.
 
-Held in working tree but not committed: `docs/integration/WORKLOAD_PHASE_WITNESSES.md`. That doc crossed the line this gap (and the spike it composes with) explicitly defers — the generic workload-phase grammar before a second component forced the same shape. The draft is preserved as input for a future iteration after the shared self-subject-collapse gap and the first-slice work have surfaced the actual cross-component requirements; it is not authorized to ship in its current form.
+Note on `docs/integration/WORKLOAD_PHASE_WITNESSES.md`: when this gap was filed (2026-05-28), the integration draft was committed under held-doctrinally framing — held in working tree as a doctrinal posture, awaiting a second forcing consumer per the spike's discipline. The held status was lifted 2026-05-29 by the labelwatch Day-5 forcing case (which surfaced PHLR axis decomposition; see [`PRESSURE_HARM_LOSS_RECOVERABILITY_GAP.md`](PRESSURE_HARM_LOSS_RECOVERABILITY_GAP.md)) plus NQ-on-NQ as the second consumer surface. The doc is v1-shaped; PHLR is part of v1 shape; packet-structure restructure is a follow-up scope.
