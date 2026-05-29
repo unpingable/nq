@@ -35,7 +35,7 @@ const EXPECTED_EXPORT_STALE: &str = include_str!("fixtures/expected_export_after
 
 fn test_db() -> nq_db::WriteDb {
     let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.into_path().join("test.db");
+    let db_path = dir.keep().join("test.db");
     let mut db = open_rw(&db_path).unwrap();
     migrate(&mut db).unwrap();
     // Seed generation 1 so export's current_generation lookup has a row.

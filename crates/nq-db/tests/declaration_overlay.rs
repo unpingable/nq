@@ -27,9 +27,7 @@ use time::OffsetDateTime;
 
 fn test_db() -> nq_db::WriteDb {
     let dir = tempfile::tempdir().unwrap();
-    // into_path is the existing convention in detector_fixtures; keep it
-    // consistent here so the deprecation warning lands in one place.
-    let db_path = dir.into_path().join("test.db");
+    let db_path = dir.keep().join("test.db");
     let mut db = open_rw(&db_path).unwrap();
     migrate(&mut db).unwrap();
     db
