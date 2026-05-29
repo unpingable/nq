@@ -11,8 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --all
+      - name: Install Rust toolchain (per rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - run: cargo test --all --locked
 
   gap-status-discipline:
     runs-on: ubuntu-latest
