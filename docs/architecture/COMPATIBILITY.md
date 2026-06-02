@@ -21,7 +21,7 @@ These hold inside any single release. Upgrading across releases requires reading
 
 - **Across releases — what we try not to break:**
   - The aggregator HTTP API surfaces (the dashboard at `/`, the SQL API at `/api/query`, the per-finding detail pages at `/finding/<kind>/<host>/...`). Breaks here go in `CHANGELOG.md` under "Breaking changes" with the migration path named.
-  - The witness packet wire format (`nq.witness_packet.v1` — the envelope `nq-monitor publish` POSTs to `nq-monitor serve`). The version suffix is load-bearing: a future `v2` packet ships alongside `v1` during transition, never replacing it silently.
+  - The witness packet wire format (`nq.witness_packet.v1` — the envelope `nq-witness` exposes at `GET /state`, which `nq-monitor serve` pulls). The version suffix is load-bearing: a future `v2` packet ships alongside `v1` during transition, never replacing it silently.
   - SQLite databases written by an older `nq` are readable by a newer `nq` via the migration path. We do not break read-back-compat within a major version.
 
 ## What we expect to change

@@ -29,7 +29,8 @@ Five layers. Each layer has one job and one keeper rule. The keepers exist to pr
 - `WitnessPacket` — `crates/nq-core/src/witness.rs` (constant `WITNESS_SCHEMA = "nq.witness.v1"`)
 - `observed_at`, `generated_at`, `vantage`, `subject`, `coverage_limits`, `dependencies` — `WitnessPacket` fields
 - `cannot_testify` — per-claim-kind constitutional refusal lists (e.g. `disk_state_cannot_testify()`, `ingest_state_cannot_testify()`, `dns_state_cannot_testify()`) in `crates/nq-core/src/preflight.rs`
-- Producer-side contracts: `nq.witness.v0` plus per-profile shapes (`nq.witness.zfs.v0`, `nq.witness.smart.v0`) — separate repo at `~/git/nq-witness`
+- Producer-side contracts: `nq.witness.v0` plus per-profile shapes (`nq.witness.zfs.v0`, `nq.witness.smart.v0`) — separate repo at `~/git/nq-witness` (this is the sibling foundation-spec / library-spec repo, distinct from the workspace crate `crates/nq-witness/` introduced 2026-06-02 — see Track 4 of [`../working/decisions/OSS_READINESS_ROADMAP.md`](../working/decisions/OSS_READINESS_ROADMAP.md))
+- Structural W/E separation (2026-06-02): the witness role lives in its own workspace crate `crates/nq-witness/` + binary `nq-witness`. The monitor binary (`nq-monitor`) does not depend on `nq-witness` as a library — they communicate over HTTP via `crates/nq-witness-api/`. Co-residence inside one process is no longer the default; if a future deployment wants in-process witness collection, it must explicitly opt into a `local-witness` cargo feature (not yet implemented — gated on forcing case).
 
 **Doctrine:** `../architecture/WITNESS_PACKET.md` (three witness-semantics constraints), `~/git/nq-witness/SPEC.md`
 

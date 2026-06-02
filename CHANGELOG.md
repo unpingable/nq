@@ -12,17 +12,18 @@ The first tagged release. Three operator-owned production hosts and a live demo 
 
 ### Added
 
-- **Publisher** (`nq publish`) — pulls Prometheus exporters, systemd/Docker service status, SQLite DB inspection (size, WAL, freelist, quick-check), and log sources (journald + file). Emits `nq.witness_packet.v1` envelopes over HTTP POST.
-- **Aggregator + dashboard** (`nq serve`) — runs 15 built-in detectors classifying findings into four failure domains (Δo signal missing / Δs signal skewed / Δg substrate unstable / Δh trend degrading). Web dashboard with Open Findings, Failure Domains, Host State, substrate tables, and a SQL console.
-- **Receipt CLI** (`nq receipt check`, `nq receipt replay`) — deterministic content-hash sealing; replay is reproducible per `schema_version`.
+- **Witness binary** (`nq-witness`) — pulls Prometheus exporters, systemd/Docker service status, SQLite DB inspection (size, WAL, freelist, quick-check), and log sources (journald + file). Exposes `nq.witness_packet.v1` envelopes at `GET /state`. Replaces the prior `nq publish` subcommand; same wire shape.
+- **Aggregator + dashboard** (`nq-monitor serve`) — runs 15 built-in detectors classifying findings into four failure domains (Δo signal missing / Δs signal skewed / Δg substrate unstable / Δh trend degrading). Web dashboard with Open Findings, Failure Domains, Host State, substrate tables, and a SQL console.
+- **Structural witness/evaluator separation** — the witness and the monitor are separate workspace crates and separate binaries. `nq-monitor` does not link against the witness library; the cross-process contract lives in `nq-witness-api`. (Track 4 of `OSS_READINESS_ROADMAP.md`.)
+- **Receipt CLI** (`nq-monitor receipt check`, `nq-monitor receipt replay`) — deterministic content-hash sealing; replay is reproducible per `schema_version`.
 - **Notifications** — webhook, Slack, Discord. Durable identity (new vs recurring); same-severity 24h cooldown; severity escalations always notify.
-- **Component-testimony self-witness** — `nq serve` emits `component_testimony_observation_loop_alive` heartbeat under operator-declared coverage rules. Absence resolver classifies missing heartbeats; refusal-shape `CoverageUnknown` is the steady state when no rule is declared.
+- **Component-testimony self-witness** — `nq-monitor serve` emits `component_testimony_observation_loop_alive` heartbeat under operator-declared coverage rules. Absence resolver classifies missing heartbeats; refusal-shape `CoverageUnknown` is the steady state when no rule is declared.
 - **Three-axis finding state** — `condition` × `stability` × `visibility`. When a host goes unreachable, child findings flip to `visibility=suppressed` with last-known state preserved; they reappear on host recovery.
 - **Severity escalation by persistence** — findings start at `info`, escalate to `warning` after ~30 generations, then `critical` after ~180 generations. Spikes that clear do not escalate.
 - **Dashboard axis decomposition** — header summary renders `Severity` and `Response` as separate labeled axes; substrate-as-evidence findings (`freelist_bloat`) inline their SQLite DB stats adjacent to the finding row.
 - **SQL is the interface** — every table and view is queryable from the dashboard or via the SQL API. 30+ pre-built `v_*` views; saved queries become recurring checks.
 - **Verdict register** — eight verdicts (`Admissible`, `AdmissibleWithScope`, `UnsupportedAsStated`, `ClaimExceedsTestimony`, `InsufficientCoverage`, `StaleTestimony`, `ContradictoryTestimony`, `CannotTestify`) carry the adjudicative shape of every finding.
-- **Distribution** — single binary, Linux `x86_64` and `aarch64` musl. Built against Rust 1.88, pinned in `rust-toolchain.toml`.
+- **Distribution** — two binaries (`nq-monitor` + `nq-witness`), Linux `x86_64` and `aarch64` musl. Built against Rust 1.88, pinned in `rust-toolchain.toml`.
 
 ### Documentation
 
@@ -36,7 +37,7 @@ The first tagged release. Three operator-owned production hosts and a live demo 
 - **Linux only** (`x86_64` + `aarch64` musl). macOS port parked; Windows out-of-scope unless a contributor ships one.
 - **No container image yet** — Dockerfile + GHCR publish are roadmapped as Track 2 of `docs/working/decisions/OSS_READINESS_ROADMAP.md`.
 - **No Prometheus `/metrics` export from `nq serve`** — roadmapped as Track 3a.
-- **`nq publish` is part of the unified binary** — the separable `nq-witness` daemon is roadmapped as Track 4 under a `v0-wire-equals-current-wire` constraint.
+- **No `local-witness` cargo feature on `nq-monitor`** — a deliberate omission for v0.1.0. An in-process monolith mode (witness embedded inside `nq-monitor`) is permitted by the architecture but gated on a forcing case; today every deployment runs the witness in its own process.
 - **Pre-1.0 stability** — schema migrations land freely, wire format may evolve, detector identities may be retuned. See `COMPATIBILITY.md` for the contract.
 
 [Unreleased]: https://github.com/unpingable/nq/compare/v0.1.0...HEAD

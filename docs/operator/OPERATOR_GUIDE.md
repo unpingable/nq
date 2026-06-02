@@ -6,9 +6,9 @@ This guide is the recommended starting point if you have just downloaded the bin
 
 ## What NQ does, in one paragraph
 
-NQ runs as a single statically-linked binary on Linux. There are two distinct uses, and you can pick either, both, or neither:
+NQ ships as two statically-linked Linux binaries (`nq-monitor` + `nq-witness`). There are two distinct uses, and you can pick either, both, or neither:
 
-- **Operational monitor.** `nq-monitor publish` runs on each host you want to monitor; `nq-monitor serve` runs centrally, pulls from each publisher, runs detectors, stores findings in SQLite, exposes a web UI and an HTTP API, and sends notifications when findings escalate.
+- **Operational monitor.** `nq-witness` runs on each host you want to monitor; `nq-monitor serve` runs centrally, pulls from each witness over HTTP, runs detectors, stores findings in SQLite, exposes a web UI and an HTTP API, and sends notifications when findings escalate. The W/E separation is structural: the witness binary cannot evaluate, and the monitor binary does not link against the witness library.
 - **Claim verifier (CI).** `nq-monitor verify` reads witness-packet files (produced by `nq-monitor witness git-status`, `nq-monitor witness pytest`, `nq-monitor witness diff-scope`, or your own producer) and emits an `nq.receipt.v1` document recording whether the named claim is supported. Usable from CI without any aggregator running.
 
 These two surfaces share a kernel but you do not have to deploy both. Most operators start with the monitor. CI integration is independent and can be added later.
@@ -28,13 +28,21 @@ Worked examples of how this comes out in practice live in [REFUSAL_EXAMPLES.md](
 
 ## Install
 
-Download a static binary from [GitHub Releases](https://github.com/unpingable/nq/releases/latest):
+Download static binaries from [GitHub Releases](https://github.com/unpingable/nq/releases/latest):
 
 ```bash
-curl -sSL https://github.com/unpingable/nq/releases/latest/download/nq-linux-amd64 -o nq
-chmod +x nq
+# Aggregator + dashboard
+curl -sSL https://github.com/unpingable/nq/releases/latest/download/nq-monitor-linux-amd64 -o nq-monitor
+chmod +x nq-monitor
 sudo mv nq-monitor /usr/local/bin/
+
+# Witness (per host)
+curl -sSL https://github.com/unpingable/nq/releases/latest/download/nq-witness-linux-amd64 -o nq-witness
+chmod +x nq-witness
+sudo mv nq-witness /usr/local/bin/
+
 nq-monitor --help
+nq-witness --help
 ```
 
 Or build from source:
@@ -44,6 +52,7 @@ git clone https://github.com/unpingable/nq.git
 cd nq
 cargo build --release
 sudo install -m 0755 target/release/nq-monitor /usr/local/bin/
+sudo install -m 0755 target/release/nq-witness /usr/local/bin/
 ```
 
 Static-linked musl builds are available for `linux-amd64` and `linux-arm64`. There are no runtime dependencies beyond a recent Linux kernel.
@@ -82,7 +91,7 @@ For a one-host install both can run on the same machine.
 Run it:
 
 ```bash
-nq-monitor publish -c publisher.json
+nq-witness --config publisher.json
 ```
 
 You should see periodic log lines and `curl http://127.0.0.1:9847/state` should return JSON.
