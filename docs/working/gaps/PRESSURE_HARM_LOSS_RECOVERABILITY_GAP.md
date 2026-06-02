@@ -70,6 +70,39 @@ checkpoint busy / WAL   = substrate contention
 
 This distinction was load-bearing to the Day-5 verdict. Without it, the system would have read as in trouble; with it, the system read as bounded under pressure with recoverable loss.
 
+### Day-7 closeout (2026-06-01) — 7-day specimen confirms the decomposition
+
+The labelwatch soak ran to 7-day completion with PASS verdict on 2026-06-01. The full trajectory is the first sustained field specimen for this gap's axis decomposition; the four-axis vocabulary held across continuous load.
+
+7-day evidence:
+
+| Day | Raw drops (pressure) | Unique DIDs (loss) | cp_busy (contention) | wt_busy |
+|---|---:|---:|---:|---:|
+| D1 2026-05-25 | 852 | 7 | 12 | 0 |
+| D2 2026-05-26 | 873 | 8 | 16 | 0 |
+| D3 2026-05-27 | 1056 | 5 | 20 | 0 |
+| D4 2026-05-28 | 788 | 6 | 18 | 0 |
+| D5 2026-05-29 | 918 | 7 | 13 | 0 |
+| D6 2026-05-30 | 542 | 7 | 12 | 0 |
+| D7 2026-05-31 | 386 (14h partial) | 4 | 11 | 0 |
+
+Cumulative: ~21,000 raw drops over 7 days; ~15–20 distinct DIDs touched; top-3 concentration 89% (16,178 + 2,038 + 558). Hot-set DIDs were known labeler-record-flappers re-discovered automatically by backstop scrape — loss → debt (receipt carried forward), not damage. `wt_busy` (wal_truncate busy=1, the original alarming metric) was 0 across all 7 days. WAL bounded at 64 MB. Backlog never pinned.
+
+The collapsed-axis read of "~21,000 drops over 7 days" would have classified as severe sustained evidence loss. The axis-decomposed read was bounded pressure dominated by ~15-20 known flappers, with recoverable loss confirmed by the backstop. Same raw counter; opposite operational verdict.
+
+The canonical mapping (now field-validated):
+
+```text
+raw drops (counter)        = pressure
+unique DIDs affected       = loss
+backstop scrape outcome    = recoverability
+cp_busy / wt_busy          = bounded residual checkpoint debt (substrate contention)
+```
+
+The 7-day specimen does NOT promote PHLR out of candidate status — the acceptance criteria below still gate that — but it satisfies the "first concrete instance with field evidence at sustained scale" precondition for any v1 work that picks this up. The vocabulary survived 7 days of continuous load without conflating; the next adopter has working precedent to reference.
+
+See also `../../integration/WORKLOAD_PHASE_WITNESSES.md` §"2026-06-01: Day-7 soak closeout" for the integration-doc-side record of the same specimen.
+
 ## The Problem
 
 NQ should not treat operational severity as a single scalar or binary severity class. The following are distinct claims:
@@ -364,7 +397,12 @@ Counters without subject identity collapse pressure into harm.
 A green health check is meaningless unless it says what it cannot testify to.
 
 Recoverability has an expiration date.
+
+Evidence that cannot carry its own discriminating fields is just
+a rumor with a schema.
 ```
+
+The last line landed 2026-06-01 from the labelwatch Day-7 closeout (see "Day-7 closeout" subsection of Forcing evidence). It is the wire-shape statement of the axis decomposition: a raw counter without subject identity, recoverability semantics, or substrate-contention attribution is structurally rumor regardless of what schema or `cannot_testify` list it ships under. The four-axis decomposition is what carrying-the-discriminating-fields looks like in practice.
 
 ## Provenance
 

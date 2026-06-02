@@ -32,6 +32,10 @@ And the dogfood line:
 
 > **NQ should not merely ingest workload-phase witnesses. It should survive one.**
 
+The wire-shape line (added 2026-06-01 from the labelwatch Day-7 soak closeout — see §"2026-06-01: Day-7 soak closeout" below):
+
+> **Evidence that cannot carry its own discriminating fields is just a rumor with a schema.**
+
 ## Common packet spine
 
 Every emitter produces JSON of this shape. Substrate-specific enrichments attach under `substrates`; loss-correlation counters attach under `harm`. Both are optional.
@@ -451,6 +455,66 @@ The keepers this refinement preserves at the witness layer:
 - *Pressure is not harm. Harm is not loss. Loss is not unrecoverability.*
 - *Counters without subject identity collapse pressure into harm.*
 - *A green health check is meaningless unless it says what it cannot testify to.*
+
+## 2026-06-01: Day-7 soak closeout — field specimen for v1 axis decomposition
+
+The labelwatch `update_author_day` Option 2 soak ran to 7-day completion with PASS verdict on 2026-06-01. The full trajectory is the first sustained field specimen for the v1 axis decomposition recorded in the 2026-05-29 amendment above. The four axes held across continuous load without conflating; the canonical example for adopters now lives in the field, not just in doctrine.
+
+### The canonical four-axis mapping (now field-validated)
+
+```text
+raw drops (counter)        = pressure
+unique DIDs affected       = loss
+backstop scrape outcome    = recoverability
+cp_busy / wt_busy          = bounded residual checkpoint debt (substrate contention)
+```
+
+This is what the v1 packet's four-axis decomposition (in place of the current single `harm` block) looks like in operator vocabulary. An adopter implementing the v1 packet has working precedent: each column in the table below is one axis block; the mapping above shows which raw substrate observation populates which axis.
+
+### Seven-day evidence
+
+Observed via labelwatch's hand-assembled phase / WAL / progress / drop receipts. This is the kind of evidence the v1 witness packet would emit as structured JSON; the hand-assembled form is the prototype.
+
+| Day | Raw drops (pressure) | Unique DIDs (loss) | cp_busy (contention) | wt_busy |
+|---|---:|---:|---:|---:|
+| D1 2026-05-25 | 852 | 7 | 12 | 0 |
+| D2 2026-05-26 | 873 | 8 | 16 | 0 |
+| D3 2026-05-27 | 1056 | 5 | 20 | 0 |
+| D4 2026-05-28 | 788 | 6 | 18 | 0 |
+| D5 2026-05-29 | 918 | 7 | 13 | 0 |
+| D6 2026-05-30 | 542 | 7 | 12 | 0 |
+| D7 2026-05-31 | 386 (14h partial) | 4 | 11 | 0 |
+
+**Cumulative**: ~21,000 raw drops over 7 days. ~15–20 distinct DIDs touched (against millions of label events ingested). Top-3 DID concentration was 89% (16,178 + 2,038 + 558). Hot-set DIDs were known labeler-record-flappers re-discovered automatically by backstop scrape — loss became debt (receipt carried forward), not damage. `wt_busy` (wal_truncate busy=1, the original alarming metric) stayed 0 across all 7 days. WAL bounded at 64 MB. Backlog never pinned.
+
+The collapsed-axis read of "~21,000 drops over 7 days" would have classified as severe sustained evidence loss. The axis-decomposed read was bounded pressure dominated by ~15-20 known flappers with recoverable loss. Same raw counter; opposite operational verdict. **This is the laundering this integration contract refuses, made concrete.**
+
+### The keeper this closeout earned
+
+> **Evidence that cannot carry its own discriminating fields is just a rumor with a schema.**
+
+A raw drop counter without subject identity, recoverability semantics, or substrate-contention attribution is the wire-shape of the laundering — regardless of what schema, `packet_type`, or `cannot_testify` list it ships under. Schema is not enough. The discriminating fields are what convert testimony from rumor into something a consumer can pivot on without re-introducing the collapse.
+
+Concretely, for this packet: a v1 emitter that filled `pressure.drops_during=21000` and left the other three axis blocks absent — even with a well-formed packet, a current `packet_type`, and an accurate `cannot_testify` — would be schema-conformant rumor. The four axis blocks must be present (or explicitly `cannot_testify` per-axis) for the packet to discriminate at the wire.
+
+Added to Keepers section at top of this document.
+
+### What this changes for the integration contract
+
+- **Confirms `labelwatch` as the first external adopter** whose phase / drop / progress evidence trajectory is now field-validated against this grammar. The integration contract's v0 → v1 trajectory has working precedent.
+- **Lowers the cost of v1 packet restructure** (folding the four axis blocks into the main spine in place of the current `harm` block) — the field-validated mapping is the concrete reference the restructure can cite. The restructure remains scoped but not authorized; the field specimen is one of the v1 preconditions, not a v1 authorization.
+- **Strengthens but does not fire NQ-as-monitor rung-1 candidacy.** The soak's 7 days of structured verdict-assembly was real witness-packet work performed by the operator manually. That is the kind of work NQ-as-monitor would automate. Candidacy is strengthened; the forcing case for actually building remains operator-driven.
+
+### Bilateral pin with NS
+
+The self-subject external-reconciler gap (see `[[project_ns_claim_support_response]]`) was confirmed by the 7-day specimen as bilateral with Nightshift's parallel recognition. No NQ-side action required; the pin holds.
+
+### What this does NOT do
+
+- Does NOT authorize the v1 packet restructure.
+- Does NOT authorize NQ ingestion of the workload-phase JSONL (adoption ladder step v0.5 remains parked).
+- Does NOT promote PHLR out of candidate status — see `../working/gaps/PRESSURE_HARM_LOSS_RECOVERABILITY_GAP.md` acceptance criteria.
+- Does NOT fire NQ rung-1 candidacy. Strengthened ≠ fired.
 
 ## Provenance
 
