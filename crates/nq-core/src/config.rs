@@ -227,6 +227,14 @@ pub struct PublisherConfig {
     /// concerns, etc.) without disabling the probe entirely.
     #[serde(default = "default_true")]
     pub sqlite_wal_proc_locks_enabled: bool,
+    /// Operator override for the path the `nq_binary_mtime_state`
+    /// collector observes. Default: the publisher's own
+    /// `/proc/self/exe` canonicalized once at startup (per
+    /// `NQ_BINARY_MTIME_STATE.md` §2). Useful for testing or for
+    /// operators running multiple `nq` instances under different
+    /// binaries.
+    #[serde(default)]
+    pub nq_binary_path: Option<String>,
 }
 
 fn default_true() -> bool {

@@ -38,6 +38,15 @@ pub struct Collectors {
     /// Additive; older payloads without this field deserialize cleanly.
     #[serde(default)]
     pub sqlite_wal_observations: Option<CollectorPayload<Vec<WalObservationData>>>,
+    /// Tier 1 NQ-on-NQ: one observation per cycle about the publisher's
+    /// own binary file at its filesystem path (mtime, size, sha256
+    /// content-hash). The aggregator persists into `nq_binary_observations`
+    /// with the cycle's `generation_id`. Single target per publisher —
+    /// the publisher's own `/proc/self/exe` (or the operator's
+    /// `nq_binary_path` override) — so the payload data is one struct,
+    /// not a Vec. Additive; older payloads deserialize cleanly.
+    #[serde(default)]
+    pub nq_binary_observations: Option<CollectorPayload<NqBinaryObservationData>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +164,45 @@ pub struct WalObservationData {
     pub pinned_reader_pid: Option<i64>,
     #[serde(default)]
     pub pinned_reader_command: Option<String>,
+    /// RFC3339 UTC. Probe wall-clock at the moment of the stat.
+    pub observed_at: String,
+    #[serde(default)]
+    pub error_detail: Option<String>,
+}
+
+/// One observation of the publisher's own `nq` binary file, produced
+/// by the publisher-side collector (slice B of NQ_BINARY_MTIME_STATE).
+///
+/// Host is carried at the `PublisherState` level. `binary_path` is the
+/// canonical filesystem path the publisher observed — either the
+/// canonicalize-once-at-startup resolution of `/proc/self/exe` (the
+/// default) or the operator's `nq_binary_path` config override.
+///
+/// `observation_status` is the closed enum from migration 054:
+/// `observed | target_missing | permission_denied | stat_error |
+/// read_error | hash_error`. Wire-side it is `String`; the aggregator
+/// validates on insert.
+///
+/// All stat-derived fields (`size_bytes`, `mtime`, `content_hash`) are
+/// populated when `observation_status = "observed"`; NULL otherwise.
+/// Non-observed rows MUST set `error_detail` — the migration's
+/// conditional CHECK enforces this at the substrate boundary.
+///
+/// `content_hash` is `"sha256:<64-hex>"` when computed; the substrate
+/// CHECK pins the structural shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NqBinaryObservationData {
+    pub binary_path: String,
+    pub observation_status: String,
+    #[serde(default)]
+    pub size_bytes: Option<i64>,
+    /// RFC3339 UTC. None when `observation_status != "observed"`.
+    #[serde(default)]
+    pub mtime: Option<String>,
+    /// `"sha256:<64-hex>"` when computed; None when
+    /// `observation_status != "observed"`.
+    #[serde(default)]
+    pub content_hash: Option<String>,
     /// RFC3339 UTC. Probe wall-clock at the moment of the stat.
     pub observed_at: String,
     #[serde(default)]

@@ -1,5 +1,6 @@
 pub mod host;
 pub mod logs;
+pub mod nq_binary;
 pub mod prometheus;
 pub mod services;
 pub mod smart;
@@ -28,6 +29,7 @@ pub fn collect_state(config: &PublisherConfig) -> PublisherState {
             zfs_witness: Some(zfs::collect(config)),
             smart_witness: Some(smart::collect(config)),
             sqlite_wal_observations: Some(sqlite_wal_probe::collect(config)),
+            nq_binary_observations: Some(nq_binary::collect(config)),
         },
     }
 }

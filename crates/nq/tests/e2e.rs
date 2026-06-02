@@ -2537,6 +2537,7 @@ fn sqlite_wal_probe_pipeline_end_to_end_smoke() {
         // /proc/locks-enabled paths are unit-tested via the probe's
         // path-injection seam.
         sqlite_wal_proc_locks_enabled: false,
+        nq_binary_path: None,
     };
 
     // Drive the actual publisher-side collector.

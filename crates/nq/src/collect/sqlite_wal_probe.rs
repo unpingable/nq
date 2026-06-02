@@ -439,6 +439,7 @@ mod tests {
             smart_witness: None,
             sqlite_wal_targets: vec![],
             sqlite_wal_proc_locks_enabled: false,
+            nq_binary_path: None,
         };
         let p = collect(&cfg);
         assert!(matches!(p.status, CollectorStatus::Ok));
