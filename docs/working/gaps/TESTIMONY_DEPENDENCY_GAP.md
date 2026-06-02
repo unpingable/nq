@@ -265,7 +265,7 @@ Smallest useful cash-out — name the primitive, ship the loss-collapse case end
 
 3. **One promoter** — pick `smart_witness_silent` as the V1 promoter. When it fires, emit a paired `node_unobservable` parent finding with `node_type=witness` and `evidence_refs=[<smart_witness_silent finding key>]`. Per-device SMART findings produced by that witness inherit `suppressed_by_ancestor`.
 
-4. **Admissibility view** — `v_admissibility` exposing `(finding_key, admissibility, ancestor_node_ref)`. Operator surface query: `nq query findings WHERE admissibility = 'suppressed_by_ancestor'` returns the right rows.
+4. **Admissibility view** — `v_admissibility` exposing `(finding_key, admissibility, ancestor_node_ref)`. Operator surface query: `nq-monitor query findings WHERE admissibility = 'suppressed_by_ancestor'` returns the right rows.
 
 5. **COVERAGE_HONESTY clearance contract update** — the COVERAGE_HONESTY_GAP gets an edit referencing this primitive: `coverage_degraded` clearance requires either explicit recovery testimony from the producer OR supersession by an unobservable ancestor (which transitions admissibility to `suppressed_by_ancestor`, not cleared).
 
@@ -314,7 +314,7 @@ Deferred out of V1:
 - `smart_witness_silent` promoter emits a paired `node_unobservable` parent when it fires; per-device SMART findings produced by that witness flip to `admissibility=suppressed_by_ancestor` while their stored state is preserved.
 - A finding with `admissibility=suppressed_by_ancestor` does not auto-clear on missing emission. Its row stays in `warning_state`; its lifecycle column reflects the suppression.
 - `v_admissibility` view exposes per-finding admissibility resolved through ancestry (one level for V1).
-- `nq query findings WHERE admissibility = 'suppressed_by_ancestor'` returns the right rows; consumers can identify suppressed findings without parsing kind strings.
+- `nq-monitor query findings WHERE admissibility = 'suppressed_by_ancestor'` returns the right rows; consumers can identify suppressed findings without parsing kind strings.
 - COVERAGE_HONESTY_GAP clearance contract updated to reference this primitive.
 - SILENCE_UNIFICATION_GAP V1 contract updated so silence detectors are documented as parent-node evidence inputs, not peer operator alerts.
 - Inversion test passes: downstream Governor / Night Shift can deny, defer, revalidate, or admit a `suppressed_by_ancestor` finding without NQ encoding the governance outcome.

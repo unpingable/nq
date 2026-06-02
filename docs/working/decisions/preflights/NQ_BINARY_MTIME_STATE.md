@@ -46,7 +46,7 @@ The kind-4 probe preflight refuses auto-discovery (§2: "operator-declared only,
 Same SIGSTOP test from the Tier 0 design:
 
 ```text
-Component being claimed about:  the nq binary file at its filesystem path
+Component being claimed about:  the nq-monitor binary file at its filesystem path
 Witness sources:                kernel-mediated stat + read by nq-publish
 Process performing the stat:    nq-publish (separate process from nq-serve)
 

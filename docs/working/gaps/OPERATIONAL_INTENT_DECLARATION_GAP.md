@@ -16,7 +16,7 @@ V1 implementation made several austerity choices to avoid wiring dead semantics.
 - **`current_admissibility`** — view-derived in `v_admissibility`, not persisted as a column. Persist primitives (`visibility_state`, `suppression_kind`); derive interpretation. Avoids drift from a second-truth column.
 - **Quiescence consumer path** — declared but inert in V1. NQ does not produce work-intake findings yet; `quiesced` declarations are stored, surfaced by hygiene detectors, but produce no suppression effect. Wiring lands when intake-shaped findings exist. Withdrawal path is fully wired.
 - **`declaration_conflicts_with_observed_state`** — narrowed to `withdrawn_subject_active` (the one conflict shape V1 has evidence for: a withdrawn host still producing substrate observations). The grand "conflicts" name is held back until intake-metric data exists. `quiesced_subject_receiving_work` is its quiescence-side counterpart, also deferred.
-- **Ingestion** — file-based JSON only. CLI subcommand (`nq declaration {add|list|revoke}`) is a follow-up. File path is configured at `nq-core::config::DeclarationsConfig::path` and re-read each publish cycle.
+- **Ingestion** — file-based JSON only. CLI subcommand (`nq-monitor declaration {add|list|revoke}`) is a follow-up. File path is configured at `nq-core::config::DeclarationsConfig::path` and re-read each publish cycle.
 
 ### Suppression metadata — schema scope
 

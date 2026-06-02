@@ -217,7 +217,7 @@ Mirror the parent doc's six tests, with dns_state substitutions:
 3. **Observation row cannot self-authorize** — given a `dns_observations` row with unparseable `observed_at`, the projector refuses; the evaluator surfaces a `PreflightExclusion` (or routes to the existing InsufficientCoverage path); the row does not become observable substrate.
 4. **`generated_at` does not refresh `observed_at`** — projected packet's `observed_at` is `obs.observed_at`, never the evaluator's wall-clock; `freshness_horizon` is computed from `observed_at_max`, never from `generated_at`. The existing freshness tests (`evaluator_emits_freshness_horizon_on_fresh_success`, `evaluator_emits_freshness_horizon_even_when_verdict_is_stale`) must continue to pass on the cut-over path.
 5. **`dns_state` does not testify to upstream substrate** — the constitutional refusal surface (the long `cannot_testify` list) holds on the new path; no projection laundering admits "endpoint reachable" or "service healthy" or any other forbidden phrase. The existing `FORBIDDEN_PHRASES` guard at `dns.rs:874` continues to pass.
-6. **Slice 1d/1e behavior on cut-over Track A dns_state receipts** — `nq receipt check` works; `nq receipt replay` returns `REPLAY_NOT_APPLICABLE` with the Q2-aware detail string ("with projected legacy witness custody: legacy_projection" once supports carry packets).
+6. **Slice 1d/1e behavior on cut-over Track A dns_state receipts** — `nq-monitor receipt check` works; `nq-monitor receipt replay` returns `REPLAY_NOT_APPLICABLE` with the Q2-aware detail string ("with projected legacy witness custody: legacy_projection" once supports carry packets).
 
 Two dns_state-specific acceptance items beyond the parent's six:
 

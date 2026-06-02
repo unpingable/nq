@@ -111,7 +111,7 @@ Written via `fsync`, outside the main `nq.db` transaction, because the whole poi
 
 ### 4. Post-restart summary
 
-New subcommand `nq forensics` (or CLI flag on existing subcommand) that reads the last generation(s) before silence and renders:
+New subcommand `nq-monitor forensics` (or CLI flag on existing subcommand) that reads the last generation(s) before silence and renders:
 
 ```
 Last sample before silence: 2026-04-17 03:14:22 EDT (gen 14883)
@@ -151,7 +151,7 @@ Plain text by default, `--format json` for programmatic consumers. A dashboard r
 2. Top-RSS output is bounded to `top_n` (default 20) PID-level records and an unbounded-but-small process-group aggregation.
 3. `desktop_memory_pressure`, `desktop_swap_thrash`, `desktop_browser_rss_growth`, and `desktop_sampler_silence` detectors emit findings under configurable thresholds.
 4. Pre-freeze pressure snapshot writes to `~/nq/pressure_snapshots/` when critical memory pressure is crossed, `fsync`'d, outside the main DB transaction.
-5. `nq forensics` subcommand (or equivalent CLI path) renders the "last generation before silence" summary as plain text with optional JSON.
+5. `nq-monitor forensics` subcommand (or equivalent CLI path) renders the "last generation before silence" summary as plain text with optional JSON.
 6. The synthetic memory-hog test scenario passes:
    - `stress-ng --vm 1 --vm-bytes 80% --vm-keep --timeout 120s` causes desktop NQ to emit `desktop_memory_pressure` at severity `warning` before the stress test ends.
    - A pressure snapshot is written if the test crosses the critical threshold.
@@ -177,7 +177,7 @@ And the blunt rule:
 - **macOS top-RSS via `libproc`**; FreeBSD via `kvm`. Follows PORTABILITY_GAP tier model.
 - **PSI (pressure stall information)** reads from `/proc/pressure/*`. More accurate memory-pressure signal than load-derived inference.
 - **Browser extension integration** for per-tab attribution. Requires user consent and ongoing maintenance against changing browser APIs — probably never worth it.
-- **Dashboard forensics view** rendering the `nq forensics` summary as a page. For now, CLI is the interface.
+- **Dashboard forensics view** rendering the `nq-monitor forensics` summary as a page. For now, CLI is the interface.
 - **Night Shift `watchbill run desktop-freeze-postmortem`** — consumes pressure snapshots, reconciles, emits packet. `advise`-only by the gap's own rule.
 - **Multi-machine desktop fleet** — if you ever run NQ on >1 workstation, the snapshots federate via INSTANCE_WITNESS. Not an MVP concern.
 - **Automatic browser-session snapshot integration** — could capture tab URLs from browser session files for pre-freeze forensics. Scope creep. Deferred.

@@ -79,7 +79,7 @@ The shapes converge. Each is a *new artifact* citing *prior artifacts*, naming *
 ```yaml
 audit_receipt:
   kind: later_audit
-  issuing_tool: nq                          # which tool's jurisdiction
+  issuing_tool: nq-monitor                          # which tool's jurisdiction
   issued_at: 2026-05-21T17:00:00Z
   jurisdiction:
     artifact_kinds: [witness_packet, preflight_receipt]

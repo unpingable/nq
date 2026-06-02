@@ -77,7 +77,7 @@ Pass criteria: every listed read returns 200. A regression here means the mutati
 
 ### Section 3 — SQL adversarial rejection
 
-Against `/api/query?sql=...` (and post-target-primitive, against `nq query run <target> ...`), each of these statements must be **rejected before execution**:
+Against `/api/query?sql=...` (and post-target-primitive, against `nq-monitor query run <target> ...`), each of these statements must be **rejected before execution**:
 
 ```text
 DROP TABLE warning_state;
@@ -133,13 +133,13 @@ DELETE /api/saved/1         → 200 (handler ran)
 
 Both responses came back through Caddy (the `via: 1.1 Caddy` header confirmed proxy traversal), but the application had handled the request — meaning the matcher was not catching anything. Without the verification curl pass, the operator would have walked away believing the surface was bounded when it was not. **The smoke suite is what makes the doctrine load-bearing in production, not just at write time.**
 
-If this gap had existed and been wired into a `nq smoke dashboard-public-surface` CLI subcommand (or equivalent), the rollout would have caught the silent reload failure immediately. That is the forcing case for the gap; the tonight-incident-shape goes in the provenance section.
+If this gap had existed and been wired into a `nq-monitor smoke dashboard-public-surface` CLI subcommand (or equivalent), the rollout would have caught the silent reload failure immediately. That is the forcing case for the gap; the tonight-incident-shape goes in the provenance section.
 
 ## Required properties for any future implementation
 
 If this suite is built, V1 must:
 
-1. **Be runnable as a single command.** `nq smoke dashboard-public-surface --target <url>` or equivalent. No multi-step ceremony.
+1. **Be runnable as a single command.** `nq-monitor smoke dashboard-public-surface --target <url>` or equivalent. No multi-step ceremony.
 2. **Fail loudly on the first violation.** Exit non-zero, clear error message, no buried output.
 3. **Distinguish proxy-layer rejection from application-layer rejection.** A 405 from the proxy and a 405 from axum are different defenses; the suite must verify the right one.
 4. **Include state-integrity checks, not just HTTP-status checks.** Section 4 above is the load-bearing piece.
@@ -166,7 +166,7 @@ If this suite is built, V1 must:
 
 This gap closes when:
 
-- A `nq smoke dashboard-public-surface` (or equivalent) subcommand exists with the four-section structure above.
+- A `nq-monitor smoke dashboard-public-surface` (or equivalent) subcommand exists with the four-section structure above.
 - It is wired into CI to run against a test instance on every PR that touches the HTTP routes, the `query_read_only` path, the Caddy config, or any auth surface.
 - Operators are documented to run it post-deploy as part of the deploy ritual.
 - Tonight's "silent caddy reload" failure mode is in the suite as an explicit regression test (verify the post-reload state actually refuses the configured methods, not just that reload returned success).

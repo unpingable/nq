@@ -21,7 +21,7 @@ Or build from source:
 git clone https://github.com/unpingable/nq.git
 cd nq
 cargo build --release
-cp target/release/nq /usr/local/bin/
+cp target/release/nq-monitor /usr/local/bin/
 ```
 
 ## 2. Create a publisher config
@@ -74,8 +74,8 @@ mkdir -p /var/lib/nq
 ## 4. Start both processes
 
 ```bash
-nq publish -c publisher.json &
-nq serve -c aggregator.json &
+nq-monitor publish -c publisher.json &
+nq-monitor serve -c aggregator.json &
 ```
 
 Or use systemd (recommended for production):
@@ -83,12 +83,12 @@ Or use systemd (recommended for production):
 ```ini
 # /etc/systemd/system/nq-publish.service
 [Unit]
-Description=nq publisher
+Description=nq-monitor publisher
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/nq publish -c /etc/nq/publisher.json
+ExecStart=/usr/local/bin/nq-monitor publish -c /etc/nq/publisher.json
 Restart=on-failure
 RestartSec=5
 
@@ -99,12 +99,12 @@ WantedBy=multi-user.target
 ```ini
 # /etc/systemd/system/nq-serve.service
 [Unit]
-Description=nq aggregator + web UI
+Description=nq-monitor aggregator + web UI
 After=network.target nq-publish.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/nq serve -c /etc/nq/aggregator.json
+ExecStart=/usr/local/bin/nq-monitor serve -c /etc/nq/aggregator.json
 Restart=on-failure
 RestartSec=5
 

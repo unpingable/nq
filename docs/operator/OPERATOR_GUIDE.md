@@ -8,8 +8,8 @@ This guide is the recommended starting point if you have just downloaded the bin
 
 NQ runs as a single statically-linked binary on Linux. There are two distinct uses, and you can pick either, both, or neither:
 
-- **Operational monitor.** `nq publish` runs on each host you want to monitor; `nq serve` runs centrally, pulls from each publisher, runs detectors, stores findings in SQLite, exposes a web UI and an HTTP API, and sends notifications when findings escalate.
-- **Claim verifier (CI).** `nq verify` reads witness-packet files (produced by `nq witness git-status`, `nq witness pytest`, `nq witness diff-scope`, or your own producer) and emits an `nq.receipt.v1` document recording whether the named claim is supported. Usable from CI without any aggregator running.
+- **Operational monitor.** `nq-monitor publish` runs on each host you want to monitor; `nq-monitor serve` runs centrally, pulls from each publisher, runs detectors, stores findings in SQLite, exposes a web UI and an HTTP API, and sends notifications when findings escalate.
+- **Claim verifier (CI).** `nq-monitor verify` reads witness-packet files (produced by `nq-monitor witness git-status`, `nq-monitor witness pytest`, `nq-monitor witness diff-scope`, or your own producer) and emits an `nq.receipt.v1` document recording whether the named claim is supported. Usable from CI without any aggregator running.
 
 These two surfaces share a kernel but you do not have to deploy both. Most operators start with the monitor. CI integration is independent and can be added later.
 
@@ -20,7 +20,7 @@ NQ holds these regardless of how you deploy it:
 - **Finding ≠ claim.** Findings are NQ-minted diagnostics. Claims are things external systems want to say ("clean", "ready", "recovered"). NQ preflights claims against findings; it does not promote findings into claims.
 - **Witnesses observe; they do not promote.** A witness that exit-zero'd a test attests to that; it does not attest to "the system is healthy."
 - **Receipts attest; they do not authorize mutation.** A `verified` receipt records what testimony supported; it is not a deploy token, merge token, or paging signal.
-- **NQ preflights assertions; it does not operate the system.** NQ has no `nq restart`, `nq replace`, or `nq merge` verbs. Consequence is downstream.
+- **NQ preflights assertions; it does not operate the system.** NQ has no `nq-monitor restart`, `nq-monitor replace`, or `nq-monitor merge` verbs. Consequence is downstream.
 
 Worked examples of how this comes out in practice live in [REFUSAL_EXAMPLES.md](REFUSAL_EXAMPLES.md).
 
@@ -33,8 +33,8 @@ Download a static binary from [GitHub Releases](https://github.com/unpingable/nq
 ```bash
 curl -sSL https://github.com/unpingable/nq/releases/latest/download/nq-linux-amd64 -o nq
 chmod +x nq
-sudo mv nq /usr/local/bin/
-nq --help
+sudo mv nq-monitor /usr/local/bin/
+nq-monitor --help
 ```
 
 Or build from source:
@@ -43,7 +43,7 @@ Or build from source:
 git clone https://github.com/unpingable/nq.git
 cd nq
 cargo build --release
-sudo install -m 0755 target/release/nq /usr/local/bin/
+sudo install -m 0755 target/release/nq-monitor /usr/local/bin/
 ```
 
 Static-linked musl builds are available for `linux-amd64` and `linux-arm64`. There are no runtime dependencies beyond a recent Linux kernel.
@@ -82,7 +82,7 @@ For a one-host install both can run on the same machine.
 Run it:
 
 ```bash
-nq publish -c publisher.json
+nq-monitor publish -c publisher.json
 ```
 
 You should see periodic log lines and `curl http://127.0.0.1:9847/state` should return JSON.
@@ -104,7 +104,7 @@ Run it:
 
 ```bash
 mkdir -p /var/lib/nq
-nq serve -c aggregator.json
+nq-monitor serve -c aggregator.json
 ```
 
 Open `http://127.0.0.1:9848` in a browser.
@@ -159,7 +159,7 @@ Add targets to the publisher config:
 What you get:
 
 - One `wal_observations` row per target per pulse cycle (default 60s), persisted with the cycle's `generation_id`.
-- A new claim kind, `sqlite_wal_state`, that the aggregator can evaluate (via `nq preflight sqlite-wal-state --host=H --db=PATH` or the HTTP route `/api/preflight/sqlite-wal-state`).
+- A new claim kind, `sqlite_wal_state`, that the aggregator can evaluate (via `nq-monitor preflight sqlite-wal-state --host=H --db=PATH` or the HTTP route `/api/preflight/sqlite-wal-state`).
 - Honest error rows when the path is missing or the publisher's user lacks read on it: an `observation_status` of `target_missing` / `permission_denied` / `stat_error` plus an `error_detail` string, with all stat-derived fields NULL (the probe will not encode "I couldn't see" as "the file is empty").
 
 Permissions: the publisher runs as the `nq` user by default; on a typical Debian install `/var/lib/<service>/` is owned by the service's group and not world-readable. Either add `nq` to that group, loosen the dir permissions, or accept that the probe will emit `permission_denied` rows (which the aggregator surfaces as `cannot_testify` — useful operational signal in its own right).
@@ -191,7 +191,7 @@ Behavior:
 
 ### Reverse proxy and authentication
 
-NQ does not implement authentication, TLS termination, OAuth, multi-tenancy, or CORS hardening. `nq serve` is designed to run on a private network or behind a reverse proxy that handles those concerns.
+NQ does not implement authentication, TLS termination, OAuth, multi-tenancy, or CORS hardening. `nq-monitor serve` is designed to run on a private network or behind a reverse proxy that handles those concerns.
 
 Minimal Caddy example:
 
@@ -221,7 +221,7 @@ server {
 }
 ```
 
-If you expose `nq serve` to the public internet without a reverse proxy in front, the web UI and SQL console are reachable by anyone who can route to the bind address. The SQL console is read-only against NQ's database, but it does expose findings, host state, and any queries you have saved.
+If you expose `nq-monitor serve` to the public internet without a reverse proxy in front, the web UI and SQL console are reachable by anyone who can route to the bind address. The SQL console is read-only against NQ's database, but it does expose findings, host state, and any queries you have saved.
 
 ### Storage, backup, upgrade
 
@@ -231,7 +231,7 @@ Single SQLite database at `db_path`. Nothing else is durable. WAL files appear i
 
 #### Backup
 
-A live `nq serve` can be backed up safely with SQLite's `VACUUM INTO`:
+A live `nq-monitor serve` can be backed up safely with SQLite's `VACUUM INTO`:
 
 ```bash
 sqlite3 /var/lib/nq/nq.db "VACUUM INTO '/var/backups/nq.db.$(date -u +%Y%m%d)'"
@@ -255,14 +255,14 @@ The database grows with history. Default settings keep enough history for trend 
 sudo systemctl stop nq-serve nq-publish
 
 # replace
-sudo install -m 0755 ./nq /usr/local/bin/nq
+sudo install -m 0755 ./nq-monitor /usr/local/bin/nq
 
 # restart
 sudo systemctl start nq-publish nq-serve
 journalctl -u nq-serve -n 50
 ```
 
-Schema migrations run automatically on startup. If the new binary requires a schema version newer than the on-disk DB, the migration log appears in the first few lines of `nq serve` output. There is no manual migration step.
+Schema migrations run automatically on startup. If the new binary requires a schema version newer than the on-disk DB, the migration log appears in the first few lines of `nq-monitor serve` output. There is no manual migration step.
 
 After upgrade, verify:
 
@@ -282,15 +282,15 @@ If `generation_id` advances between the two calls (separated by more than one `i
 
 ## Use 2: CI claim verification
 
-`nq verify` takes one or more witness-packet files and a claim name, evaluates the claim, and emits an `nq.receipt.v1` document. It does not require any aggregator or database.
+`nq-monitor verify` takes one or more witness-packet files and a claim name, evaluates the claim, and emits an `nq.receipt.v1` document. It does not require any aggregator or database.
 
 ### Smallest possible example
 
 Verify `repo_clean` against a fresh `git status` witness:
 
 ```bash
-nq witness git-status --subject repo:. > /tmp/git.json
-nq verify \
+nq-monitor witness git-status --subject repo:. > /tmp/git.json
+nq-monitor verify \
   --claim repo_clean \
   --subject repo:. \
   --witness /tmp/git.json
@@ -306,7 +306,7 @@ Output:
 Two posture flags promote informational receipts to gating:
 
 ```bash
-nq verify --claim ready_for_review --subject repo:. \
+nq-monitor verify --claim ready_for_review --subject repo:. \
   --witness .nq/git.json \
   --witness .nq/pytest.json \
   --witness .nq/diff.json \
@@ -324,10 +324,10 @@ See [CLAIM_CATALOG.md](CLAIM_CATALOG.md) for the full list, required witnesses, 
 
 ### Receipt format and rendering
 
-`nq verify --format json` emits the canonical `nq.receipt.v1` JSON. Render an existing receipt for a PR comment:
+`nq-monitor verify --format json` emits the canonical `nq.receipt.v1` JSON. Render an existing receipt for a PR comment:
 
 ```bash
-nq receipt render path/to/receipt.json --format markdown
+nq-monitor receipt render path/to/receipt.json --format markdown
 ```
 
 Formats: `human` (default), `markdown`, `json`, `jsonl`.
@@ -337,9 +337,9 @@ Formats: `human` (default), `markdown`, `json`, `jsonl`.
 A receipt is an artifact — once emitted, two later operations work over it. They answer **different questions** and you should pick deliberately.
 
 ```text
-nq verify / preflight   = what may we claim now?
-nq receipt check        = has this receipt been tampered with?
-nq receipt replay       = does the same evaluator + same packets reproduce the same decision?
+nq-monitor verify / preflight   = what may we claim now?
+nq-monitor receipt check        = has this receipt been tampered with?
+nq-monitor receipt replay       = does the same evaluator + same packets reproduce the same decision?
 fresh preflight         = is the claim admissible right now?
 authority layer         = may anyone act on it?
 ```
@@ -348,11 +348,11 @@ The quick chooser:
 
 | Need | Command |
 |---|---|
-| Did this receipt get tampered with? | `nq receipt check` |
-| Do I still have the packets it cites? | `nq receipt check` (with `--witness`) or `nq receipt replay` |
-| Does the old decision reproduce from those packets? | `nq receipt replay` |
-| Is this claim fresh now? | `nq receipt check --fresh` / `nq receipt replay --fresh` |
-| What does the system claim about this subject *today*? | `nq verify` / `nq preflight` (fresh evaluation) |
+| Did this receipt get tampered with? | `nq-monitor receipt check` |
+| Do I still have the packets it cites? | `nq-monitor receipt check` (with `--witness`) or `nq-monitor receipt replay` |
+| Does the old decision reproduce from those packets? | `nq-monitor receipt replay` |
+| Is this claim fresh now? | `nq-monitor receipt check --fresh` / `nq-monitor receipt replay --fresh` |
+| What does the system claim about this subject *today*? | `nq-monitor verify` / `nq-monitor preflight` (fresh evaluation) |
 | Should automation act on this? | Not NQ alone — `nq` produces evidence; consequence belongs to a separate authority layer. |
 
 Both `check` and `replay` take `--receipt`, repeatable `--witness PATH`, plus `--strict`, `--fresh`, `--as-of RFC3339`, and `--json`.
@@ -378,7 +378,7 @@ A starter action lives at the repo root (`.github/workflows/`). See the [SHARED_
 ### "What is wrong right now?"
 
 ```bash
-nq query --remote http://127.0.0.1:9848 \
+nq-monitor query --remote http://127.0.0.1:9848 \
   "SELECT severity, domain, kind, host, message FROM v_warnings \
    ORDER BY severity DESC, consecutive_gens DESC"
 ```
@@ -392,7 +392,7 @@ The web UI shows each finding's four-part proof (Observed / Contradiction / Diag
 From the CLI:
 
 ```bash
-nq query --db /var/lib/nq/nq.db \
+nq-monitor query --db /var/lib/nq/nq.db \
   "SELECT * FROM v_finding_evidence WHERE kind='wal_bloat' AND host='my-host'"
 ```
 
@@ -401,7 +401,7 @@ nq query --db /var/lib/nq/nq.db \
 Declare a maintenance window before the maintenance starts. NQ rejects past-dated declarations on purpose — declaration must precede effect.
 
 ```bash
-nq maintenance declare \
+nq-monitor maintenance declare \
   --db /var/lib/nq/nq.db \
   --host my-host \
   --kind log_silence \
@@ -416,18 +416,18 @@ Maintenance annotates findings (`covered` while in window, `overrun` if they per
 ### "Is NQ itself still running?"
 
 ```bash
-nq liveness export --artifact /var/lib/nq/liveness.json \
+nq-monitor liveness export --artifact /var/lib/nq/liveness.json \
   --stale-threshold-seconds 180
 ```
 
-If `freshness.fresh` is `false`, NQ has stopped publishing generations. Use `nq sentinel` (run from outside the same host) for external liveness monitoring.
+If `freshness.fresh` is `false`, NQ has stopped publishing generations. Use `nq-monitor sentinel` (run from outside the same host) for external liveness monitoring.
 
 ### "I run NQ on more than one host"
 
-`nq fleet status` renders one row per declared target by reading each target's liveness artifact. No merged authority, no synthetic fleet rollup — each target speaks for itself.
+`nq-monitor fleet status` renders one row per declared target by reading each target's liveness artifact. No merged authority, no synthetic fleet rollup — each target speaks for itself.
 
 ```bash
-nq fleet status --manifest ~/.config/nq-fleet/targets.json
+nq-monitor fleet status --manifest ~/.config/nq-fleet/targets.json
 ```
 
 ### "I want to know what NQ refuses to say"
@@ -440,7 +440,7 @@ See [REFUSAL_EXAMPLES.md](REFUSAL_EXAMPLES.md). The refusals are constitutional:
 
 ### Publisher unreachable
 
-Symptom: aggregator logs `source_error`, `nq fleet status` shows a stale target.
+Symptom: aggregator logs `source_error`, `nq-monitor fleet status` shows a stale target.
 
 Check:
 
@@ -466,13 +466,13 @@ Generations are produced on the aggregator's `interval_s` schedule (default 60s)
 Either: no publishers are reporting yet, or every finding is currently `cleared`. Run:
 
 ```bash
-nq query --remote http://127.0.0.1:9848 \
+nq-monitor query --remote http://127.0.0.1:9848 \
   "SELECT count(*), max(generation_id) FROM generations"
 ```
 
 If `max(generation_id)` is advancing, the aggregator is collecting data — the system being monitored may just be quiet.
 
-### `nq verify` says `needs_more_evidence`
+### `nq-monitor verify` says `needs_more_evidence`
 
 You did not pass a witness packet whose `subject` matches the `--subject` argument. Witness packets are filtered by exact subject. Verify with:
 
@@ -482,12 +482,12 @@ jq .subject /tmp/git.json
 
 Subjects must match exactly (`repo:.`, `host:my-host`, etc).
 
-### `nq verify` says `invalid_evidence`
+### `nq-monitor verify` says `invalid_evidence`
 
-A witness packet failed envelope validation. The most common cause is a hand-edited packet missing a required field. Re-emit via `nq witness <kind>` or validate explicitly:
+A witness packet failed envelope validation. The most common cause is a hand-edited packet missing a required field. Re-emit via `nq-monitor witness <kind>` or validate explicitly:
 
 ```bash
-nq validate-witness /tmp/git.json
+nq-monitor validate-witness /tmp/git.json
 ```
 
 ### Preflight returns `cannot_testify`
@@ -511,7 +511,7 @@ Generation-count retention runs periodically (see `RetentionConfig.prune_every_n
 
 ## Where to look next
 
-- [RECEIPTS.md](RECEIPTS.md) — `nq receipt check` and `nq receipt replay`: tamper-evidence, decision reproducibility, and the failure taxonomy.
+- [RECEIPTS.md](RECEIPTS.md) — `nq-monitor receipt check` and `nq-monitor receipt replay`: tamper-evidence, decision reproducibility, and the failure taxonomy.
 - [CLAIM_CATALOG.md](CLAIM_CATALOG.md) — every shipped claim, its required witnesses, what it can say, what it refuses.
 - [REFUSAL_EXAMPLES.md](REFUSAL_EXAMPLES.md) — worked operator-facing examples of NQ refusing a stronger claim and pointing to the weaker admissible one.
 - [Quickstart](quickstart.md) — the tightest possible install path.

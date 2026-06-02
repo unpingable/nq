@@ -88,10 +88,10 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
 
 ## MAINTENANCE_DECLARATION V1
 
-**Status:** shipped 2026-05-08. Annotation lane only — V1 emits `none` / `covered` / `overrun` per the frozen 2026-04-27 spec; `late` and `out_of_envelope` are explicit V2+ deferrals. Operator/agent CLI verbs `nq maintenance declare` + `nq maintenance list` ship; the spec's `clear` / `cancel` / `extend` are explicit non-goals (append-only storage).
+**Status:** shipped 2026-05-08. Annotation lane only — V1 emits `none` / `covered` / `overrun` per the frozen 2026-04-27 spec; `late` and `out_of_envelope` are explicit V2+ deferrals. Operator/agent CLI verbs `nq-monitor maintenance declare` + `nq-monitor maintenance list` ship; the spec's `clear` / `cancel` / `extend` are explicit non-goals (append-only storage).
 
 **Shipped commits:**
-- (this commit, 2026-05-08) — V1: migration 045 (`maintenance_declarations` table + `maintenance_state` / `maintenance_id` annotation columns on `warning_state` + `v_warnings` recreation); `apply_maintenance_overlay` lifecycle pass; `nq maintenance declare|list` CLI verbs; export wire shape (`FindingSnapshot.maintenance` block, `skip_serializing_if`); dashboard overview-list + finding-detail badge surfacing.
+- (this commit, 2026-05-08) — V1: migration 045 (`maintenance_declarations` table + `maintenance_state` / `maintenance_id` annotation columns on `warning_state` + `v_warnings` recreation); `apply_maintenance_overlay` lifecycle pass; `nq-monitor maintenance declare|list` CLI verbs; export wire shape (`FindingSnapshot.maintenance` block, `skip_serializing_if`); dashboard overview-list + finding-detail badge surfacing.
 
 **Spec-vs-shipped framing note (load-bearing):** The gap doc's lead paragraph reads "maintenance becomes one **profile** of the broader OPERATIONAL_INTENT_DECLARATION primitive (`reason_class = maintenance`)." The V1 frozen sub-slices (V1.1–V1.5) describe a **separate** `maintenance_declarations` table, separate annotation columns on `warning_state`, separate CLI verbs. V1 ships the separate-table version. The framing language was written 2026-04-28 before OID's V1 austerity was clear; once OID landed 2026-04-30 with `mode IN ('quiesced', 'withdrawn')`, it became apparent that maintenance is a sibling primitive (annotation lane), not a sub-mode of OID's expectation-changing modes (suppression lane). The decisive distinction: OID-withdrawn *suppresses* dependent findings; maintenance keeps them visible and *annotates* them as `covered` / `overrun`. Forcing them through the same storage now would create a fake unification and make any V2 unification harder. V2+ may pursue unified storage; this entry names the debt.
 
@@ -105,7 +105,7 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
 - Export surface: `crates/nq-db/src/export.rs`. `MaintenanceExport { state, declaration_id }` struct. `FindingSnapshot.maintenance: Option<MaintenanceExport>` with `skip_serializing_if = Option::is_none` — `state = 'none'` is communicated by **absence of the maintenance key in JSON**, not by a serialized null. `MIN_SCHEMA_FOR_EXPORT` bumped 38 → 45 (export now reads the new annotation columns; older DBs hit the preflight error explicitly via FINDING_EXPORT V1's loud-fail discipline, `be83e92`).
 - Render:
   - Overview list (`crates/nq/src/http/routes.rs:render_overview`): one chip on each affected finding row. `covered` = blue (`#388bfd`); `overrun` = warning yellow (`#d29922`). Tooltip explains the state. No new layout — slot fills alongside the existing stability/diagnosis/regime badges.
-  - Finding-detail page (`finding_detail_inner`): same chip in the header `diagnosis_badges` block, with the matching `maintenance_id` carried in the tooltip so the operator can grep `nq maintenance list` for the responsible declaration.
+  - Finding-detail page (`finding_detail_inner`): same chip in the header `diagnosis_badges` block, with the matching `maintenance_id` carried in the tooltip so the operator can grep `nq-monitor maintenance list` for the responsible declaration.
 - WarningVm (`crates/nq-db/src/views.rs`): `maintenance_state: String` (default `"none"`) + `maintenance_id: Option<String>` fields added; populated from `v_warnings`.
 - Acceptance tests (10 in `crates/nq-db/src/publish.rs::tests`):
   - `maintenance_covers_finding_in_active_window`
@@ -123,7 +123,7 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
   - `maintenance_export_round_trip_covered` — covered finding carries the maintenance block
   - `maintenance_export_omits_block_when_state_none` — state='none' communicated by JSON-key-absence, not null
   - `maintenance_export_carries_overrun_with_declaration_id` — overrun round-trip
-- End-to-end smoke verified manually (2026-05-08): `nq maintenance declare --db /tmp/maint-smoke.db --host labelwatch-host --kind log_silence --subject labelwatch.log_source --start now --end now+30m --reason "VACUUM ..." --declared-by labelwatch-claude` → row written; `nq maintenance list` shows `[active]`; `nq maintenance list --active` shows the same row; past-dated `--start` rejected with the documented invariant message.
+- End-to-end smoke verified manually (2026-05-08): `nq-monitor maintenance declare --db /tmp/maint-smoke.db --host labelwatch-host --kind log_silence --subject labelwatch.log_source --start now --end now+30m --reason "VACUUM ..." --declared-by labelwatch-claude` → row written; `nq-monitor maintenance list` shows `[active]`; `nq-monitor maintenance list --active` shows the same row; past-dated `--start` rejected with the documented invariant message.
 
 **Known unproven surfaces / V1 explicit deferrals:**
 - **`late` and `out_of_envelope` states.** Documented in the canonical model section of the gap doc but not in V1's wire shape. CLI rejects past-dated `--start` rather than recording `late`. Adding either later is non-breaking: consumers branching on `state` will simply see new values appear.
@@ -147,7 +147,7 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
 - The deterministic-precedence rule for overlapping declarations was a load-bearing review catch from ChatGPT: "phrase it as deterministic resolution, not truth." Annotation picks **a** declaration; that doesn't mean the others are wrong, just that one is exposed via `maintenance_id`. Future-self is spared debugging metaphysics in SQL.
 - `apply_maintenance_overlay` runs per-row in Rust rather than as a single UPDATE-FROM-CTE. The per-row form is more readable, the SQL is bounded by host+kind cardinality (small in practice), and the test cases land at exactly the granularity the code exercises. If profiling ever shows this is hot, switching to a bulk UPDATE is mechanical.
 - The migration's mint of `maint_<32-hex-nanos>` is intentionally not a UUID. NQ has no UUID dependency anywhere; introducing one here for V1 would be schema-acne. Nanosecond-precision unix timestamps are sufficient for the operationally-plausible call rate; if collision ever becomes a real concern, the mint is a one-line change.
-- The "earn the chrome" discipline held: V1 ships exactly two badge chips (covered, overrun) and a tooltip that carries the `maintenance_id` for grep-based correlation. No new color palette, no new layout, no new UI page for declaration management. Operators inspect via `nq maintenance list`.
+- The "earn the chrome" discipline held: V1 ships exactly two badge chips (covered, overrun) and a tooltip that carries the `maintenance_id` for grep-based correlation. No new color palette, no new layout, no new UI page for declaration management. Operators inspect via `nq-monitor maintenance list`.
 
 ---
 
@@ -226,7 +226,7 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
 
 **Known unproven surfaces / explicit deferrals:**
 - **One concrete real producer path.** Synthetic test producer is the V1 cash-out per spec; a driftwatch witness adapter (the live forcing case from the 2026-04-15 self-shedding incident) is its own slice.
-- **Operator surface beyond `nq query`.** Dashboard rendering deferred per spec non-goal.
+- **Operator surface beyond `nq-monitor query`.** Dashboard rendering deferred per spec non-goal.
 - **V1.2 post-mask edge case.** `validate_coverage_composition` runs *before* the masking pass and declaration overlay execute on the current batch. A parent emitted in this same batch and then masked later in the same cycle (because its host went stale or its witness silent in this same cycle) is treated as open. In practice, when the witness/host is in trouble, producers typically don't emit dependent findings — the masking-firing-in-the-same-cycle-as-fresh-emission pattern is rare. Tightening to true post-mask requires a second pass after `apply_declaration_overlay` and is deferred until a forcing case shows the gap matters.
 - **Sustained-recovery timer not enforced by NQ.** V1 persists `recovery_state` transitions through `active → candidate → satisfied` but does not enforce the `recovery_sustained_for_s` timer — that responsibility sits with the producer. NQ records the contract; the producer drives the lifecycle.
 
@@ -328,7 +328,7 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
 - **`current_admissibility` is view-derived, not a column.** Persist primitives (`visibility_state`, `suppression_kind`) and derive interpretation in `v_admissibility`. Avoids drift from a second-truth column.
 - **Quiescence consumer path is inert.** `quiesced` declarations are stored, surfaced by hygiene, and rejected on conflict, but produce no suppression effect today — NQ has no work-intake findings yet. Withdrawal path is fully wired.
 - **`declaration_conflicts_with_observed_state` is narrowed to `withdrawn_subject_active`.** The grand "conflicts" name is held back until intake-metric data exists.
-- **CLI subcommand absent.** Ingestion is file-based JSON only; `nq declaration {add|list|revoke}` is a follow-up.
+- **CLI subcommand absent.** Ingestion is file-based JSON only; `nq-monitor declaration {add|list|revoke}` is a follow-up.
 - **Suppression metadata on `finding_observations` was deliberately not added.** The spec listed both `warning_state` and `finding_observations`; the latter is the append-only evidence event log and has no `suppression_reason` to backfill against — wiring there would be dead semantics. Suppression is a lifecycle decision applied during publish-time consolidation, not a property of an individual emission.
 
 **Unblocks:**
@@ -346,7 +346,7 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
 
 ## EVIDENCE_RETIREMENT V1.0 (substrate)
 
-**Status:** partial — V1 substrate (ground structure for basis propagation) shipped 2026-04-22 in `62e5005`. Five-state basis lifecycle landed at the schema, detector, write-path, and export layers, but the V1 spec also names four follow-on slices that have not shipped: basis-stale detector, `nq source retire` verb, per-state notification gating, render distinction in Slack/v_warnings beyond the column being present. Ratified under the gap-status discipline 2026-05-07 (this entry).
+**Status:** partial — V1 substrate (ground structure for basis propagation) shipped 2026-04-22 in `62e5005`. Five-state basis lifecycle landed at the schema, detector, write-path, and export layers, but the V1 spec also names four follow-on slices that have not shipped: basis-stale detector, `nq-monitor source retire` verb, per-state notification gating, render distinction in Slack/v_warnings beyond the column being present. Ratified under the gap-status discipline 2026-05-07 (this entry).
 
 **Shipped commits:**
 - `62e5005` (2026-04-22) — V1.0 substrate: migration 033_basis_state.sql adds `basis_state TEXT NOT NULL DEFAULT 'unknown' CHECK (state IN ('live','stale','retired','invalidated','unknown'))` plus `basis_source_id`, `basis_witness_id`, `last_basis_generation`, `basis_state_at` to `warning_state`; `basis_source_id` + `basis_witness_id` to `finding_observations`. v_warnings recreated. Write path and detector code propagate basis-state. Export surface carries the basis envelope.
@@ -360,7 +360,7 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
 
 **Known unproven surfaces / V1 slice items not yet shipped:**
 - **Basis-stale detector (V1 #2).** No detector currently transitions `live → stale` when a `basis_source_id` misses its freshness window. The five-state enum is reserved in the schema; the transition logic is not yet built.
-- **`nq source retire` / `nq source unretire` verb (V1 #3).** No CLI command, no `sources_retired` table, no atomic `live → retired` transitions. Manual cleanup (the 2026-04-22 sushi-k template referenced in the gap doc §"References") remains the only path.
+- **`nq-monitor source retire` / `nq-monitor source unretire` verb (V1 #3).** No CLI command, no `sources_retired` table, no atomic `live → retired` transitions. Manual cleanup (the 2026-04-22 sushi-k template referenced in the gap doc §"References") remains the only path.
 - **State-transition notifications (V1 V1 §"Notification discipline").** `live → stale` does not emit the spec's "🔕 basis went silent" notification yet.
 - **Render distinction beyond column presence (V1 #5).** `v_warnings` exposes `basis_state`; Slack/Discord renderers do not yet visibly mark `stale` / `retired` / `invalidated` differently from `live`. The substrate is there for renderers to consume; rendering itself is the unfinished surface.
 - **Per-state notification gating (V1 #6).** The intended `basis_state = 'live'` page-gate is not enforced; retired/invalidated findings are kept off-page today only because no path produces them yet.
@@ -459,7 +459,7 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
   - `observed_at_is_required` (criterion #6).
   - `observation_failure_rolls_back_lifecycle` (criterion #7 — transactional safety; pre-inserts a colliding row and verifies the lifecycle changes also roll back).
 - Downstream consumer evidence: every subsequent V1 sub-law has used `finding_observations` as its read substrate. FINDING_DIAGNOSIS round-trips through `finding_observations` (`diagnosis_round_trips_through_finding_observations` at line 3633). GENERATION_LINEAGE counts derive from this layer. STABILITY_AXIS computes presence patterns by counting distinct `generation_id` rows across the observation_window. DOMINANCE_PROJECTION reads dominance from rolled-up observations. The "build the substrate now; flip the model later, cheaply" thesis from the gap's §"Why This Matters" has cashed out — the substrate has supported every V1 sub-law without schema breakage.
-- Live evidence: schema 44 in production; observations written every cycle on all three NQ hosts. The `nq findings export` JSONL surface (FINDING_EXPORT V1) reads from `finding_observations` and is consumed cross-repo by Night Shift.
+- Live evidence: schema 44 in production; observations written every cycle on all three NQ hosts. The `nq-monitor findings export` JSONL surface (FINDING_EXPORT V1) reads from `finding_observations` and is consumed cross-repo by Night Shift.
 
 **Known unproven surfaces:**
 - `observed_at` is detector emission time (`fmt_ts(now)` at the top of the inner function), not source collection time. The TODO at `publish.rs:1083-1085` flags this against the gap's open question — federation will care about the difference. Forcing case has not appeared.
@@ -496,7 +496,7 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
   - `lineage_empty_findings_zero_counters` (criterion #4).
   - `lineage_counters_atomic_with_rollback` (criterion #5 — transactional safety against observation-collision rollback).
   - `lineage_pre_migration_rows_default_to_zero` (criterion #6).
-- Downstream consumer evidence: `source_error_masking_updates_lineage_suppressed_count` at `publish.rs:2795` (GENERALIZED_MASKING V1.0 uses lineage as a state-correctness oracle for masking passes). `LivenessArtifact` carries `findings_observed`, `findings_suppressed`, `detectors_run` per cycle (`crates/nq-db/src/liveness.rs:52-54`); they are the per-instance summary in the wire format and reach `nq fleet status`.
+- Downstream consumer evidence: `source_error_masking_updates_lineage_suppressed_count` at `publish.rs:2795` (GENERALIZED_MASKING V1.0 uses lineage as a state-correctness oracle for masking passes). `LivenessArtifact` carries `findings_observed`, `findings_suppressed`, `detectors_run` per cycle (`crates/nq-db/src/liveness.rs:52-54`); they are the per-instance summary in the wire format and reach `nq-monitor fleet status`.
 - Live evidence: schema 44 in production; counters populated every cycle on all three NQ hosts. The `liveness.json` artifacts on sushi-k / lil-nas-x / labelwatch carry non-zero values per the FLEET_INDEX V1 smoke (2026-05-06).
 
 **Known unproven surfaces:**
@@ -521,20 +521,20 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
 **Status:** shipped. V1 landed 2026-04-13; refined incrementally through 2026-05-05. Ratified under the gap-status discipline 2026-05-06 (this entry).
 
 **Shipped commits:**
-- `dd9a971` (2026-04-13) — V1.0: liveness artifact write path in the publish loop + `nq sentinel` subcommand + state machine + acceptance tests.
-- `ce394f3` (later in arc) — V1.1: canonical `LivenessSnapshot` DTO + `nq liveness export` CLI. Originally added when FLEET_INDEX needed a programmatic reader; folded back into the SENTINEL_LIVENESS evidence as the canonical artifact-read path.
+- `dd9a971` (2026-04-13) — V1.0: liveness artifact write path in the publish loop + `nq-monitor sentinel` subcommand + state machine + acceptance tests.
+- `ce394f3` (later in arc) — V1.1: canonical `LivenessSnapshot` DTO + `nq-monitor liveness export` CLI. Originally added when FLEET_INDEX needed a programmatic reader; folded back into the SENTINEL_LIVENESS evidence as the canonical artifact-read path.
 - `7a5f0a2` (later in arc) — V1.2: schema_version pulled from `CURRENT_SCHEMA_VERSION` constant rather than a literal, so artifact stays accurate as migrations land.
 - `6c8c9bd` (2026-05-05) — V1.3: extended artifact with `contract_version` and `build_commit` (substrate work for FLEET_INDEX V1a; see [FLEET_INDEX V1](#fleet_index-v1) entry for that arc's details). The artifact is additive — both new fields skip-on-None for legacy producers.
 
 **Evidence:**
 - Artifact write: `crates/nq/src/cmd/serve.rs:130-160`. After each successful generation cycle, builds a `LivenessArtifact` (instance_id from `pull_config.liveness.instance_id`, generated_at from now, generation_id, schema_version from `CURRENT_SCHEMA_VERSION`, finding/detector counts, contract_version, build_commit) and calls `nq_db::write_liveness`. Write failure is logged warn but does not crash the cycle — spec §"Open Questions" explicitly endorses this posture.
 - Atomic write helper: `nq_db::write_liveness` writes to `.tmp` then renames. Partial reads cannot occur.
-- Read/parse path: `crates/nq-db/src/liveness_export.rs::export_liveness` is the canonical reader. Returns `LivenessSnapshot` with normalized fields + freshness verdict against an optional threshold. Used by `nq liveness export`, `nq sentinel`, and `nq fleet status`.
+- Read/parse path: `crates/nq-db/src/liveness_export.rs::export_liveness` is the canonical reader. Returns `LivenessSnapshot` with normalized fields + freshness verdict against an optional threshold. Used by `nq-monitor liveness export`, `nq-monitor sentinel`, and `nq-monitor fleet status`.
 - Sentinel state machine: `crates/nq/src/cmd/sentinel.rs::classify` returns `Healthy / Stale / Stuck / Missing / Malformed`. Configurable thresholds (`max_age_secs=180`, `poll_interval_secs=60`, `grace_secs=120`, `stuck_polls=5`). Deduplicates: alert on transition to unhealthy, recovery once on transition to healthy. Webhook delivery via the existing notifier transport (Slack/Discord).
 - Tests:
   - 14 in `crates/nq-db/src/liveness_export.rs::tests` — schema/contract surfacing, instance_id present/absent, freshness threshold semantics, missing/malformed errors, V1a witness-fields propagation, deterministic JSON shape.
   - 8 in `crates/nq/src/cmd/sentinel.rs::tests` — fresh artifact healthy, stale on threshold breach, missing on absent file, malformed on parse error, malformed on bad timestamp, stuck after N polls of frozen generation_id, not stuck below threshold, real-file round trip.
-- Live evidence: every NQ host (sushi-k, lil-nas-x, labelwatch) now writes a populated artifact every cycle; `nq fleet status --manifest /tmp/fleet-smoke/four.json` reads them all and renders schema=44 contract=1 build_commit=40bcac7fe092 across the deployed fleet (see [FLEET_INDEX V1](#fleet_index-v1) entry for that smoke).
+- Live evidence: every NQ host (sushi-k, lil-nas-x, labelwatch) now writes a populated artifact every cycle; `nq-monitor fleet status --manifest /tmp/fleet-smoke/four.json` reads them all and renders schema=44 contract=1 build_commit=40bcac7fe092 across the deployed fleet (see [FLEET_INDEX V1](#fleet_index-v1) entry for that smoke).
 
 **Known unproven surfaces:**
 - Remote sentinel — explicit V2 deferral. Same-host sentinel catches process/scheduler/DB failures; remote catches host failures. Forcing case for remote is multi-instance + production-pager wiring; not yet present.
@@ -548,8 +548,8 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
 
 **Field notes:**
 - The liveness write lives in `serve.rs` (the aggregator+publisher path that holds the read connection), not in `publish.rs` (the per-batch write path). Spec §1 said "after each successful generation commit" — `serve.rs` is the lifecycle layer that observes generation completion across the pull/aggregate loop, which is where the artifact's "I just produced a generation" semantic actually lives.
-- The original V1 artifact omitted `contract_version` and `build_commit`; both were added under FLEET_INDEX V1a (`6c8c9bd`) as additive Optional fields. Legacy producers continue to write valid artifacts without them, and consumers (sentinel, `nq fleet status`) handle absence honestly. This is the build.rs "honest absence beats fabricated identity" doctrine put into practice — see [FLEET_INDEX V1](#fleet_index-v1) field notes for the deployment wrinkle on Linode where `.git` is rsync-excluded and `NQ_BUILD_COMMIT` must be passed explicitly.
-- `nq liveness export` started life as a SENTINEL helper (`ce394f3`) and became FLEET_INDEX's canonical read primitive. Nice example of the spec §"Tests" architecture (artifact as contract, not implementation) paying off — both consumers depend only on the JSON shape and the helper that produces a typed snapshot from it.
+- The original V1 artifact omitted `contract_version` and `build_commit`; both were added under FLEET_INDEX V1a (`6c8c9bd`) as additive Optional fields. Legacy producers continue to write valid artifacts without them, and consumers (sentinel, `nq-monitor fleet status`) handle absence honestly. This is the build.rs "honest absence beats fabricated identity" doctrine put into practice — see [FLEET_INDEX V1](#fleet_index-v1) field notes for the deployment wrinkle on Linode where `.git` is rsync-excluded and `NQ_BUILD_COMMIT` must be passed explicitly.
+- `nq-monitor liveness export` started life as a SENTINEL helper (`ce394f3`) and became FLEET_INDEX's canonical read primitive. Nice example of the spec §"Tests" architecture (artifact as contract, not implementation) paying off — both consumers depend only on the JSON shape and the helper that produces a typed snapshot from it.
 
 ---
 
@@ -634,7 +634,7 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
 
 **Shipped commits:**
 - `6c8c9bd` (2026-05-05) — V1a: extend liveness artifact with `contract_version` + `build_commit`. Substrate prerequisite — comparison surface needs build/schema/contract metadata per target row.
-- `59538de` (2026-05-05) — V1b: manifest + loader (`crates/nq-db/src/fleet.rs`), per-target reader, `nq fleet status` CLI render. `crates/nq/src/cmd/fleet.rs`.
+- `59538de` (2026-05-05) — V1b: manifest + loader (`crates/nq-db/src/fleet.rs`), per-target reader, `nq-monitor fleet status` CLI render. `crates/nq/src/cmd/fleet.rs`.
 
 **Evidence:**
 - Manifest types: `TargetClass` (local | remote), `SupportTier` (active | experimental | unsupported | observed_only), `TargetDeclaration`, `FleetManifest` with serde rename_all = "snake_case" so unknown values reject at parse time.
@@ -642,7 +642,7 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
 - Reader transports: `file://` (local artifact via `export_liveness`), `ssh://[user@]host/abs/path` (BatchMode + ConnectTimeout + cat-and-parse via the new public `snapshot_from_loaded_artifact` helper), bare absolute path (same as file://). Unsupported scheme yields explicit error.
 - Parallel reads: thread-per-target with mpsc collection; manifest order preserved regardless of completion order. Bounded per-target timeout via `--timeout-seconds`.
 - Unreachable targets: rendered with `reachable: false` and human-readable failure reason in `unreachable_reason`. Never omitted from the row set.
-- CLI: `nq fleet status [--manifest PATH] [--format table|json] [--timeout-seconds N]`. Manifest defaults to `~/.config/nq-fleet/targets.json` with tilde expansion.
+- CLI: `nq-monitor fleet status [--manifest PATH] [--format table|json] [--timeout-seconds N]`. Manifest defaults to `~/.config/nq-fleet/targets.json` with tilde expansion.
 - Table render: fixed-width columns `ID / CLASS / TIER / REACHABLE / BUILD / SCHEMA / CONTRACT / LAST_GEN / AGE_S`. Non-active tiers wrapped in `[brackets]` for visual distinction.
 - JSON render: per-target object array with `serde::Serialize`-derived shape; `Option` fields use `skip_serializing_if` so absence stays absent.
 - No-aggregate-state guarantee: test `render_carries_no_top_level_aggregate_state` asserts the rendered output contains no `fleet health` / `constellation` / `overall:` / `aggregate` / `rollup:` tokens.
@@ -661,7 +661,7 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
 - `snapshot_from_loaded_artifact` was added to `liveness_export` mid-V1b to avoid a tempfile dance in the SSH read path. Cleaner than re-serializing through the file API; useful for any future non-filesystem transport (HTTP, etc.).
 - The CLI argument expansion of `~/.config/...` had to be done via a custom `value_parser`; clap doesn't expand tilde automatically. Worth knowing for future CLI work.
 - **Linode build needs `NQ_BUILD_COMMIT` passed explicitly.** `crates/nq-db/build.rs` derives the commit from `git rev-parse`, but the Linode source tree is rsync-deployed without `.git` (per the existing exclude). The first deploy round produced a binary with `contract_version` populated but `build_commit` absent — the build.rs intentionally returns absent rather than fabricated identity. Fix: pass the local HEAD sha as `NQ_BUILD_COMMIT=$(git rev-parse --short=12 HEAD)` to the on-host `cargo build`. The source we just rsynced *is* local HEAD, so reporting that sha is honest. Memory `project_deployment.md` carries the updated ritual.
-- The fleet reader's SSH transport uses `ssh user@host cat path` without an explicit `-i` flag — it relies on agent / SSH config. Operator-side, this means `~/.ssh/config` aliases or pre-loaded agent keys. For the smoke session the plex key was added via `ssh-add ~/git/claude/ssh/plex`. Not a bug; a deliberate choice in the reader to keep the URL shape simple. Worth knowing for any future automation that wants to invoke `nq fleet status` from a context where the agent is empty.
+- The fleet reader's SSH transport uses `ssh user@host cat path` without an explicit `-i` flag — it relies on agent / SSH config. Operator-side, this means `~/.ssh/config` aliases or pre-loaded agent keys. For the smoke session the plex key was added via `ssh-add ~/git/claude/ssh/plex`. Not a bug; a deliberate choice in the reader to keep the URL shape simple. Worth knowing for any future automation that wants to invoke `nq-monitor fleet status` from a context where the agent is empty.
 
 ---
 
@@ -759,7 +759,7 @@ All three are *tolerance without consumption.* V1 admits under the mechanical ba
 **Status:** shipped (2026-04-16 → 2026-05-01 — V1 wire surface + Night Shift integration acceptance + coverage-map audit)
 
 **Shipped commits:**
-- `447db96` (2026-04-16) — initial DTO + CLI. `FindingSnapshot` struct, `nq findings export` subcommand with the spec's flag set.
+- `447db96` (2026-04-16) — initial DTO + CLI. `FindingSnapshot` struct, `nq-monitor findings export` subcommand with the spec's flag set.
 - `be83e92` — schema preflight (`MIN_SCHEMA_FOR_EXPORT = 38`). Specific actionable error when DB schema predates the columns the contract reads. First-contact scar from Night Shift Phase 1 consumer work 2026-04-18.
 - `0a17e89` — TESTIMONY_DEPENDENCY V1.1 admissibility surface in JSON export.
 - `768366b` — COVERAGE_HONESTY V1.1 JSON export wiring.

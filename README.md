@@ -39,9 +39,9 @@ The finding card in the UI walks you through this ladder. You can stop at the me
 Download from [GitHub Releases](https://github.com/unpingable/nq/releases):
 
 ```bash
-curl -sSL https://github.com/unpingable/nq/releases/latest/download/nq-linux-amd64 -o nq
-chmod +x nq
-sudo mv nq /usr/local/bin/
+curl -sSL https://github.com/unpingable/nq/releases/latest/download/nq-monitor-linux-amd64 -o nq-monitor
+chmod +x nq-monitor
+sudo mv nq-monitor /usr/local/bin/
 ```
 
 Or build from source (requires **Rust ≥ 1.88** — pinned in `rust-toolchain.toml`):
@@ -67,7 +67,7 @@ cat > publisher.json << 'EOF'
   ]
 }
 EOF
-nq publish -c publisher.json
+nq-monitor publish -c publisher.json
 
 # Aggregator + web UI (runs centrally)
 cat > aggregator.json << 'EOF'
@@ -80,7 +80,7 @@ cat > aggregator.json << 'EOF'
 }
 EOF
 mkdir -p /var/lib/nq
-nq serve -c aggregator.json
+nq-monitor serve -c aggregator.json
 ```
 
 Open `http://localhost:9848`.
@@ -167,22 +167,22 @@ FROM v_hosts h JOIN v_services s ON h.host = s.host;
 ### Architecture
 
 ```
-Monitored hosts              Central host
-┌──────────────┐            ┌─────────────────────────┐
-│ nq publish   │──HTTP───→  │ nq serve                │
-│  host        │            │  pull → publish → detect│
-│  services    │            │  lifecycle → notify     │
-│  sqlite      │            │  web UI + SQL API       │
-│  prometheus  │            └──────────┬──────────────┘
-│  logs        │                       │
-└──────────────┘                  ┌────▼────┐
-                                  │ SQLite  │
-                                  └─────────┘
+Monitored hosts                  Central host
+┌──────────────────┐            ┌─────────────────────────┐
+│ nq-monitor       │──HTTP───→  │ nq-monitor serve        │
+│   publish        │            │  pull → publish → detect│
+│  host            │            │  lifecycle → notify     │
+│  services        │            │  web UI + SQL API       │
+│  sqlite          │            └──────────┬──────────────┘
+│  prometheus      │                       │
+│  logs            │                  ┌────▼────┐
+└──────────────────┘                  │ SQLite  │
+                                      └─────────┘
 ```
 
-Single binary. Schema version 53. 1236 workspace tests.
+Schema version 53. 1274 workspace tests.
 
-**The witness role today.** `nq publish` *is* the witness. It observes hosts, services, SQLite, Prometheus exporters, and log sources, then emits `nq.witness_packet.v1` envelopes for the aggregator to ingest. A separable `nq-witness` binary in the same role is roadmapped (Track 4 of [`docs/working/decisions/OSS_READINESS_ROADMAP.md`](docs/working/decisions/OSS_READINESS_ROADMAP.md)) under a `v0-wire-equals-current-wire` constraint — same envelope, same W/E boundary discipline, separated from the aggregator/dashboard. Until that ships, the witness pattern is reachable today via `nq publish`. The role-vs-binary distinction is structural: the role exists; today it's packaged inside the unified binary.
+**The witness role today.** `nq-monitor publish` *is* the witness. It observes hosts, services, SQLite, Prometheus exporters, and log sources, then emits `nq.witness_packet.v1` envelopes for the aggregator to ingest. A separable `nq-witness` binary in the same role is roadmapped (Track 4 of [`docs/working/decisions/OSS_READINESS_ROADMAP.md`](docs/working/decisions/OSS_READINESS_ROADMAP.md)) under a `v0-wire-equals-current-wire` constraint — same envelope, same W/E boundary discipline, separated from the aggregator/dashboard. Until that ships, the witness pattern is reachable today via `nq-monitor publish`. The role-vs-binary distinction is structural: the role exists; today it's packaged inside the monitor binary.
 
 ## The deeper claim
 
@@ -200,7 +200,7 @@ These map to a broader [15-domain failure taxonomy](docs/operator/failure-domain
 ## Docs
 
 - [Operator Guide](docs/operator/OPERATOR_GUIDE.md) — install, deploy, configure, troubleshoot
-- [Receipts](docs/operator/RECEIPTS.md) — `nq receipt check` and `nq receipt replay`, failure taxonomy, worked examples
+- [Receipts](docs/operator/RECEIPTS.md) — `nq-monitor receipt check` and `nq-monitor receipt replay`, failure taxonomy, worked examples
 - [Claim Catalog](docs/operator/CLAIM_CATALOG.md) — every shipped claim, required witnesses, what each refuses
 - [Refusal Examples](docs/operator/REFUSAL_EXAMPLES.md) — worked examples of NQ refusing stronger claims
 - [Quickstart](docs/operator/quickstart.md) — monitoring a host in 5 minutes

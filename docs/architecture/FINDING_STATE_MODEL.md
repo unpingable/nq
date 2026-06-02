@@ -44,7 +44,7 @@ A finding's state lives on multiple orthogonal axes. The axes do not collapse in
 
 **Values:** `live` / `stale` / `retired` / `invalidated` / `unknown`
 **Owner:** basis-stale detector + operator retirement verb (V1 substrate shipped 2026-04-22; follow-on slices remain)
-**Mutation rule:** detector evaluation (live ↔ stale) + explicit operator verbs (`nq source retire` / `unretire`; manual `invalidated` transitions via `finding_transitions`).
+**Mutation rule:** detector evaluation (live ↔ stale) + explicit operator verbs (`nq-monitor source retire` / `unretire`; manual `invalidated` transitions via `finding_transitions`).
 **Source:** `warning_state.basis_state` column; `EVIDENCE_RETIREMENT_GAP.md`.
 **Refusal it encodes:** present-tense rendering requires a live basis. History may survive; active truth may not be faked. Retirement is explicit, not inferred from decay. Default is `unknown`, never `live`.
 
@@ -91,7 +91,7 @@ This axis is the structural home for the persistence-into-urgency laundering exa
 ### 9. `maintenance_state` — declared-maintenance overlay axis
 
 **Values:** `none` / declared-maintenance values per `MAINTENANCE_DECLARATION_GAP` V1.
-**Owner:** operator declarations (`nq maintenance declare|list`) + lifecycle pass that tags findings under active declarations.
+**Owner:** operator declarations (`nq-monitor maintenance declare|list`) + lifecycle pass that tags findings under active declarations.
 **Mutation rule:** computed at lifecycle time against active `maintenance_declarations`; transitions out of `none` when a declaration matches; transitions back when the declaration expires or is revoked.
 **Source:** `warning_state.maintenance_state` + `warning_state.maintenance_id` columns; `MAINTENANCE_DECLARATION_GAP` (shipped V1).
 **Refusal it encodes:** "this finding is under declared maintenance" is distinct from "this finding is suppressed by parent-staleness" is distinct from "this finding is acknowledged by an operator." The three overlay shapes share rendering register but are doctrinally separate.
@@ -168,7 +168,7 @@ Each external surface projects some subset of the axes. The table below is the c
 | Dashboard "Open Findings" list | condition + visibility + work_state | — | severity-of-condition + action_bias, distinctly labeled per finding | render `basis_state ∈ {stale, retired, invalidated, unknown}` in the same visual class as `live`; render action_bias and severity with the same vocabulary |
 | Dashboard header | condition + visibility (for counts); severity AND action_bias, separately labeled | — | severity counts labeled as `severity`; action_bias counts labeled as `response` (or equivalent) | render `"{N} critical"` as a bare label when the count is severity-derived but the word reads as urgency; collapse the two registers into one number |
 | Slack / webhook notification | condition + basis_state + failure_class | `(new)` / `(recurring)` | severity-of-condition + action_bias, distinctly | drop the recurrence marker; render suppressed findings as live; conflate severity and action_bias in payload labels |
-| `nq finding list` CLI | filterable by all axes | — | severity-of-condition + action_bias, with filter labels | default to condition=open and silently hide other axes; render action_bias as a sub-field of severity |
+| `nq-monitor finding list` CLI | filterable by all axes | — | severity-of-condition + action_bias, with filter labels | default to condition=open and silently hide other axes; render action_bias as a sub-field of severity |
 | `/api/preflight/*` HTTP route (current Track A) | condition + basis_state | — | verdict + cannot_testify (separate register) | render verdicts as severity |
 | Future: Prom `/metrics` (Track 3a scope) | basis_state + visibility + condition (substrate-state only) | — | aggregate severities only, with anti-laundering doc | export per-finding labels that allow `alert: open > 0` consumer logic without consulting the refusal axis |
 | Hypothetical responder-witness surface (Daywatch doctrine) | condition + work_state + basis_state + responder-state (if/when any such surface lands) | — | severity-of-condition + urgency-of-response + responder-liveness, distinctly | render a click-resolved finding as resolved when substrate still says open |

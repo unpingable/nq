@@ -8,7 +8,7 @@
 
 ## The Problem
 
-NQ has well-shaped vocabulary for testimony — `Finding`, `LivenessArtifact`, the `nq findings export` JSONL surface — but the wire-format boundary trusts **shape conformance**, not **path of emission**. A consumer downstream of NQ that receives JSON shaped like NQ output cannot today distinguish "this came from a conforming NQ witness path" from "this is JSON that happens to match the schema."
+NQ has well-shaped vocabulary for testimony — `Finding`, `LivenessArtifact`, the `nq-monitor findings export` JSONL surface — but the wire-format boundary trusts **shape conformance**, not **path of emission**. A consumer downstream of NQ that receives JSON shaped like NQ output cannot today distinguish "this came from a conforming NQ witness path" from "this is JSON that happens to match the schema."
 
 The keeper:
 
@@ -18,8 +18,8 @@ In-process this is already true: `Finding` is type-sealed (no `Serialize`, no `D
 
 The gap lives at the wire boundary, specifically at the surfaces where:
 
-1. **NQ re-imports its own JSON.** `nq fleet status` reads `liveness.json` files via `serde_json::from_str` into `LivenessArtifact` and treats `instance_id` as a per-row identity claim. Anyone with filesystem write access (or a manifest path that points anywhere) can mint a shape-conformant artifact; the fleet reader will accept it.
-2. **External consumers ingest NQ JSON as testimony.** Night Shift consumes `nq findings export` JSONL as admissibility input (per `FINDING_EXPORT_GAP` V1.2). The shape is the contract; nothing in the wire format proves the JSON came from a conforming `nq findings export` invocation against a known NQ instance.
+1. **NQ re-imports its own JSON.** `nq-monitor fleet status` reads `liveness.json` files via `serde_json::from_str` into `LivenessArtifact` and treats `instance_id` as a per-row identity claim. Anyone with filesystem write access (or a manifest path that points anywhere) can mint a shape-conformant artifact; the fleet reader will accept it.
+2. **External consumers ingest NQ JSON as testimony.** Night Shift consumes `nq-monitor findings export` JSONL as admissibility input (per `FINDING_EXPORT_GAP` V1.2). The shape is the contract; nothing in the wire format proves the JSON came from a conforming `nq-monitor findings export` invocation against a known NQ instance.
 
 The OS layer helps but does not seal: SSH paths, sudoers, fixed-path NOPASSWD discipline are real and operative for witness binaries (see `GENERALIZED_MASKING V1` and `Real-SMART deploy` field notes). They bind *who can run a helper at a given path*, not *whether a given JSON value was produced by that helper*. Path-binding is operator-curated; it is a different layer from value-of-type provenance.
 
@@ -34,7 +34,7 @@ A parallel doctrinal session derived the same construction-discipline boundary o
 | AG | NQ | receipt_kernel |
 |----|----|----------------|
 | Authority mint | Testimony mint | Attestation record |
-| `AuthorizationVerdict` (defined, no minter) | `LivenessArtifact` (round-trippable, no path-of-emission proof); `nq findings export` JSONL (shape-only consumer contract) | content-addressed blobs (signed by content) |
+| `AuthorizationVerdict` (defined, no minter) | `LivenessArtifact` (round-trippable, no path-of-emission proof); `nq-monitor findings export` JSONL (shape-only consumer contract) | content-addressed blobs (signed by content) |
 
 The cross-system pattern — the thing that matters must be emitted by the process that earns it, not constructed by whichever consumer finds the enum — is the same primitive at different scales. Two independent derivations (Lean kernel via AG, Ada probe via AG, NQ wire-format audit) converging on the same hole is the signal that justifies naming this as a gap before any forcing-case-driven implementation.
 
@@ -45,12 +45,12 @@ Falsification grep at filing time, against `~/git/nq` HEAD:
 | Component | Location | Construction discipline today |
 |-----------|----------|------------------------------|
 | `Finding` (in-process testimony) | `crates/nq-db/src/detect.rs:437` | **Sealed by type system.** `#[derive(Debug, Clone)]` only. **No `Serialize`, no `Deserialize`.** Cannot be deserialized from JSON. All production-code construction lives in `detect.rs`. The AG analog of `ValidationReceipt` validator-only-factory, achieved structurally rather than by explicit factory. |
-| `LivenessArtifact` | `crates/nq-db/src/liveness.rs` | **Bidirectional.** `#[derive(Debug, Clone, Serialize, Deserialize)]`. `nq fleet status` reads `liveness.json` files via `serde_json::from_str`. `instance_id` is a claim, not a proof. |
-| `nq findings export` JSONL types | `crates/nq-db/src/export.rs` (`FindingSnapshot`, `AdmissibilityExport`, `CoverageDegradationExport`, `ObservationRecord`, etc.) | **Write-only from NQ's typed surface.** `#[derive(Serialize)]` only — never `Deserialize`. NQ does not re-import its own JSONL into typed values. |
+| `LivenessArtifact` | `crates/nq-db/src/liveness.rs` | **Bidirectional.** `#[derive(Debug, Clone, Serialize, Deserialize)]`. `nq-monitor fleet status` reads `liveness.json` files via `serde_json::from_str`. `instance_id` is a claim, not a proof. |
+| `nq-monitor findings export` JSONL types | `crates/nq-db/src/export.rs` (`FindingSnapshot`, `AdmissibilityExport`, `CoverageDegradationExport`, `ObservationRecord`, etc.) | **Write-only from NQ's typed surface.** `#[derive(Serialize)]` only — never `Deserialize`. NQ does not re-import its own JSONL into typed values. |
 | Witness binary payloads (SMART, ZFS) | external helpers, invoked via `wrapper: ["sudo", "-n"]` at sudoers-named paths | **Path-bound at the OS layer.** Sudoers + fixed absolute path + NOPASSWD on the exact path. The seal is operator-curated; the type system is not the enforcement layer. |
 | `Finding` constructions in production code | grep `Finding {` across `crates/`, exclude tests and deserialization | **All in `crates/nq-db/src/detect.rs`** (multiple sites: lines 664, 754, 819, 902, 958, 1010, 1057, 1105, 1158, 1205, 1296, 1327, 1358, 1435, 1498, 1552, 1628, 1657, 1733, 1816, 1880, 1930, etc.). `crates/nq-db/src/export.rs` constructions are inside `#[cfg(test)]` modules (verified). No non-detector production module mints `Finding`. |
 
-The grep evidence is the cheapest available falsification. If a future audit finds a non-test production minter of `Finding` outside `detect.rs`, or a path that round-trips `nq findings export` JSON back into typed NQ state, this spec's "in-process is healthy" claim is wrong and the spec should be rewritten or retired.
+The grep evidence is the cheapest available falsification. If a future audit finds a non-test production minter of `Finding` outside `detect.rs`, or a path that round-trips `nq-monitor findings export` JSON back into typed NQ state, this spec's "in-process is healthy" claim is wrong and the spec should be rewritten or retired.
 
 ## Laundering Vector
 
@@ -64,11 +64,11 @@ State carefully:
 
 The fleet reader (`crates/nq/src/cmd/fleet.rs`) reads `liveness.json` files at manifest-named paths. Local reads use `file://` and SSH reads use `ssh://user@host/path`. The reader deserializes into `LivenessArtifact`, then constructs a `LivenessSnapshot` row with the artifact's `instance_id` as a per-row identity claim.
 
-A consumer of `nq fleet status` (an operator reading the table; a future federation aggregator; an automation that branches on schema/contract drift) treats each row as testimony from the named instance. There is no value in the wire format that proves the artifact was produced by the NQ on the named host; only path-binding (and SSH host-key verification, when SSH transport is used) constrains the source. A non-NQ tool with filesystem write access to the path mentioned in the manifest can mint a shape-conformant artifact, and the fleet reader will accept it.
+A consumer of `nq-monitor fleet status` (an operator reading the table; a future federation aggregator; an automation that branches on schema/contract drift) treats each row as testimony from the named instance. There is no value in the wire format that proves the artifact was produced by the NQ on the named host; only path-binding (and SSH host-key verification, when SSH transport is used) constrains the source. A non-NQ tool with filesystem write access to the path mentioned in the manifest can mint a shape-conformant artifact, and the fleet reader will accept it.
 
-### Vector B — `nq findings export` JSONL → Night Shift admissibility
+### Vector B — `nq-monitor findings export` JSONL → Night Shift admissibility
 
-Night Shift consumes the `nq findings export` JSONL surface as admissibility input. The wire shape (`FindingSnapshot`, `AdmissibilityExport`, `ObservationRecord`, etc.) is a contract between NQ-as-emitter and Night Shift-as-consumer. Nothing in the JSONL proves that a given line was emitted by `nq findings export` against a real NQ database; the shape is the contract.
+Night Shift consumes the `nq-monitor findings export` JSONL surface as admissibility input. The wire shape (`FindingSnapshot`, `AdmissibilityExport`, `ObservationRecord`, etc.) is a contract between NQ-as-emitter and Night Shift-as-consumer. Nothing in the JSONL proves that a given line was emitted by `nq-monitor findings export` against a real NQ database; the shape is the contract.
 
 A non-NQ tool can produce JSON in the same shape and feed it to Night Shift. Night Shift would treat the lines as NQ testimony — including their admissibility envelopes, their typed diagnoses, their basis-source-id fields. Whether Night Shift's downstream actions (admission, scheduling) are sufficiently bounded to absorb a laundered finding without consequence is a Night Shift question; from NQ's side, the wire format does not constrain the answer.
 
@@ -79,7 +79,7 @@ A non-NQ tool can produce JSON in the same shape and feed it to Night Shift. Nig
 | Did this collector report observations? | raw collector data (freely constructible — correct as evidence) |
 | Did the in-process detector emit a `Finding`? | `Finding` type seal (no Deserialize, single producer module — correct as testimony mint) |
 | Did this `liveness.json` come from the named instance? | **No production answering surface.** Path + SSH host-key are the seal at the OS layer; `instance_id` is a claim. |
-| Did this `nq findings export` line come from a conforming export pass against a known NQ instance? | **No production answering surface.** Shape is the contract; provenance of the bytes is not enforced. |
+| Did this `nq-monitor findings export` line come from a conforming export pass against a known NQ instance? | **No production answering surface.** Shape is the contract; provenance of the bytes is not enforced. |
 
 The third and fourth rows are where consumers transition from "received some bytes" to "trust this as NQ testimony." Today that transition rests on operator discipline and OS-layer seals, not on a value-typed proof.
 
@@ -103,8 +103,8 @@ The guardrails (load-bearing — do not lose):
 
 This gap is closed when a doctrine record exists that:
 
-1. States the construction-discipline rule: NQ wire-format artifacts (`liveness.json`, `nq findings export` JSONL) consumed by NQ-internal or external readers are admissible testimony only when they originate from a conforming emission path; shape conformance is necessary but not sufficient.
-2. Names the two laundering vectors: (a) `liveness.json` shape + manifest-path trust without `instance_id` proof; (b) `nq findings export` JSONL shape conformance without path-of-emission proof for downstream consumers like Night Shift.
+1. States the construction-discipline rule: NQ wire-format artifacts (`liveness.json`, `nq-monitor findings export` JSONL) consumed by NQ-internal or external readers are admissible testimony only when they originate from a conforming emission path; shape conformance is necessary but not sufficient.
+2. Names the two laundering vectors: (a) `liveness.json` shape + manifest-path trust without `instance_id` proof; (b) `nq-monitor findings export` JSONL shape conformance without path-of-emission proof for downstream consumers like Night Shift.
 3. Explicitly preserves the guardrails: observations remain freely constructible; `Finding` remains type-sealed in-process (no `Deserialize`); no signing/path-binding scheme is ratified by the doctrine record itself.
 4. Identifies the future work that would close the gap mechanically (deferred, not ratified by this filing): a provenance-carrying field or signature on `LivenessArtifact`; a manifest-of-known-NQ-instances against which Night Shift verifies emission; an instance-bound key + sign-on-emission discipline; or an alternative not yet imagined.
 5. Records that no construction of any seal, no schema migration, and no consumer-side enforcement is ratified by the doctrine record itself.
@@ -118,7 +118,7 @@ Non-goals are load-bearing here:
 - **Not making `Finding` deserializable.** Explicit non-goal — the type-system seal is exactly the right in-process discipline. Opening it would create the very laundering vector this gap names, just one boundary inward.
 - **Not sealing `Observation` or witness-payload structs.** Observations must remain constructible; the witness layer is OS-curated and that posture is correct.
 - **Not a schema migration.** No new field, no field removed, no constructor signature change.
-- **Not a refactor of `nq fleet status` or `nq findings export`.** Both are correct as wire-format producers and consumers; the gap names a sibling discipline, not a replacement.
+- **Not a refactor of `nq-monitor fleet status` or `nq-monitor findings export`.** Both are correct as wire-format producers and consumers; the gap names a sibling discipline, not a replacement.
 - **Not absorbing into `INSTANCE_WITNESS_GAP`.** That gap names "no instance attests for another." This gap names "no consumer constructs testimony by emitting the shape." Adjacent, not identical. Cross-reference, do not merge.
 - **Not a Lean-side specification.** No formal kernel for NQ exists today; this gap is about Rust-side construction discipline at the wire boundary, not about a formal verdict algebra.
 - **Not "while here" cleanup of `LivenessArtifact` `Deserialize`, the export-pass JSONL serialization, or the witness payload contracts.** Those are downstream of the seal design and out of scope until that design exists.
@@ -137,8 +137,8 @@ Non-goals are load-bearing here:
 
 Deliberately empty in detail. Implementation requires a forcing case beyond the audit-witness discovery. Candidate ratification paths if forced:
 
-- **Provenance signature on `LivenessArtifact`.** Add an optional `signature` field; signed at write time by an instance-bound key; verified at read time by `nq fleet status` against a known-instances manifest. Risk: introduces a key-management surface NQ does not currently have. If the AG side picks a particular signing primitive first, NQ may follow that lead.
-- **Path-of-emission attestation in JSONL preamble.** `nq findings export` could emit a header line carrying instance-id + timestamp + signature; consumers (Night Shift) verify against a known-instances manifest. Lighter weight than per-line signing.
+- **Provenance signature on `LivenessArtifact`.** Add an optional `signature` field; signed at write time by an instance-bound key; verified at read time by `nq-monitor fleet status` against a known-instances manifest. Risk: introduces a key-management surface NQ does not currently have. If the AG side picks a particular signing primitive first, NQ may follow that lead.
+- **Path-of-emission attestation in JSONL preamble.** `nq-monitor findings export` could emit a header line carrying instance-id + timestamp + signature; consumers (Night Shift) verify against a known-instances manifest. Lighter weight than per-line signing.
 - **Consumer-side enforcement only.** Night Shift requires a fresh emission from a known NQ instance (HTTP call to `/api/findings/export` against a verified TLS endpoint) rather than reading JSONL from disk. Shifts the seal to the network layer; no NQ-side change required. Risk: tightly couples the consumer to NQ's HTTP surface, which today is `nq-serve`-shaped (different failure domain from `nq-publish`).
 - **A "trusted source" layer at the manifest level.** Fleet manifests gain a per-target attestation field (e.g., expected build-commit, expected schema, expected key); the fleet reader refuses to admit rows that don't match.
 - **Doing nothing.** If the operator-curated path/SSH/sudoers seal proves sufficient in practice (no laundering incident, no consumer-side confusion), the doctrine record stands as the audit-witness, and no implementation lands.

@@ -1,6 +1,6 @@
 # Gap: Maintenance Declaration — expected disturbance must not be suppressed into nothing
 
-**Status:** shipped (V1, 2026-05-08) — separate-table per the frozen 2026-04-27 spec; the 2026-04-28 "profile of OID" framing is stale (V2+ unification debt named in the FEATURE_HISTORY entry). See [../decisions/FEATURE_HISTORY.md#maintenance_declaration-v1](../decisions/FEATURE_HISTORY.md#maintenance_declaration-v1) for evidence (migration 045 + `apply_maintenance_overlay` + `nq maintenance declare|list` CLI + export wire shape + dashboard badge + 22 tests). Ratified 2026-05-08. The V1 slice section below remains canonical for the spec-vs-shipped diff.
+**Status:** shipped (V1, 2026-05-08) — separate-table per the frozen 2026-04-27 spec; the 2026-04-28 "profile of OID" framing is stale (V2+ unification debt named in the FEATURE_HISTORY entry). See [../decisions/FEATURE_HISTORY.md#maintenance_declaration-v1](../decisions/FEATURE_HISTORY.md#maintenance_declaration-v1) for evidence (migration 045 + `apply_maintenance_overlay` + `nq-monitor maintenance declare|list` CLI + export wire shape + dashboard badge + 22 tests). Ratified 2026-05-08. The V1 slice section below remains canonical for the spec-vs-shipped diff.
 **Depends on:** OPERATIONAL_INTENT_DECLARATION_GAP (substrate primitive — declaration storage, suppression metadata, hygiene detectors), EVIDENCE_LAYER_GAP (built — transactional finding substrate), FINDING_DIAGNOSIS_GAP (state_kind axis already lands `maintenance` as a class)
 **Related:** OPERATIONAL_INTENT_DECLARATION_GAP (parent primitive — maintenance is one profile), EVIDENCE_RETIREMENT_GAP (sibling — retirement is permanent end-of-life; maintenance is bounded expected disturbance), COMPLETENESS_PROPAGATION_GAP (sibling — partiality and expectation as separate axes), ALERT_INTERPRETATION_GAP (consumer surface), NOTIFICATION_INHIBITION_GAP (downstream routing), Night Shift attention/escalation semantics
 **Blocks:** honest maintenance handling, expected-silence semantics, window-end overrun detection, agent-declared maintenance workflows
@@ -283,13 +283,13 @@ A finding is **overrun** when there is a declaration row that *was* covering it 
 Two verbs only:
 
 ```text
-nq maintenance declare \
+nq-monitor maintenance declare \
   --host H --kind K [--subject S] \
   --start <iso8601 | "now"> \
   --end <iso8601 | "now+30m"> \
   [--reason "..."] [--declared-by "..."]
 
-nq maintenance list [--active | --all]
+nq-monitor maintenance list [--active | --all]
 ```
 
 **No `clear`, `cancel`, `extend`, or `update` verbs in V1.** A declaration with the wrong window is fixed by waiting for `end_at` to pass (or writing a new declaration that supersedes it semantically; storage stays append-only).
@@ -309,9 +309,9 @@ maintenance_id     TEXT  -- nullable; references the declaration when state ≠ 
 
 `maintenance_state` and `maintenance_id` propagate to:
 
-- `nq findings export` JSON output (new fields, nullable for back-compat)
+- `nq-monitor findings export` JSON output (new fields, nullable for back-compat)
 - the existing dashboard finding cards (badge or label, no new layout)
-- `nq query` works against the new columns by default — no special flags
+- `nq-monitor query` works against the new columns by default — no special flags
 
 Dashboard treatment is "earn-the-chrome": minimum viable distinct rendering, no new colors/icons until a real operator pull surfaces.
 
@@ -342,7 +342,7 @@ Before implementation begins, V1 must answer all of these. Anything still open i
 - [x] render: export + dashboard badge, nothing fancier
 - [x] schema migration number: whatever the next honest integer is (currently 038). No theology. Per `docs/architecture/MIGRATION_DISCIPLINE.md` and `project_versioning_three_clocks` memory: migration ledger is local bookkeeping, not a public coupling point. The work is to *not* let the integer be the public clock — adding the table is just local DDL, no contract bump.
 - [ ] which DB the declarations live in (publisher-local vs aggregator) — TBD. Lean: aggregator-side, since that's where finding state is computed and `update_warning_state` runs. Publisher-local would be source-local maintenance with later federation, which is a bigger shape than V1.
-- [ ] how the CLI reaches the right DB — likely the existing `--db` flag pattern from `nq query`. Confirm at implementation time.
+- [ ] how the CLI reaches the right DB — likely the existing `--db` flag pattern from `nq-monitor query`. Confirm at implementation time.
 
 ## Explicitly deferred
 

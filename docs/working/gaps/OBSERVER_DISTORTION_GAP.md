@@ -76,8 +76,8 @@ V1 is strictly about NQ auditing NQ. Host-wide process-FD enumeration is **v2**,
 Every collector in the publisher and aggregator pipelines declares a **participation mode** per substrate it touches. Modes (small controlled vocabulary, v1):
 
 - `non_participatory` — file metadata only; header parse; stat; read-only FS calls that don't create SQLite read marks or holder state. Example: the file-header parser in `sqlite_health` after `734f14c`.
-- `participatory_read` — opens a connection or long-lived handle; may acquire a read mark or equivalent substrate standing. Example: the pre-`734f14c` `read_pragmas` path. Example that is legitimate: `nq serve` opening its own `nq.sqlite`.
-- `participatory_write` — writes to substrate. Example: `nq serve` writing finding observations into its own `nq.sqlite`.
+- `participatory_read` — opens a connection or long-lived handle; may acquire a read mark or equivalent substrate standing. Example: the pre-`734f14c` `read_pragmas` path. Example that is legitimate: `nq-monitor serve` opening its own `nq.sqlite`.
+- `participatory_write` — writes to substrate. Example: `nq-monitor serve` writing finding observations into its own `nq.sqlite`.
 - `subprocess` — spawns an external process (`journalctl`, `tail`, etc.). The observer inherits the subprocess's substrate consumption. v1 treats this as its own mode rather than pretending it reduces to the others.
 
 Each collector gets a static `participation_manifest` entry listing substrate targets (own vs foreign) × mode.
@@ -102,7 +102,7 @@ collector: nq-serve (its own DB)
   mode: participatory_write (own)
 ```
 
-The manifest is declared in code (not config) and surfaced via a new `nq observer-manifest` subcommand and optionally at `/observer-manifest` on the serve HTTP surface.
+The manifest is declared in code (not config) and surfaced via a new `nq-monitor observer-manifest` subcommand and optionally at `/observer-manifest` on the serve HTTP surface.
 
 ### 2. Participation audit finding
 
@@ -157,7 +157,7 @@ These are real and important; v1 defers them deliberately so the self-audit disc
 - **Don't make NQ a process supervisor.** Δq reports; it does not stop, restart, or throttle observers. The finding names the problem; the human or another system acts.
 - **Don't infer guilt from WAL size alone.** A pinned-reader detector needs WAL evidence *plus* fd/process evidence *plus* checkpoint behavior. Single-signal guilt is how the taxonomy gets lazy.
 - **Don't require deep SQLite introspection in v1.** The file-header pattern is intentional — inspect the substrate without participating in it. Extend the pattern rather than adding SQLite-specific probes.
-- **Don't emit Δq findings for legitimate own-substrate participation.** `nq serve` opening its own `nq.sqlite` is not Δq; the participation manifest marks it as `own` and the detector only flags `foreign`.
+- **Don't emit Δq findings for legitimate own-substrate participation.** `nq-monitor serve` opening its own `nq.sqlite` is not Δq; the participation manifest marks it as `own` and the detector only flags `foreign`.
 - **Don't promote Δq to a paper primitive.** That is a separate, unsettled question. NQ can ship the detector domain without prejudging the taxonomy question.
 - **Don't use "heisenbug" in operator-facing surfaces.** Cute; violates the brutalist design-ethic. "Observer interference" or "observer distortion" in docs and UI. `Δq` in schema.
 
@@ -168,7 +168,7 @@ These are real and important; v1 defers them deliberately so the self-audit disc
 3. NQ's existing resource-drift detector runs against NQ's own pids and emits `observer_self_consumption` findings in domain Δq under the same thresholds applied to any other process.
 4. The file-header migration in `sqlite_health` (commit `734f14c`) is retroactively classified in the manifest as a migration from `participatory_read` to `non_participatory`, and the gap's Shipped State section captures this as the first concrete instance.
 5. Domain `Δq` is present in the warning_state domain enum and renders in existing domain-card surfaces with the operator-facing label "observer interference."
-6. The `nq observer-manifest` subcommand (and optional HTTP surface) emits the current manifest as JSON for inspection.
+6. The `nq-monitor observer-manifest` subcommand (and optional HTTP surface) emits the current manifest as JSON for inspection.
 7. No Δq detector performs host-wide `/proc` enumeration; all detectors scope themselves to NQ's own processes.
 
 ## Core invariant

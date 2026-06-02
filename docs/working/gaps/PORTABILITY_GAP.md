@@ -3,7 +3,7 @@
 **Status:** `proposed` — drafted 2026-04-15
 **Depends on:** OBSERVER_DISTORTION_GAP (Δq self-manifest is the integration point; this gap extends the manifest with platform capability declarations), EVIDENCE_LAYER (capability-gap findings flow through the same pipe)
 **Build phase:** structural — introduces a platform-capability manifest and the degraded-mode probe discipline
-**Blocks:** any non-Linux deployment; the NAS deployment path (LLM-free config, `nq validate`, `nq test-targets`) that already exists in the deferred list; an honest `nq preflight` on anything that isn't systemd Linux
+**Blocks:** any non-Linux deployment; the NAS deployment path (LLM-free config, `nq-monitor validate`, `nq-monitor test-targets`) that already exists in the deferred list; an honest `nq-monitor preflight` on anything that isn't systemd Linux
 **Last updated:** 2026-04-15
 
 ## The Problem
@@ -94,7 +94,7 @@ pub const HOST_COLLECTOR_CAPABILITY: CollectorCapability = CollectorCapability {
 ```
 
 Manifest surfaces via:
-- `nq capabilities` subcommand (JSON output)
+- `nq-monitor capabilities` subcommand (JSON output)
 - Optional `/capabilities` HTTP endpoint on the publisher
 - Included in `PublisherState` wire payload as a top-level field so the aggregator captures it per generation
 
@@ -129,7 +129,7 @@ These findings are long-lived. They don't flap; they exist while the collector r
 
 ### 3. Preflight check
 
-`nq preflight` reads the config, enumerates which collectors would run, and reports per-collector whether the local platform supports them. Fails hard on zero-capability configs. Useful output, example:
+`nq-monitor preflight` reads the config, enumerates which collectors would run, and reports per-collector whether the local platform supports them. Fails hard on zero-capability configs. Useful output, example:
 
 ```
 preflight: platform=macos
@@ -160,9 +160,9 @@ Preflight is read-only, idempotent, and costs nothing — it's the honest-deploy
 1. Every collector has a static capability declaration covering `linux`, `macos`, `freebsd`, `windows` at minimum.
 2. Collectors whose capability for the running platform is `not_supported` return `CollectorStatus::Skipped` rather than `CollectorStatus::Error`. An explicit reason is attached.
 3. NQ emits `platform_capability_gap` findings in domain `portability` (with `related_domains: [Δq]`) for every such skipped collector at each generation, at `info` severity. Interim implementation as `domain: Δq / basis: portability_declaration` is acceptable if the warning_state.domain enum migration is not yet landed.
-4. `nq capabilities` subcommand exists and returns JSON describing the capability matrix for the running platform.
+4. `nq-monitor capabilities` subcommand exists and returns JSON describing the capability matrix for the running platform.
 5. Optional `/capabilities` HTTP endpoint on nq-publish mirrors the subcommand output.
-6. `nq preflight` subcommand exists and produces the human-readable report shown in §V1.3. Exit code nonzero if zero collectors are supported.
+6. `nq-monitor preflight` subcommand exists and produces the human-readable report shown in §V1.3. Exit code nonzero if zero collectors are supported.
 7. The wire `PublisherState` payload includes the platform string and capability summary.
 8. `host.rs`, `services.rs`, and `logs.rs` have their Linux assumptions gated by `cfg(target_os = "linux")` with `not_supported` fallbacks on other platforms. No silent panics on file-not-found or command-not-found.
 
@@ -185,7 +185,7 @@ And the brutal corollary specific to this project:
 - Service-health abstraction that handles non-systemd init systems (runit, s6, launchd, openrc).
 - File-adapter-first log collector default on non-systemd platforms.
 - Cross-platform CI matrix.
-- `nq validate` and `nq test-targets` for NAS-style deployment validation (already in the deferred pile; this spec unblocks them).
+- `nq-monitor validate` and `nq-monitor test-targets` for NAS-style deployment validation (already in the deferred pile; this spec unblocks them).
 - Capability *versioning* — declaring that a capability was upgraded from `best_effort` to `native` in some NQ release, useful when operators upgrade on-the-edge platforms.
 
 ## References

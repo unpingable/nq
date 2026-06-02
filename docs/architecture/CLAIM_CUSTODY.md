@@ -18,7 +18,7 @@ claim preflight                 ←  evaluator
         ↓
 receipt                         ←  nq.receipt.v1 (sealed, anchored)
         ↓
-check / replay                  ←  nq receipt check, nq receipt replay
+check / replay                  ←  nq-monitor receipt check, nq-monitor receipt replay
         ↓
 operator / automation / Governor
 ```
@@ -70,9 +70,9 @@ A naive read of "did this alert lie?" collapses three different questions:
 
 | Question | Answered by |
 |---|---|
-| Has the receipt been tampered with? | `nq receipt check` |
-| Does the original decision reproduce from supplied packets? | `nq receipt replay` |
-| Is the claim still true in the world *right now*? | A fresh preflight (`nq verify` / preflight HTTP route) |
+| Has the receipt been tampered with? | `nq-monitor receipt check` |
+| Does the original decision reproduce from supplied packets? | `nq-monitor receipt replay` |
+| Is the claim still true in the world *right now*? | A fresh preflight (`nq-monitor verify` / preflight HTTP route) |
 
 Each has a separate command, a separate exit code, and a separate failure mode. Operators (and automations) that need to reason about old receipts can address the right question without conflating it with the other two.
 
@@ -131,8 +131,8 @@ Concretely, once `receipt replay` exists:
 
 Five exclusions, all load-bearing because each one is a category error someone will eventually try to make:
 
-1. **NQ is not monitoring.** It does not scrape. It does not poll. It does not draw dashboards. (`nq serve`'s web UI is a *consumer* of NQ's own outputs, not a monitoring surface in its own right. The witness producers — Prometheus, journald, SMART tooling — are upstream substrate.)
-2. **NQ is not alerting.** Receipt emission is not an alert. The notification engine that fires on finding escalation is a separate concern wired into `nq serve`; it is not the receipt machinery.
+1. **NQ is not monitoring.** It does not scrape. It does not poll. It does not draw dashboards. (`nq-monitor serve`'s web UI is a *consumer* of NQ's own outputs, not a monitoring surface in its own right. The witness producers — Prometheus, journald, SMART tooling — are upstream substrate.)
+2. **NQ is not alerting.** Receipt emission is not an alert. The notification engine that fires on finding escalation is a separate concern wired into `nq-monitor serve`; it is not the receipt machinery.
 3. **NQ is not authorization.** A receipt — even an `OK` receipt that replays cleanly — does not authorize a merge, a deploy, a restart, or an incident closure. NQ tells systems what they are *allowed to honestly claim*. Whether to act on a claim is downstream. See `feedback_knob_facing` doctrine.
 4. **NQ is not an oracle.** Replay reproduces a decision from inputs; it does not pronounce truth about the world.
 5. **NQ is not a replacement for runbooks, dashboards, or alertmanagers.** It sits underneath all three as the integrity layer. Operators still need their dashboards. They just have a structured artifact below the dashboard that says what they were allowed to claim from the picture.
@@ -152,7 +152,7 @@ In the constellation NQ is part of:
 
 The two layers compose: NQ's receipts are one input to an authority layer's decision. They are not the decision. A successful replay is not a deploy button. A stale receipt does not authorize anything to ignore the staleness. A `cannot_testify` is not a veto; it is testimony of absent standing.
 
-This boundary is the single most likely category error future surfaces will try to make. The receipt machinery makes claims *defensible*. It does not make them *executable*. Adding any verb that conflates the two — `nq receipt approve`, `nq receipt act`, `nq receipt close` — would rebuild the exact laundering pattern the kernel exists to refuse.
+This boundary is the single most likely category error future surfaces will try to make. The receipt machinery makes claims *defensible*. It does not make them *executable*. Adding any verb that conflates the two — `nq-monitor receipt approve`, `nq-monitor receipt act`, `nq-monitor receipt close` — would rebuild the exact laundering pattern the kernel exists to refuse.
 
 ## Where the next pressure lands
 
@@ -163,8 +163,8 @@ The pressure map (none of these are committed-to in scope; named here so the dis
 - **Receipt bundles.** A directory or archive containing a receipt plus all the witness packets it cites, so replay can run from a single artifact. The shape is straightforward; the discipline question is what "bundle" means for receipts that span multiple subjects or evaluators.
 - **Packet retention.** The aggregator already retains finding history; witness-packet retention is a separate, currently-unaddressed question. `EVIDENCE_RETIREMENT_GAP` already names some of this surface.
 - **Cross-host attestation.** A second NQ instance verifying receipts from a first is a different problem from running `check`/`replay` locally. Discipline question: how does the verifier obtain the witness packets it doesn't itself hold?
-- **Incident bundles.** A future `nq bundle` shape would package a receipt + packets + replay report + freshness verdict for postmortem use. The shape is straightforward; the discipline question is what counts as "the incident" relative to one receipt.
-- **Receipt diff.** A future `nq receipt diff` would tell you whether the world changed, the evaluator changed, or the policy changed between two receipts of similar shape. This is what makes evaluator drift visible across time. Currently doable by reading both receipts; a verb would make it a first-class operation.
+- **Incident bundles.** A future `nq-monitor bundle` shape would package a receipt + packets + replay report + freshness verdict for postmortem use. The shape is straightforward; the discipline question is what counts as "the incident" relative to one receipt.
+- **Receipt diff.** A future `nq-monitor receipt diff` would tell you whether the world changed, the evaluator changed, or the policy changed between two receipts of similar shape. This is what makes evaluator drift visible across time. Currently doable by reading both receipts; a verb would make it a first-class operation.
 
 These are pressure, not scope. None of them is in flight. The right move when any of them comes up is the same posture every other Slice 1 question got: a design preflight first, then a bounded commit, then the next slice.
 
@@ -203,7 +203,7 @@ The engineer-shaped sticky handle. Tells you what kind of tool this is in a sent
 ## See also
 
 - [`PATH_TO_1_0.md`](../working/decisions/PATH_TO_1_0.md) — Slice 1a/1b/1c/1d/1e scope and ordering; Phase 2 complete.
-- [`RECEIPT_REPLAY.md`](RECEIPT_REPLAY.md) — semantics pin for `nq receipt check` and `nq receipt replay`.
+- [`RECEIPT_REPLAY.md`](RECEIPT_REPLAY.md) — semantics pin for `nq-monitor receipt check` and `nq-monitor receipt replay`.
 - [`SHARED_SPINE.md`](SHARED_SPINE.md) — the witness → claim → receipt pipeline.
 - [`SPINE_AND_ROADMAP.md`](SPINE_AND_ROADMAP.md) — the five-layer spine and roadmap phases.
 - [`../operator/RECEIPTS.md`](../operator/RECEIPTS.md) — operator-facing receipt guide.

@@ -22,7 +22,7 @@ The component-testimony heartbeat slice implements the four-verb table from [[pr
 
 - The **witness** layer (`try_emit_observation_loop_alive` in `crates/nq-db/src/component_testimony.rs`) writes raw observations + contractual derivations.
 - The **evaluator** layer (`classify_absence` + `evaluate_observation_loop_alive_preflight`) reads observations + coverage and produces verdicts.
-- Both run **inside the same pulse iteration** of `nq serve`'s pull loop (`crates/nq/src/cmd/serve.rs`).
+- Both run **inside the same pulse iteration** of `nq-monitor serve`'s pull loop (`crates/nq/src/cmd/serve.rs`).
 
 The slice handles the boundary correctly in practice but does not articulate the discipline that holds it. The audit on 2026-05-29 surfaced six articulable pressure points; this gap files them as recognition.
 

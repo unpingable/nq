@@ -129,7 +129,7 @@ The pattern's refusal is not new doctrine — it is scattered across existing ma
 
 - HTTP routes (`/api/preflight/{disk-state, ingest-state, dns-state}`) serve raw `PreflightResult` → `cannot_testify` ships on the wire.
 - The host-detail nested envelope (`/api/host/{name}.disk_state_preflight`) also serves raw `PreflightResult` → ships.
-- CLI / markdown / json output (`nq preflight disk-state`, `nq receipt render`) consume `Receipt` → **`cannot_testify` is dropped**.
+- CLI / markdown / json output (`nq-monitor preflight disk-state`, `nq-monitor receipt render`) consume `Receipt` → **`cannot_testify` is dropped**.
 
 Treated here as a **declared seam**, not a bug to fix in this patch. A future ratified change may reconcile it. The mitigation today is: consumers that need the constitutional refusal surface read the HTTP route, not the CLI receipt.
 

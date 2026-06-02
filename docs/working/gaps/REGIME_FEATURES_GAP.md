@@ -106,7 +106,7 @@ Concrete rules:
 
 - **Retention horizon per feature type.** Trajectory and persistence are useful at most one window back; once the window advances, older rows lose interpretive value. Recovery may want longer because rare cycles are informative, but "longer" is bounded, not infinite.
 - **Pruning is generation-keyed.** Prune by generation_id, not wall-clock. Matches the clock the rest of the system uses.
-- **Retention is coupled to the existing prune pass.** `nq serve`'s retention loop (see `crates/nq-db/src/retention.rs`) runs every N generations; `regime_features` pruning rides that loop, not a separate timer.
+- **Retention is coupled to the existing prune pass.** `nq-monitor serve`'s retention loop (see `crates/nq-db/src/retention.rs`) runs every N generations; `regime_features` pruning rides that loop, not a separate timer.
 - **Pruning must preserve the most recent sufficient_history row per (subject_kind, subject_id, feature_type)**, so consumers can always read "the latest" without a stale-data surprise after a prune pass.
 - **Storage budget.** Feature class × window × subject cardinality × generation cadence × emit rate gives a ceiling. That ceiling must fit under the configured `disk_budget`; retention horizons are tuned to satisfy it.
 - **Compaction is out of scope for v1** (see HISTORY_COMPACTION_GAP). Plain row-level pruning is sufficient until cardinality forces the issue.

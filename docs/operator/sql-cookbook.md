@@ -1,7 +1,7 @@
 # SQL Cookbook
 
 NQ stores everything in SQLite. Every table and view is queryable from the
-web UI's SQL console or via `nq query --db /path/to/nq.db "SELECT ..."`.
+web UI's SQL console or via `nq-monitor query --db /path/to/nq.db "SELECT ..."`.
 
 ---
 

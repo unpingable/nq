@@ -95,11 +95,11 @@ The discriminating mechanism moves out of the SQL string (which is fragile, bloc
 The shape the adjacent gaps want, but cannot specify cleanly without this primitive:
 
 ```bash
-nq query targets                                              # list configured targets
-nq query schema <target>                                      # show allowed_namespace for a target
-nq query run <target> 'select * from active_maintenance_subjects'
-nq query check <target> ./queries/foo.sql                     # validate without running
-nq query export <target> 'select ...' --format ndjson
+nq-monitor query targets                                              # list configured targets
+nq-monitor query schema <target>                                      # show allowed_namespace for a target
+nq-monitor query run <target> 'select * from active_maintenance_subjects'
+nq-monitor query check <target> ./queries/foo.sql                     # validate without running
+nq-monitor query export <target> 'select ...' --format ndjson
 ```
 
 The `<target>` slot is **not** a path, **not** a DSN, **not** an arbitrary string. It is a configured target name, resolved through the target registry. The query expression runs under the target's contract.
@@ -112,7 +112,7 @@ If this primitive is built, the safe staging:
 
 ```text
 V0:
-  nq query <target> ... CLI (local invocation only)
+  nq-monitor query <target> ... CLI (local invocation only)
   read-only connections per target's read_enforcement
   configured targets in a declared file (e.g., /etc/nq/targets.yaml)
   no mutation verbs of any kind
@@ -141,7 +141,7 @@ If this primitive is built, V1 must:
 4. **`allowed_namespace` is a named allowlist.** Not "any table in the source." A target is `(source, list_of_tables_or_views)`, not `(source)`.
 5. **Read enforcement is layered.** Connection-level (`SQLITE_OPEN_READONLY`), pragma-level (`PRAGMA query_only=ON`), authorizer-level (deny writes/DDL/attach/load_extension/unsafe pragmas), and limit-level (timeout/rows/bytes/one-statement). Each belt independently rejects the bad case.
 6. **`display_only` and `barred_from_testimony` are first-class outputs.** Output from a target carries its standing flags downstream. Consumers (the future console; the future MCP server; any saved check that joins target output with NQ findings) read the standing and route accordingly.
-7. **No mutation verbs.** `nq query` ships `run / check / explain / targets / schema / export`. It does not ship `delete`, `create-table`, `register-target` (registration is config-file, not CLI command), or any verb that mutates target state.
+7. **No mutation verbs.** `nq-monitor query` ships `run / check / explain / targets / schema / export`. It does not ship `delete`, `create-table`, `register-target` (registration is config-file, not CLI command), or any verb that mutates target state.
 8. **Local-only V0; remote execution requires auth in the same PR.** A V0 ship without auth, followed by a "let's expose the runner over HTTP" follow-up, is exactly the shape that produced tonight's unauthenticated mutation exposure. Bundle them.
 
 ## Composition with the adjacent gaps
@@ -161,7 +161,7 @@ The point of filing this primitive separately is that each adjacent gap can refe
 - **Not a query language.** SQL only. No PromQL-equivalent, no expression engine, no custom DSL.
 - **Not a metrics surface.** Targets read state; they do not emit time-series.
 - **Not a federation primitive.** V0 is local files / local SQLite. Networked targets are a separate forcing case.
-- **Not an admin shell.** No mutation verbs ever. Operator authority for state mutation lives in `nq finding transition` / `nq maintenance declare` / etc., not in the query runner.
+- **Not an admin shell.** No mutation verbs ever. Operator authority for state mutation lives in `nq-monitor finding transition` / `nq-monitor maintenance declare` / etc., not in the query runner.
 - **Not an auth surface.** V0 defers auth because V0 is local-only. The deferral is bounded by the keeper above; remote exposure adds auth in the same PR.
 - **Not a replacement for `query_read_only`.** That function continues to enforce the in-process blocklist at the existing dashboard surface until the dashboard's SQL inspection path is rewritten to call targets. The primitive doesn't retroactively secure the existing surface; the existing surface is bounded by tonight's Caddy tourniquet and the forthcoming `DASHBOARD_SQL_INSPECTION_GAP` discipline.
 
@@ -171,13 +171,13 @@ The point of filing this primitive separately is that each adjacent gap can refe
 2. **How does a target's `allowed_namespace` interact with SQLite views?** Views are themselves named targets-of-a-sort; this composes cleanly with `TABULAR_DECLARED_CONTEXT_INPUT_GAP`'s "views as a third source kind" framing. A view in `allowed_namespace` admits the view's projection but not the underlying tables.
 3. **Does NQ's own `nq.db` become a target?** Probably yes — likely two targets: an `nq` target with `standing: internal_readonly` covering the operator-relevant views, and possibly a stricter `nq_audit` target for the receipt / finding-transition history. The flat "the whole DB" view is the failure mode this gap exists to refuse.
 4. **Hygiene detectors for target drift.** A target's `allowed_namespace` may reference views that get dropped; sources may move; standing labels may diverge from intent. Each becomes a hygiene-detector finding (`target_unreadable`, `target_namespace_drift`, `target_standing_unverifiable`) per the discipline already established for declared-context hygiene.
-5. **CLI shape for `nq query targets`.** Lean: machine-readable by default (JSON), `--human` flag for the operator-pretty version, per the existing CLI convention.
+5. **CLI shape for `nq-monitor query targets`.** Lean: machine-readable by default (JSON), `--human` flag for the operator-pretty version, per the existing CLI convention.
 
 ## Acceptance criteria for closing
 
 This gap closes when **either**:
 
-- (a) A forcing case fires (most likely: the operator wants an `nq query <target> ...` CLI for cross-substrate inspection, or one of the adjacent gaps reaches implementation and needs the target primitive as a precondition), the contract above is ratified, and V0 ships with the bundled-auth discipline; or
+- (a) A forcing case fires (most likely: the operator wants an `nq-monitor query <target> ...` CLI for cross-substrate inspection, or one of the adjacent gaps reaches implementation and needs the target primitive as a precondition), the contract above is ratified, and V0 ships with the bundled-auth discipline; or
 - (b) An explicit decision lands that NQ will not introduce a target-addressed query runner, and the adjacent gaps each work out their own per-gap plumbing.
 
 Until then: candidate, no implementation, no schema, no loader, no CLI verb.

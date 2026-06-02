@@ -49,7 +49,7 @@ The discriminator that prevents the collapse: a packet from `evaluation_engine_i
 
 NQ today has `node_unobservable` (finding-shaped — produced after the fact) and per-claim-kind freshness horizons (receipt-shaped — produced at emission time). Neither is *coverage-declaration-shaped*. The first-slice heartbeat needs the missing primitive.
 
-**Operator-surface storage (per scope question D, resolved 2026-05-28):** JSON file at runtime path `config/coverage.json` (per-aggregator, alongside `aggregator.json`). Documented example at `docs/examples/coverage.json`. **Do not embed coverage rules in `aggregator.json`** — aggregator output should report which coverage rule was active, not become the rule registry. **Do not add a CLI verb in this slice** — the JSON loader is the V0 declaration surface; a `nq coverage` CLI verb arrives later when humans need to inspect/list/validate rules.
+**Operator-surface storage (per scope question D, resolved 2026-05-28):** JSON file at runtime path `config/coverage.json` (per-aggregator, alongside `aggregator.json`). Documented example at `docs/examples/coverage.json`. **Do not embed coverage rules in `aggregator.json`** — aggregator output should report which coverage rule was active, not become the rule registry. **Do not add a CLI verb in this slice** — the JSON loader is the V0 declaration surface; a `nq-monitor coverage` CLI verb arrives later when humans need to inspect/list/validate rules.
 
 **JSON shape (one rule per array element):**
 
@@ -202,7 +202,7 @@ CREATE TABLE observation_loop_alive_observations (
 }
 ```
 
-**First-slice emit cadence:** the `nq serve` process emits `component_testimony_observation_loop_alive` once per its observation-loop pulse (60s in default config). The emit is *internal* to the running NQ binary — NQ writes a row to `observation_loop_alive_observations` from inside its own pulse loop.
+**First-slice emit cadence:** the `nq-monitor serve` process emits `component_testimony_observation_loop_alive` once per its observation-loop pulse (60s in default config). The emit is *internal* to the running NQ binary — NQ writes a row to `observation_loop_alive_observations` from inside its own pulse loop.
 
 ### Finding kind for coverage-resolved absence — `coverage_testimony_absent`
 
@@ -271,7 +271,7 @@ The four resolver-split fields propagate to the detail row at creation time (per
 
 **The honest framing:** NQ emits standing-bound self-testimony that *the observation loop ran*. NQ does NOT emit "NQ is healthy" / "NQ is operational" / "all loops are alive." The single fact the packet testifies to: the loop ran, at this time, under this coverage rule.
 
-**Self-witness wrinkle, named:** because the emitter and the subject are the same process, this packet's witness shape is *not* external (the SIGSTOP test from `NQ_BINARY_MTIME_STATE` §3 fails — if `nq serve` is frozen, no `observation_loop_alive` packet appears). This is by design: the packet's positive case is admissible *because* the loop running emits its own pulse; its absence is admissible only because an EXTERNAL party (the aggregator, the operator dashboard) consults `coverage_rules` and observes that the expected packet did not arrive. The witness for *absence* is external (the aggregator's coverage-resolver); the witness for *presence* is internal (the loop pulse itself). Tests pin this asymmetry.
+**Self-witness wrinkle, named:** because the emitter and the subject are the same process, this packet's witness shape is *not* external (the SIGSTOP test from `NQ_BINARY_MTIME_STATE` §3 fails — if `nq-monitor serve` is frozen, no `observation_loop_alive` packet appears). This is by design: the packet's positive case is admissible *because* the loop running emits its own pulse; its absence is admissible only because an EXTERNAL party (the aggregator, the operator dashboard) consults `coverage_rules` and observes that the expected packet did not arrive. The witness for *absence* is external (the aggregator's coverage-resolver); the witness for *presence* is internal (the loop pulse itself). Tests pin this asymmetry.
 
 ## 4. Constitutional `cannot_testify`
 
@@ -376,7 +376,7 @@ When the implementation slice ships, the following must hold:
 
 1. **Coverage rule lifecycle.** A coverage rule can be declared via `config/coverage.json`, loaded into the `coverage_rules` table, and superseded by editing the JSON (new row created; previous row's `valid_until` set). `valid_until` enforcement is correct at the index level; two active rules for the same `(component, subject, kind)` tuple are rejected.
 2. **Coverage rule hash stability.** `coverage_rule_hash` is deterministic over canonical-JSON serialization of the rule's defining fields. Identical rule content produces identical hashes; any field change produces a different hash.
-3. **Standing-bound emit.** `nq serve` emits one `component_testimony_observation_loop_alive` row per pulse with all four resolver-split fields populated (including `coverage_rule_hash` denormalized from the rule). An emit attempt with `standing_resolver_id = NULL` or `coverage_rule_id = NULL` is refused at the type/wire boundary; the row cannot be constructed.
+3. **Standing-bound emit.** `nq-monitor serve` emits one `component_testimony_observation_loop_alive` row per pulse with all four resolver-split fields populated (including `coverage_rule_hash` denormalized from the rule). An emit attempt with `standing_resolver_id = NULL` or `coverage_rule_id = NULL` is refused at the type/wire boundary; the row cannot be constructed.
 4. **Bounded payload.** Heartbeat carries exactly the declared diagnostic columns (`loop_name`, `checkpoint_name`, `last_success_at`, `component_version`, `schema_version`). No WAL/disk/export fields; the substrate table's schema does not permit them.
 5. **Expiry computation.** `expires_at` = `generated_at + (interval * grace_multiplier)`, computed at emit time, never recomputed downstream.
 6. **Absence classification.** Given a coverage rule and the current time, the absence resolver returns one of the seven states from `WITNESS_IDENTITY_AND_ABSENCE_GAP` §2.
@@ -399,7 +399,7 @@ The slice's checklist, in operator-given order:
 1. **`config/coverage.json`** with one rule: expect `component_testimony_observation_loop_alive` from `nq.local`, subject `observation_loop`, interval 60s, grace_multiplier 2.0 (expires_at = generated_at + 120s), `escalation_target = operator`.
 2. **Migrations:** `coverage_rules` table (per §2) + `observation_loop_alive_observations` table (per §3) + `coverage_testimony_absence_details` per-kind detail table (per §3's finding subsection; operator-revised 2026-05-28 — NOT sparse nullable columns on `warning_state` / `finding_observations`). The base finding rows stay generic; coverage-specific fields live in the narrow detail table.
 3. **Coverage-rule loader:** read `config/coverage.json` on aggregator startup and once per pulse; compute `coverage_rule_hash` over canonical-JSON of defining fields; reconcile JSON declarations to DB rows via append-only operations.
-4. **Standing-bound heartbeat emit:** `nq serve` writes one `observation_loop_alive_observations` row per observation-loop pulse, with all four resolver-split fields denormalized from the active coverage rule. Row construction refuses NULL on any required field.
+4. **Standing-bound heartbeat emit:** `nq-monitor serve` writes one `observation_loop_alive_observations` row per observation-loop pulse, with all four resolver-split fields denormalized from the active coverage rule. Row construction refuses NULL on any required field.
 5. **`ClaimKind::ComponentTestimonyObservationLoopAlive`** variant added to the enum; `as_str()` returns `"component_testimony_observation_loop_alive"`.
 6. **Absence resolver:** `(component_id, subject_id, claim_kind, now) → AbsenceState` returning one of seven states (`CoverageUnknown` when no active rule).
 7. **Finding production:** when absence resolves to anything other than `CoverageUnknown`, produce a `coverage_testimony_absent` finding row with all four resolver-split fields denormalized + `absence_state` + `last_observed_at` + `expected_by`.
@@ -416,7 +416,7 @@ The slice's checklist, in operator-given order:
 - No self-resolution (the refusal is the artifact; resolution architecture lives in `SELF-SUBJECT-COLLAPSE`).
 - No `health.ok` shape, in any encoding.
 - No additional component-testimony kinds (no `component_testimony_sqlite_wal_state`, no `component_testimony_export_path_*` in this slice — each gets its own preflight/slice when needed).
-- No CLI verb for coverage-rule management (`nq coverage list` etc. arrive later when humans need it; JSON file is the V0 declaration surface).
+- No CLI verb for coverage-rule management (`nq-monitor coverage list` etc. arrive later when humans need it; JSON file is the V0 declaration surface).
 - No bare heartbeat without diagnostic payload (Lie 2 mitigation; the heartbeat is structured testimony, not a presence flag).
 
 **Suggested commit splits (archaeology-story-oriented):**

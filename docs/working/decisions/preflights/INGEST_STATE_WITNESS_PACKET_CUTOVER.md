@@ -138,7 +138,7 @@ Mirror the parent doc's six tests, with ingest_state substitutions:
 3. **Row cannot self-authorize** — given a `generations` row with unparseable `completed_at`, the projector refuses; the evaluator surfaces a `PreflightExclusion` with a projection-refused reason; the row does not become observable substrate.
 4. **`generated_at` does not refresh `observed_at`** — projected packet's `observed_at` is `gen.completed_at` (or `src.received_at`), never the evaluator's wall-clock; `freshness_horizon` is computed from `observed_at_max`, never from `generated_at`.
 5. **`ingest_state` does not testify to upstream substrate** — the constitutional refusal surface (`ingest_state_cannot_testify`) holds on the new path; no projection laundering admits "source X is actually healthy" or "future ingest will succeed."
-6. **Slice 1d/1e behavior on cut-over Track A ingest_state receipts** — `nq receipt check` works; `nq receipt replay` returns `REPLAY_NOT_APPLICABLE` with the Q2-aware detail string ("with projected legacy witness custody: legacy_projection" once supports carry packets).
+6. **Slice 1d/1e behavior on cut-over Track A ingest_state receipts** — `nq-monitor receipt check` works; `nq-monitor receipt replay` returns `REPLAY_NOT_APPLICABLE` with the Q2-aware detail string ("with projected legacy witness custody: legacy_projection" once supports carry packets).
 
 ## 6. dns_state remains pre-cut-over
 

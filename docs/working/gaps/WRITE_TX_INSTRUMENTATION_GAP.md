@@ -167,7 +167,7 @@ GET /debug/writers
 → JSON array of currently open WriteTxSpans
 ```
 
-Or a subcommand: `nq query --debug-writers /path/to/nq.db` (less useful because it would open its own connection; the HTTP version reflects the live publisher process).
+Or a subcommand: `nq-monitor query --debug-writers /path/to/nq.db` (less useful because it would open its own connection; the HTTP version reflects the live publisher process).
 
 Bound to `127.0.0.1` only (or behind auth) — the backtraces may expose internal code paths.
 

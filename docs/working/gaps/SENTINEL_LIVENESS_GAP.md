@@ -1,6 +1,6 @@
 # Gap: Sentinel Liveness — out-of-band witness for NQ itself
 
-**Status:** shipped; see [../decisions/FEATURE_HISTORY.md#sentinel_liveness-v1](../decisions/FEATURE_HISTORY.md#sentinel_liveness-v1) for evidence (V1.0 artifact + sentinel + state machine; V1.1 canonical DTO + `nq liveness export`; V1.3 contract_version/build_commit extension via FLEET_INDEX V1a).
+**Status:** shipped; see [../decisions/FEATURE_HISTORY.md#sentinel_liveness-v1](../decisions/FEATURE_HISTORY.md#sentinel_liveness-v1) for evidence (V1.0 artifact + sentinel + state machine; V1.1 canonical DTO + `nq-monitor liveness export`; V1.3 contract_version/build_commit extension via FLEET_INDEX V1a).
 **Depends on:** none (orthogonal to the store spine)
 **Build phase:** infrastructure — adds a constitutional boundary between NQ and its own observation
 **Blocks:** `INSTANCE_WITNESS_GAP` (multi-instance registry needs per-instance liveness first), NAS deployment (can't deploy to a second box without knowing when it stops)
@@ -58,7 +58,7 @@ This is ~20 lines of Rust in `publish_batch`, after the transaction commits.
 
 ### 2. `nq-sentinel`: a separate watcher process
 
-A new binary (or subcommand: `nq sentinel`) that:
+A new binary (or subcommand: `nq-monitor sentinel`) that:
 
 - Reads `liveness.json` on a configurable interval
 - Checks freshness: is `generated_at` within the expected window?
@@ -101,7 +101,7 @@ Description=NQ Sentinel — liveness witness
 After=network.target
 
 [Service]
-ExecStart=/opt/nq/nq sentinel -c /opt/nq/sentinel.json
+ExecStart=/opt/nq/nq-monitor sentinel -c /opt/nq/sentinel.json
 Restart=always
 RestartSec=10
 
@@ -190,7 +190,7 @@ This is also the first step toward multi-instance deployment (NAS, desktop). You
 |---|---|
 | Liveness artifact write in `publish_batch` | ~30 Rust |
 | Atomic file write helper | ~15 Rust |
-| `nq sentinel` subcommand + main loop | ~120 Rust |
+| `nq-monitor sentinel` subcommand + main loop | ~120 Rust |
 | Sentinel config struct + parsing | ~30 Rust |
 | Sentinel webhook alert (reuse existing) | ~40 Rust |
 | Sentinel state machine (healthy/stale/stuck/missing/malformed) | ~60 Rust |
@@ -204,7 +204,7 @@ Time: roughly 4-5 focused hours. The sentinel is conceptually simple but has eno
 
 1. `publish_batch` writes `liveness.json` atomically after each successful generation.
 2. The artifact contains `instance_id`, `generated_at`, `generation_id`, `schema_version`, and coverage counters.
-3. `nq sentinel` subcommand runs as a separate process and reads the artifact.
+3. `nq-monitor sentinel` subcommand runs as a separate process and reads the artifact.
 4. Sentinel correctly classifies healthy/stale/missing/malformed/stuck states.
 5. Sentinel sends webhook alert on transition to unhealthy and recovery notification on transition to healthy.
 6. Sentinel deduplicates: one alert per state transition, not per poll cycle.

@@ -15,13 +15,13 @@ This is not negligence. NQ is a young instrument finding its surfaces against re
 These hold inside any single release. Upgrading across releases requires reading the `CHANGELOG.md` entry for that release.
 
 - **Within a single `nq` binary:**
-  - Receipt content-hashes are deterministic and reproducible from the receipt's stated `schema_version`. Re-running `nq receipt check <file>` on the same binary against the same receipt is idempotent.
+  - Receipt content-hashes are deterministic and reproducible from the receipt's stated `schema_version`. Re-running `nq-monitor receipt check <file>` on the same binary against the same receipt is idempotent.
   - Schema migrations are forward-only; downgrading the binary against an upgraded DB will refuse cleanly rather than silently lose data.
   - The CLI's `--help` is authoritative for that release's flags. Where flags have changed across releases, the change is named in `CHANGELOG.md`.
 
 - **Across releases — what we try not to break:**
   - The aggregator HTTP API surfaces (the dashboard at `/`, the SQL API at `/api/query`, the per-finding detail pages at `/finding/<kind>/<host>/...`). Breaks here go in `CHANGELOG.md` under "Breaking changes" with the migration path named.
-  - The witness packet wire format (`nq.witness_packet.v1` — the envelope `nq publish` POSTs to `nq serve`). The version suffix is load-bearing: a future `v2` packet ships alongside `v1` during transition, never replacing it silently.
+  - The witness packet wire format (`nq.witness_packet.v1` — the envelope `nq-monitor publish` POSTs to `nq-monitor serve`). The version suffix is load-bearing: a future `v2` packet ships alongside `v1` during transition, never replacing it silently.
   - SQLite databases written by an older `nq` are readable by a newer `nq` via the migration path. We do not break read-back-compat within a major version.
 
 ## What we expect to change
@@ -45,7 +45,7 @@ The witness packet envelope is versioned at the wire:
 
 The `v1` is load-bearing. A future `v2` will:
 
-1. Ship alongside `v1` — `nq serve` accepts both during a transition window.
+1. Ship alongside `v1` — `nq-monitor serve` accepts both during a transition window.
 2. Be flagged in `CHANGELOG.md` with the transition window length.
 3. Eventually deprecate `v1` per the schedule in the release notes.
 
@@ -76,7 +76,7 @@ For any operator running NQ in production:
 1. Read the new release's `CHANGELOG.md` entry before upgrading.
 2. Back up the SQLite DB if historical findings matter to you.
 3. Smoke-test the new binary against a non-production deployment if you can.
-4. Upgrade by replacing the binary; restart `nq serve`; the migrate path runs automatically.
+4. Upgrade by replacing the binary; restart `nq-monitor serve`; the migrate path runs automatically.
 
 ## When does this change?
 

@@ -61,7 +61,7 @@ Per [[feedback_preemptive_naming]] / [[feedback_name_broadly_build_narrowly]]: n
 | Claim kind | Substrate the witness would observe | External-witness shape needed |
 |---|---|---|
 | `nq_route_state` | Whether the HTTP route at `/api/preflight/...` returns a well-formed PreflightResult within a budget | External probe (curl or sibling NQ) — not NQ-A's own request log |
-| `nq_probe_freshness` | Whether a probe (e.g., `nq probe dns`, future `nq probe sqlite-wal`) has written observations within a freshness threshold | Filesystem mtime or peer-NQ — not the probe's own self-report |
+| `nq_probe_freshness` | Whether a probe (e.g., `nq-monitor probe dns`, future `nq-monitor probe sqlite-wal`) has written observations within a freshness threshold | Filesystem mtime or peer-NQ — not the probe's own self-report |
 | `nq_receipt_emission_state` | Whether receipts are being emitted on the receipt-emission path | Filesystem mtime on the receipt directory — external to the receipt-builder |
 | `nq_evaluator_state` | Whether an evaluator is producing PreflightResults without contradiction or runtime error | Sibling-process evaluation runs as the external witness |
 | `nq_monitor_loop_state` | Whether the long-running monitor loop is alive | systemd / cron / process-supervisor signal — not the loop's own heartbeat |
@@ -114,7 +114,7 @@ Any of:
 - A second sustained-condition evaluator (any of `nq_probe_freshness`, `nq_receipt_emission_state`, `nq_projection_failure_state`) is being implemented — which would also trip `CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`'s temporal-machinery threshold at the same time.
 - A peer-NQ instance wants to monitor another NQ as external witness.
 
-**Tier 0 fired 2026-05-27.** The smallest forcing case is the kind-4 `sqlite_wal_state` claim over `/var/lib/nq/nq.db` — observed by the existing publisher probe via filesystem stat (external to `nq serve` under SIGSTOP), evaluated by the existing aggregator code. Config-only; no new claim kind. See [`../decisions/preflights/NQ_SELF_SQLITE_WAL.md`](../decisions/preflights/NQ_SELF_SQLITE_WAL.md). The sixth keeper is **exercised and recorded** in this gap doc by Tier 0; it is **not yet promoted** into `SPINE_AND_ROADMAP.md` — promotion waits for a kind that requires the rule as an invariant rather than merely exercising it.
+**Tier 0 fired 2026-05-27.** The smallest forcing case is the kind-4 `sqlite_wal_state` claim over `/var/lib/nq/nq.db` — observed by the existing publisher probe via filesystem stat (external to `nq-monitor serve` under SIGSTOP), evaluated by the existing aggregator code. Config-only; no new claim kind. See [`../decisions/preflights/NQ_SELF_SQLITE_WAL.md`](../decisions/preflights/NQ_SELF_SQLITE_WAL.md). The sixth keeper is **exercised and recorded** in this gap doc by Tier 0; it is **not yet promoted** into `SPINE_AND_ROADMAP.md` — promotion waits for a kind that requires the rule as an invariant rather than merely exercising it.
 
 Until additional cases land, this gap remains a handle for review, not a build instruction.
 

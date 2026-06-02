@@ -38,7 +38,7 @@ Once the display ingests testimony from outside NQ, the binary boundary between 
 The naming this gap pins:
 
 ```text
-nq          — produces findings / receipts / claim-support state
+nq-monitor          — produces findings / receipts / claim-support state
 nq-witness  — produces witness packets / substrate testimony
               (already named in project_nq_witness_daemon_trajectory)
 nq-console  — organizes findings into operational legibility
@@ -49,16 +49,16 @@ nq-console  — organizes findings into operational legibility
 
 ## Near-term shape (bundled inside `nq`)
 
-Until extraction is justified, the display lives inside `nq` and evolves the existing `nq status` / `nq runs show` surface toward a grouping-and-sorting affordance:
+Until extraction is justified, the display lives inside `nq` and evolves the existing `nq-monitor status` / `nq-monitor runs show` surface toward a grouping-and-sorting affordance:
 
 ```text
-nq status --group host
-nq status --group application
-nq status --group claim-kind
-nq status --group finding-kind
-nq status --group refusal
-nq status --only blockers
-nq status --stale
+nq-monitor status --group host
+nq-monitor status --group application
+nq-monitor status --group claim-kind
+nq-monitor status --group finding-kind
+nq-monitor status --group refusal
+nq-monitor status --only blockers
+nq-monitor status --stale
 ```
 
 Inventory-first, not chart-first. The kernel of the problem is grouping and sorting over the existing receipt corpus, not metric rendering. A future TUI / web view is downstream of getting the grouping axes right at the CLI.
@@ -97,7 +97,7 @@ Same data, organized by operational subject. The work is rearrangement, not new 
 
 The last one — *multiple consumers want different views over the same claim-state substrate* — is probably the real forcing case. The penultimate-real one is **display consumes non-NQ consequence witnesses**: once NS Gate 1 needs to read both NQ substrate testimony and a consequence-witness source side-by-side, the display becomes a **claim-state console across producers**, not "NQ's pretty output." That is the seam.
 
-Until then: no extraction. The bundled display continues to evolve under `nq status` and friends. A new crate / binary that exists *only* to anticipate the extraction is the failure mode this gap exists to refuse.
+Until then: no extraction. The bundled display continues to evolve under `nq-monitor status` and friends. A new crate / binary that exists *only* to anticipate the extraction is the failure mode this gap exists to refuse.
 
 ## Explicit non-goals
 

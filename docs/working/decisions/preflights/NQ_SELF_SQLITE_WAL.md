@@ -23,13 +23,13 @@ The wager: an existing operational claim kind that observes one substrate (label
 **Claimed component is NOT:**
 
 - "Whole-node NQ health" / "the entire NQ installation."
-- "The `nq serve` process is running."
+- "The `nq-monitor serve` process is running."
 - "The HTTP route is responding."
 - "Receipts are being emitted."
 - "The publisher cycle is current."
 - "NQ is operationally sound."
 
-Each of those would be a different claim kind. Tier 0 only emits the existing `sqlite_wal_state` receipt; the substrate is the DB file, nothing else. The publisher process is external to `nq serve` for the purpose of this claim, even though both processes belong to the same NQ installation. The external-witness rule (§3) operates at the **component being claimed about**, not at the deployment.
+Each of those would be a different claim kind. Tier 0 only emits the existing `sqlite_wal_state` receipt; the substrate is the DB file, nothing else. The publisher process is external to `nq-monitor serve` for the purpose of this claim, even though both processes belong to the same NQ installation. The external-witness rule (§3) operates at the **component being claimed about**, not at the deployment.
 
 ## 2. The disagreeable claim, pinned
 
@@ -73,7 +73,7 @@ A receipt about component C is honest only if its supports[] trace
 to witnesses that survive C under SIGSTOP (or uninstall, or freeze).
 ```
 
-Component-scoped wording is load-bearing: NQ-on-NQ claims will vary across `nq serve`, `nq.db`, the publisher process, the HTTP route, peer instances. Each has its own externality boundary.
+Component-scoped wording is load-bearing: NQ-on-NQ claims will vary across `nq-monitor serve`, `nq.db`, the publisher process, the HTTP route, peer instances. Each has its own externality boundary.
 
 For Tier 0:
 
@@ -82,17 +82,17 @@ Component being claimed about:  nq.db (the aggregator's SQLite DB
                                 substrate at /opt/nq/nq.db)
 Witness sources:                filesystem stat of the .db / .db-wal /
                                 .db-shm trio + /proc/locks read
-Process performing the stat:    nq publish (publisher) on the same host
+Process performing the stat:    nq-monitor publish (publisher) on the same host
 
 SIGSTOP test:
-  If nq serve is frozen, can the publisher still stat() the files?
+  If nq-monitor serve is frozen, can the publisher still stat() the files?
   Yes — the kernel keeps testifying about filesystem state
-  regardless of nq serve's process state.
+  regardless of nq-monitor serve's process state.
 
 Conclusion: external witness for this component.
 ```
 
-The publisher process is part of the NQ installation but not part of the component being claimed about (the DB substrate). The externality is at the process boundary plus the filesystem boundary, both of which survive `nq serve` being frozen.
+The publisher process is part of the NQ installation but not part of the component being claimed about (the DB substrate). The externality is at the process boundary plus the filesystem boundary, both of which survive `nq-monitor serve` being frozen.
 
 ## 4. Tier ordering (for the record)
 

@@ -58,7 +58,7 @@ What ships today and is correctly framed:
 - Generation completeness *is* surfaced: partial / failed generation status flows through `v_warnings`, the overview API, and the notification pipeline.
 - `SENTINEL_LIVENESS_GAP.md` gates external liveness witnesses. That is the existing pattern for "something outside NQ testifies about NQ" and is the natural composition partner for self-integrity if self-integrity ever ships.
 
-`OPERATOR_GUIDE.md` already routes operators to `nq sentinel` and `nq liveness export` for the question "is NQ itself still running?" — that is honest. The operator doc does **not** imply that the aggregator is running periodic structural checks against its own DB, and it must not start implying so until this gap is ratified.
+`OPERATOR_GUIDE.md` already routes operators to `nq-monitor sentinel` and `nq-monitor liveness export` for the question "is NQ itself still running?" — that is honest. The operator doc does **not** imply that the aggregator is running periodic structural checks against its own DB, and it must not start implying so until this gap is ratified.
 
 ## What this gap is not
 

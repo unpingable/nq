@@ -1,7 +1,7 @@
 # Gap: Fleet Index — comparison surface, not federation truth
 
 **Status:** shipped; see [../decisions/FEATURE_HISTORY.md#fleet_index-v1](../decisions/FEATURE_HISTORY.md#fleet_index-v1) for shipped evidence including the live four-target smoke (criterion #11). Originally drafted 2026-05-01.
-**Depends on:** SENTINEL_LIVENESS_GAP (per-instance liveness primitive — already shipped; `nq liveness export` is what each row reads), FINDING_EXPORT_GAP (canonical export contract — already shipped; the index optionally reads the dominant-posture summary against it), INSTANCE_WITNESS_GAP (per-instance identity discipline — stub, but its non-fabrication invariant already informs every row)
+**Depends on:** SENTINEL_LIVENESS_GAP (per-instance liveness primitive — already shipped; `nq-monitor liveness export` is what each row reads), FINDING_EXPORT_GAP (canonical export contract — already shipped; the index optionally reads the dominant-posture summary against it), INSTANCE_WITNESS_GAP (per-instance identity discipline — stub, but its non-fabrication invariant already informs every row)
 **Related:** FEDERATION_GAP (parent — this gap is its V1 cash-out, scoped down to comparison-only), PORTABILITY_GAP (sibling pattern at a different scope: collector-tier vs target-tier), DASHBOARD_MODE_SEPARATION_GAP (extends *snapshots are evidence, live probes are instrumentation* upward from per-panel to per-target), OBSERVER_DISTORTION_GAP (the index is itself an observer of its targets — must not participate in their substrate)
 **Build phase:** structural — introduces a manifest schema and a read protocol; no new collectors, no new storage on the targets
 **Blocks:** any operator surface that wants to compare across NQ deployments without inventing the comparison layer ad hoc; the mac-mini onboarding path (forces target-scope support_tier into the schema before any render exists); any future Night Shift consumer that wants to read more than one NQ at a time
@@ -34,7 +34,7 @@ The current set of NQ deployments — both real and on the realistic-soon list:
 
 | target | class | support_tier (proposed) | notes |
 |---|---|---|---|
-| `sushi-k` | local | `active` | Local desktop observatory; user systemd; runs out of `target/release/nq`. |
+| `sushi-k` | local | `active` | Local desktop observatory; user systemd; runs out of `target/release/nq-monitor`. |
 | `lil-nas-plex` | local | `active` | NAS; no systemd, processes setsid-detached; `claude` user, no sudo. |
 | `linode` | remote | `active` | `labelwatch.neutral.zone`; systemctl-managed; Caddy reverse proxy → `nq.neutral.zone`; nightshift's primary target. |
 | `mac-mini` | local | `experimental` | NQ is not first-class on macOS yet (see PORTABILITY_GAP). The target needs to exist in the index *before* the platform is fully supported, so the experimental status is visible rather than implicit. |
@@ -70,7 +70,7 @@ Tier semantics:
 
 This narrowness is load-bearing. The moment the index becomes a consumer of full findings, it starts wanting to merge them — and that's the slippery slope this gap exists to fence. If a future need emerges for cross-target finding correlation, that's a separate gap (and probably a separate consumer; the index is not it).
 
-**Probes are non-participatory.** The index reads each target through that target's existing public read surfaces (`nq liveness export`, `nq findings export`, equivalent HTTP endpoints if `nq serve` exposes them). It does **not** run new collectors against targets, does not write anything to them, does not register itself with them. Δq discipline (per OBSERVER_DISTORTION_GAP) applies upward: the index observer must not become a substrate-perturbation source for the targets it watches.
+**Probes are non-participatory.** The index reads each target through that target's existing public read surfaces (`nq-monitor liveness export`, `nq-monitor findings export`, equivalent HTTP endpoints if `nq-monitor serve` exposes them). It does **not** run new collectors against targets, does not write anything to them, does not register itself with them. Δq discipline (per OBSERVER_DISTORTION_GAP) applies upward: the index observer must not become a substrate-perturbation source for the targets it watches.
 
 **Read failures are first-class facts.** A target that fails to read produces a row in `reachable: false` state with explicit-failure metadata, not omission. Omitting the target would silently misrepresent fleet shape. The index renders the target as "declared but unreachable," which is a useful operator signal in its own right.
 
@@ -112,8 +112,8 @@ A manifest at a config path (likely `~/.config/nq-fleet/targets.yaml` or similar
 
 For each target, the index pulls:
 
-- liveness export (`nq liveness export` or equivalent surface) — provides instance identity, last generation, last observed_at, freshness verdict
-- build / schema / contract metadata — implementation may surface this via build-time bake (e.g. `option_env!("GIT_COMMIT")` plus the existing `CONTRACT_VERSION` and `CURRENT_SCHEMA_VERSION` constants) and expose it through the liveness payload, or via a small `nq version` helper, or through the publisher's `/state` payload. V1 implementation decides the mechanism; the contract is that the metadata is available.
+- liveness export (`nq-monitor liveness export` or equivalent surface) — provides instance identity, last generation, last observed_at, freshness verdict
+- build / schema / contract metadata — implementation may surface this via build-time bake (e.g. `option_env!("GIT_COMMIT")` plus the existing `CONTRACT_VERSION` and `CURRENT_SCHEMA_VERSION` constants) and expose it through the liveness payload, or via a small `nq-monitor version` helper, or through the publisher's `/state` payload. V1 implementation decides the mechanism; the contract is that the metadata is available.
 - (optional) dominant posture / top finding — if the target offers a cheap summary, surface it; if not, leave it `null`.
 
 Bounded timeout per target. Reads run in parallel across targets; one slow target does not block the others. Failure produces an `unreachable` row with explicit-failure metadata.
@@ -136,7 +136,7 @@ One row per target. Columns include at minimum:
 
 Side-by-side. Not merged. Order respects manifest order (operator-controllable) rather than imposing a sort by health.
 
-V1 render surface is small — a CLI table (`nq fleet status` or similar) is sufficient and is the right starting point. An HTML render lands when an operator workflow demands it; not before.
+V1 render surface is small — a CLI table (`nq-monitor fleet status` or similar) is sufficient and is the right starting point. An HTML render lands when an operator workflow demands it; not before.
 
 ## Non-goals (load-bearing)
 
@@ -169,7 +169,7 @@ V1 render surface is small — a CLI table (`nq fleet status` or similar) is suf
 
 - **Manifest format.** YAML is the user-facing default in this draft; TOML and JSON are also reasonable. NQ already uses JSON for `publisher.json` / `aggregator.json`, which argues for JSON consistency; YAML is more declarative-feeling for static manifests. Decide at V1 implementation; the loader is small enough that this is reversible.
 - **Manifest location.** `~/.config/nq-fleet/targets.yaml`? Per-instance? Carried inside an existing NQ config? Decide at implementation; not load-bearing for the spec.
-- **Build-metadata mechanism.** Bake into the binary, expose via liveness, or via a new `nq version` helper. The contract is "the metadata is available"; the mechanism is V1 implementation work.
+- **Build-metadata mechanism.** Bake into the binary, expose via liveness, or via a new `nq-monitor version` helper. The contract is "the metadata is available"; the mechanism is V1 implementation work.
 - **Does the index get a liveness artifact of its own?** Probably yes — but the index's liveness is *its own* concern, not part of the fleet rollup it produces. (The index does not claim membership in its own fleet.)
 - **Authentication / auth-headers shape for remote targets.** Today the Linode target is reached via Caddy + (no auth at the NQ surface). When real-world authentication arrives — bearer tokens, mTLS, IP allowlists — the manifest needs to carry credential references. V1 leaves this open under the URL field's implementation-discretion clause; a follow-up will pin it.
 - **What happens when a target's contract version is *higher* than the index understands?** Probably: render the row with the comparison fields the index does understand, surface a `contract_drift` indicator, and refuse to interpret unknown extension fields rather than guessing. Codify at V1 implementation.

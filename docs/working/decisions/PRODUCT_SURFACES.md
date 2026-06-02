@@ -67,10 +67,10 @@ The lineage is older than agents: CI lies, deploy scripts lie, monitoring probes
 Shape:
 
 ```bash
-nq witness git-status > .nq/git.json
-nq witness pytest -- pytest > .nq/tests.json
-nq witness diff-scope --declared docs-only > .nq/diff.json
-nq verify --claim ready_for_review --subject repo:. --witness '.nq/*.json' --receipt .nq/receipt.json
+nq-monitor witness git-status > .nq/git.json
+nq-monitor witness pytest -- pytest > .nq/tests.json
+nq-monitor witness diff-scope --declared docs-only > .nq/diff.json
+nq-monitor verify --claim ready_for_review --subject repo:. --witness '.nq/*.json' --receipt .nq/receipt.json
 ```
 
 Plus a GitHub Action that runs the above and posts a single PR comment.
@@ -92,13 +92,13 @@ Externally framed as **claim-state monitoring** — receipts for operational sta
 Shape:
 
 ```bash
-nq monitor run --config nq-monitor.yaml
-nq monitor watch --config nq-monitor.yaml
+nq-monitor monitor run --config nq-monitor.yaml
+nq-monitor monitor watch --config nq-monitor.yaml
 ```
 
 Long-running collection of witness packets for declared subjects (hosts, pools, devices), producing rolling receipts and a current state summary. Notification hooks dispatch on status transition; NQ does not own an alerting engine.
 
-**Track A.0** is the existing `nq preflight disk-state` path: a finding-DB-reading evaluator that produces receipts in the shared shape. It coexists with witness-packet ingest while a Track A.1 cut-over projects existing ZFS/SMART findings into witness packets and routes them through the shared evaluator. The deployed three-host fleet keeps running through the transition.
+**Track A.0** is the existing `nq-monitor preflight disk-state` path: a finding-DB-reading evaluator that produces receipts in the shared shape. It coexists with witness-packet ingest while a Track A.1 cut-over projects existing ZFS/SMART findings into witness packets and routes them through the shared evaluator. The deployed three-host fleet keeps running through the transition.
 
 ## Sequencing
 
@@ -107,7 +107,7 @@ Roadmap order — load-bearing:
 1. Shared witness/receipt spine (`docs/architecture/SHARED_SPINE.md` + Phase 1 code)
 2. Local repo verification witnesses + claim catalog (Track B local MVP)
 3. GitHub Action wrapper (Track B public)
-4. Track A monitor alpha (`nq monitor run` / `watch`)
+4. Track A monitor alpha (`nq-monitor monitor run` / `watch`)
 5. Cross-track renderer/viewer parity
 
 The disk-state evaluator already exists and continues working. It is demoted from "public wedge candidate" to "Track A.0 proof-of-doctrine" while the spine is built.

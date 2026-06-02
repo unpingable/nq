@@ -19,7 +19,7 @@ Sharper:
 NQ already has shipped declared-context surfaces:
 
 - `OPERATIONAL_INTENT_DECLARATION` V1 (2026-04-30) — file-based JSON declarations table, hygiene detectors, suppression metadata, `v_admissibility` fork.
-- `MAINTENANCE_DECLARATION` V1 (2026-05-08) — separate maintenance table per the 2026-04-27 spec freeze, `apply_maintenance_overlay`, `nq maintenance declare|list` CLI, dashboard badge, 22 tests.
+- `MAINTENANCE_DECLARATION` V1 (2026-05-08) — separate maintenance table per the 2026-04-27 spec freeze, `apply_maintenance_overlay`, `nq-monitor maintenance declare|list` CLI, dashboard badge, 22 tests.
 - `DECLARED_CONTEXT_GAP` (candidate, 2026-05-07) — broader interpretive-context discipline; not yet built. File-based JSON named as V1 if forced.
 
 All three currently use **file-based JSON** as the input format. The discipline they share — provenance + validity windows + no current-state authority + truth-remains-visible — is filed and partially shipped. This gap does not change any of that.
@@ -30,7 +30,7 @@ What's *not* settled is whether **tabular sources** (CSV files, SQLite tables on
 
 Three concrete forcing-shape questions, none yet active:
 
-1. **Maintenance imports.** An operator has a calendar / CMDB / scheduling-system export of maintenance windows. Can a CSV of those windows feed `nq maintenance declare` semantics directly, without round-tripping each row through the CLI? (Likely the first real ask.)
+1. **Maintenance imports.** An operator has a calendar / CMDB / scheduling-system export of maintenance windows. Can a CSV of those windows feed `nq-monitor maintenance declare` semantics directly, without round-tripping each row through the CLI? (Likely the first real ask.)
 2. **Inventory mappings.** Drive-serial ↔ enclosure-bay mappings, host ↔ team mappings, etc., that live in a CMDB SQLite extract. Can NQ admit that SQLite as a declared-context source, periodically re-read?
 3. **Bulk operator-intent loads.** Operator wants to declare quiescence / expected silence across a fleet from a single tabular source rather than per-host CLI invocations.
 
