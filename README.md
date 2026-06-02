@@ -180,7 +180,7 @@ Monitored hosts              Central host
                                   └─────────┘
 ```
 
-Single binary. Schema version 26. 114 tests.
+Single binary. Schema version 53. 1236 workspace tests.
 
 **The witness role today.** `nq publish` *is* the witness. It observes hosts, services, SQLite, Prometheus exporters, and log sources, then emits `nq.witness_packet.v1` envelopes for the aggregator to ingest. A separable `nq-witness` binary in the same role is roadmapped (Track 4 of [`docs/working/decisions/OSS_READINESS_ROADMAP.md`](docs/working/decisions/OSS_READINESS_ROADMAP.md)) under a `v0-wire-equals-current-wire` constraint — same envelope, same W/E boundary discipline, separated from the aggregator/dashboard. Until that ships, the witness pattern is reachable today via `nq publish`. The role-vs-binary distinction is structural: the role exists; today it's packaged inside the unified binary.
 
