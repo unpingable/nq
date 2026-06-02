@@ -34,7 +34,7 @@ Places where theory can improve the tool soon without turning it into a manifest
 | Closure semantics on checks | 06, 18 | A check can be "open" (evidence insufficient), "closed" (evidence satisfies), or "expired" (evidence too old) | Yes |
 | Freshness/admissibility windows | 22, 07 (Δt-Constrained Inference) | Checks specify max acceptable age. Stale evidence = inadmissible, not just "warning" | Yes ("freshness budget") |
 | Multi-witness disagreement | 16 (Signed Geometry), 21 | When multiple sources observe the same thing, disagreement is signal. High correlator quality = leverage, not noise | Not yet |
-| Justification objects from checks | 17, 15 | `nq poll` results carry provenance: what was checked, what was found, what evidence was used | Maybe ("check receipt") |
+| Justification objects from checks | 17, 15 | `nq-monitor poll` results carry provenance: what was checked, what was found, what evidence was used | Maybe ("check receipt") |
 | Support function concept | 07 | Instead of "wal_size > 256", checks could express "confidence in this claim given this evidence and this age" | No — internal only |
 
 ## Bucket C — Conceptual Horizon

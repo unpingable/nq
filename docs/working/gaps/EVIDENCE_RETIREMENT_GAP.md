@@ -140,13 +140,13 @@ Once a finding leaves `live`, its original alert stops re-firing. State is a sep
 
 ### Export discipline
 
-`nq findings export` carries `basis_state`, `basis_source_id`, `basis_witness_id`, and timestamps. Consumers (Night Shift, future federation peers) filter or render on these rather than reconstructing currentness from vibes. This is the same rule the completeness-propagation spec applies to observation partiality, applied here to tense and source lifecycle.
+`nq-monitor findings export` carries `basis_state`, `basis_source_id`, `basis_witness_id`, and timestamps. Consumers (Night Shift, future federation peers) filter or render on these rather than reconstructing currentness from vibes. This is the same rule the completeness-propagation spec applies to observation partiality, applied here to tense and source lifecycle.
 
 ### Retirement verb
 
 ```
-nq source retire --source-id <id> --reason "<text>"
-nq source unretire --source-id <id>
+nq-monitor source retire --source-id <id> --reason "<text>"
+nq-monitor source unretire --source-id <id>
 ```
 
 Semantics: writes to a `sources_retired` table (authoritative for "this source is deliberately withdrawn"); atomically transitions all `live` findings with matching `basis_source_id` to `retired`, writing `finding_transitions` records per finding. Idempotent. Reversible.
@@ -165,15 +165,15 @@ Smallest cashout that honors the invariants:
 
 1. Add `basis_state` column and the minimum basis-reference columns to `warning_state`. Default `'unknown'`; detectors on subsequent cycles populate real provenance.
 2. Implement the basis-stale detector. Transition findings out of ordinary active presentation when their basis is no longer live.
-3. Implement `nq source retire` / `nq source unretire`. Atomic transition of affected findings.
-4. Surface `basis_state` and basis identifiers in `nq findings export`.
+3. Implement `nq-monitor source retire` / `nq-monitor source unretire`. Atomic transition of affected findings.
+4. Surface `basis_state` and basis identifiers in `nq-monitor findings export`.
 5. Render `retired` and `invalidated` distinctly in `v_warnings` and the Slack payload. One-line state marker; no new formatting machinery.
 6. Make `retired` and `invalidated` findings non-pageworthy by default. Notification min-severity filter is per-state: pages gated on `basis_state = 'live'` unless a future rule escalates.
 
 Explicitly deferred to later slices:
 
 - UI polish for `sources_retired` (list retired sources, show retirement history). V1 leaves this to SQL introspection.
-- Automated invalidation tooling. V1 treats `invalidated` as a manual path — the 2026-04-22 sushi-k cleanup is the template (direct `warning_state` surgery + `finding_transitions` audit row with `changed_by='manual-cleanup'`). Operator-facing `nq finding invalidate` verb waits for enough cases to justify the UX.
+- Automated invalidation tooling. V1 treats `invalidated` as a manual path — the 2026-04-22 sushi-k cleanup is the template (direct `warning_state` surgery + `finding_transitions` audit row with `changed_by='manual-cleanup'`). Operator-facing `nq-monitor finding invalidate` verb waits for enough cases to justify the UX.
 - Cross-host / federation effects. When a federation peer disappears, derived findings on the local side need the same lifecycle treatment; deferred until FEDERATION_GAP lands.
 - Auto-retirement after prolonged silence. Tempting and risky — too easy to auto-retire a source mid-outage. V1 retains explicit retirement only.
 - Multi-basis findings. Cross-witness detectors depending on more than one source will pressure the schema toward a basis-list table; V1 supports single `basis_source_id` and defers the split.
@@ -208,11 +208,11 @@ For V1:
 
 - Every row in `warning_state` post-migration has a `basis_state` other than default-cast `'live'`. Detector-written rows are `live` with real `basis_source_id` or explicitly `unknown`. No row silently claims live basis without provenance.
 - Basis-stale detector transitions findings to `stale` within one generation of the source missing its freshness window. Integration test: deliberately silenced witness, verify transition.
-- `nq source retire --source-id X --reason Y` transitions all affected `live` findings to `retired` in a single transaction. Atomicity test: simulated crash mid-transition leaves either all-transitioned or none.
+- `nq-monitor source retire --source-id X --reason Y` transitions all affected `live` findings to `retired` in a single transaction. Atomicity test: simulated crash mid-transition leaves either all-transitioned or none.
 - `v_warnings` renders `stale`, `retired`, `invalidated` distinguishably from `live`. Slack payload carries a one-line state marker when `basis_state != 'live'`.
 - Notification path gates pages on `basis_state = 'live'` by default. Retired and invalidated findings do not page.
-- `nq findings export` round-trips `basis_state`, `basis_source_id`, `basis_witness_id`, and timestamps.
-- **Inverse check — the sushi-k reproduction:** stand up a stub witness, let detectors fire, tear down the witness. Expected outcome: within one generation, findings transition to `stale`; after `nq source retire`, findings are `retired`; dashboard reader can distinguish the three classes (live / stale / retired) without SQL; operator does not see the findings re-alert every cycle; no pages fire on retired residue.
+- `nq-monitor findings export` round-trips `basis_state`, `basis_source_id`, `basis_witness_id`, and timestamps.
+- **Inverse check — the sushi-k reproduction:** stand up a stub witness, let detectors fire, tear down the witness. Expected outcome: within one generation, findings transition to `stale`; after `nq-monitor source retire`, findings are `retired`; dashboard reader can distinguish the three classes (live / stale / retired) without SQL; operator does not see the findings re-alert every cycle; no pages fire on retired residue.
 
 ## References
 

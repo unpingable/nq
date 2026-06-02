@@ -1,6 +1,6 @@
 # Receipt Check and Replay — Semantics
 
-**Status:** doctrine. Pins the semantics of `nq receipt check` (Slice 1d) and `nq receipt replay` (Slice 1e) so future code does not "helpfully" collapse the axes those slices kept separate.
+**Status:** doctrine. Pins the semantics of `nq-monitor receipt check` (Slice 1d) and `nq-monitor receipt replay` (Slice 1e) so future code does not "helpfully" collapse the axes those slices kept separate.
 **Last updated:** 2026-05-24
 
 ## Two axes, three operations
@@ -9,9 +9,9 @@ NQ ships three operations over receipts. They answer three distinct questions:
 
 | Operation | Question |
 |---|---|
-| `nq verify` (Track B) / preflight evaluators (Track A) | *What may we claim now, given today's witnesses?* |
-| `nq receipt check` (Slice 1d) | *Is this receipt structurally intact?* |
-| `nq receipt replay` (Slice 1e) | *Can the original decision be reproduced from supplied materials?* |
+| `nq-monitor verify` (Track B) / preflight evaluators (Track A) | *What may we claim now, given today's witnesses?* |
+| `nq-monitor receipt check` (Slice 1d) | *Is this receipt structurally intact?* |
+| `nq-monitor receipt replay` (Slice 1e) | *Can the original decision be reproduced from supplied materials?* |
 
 These are not three points on a "trust scale." They are three independent axes. A receipt can be structurally intact and semantically replayable but stale. Or structurally intact and stale but semantically replayable. Or structurally broken in a way that makes the other axes diagnostic only. The whole point of separating them is to refuse the collapse.
 
@@ -154,7 +154,7 @@ A successful replay is one input to a downstream decision about whether to act. 
 
 Both verbs share a structured outcome space. Operators see status codes, exit codes, and per-check detail.
 
-### `nq receipt check` (Slice 1d) statuses
+### `nq-monitor receipt check` (Slice 1d) statuses
 
 | Status | Meaning | Default exit | `--strict` exit |
 |---|---|---|---|
@@ -172,7 +172,7 @@ Both verbs share a structured outcome space. Operators see status codes, exit co
 
 Exit 64 is reserved for malformed input (file not found, bad JSON, packet validation failure) and is returned before the report is built.
 
-### `nq receipt replay` (Slice 1e) statuses
+### `nq-monitor receipt replay` (Slice 1e) statuses
 
 | Status | Meaning | Exit |
 |---|---|---|
@@ -243,6 +243,6 @@ observability substrate → dashboard / alert → operator
 - [`PATH_TO_1_0.md`](../working/decisions/PATH_TO_1_0.md) — Slice 1a/1b/1c/1d/1e scope and ordering.
 - [`SHARED_SPINE.md`](SHARED_SPINE.md) — the witness → claim → receipt pipeline 1d/1e operate over.
 - [`CLAIM_CUSTODY.md`](CLAIM_CUSTODY.md) — the category these primitives define.
-- [`../operator/RECEIPTS.md`](../operator/RECEIPTS.md) — operator-facing guide to `nq receipt check` and `nq receipt replay`.
+- [`../operator/RECEIPTS.md`](../operator/RECEIPTS.md) — operator-facing guide to `nq-monitor receipt check` and `nq-monitor receipt replay`.
 - [`../operator/VERDICTS.md`](../operator/VERDICTS.md) — the preflight verdict vocabulary the evaluators emit and replay re-runs against.
 - [`../working/decisions/CLAIM_PREFLIGHT.md`](../working/decisions/CLAIM_PREFLIGHT.md) — preflight doctrine.

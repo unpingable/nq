@@ -34,7 +34,7 @@
 **Pending:**
 
 - **One concrete real producer path.** Synthetic test producer is the V1 cash-out per spec; a driftwatch witness adapter (the live forcing case) is its own slice.
-- **Operator surface beyond `nq query`.** Dashboard rendering deferred per spec.
+- **Operator surface beyond `nq-monitor query`.** Dashboard rendering deferred per spec.
 
 ### V1.2 — composition validation (2026-04-30)
 
@@ -261,7 +261,7 @@ Smallest useful cash-out — finding shape contract first; no detector implement
 2. **One concrete producer path** — at least one detector or witness adapter that can emit `coverage_degraded` end-to-end (likely a future driftwatch witness adapter; could be a synthetic test producer for V1 if no real witness exists yet).
 3. **Window + recovery semantics in code** — `degraded_since` set on detection, never updated. `recovery_criteria` declared at detection. Sustained-criteria evaluation gates clearing.
 4. **JSON export round-trip test** — finding emitted, exported, re-read by a consumer, fields preserved.
-5. **One operator surface** — minimum: `nq query findings WHERE finding_kind='coverage_degraded'` returns the right rows. Dashboard rendering can be deferred.
+5. **One operator surface** — minimum: `nq-monitor query findings WHERE finding_kind='coverage_degraded'` returns the right rows. Dashboard rendering can be deferred.
 
 Deferred out of V1:
 
@@ -296,7 +296,7 @@ Deferred out of V1:
 - `coverage_degraded` does not clear on a single clean cycle; clearing requires either declared sustained-criteria to be met by explicit recovery testimony, or supersession by an unobservable ancestor (per TESTIMONY_DEPENDENCY_GAP). Producer absence alone never clears.
 - `health_claim_misleading` requires a populated `coverage_degraded_ref`; it cannot stand alone.
 - Inversion test passes for both shapes: downstream Governor / Night Shift can deny, defer, revalidate, or admit without NQ encoding the governance outcome.
-- `nq query findings WHERE finding_kind='coverage_degraded'` returns the right rows; downstream consumers can identify the degradation window without parsing free text.
+- `nq-monitor query findings WHERE finding_kind='coverage_degraded'` returns the right rows; downstream consumers can identify the degradation window without parsing free text.
 
 ## Compact invariant block
 

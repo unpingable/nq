@@ -19,7 +19,7 @@ persistence. Webhook/Slack notifications. One binary, zero infrastructure.
 ```
 Monitored hosts                         Central host
 ┌──────────────┐                       ┌──────────────────────────────┐
-│ nq publish   │──HTTP GET /state───→  │ nq serve                    │
+│ nq-monitor publish   │──HTTP GET /state───→  │ nq-monitor serve                    │
 │  collectors: │                       │  pull loop                  │
 │   host       │                       │  publish (atomic gen)       │
 │   services   │                       │  detectors → findings       │
@@ -34,7 +34,7 @@ Monitored hosts                         Central host
                                              └─────────┘
 ```
 
-Single Rust binary. Subcommands: `nq publish`, `nq serve`, `nq query`.
+Single Rust binary. Subcommands: `nq-monitor publish`, `nq-monitor serve`, `nq-monitor query`.
 Schema version 24. 93 tests.
 
 ## Data flow
@@ -56,7 +56,7 @@ either committed or it isn't.
 ```
 nq-core    config, wire format, batch types, status enums
 nq-db      SQLite schema, migrations, publish, detect, lifecycle, query, views
-nq         CLI, collectors, HTTP pull, HTTP serve, routes
+nq-monitor         CLI, collectors, HTTP pull, HTTP serve, routes
 ```
 
 ## Schema (migration 004)
@@ -226,7 +226,7 @@ Currently deployed on one host (labelwatch.neutral.zone) monitoring itself.
 From DESIGN.md's roadmap, still deferred:
 - Fact tables (host_facts, service_facts, sqlite_db_facts)
 - Jobs and deploys collectors
-- `nq poll` / `nq check` (saved queries as checks)
+- `nq-monitor poll` / `nq-monitor check` (saved queries as checks)
 - Log ingestion
 - OpenTelemetry traces
 - Dashboard system (SQL-as-panels)

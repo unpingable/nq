@@ -104,7 +104,7 @@ A receipt binds: requested claim, evaluated claim, witness references, evaluator
 **Keeper:** *UI consumes jurisdiction; it does not invent it.*
 
 **Surfaces shipping today:**
-- CLI: `nq preflight disk-state`, `nq verify`, `nq witness {git-status,pytest,diff-scope}`, `nq probe dns`, `nq receipt render`, `nq smoke ...`
+- CLI: `nq-monitor preflight disk-state`, `nq-monitor verify`, `nq-monitor witness {git-status,pytest,diff-scope}`, `nq-monitor probe dns`, `nq-monitor receipt render`, `nq-monitor smoke ...`
 - HTTP: `GET /api/preflight/disk-state/{host}`, `GET /api/preflight/ingest-state`, `GET /api/preflight/dns-state?vantage=&resolver=&name=&type=`
 - GitHub Action: `.github/actions/nq-verify/action.yml` (orchestrates witness → verify → markdown → comment)
 - Read-only web UI (templates in `crates/nq/src/http/routes.rs`)
@@ -126,13 +126,13 @@ A receipt binds: requested claim, evaluated claim, witness references, evaluator
 |---|---|---|---|
 | `disk_state` | A | `crates/nq-db/src/preflight.rs::evaluate_disk_state_preflight` (projects ZFS/SMART findings through `disk_state_witness_projection.rs` into `legacy_projection` witness packets before admitting them) | CLI, HTTP, nested on `/api/host/{name}` |
 | `ingest_state` | A | `crates/nq-db/src/preflight.rs::evaluate_ingest_state_preflight` (projects `generations` + `source_runs` rows through `ingest_state_witness_projection.rs`) | HTTP |
-| `dns_state` | A | `crates/nq-db/src/dns.rs::evaluate_dns_state_preflight` (projects `dns_observations` rows through `dns_state_witness_projection.rs`) | HTTP, CLI probe (`nq probe dns`) |
+| `dns_state` | A | `crates/nq-db/src/dns.rs::evaluate_dns_state_preflight` (projects `dns_observations` rows through `dns_state_witness_projection.rs`) | HTTP, CLI probe (`nq-monitor probe dns`) |
 | `sqlite_wal_state` | A | `crates/nq-db/src/sqlite_wal_state.rs::evaluate_sqlite_wal_state_preflight` (projects `wal_observations` rows through `sqlite_wal_state_witness_projection.rs`) | HTTP |
-| `repo_clean` | B (Leaf) | `claim_registry::evaluate` over `git_status` witness | `nq verify`, GitHub Action |
-| `tests_passed` | B (Leaf) | `claim_registry::evaluate` over `pytest` witness | `nq verify`, GitHub Action |
-| `diff_scope_matches_claim` | B (Leaf) | `claim_registry::evaluate` over `diff_scope` witness | `nq verify`, GitHub Action |
-| `ready_for_review` | B (Composite) | Requires the above three | `nq verify`, GitHub Action |
-| `safe_to_merge` | B (NonMintable) | Surfaces `ready_for_review` as the admissible weaker claim | `nq verify` (always refused as stronger; weaker is the offer) |
+| `repo_clean` | B (Leaf) | `claim_registry::evaluate` over `git_status` witness | `nq-monitor verify`, GitHub Action |
+| `tests_passed` | B (Leaf) | `claim_registry::evaluate` over `pytest` witness | `nq-monitor verify`, GitHub Action |
+| `diff_scope_matches_claim` | B (Leaf) | `claim_registry::evaluate` over `diff_scope` witness | `nq-monitor verify`, GitHub Action |
+| `ready_for_review` | B (Composite) | Requires the above three | `nq-monitor verify`, GitHub Action |
+| `safe_to_merge` | B (NonMintable) | Surfaces `ready_for_review` as the admissible weaker claim | `nq-monitor verify` (always refused as stronger; weaker is the offer) |
 
 ### Candidate / docs-only / not live
 
@@ -150,7 +150,7 @@ These are surfaces a future audit would otherwise call "incomplete" — they are
 
 2. **Preflight results carry per-claim-kind wire schemas.** No unified `nq.preflight_result.v1` envelope. Three per-kind shapes (`nq.preflight.disk_state.v1`, `nq.preflight.ingest_state.v1`, `nq.preflight.dns_state.v1`) sit on the wire. Consolidation is the registry generalization (`../working/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`), forcing case: claim kind 4.
 
-3. **nq and nq-witness version independently.** nq's consumer-side `nq.witness.v1` and nq-witness's producer-side `nq.witness.v0` are contract-compatible today. Bump nq-witness when the producer contract itself changes or hardens — not for aesthetic alignment.
+3. **nq-monitor and nq-witness version independently.** nq's consumer-side `nq.witness.v1` and nq-witness's producer-side `nq.witness.v0` are contract-compatible today. Bump nq-witness when the producer contract itself changes or hardens — not for aesthetic alignment.
 
 4. **Track A.0 — retired 2026-05-27.** Historical: the `disk_state` evaluator originally read `FindingSnapshot` directly, bypassing the witness-packet projection. That carry is paid down. Each Track A evaluator (`disk_state`, `ingest_state`, `dns_state`) now projects substrate rows through a per-kind projector into `legacy_projection` witness packets before admitting them; `sqlite_wal_state` was greenfield kind 4, never had a Track A.0 phase. The keeper rule ("Witnesses observe. They do not promote.") is upheld uniformly across Track A and Track B. See [`../working/decisions/TRACK_A_0_RETIREMENT.md`](../working/decisions/TRACK_A_0_RETIREMENT.md) for the timeline and how to read older "Track A.0" references in the working/ tree.
 
@@ -168,7 +168,7 @@ Each phase has an **exit condition**: a boring, testable state that unlocks the 
 |---|---|
 | `nq.witness.v1`, `nq.receipt.v1` ship; per-kind preflight schemas ship | Decide if/when `nq.claim.v1` extraction forces (likely not yet) |
 | Verdict taxonomy closed (8 verdicts); `cannot_testify` doctrine; per-kind constitutional refusal lists live | Decide if/when unified `nq.preflight_result.v1` forces (claim kind 4 trigger) |
-| Track A: disk/ingest/dns evaluators + HTTP. Track B: claim registry + `nq verify` + GitHub Action | Track A.1 cut-over (gap doc landed; implementation deferred) |
+| Track A: disk/ingest/dns evaluators + HTTP. Track B: claim registry + `nq-monitor verify` + GitHub Action | Track A.1 cut-over (gap doc landed; implementation deferred) |
 | Canonical examples exist via e2e tests + live production probes | Codify a small canonical-example set (3–5 claim kinds) in repo docs so new readers don't have to mine tests |
 
 **Exit:** a reader can open one packet/result/receipt and see exactly what NQ is allowed to say and what it refuses. (Mostly already true.)
@@ -194,7 +194,7 @@ Each phase has an **exit condition**: a boring, testable state that unlocks the 
 | Per-witness `observed_at` reaches the wire; `observed_at_min` / `observed_at_max` envelope on results | Evaluator-version binding |
 |  | Witness refs / hashes (`digest` schema slot exists; unpopulated) |
 |  | Explicit freshness horizon field |
-|  | `nq receipt check` / `nq receipt replay` command |
+|  | `nq-monitor receipt check` / `nq-monitor receipt replay` command |
 
 **Exit:** a later system can consume a receipt without trusting prose. (Nightshift can then become plausible.)
 

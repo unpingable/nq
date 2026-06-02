@@ -33,7 +33,7 @@ NQ runs in production on three operator hosts plus a live demo at `https://nq.ne
 
 1. **No actual GitHub release artifacts** — the README points at `releases/latest/download/nq-linux-amd64`; nothing has been tagged yet. *Instrument hygiene: stop the README from lying.*
 2. **No container image** — the operator's own deployments would benefit; this is personal-tooling, not adoption-ramp work.
-3. **No Prometheus-format `/metrics` export from `nq serve`** — the operator's existing Prom stack cannot fold NQ's own substrate state in. *Legibility / personal use.*
+3. **No Prometheus-format `/metrics` export from `nq-monitor serve`** — the operator's existing Prom stack cannot fold NQ's own substrate state in. *Legibility / personal use.*
 4. **`nq-witness` does not exist as a separable deployable** — promoted under the v0-wire-equals-current-wire constraint; serves *proof* (framework touches binary boundaries) + *legibility* (W/E split structurally visible).
 5. **Some instrument hygiene items** (CHANGELOG, versioning policy, COMPATIBILITY.md, paired with Track 1) need to land at the same moment the contract goes live.
 
@@ -60,7 +60,7 @@ Tracks below recalibrated track-by-track. Track 3b ("finding-state as scrapeable
 - Zero GitHub releases — README's binary URL 404s.
 - No container image, no Helm chart, no APT/RPM packages.
 - No `/metrics` endpoint exposing NQ's own substrate state in Prometheus format.
-- No separable `nq-witness` daemon — `nq publish` is part of the unified binary.
+- No separable `nq-witness` daemon — `nq-monitor publish` is part of the unified binary.
 - No CONTRIBUTING.md, issue/PR templates, code of conduct.
 - No documented versioning / compatibility policy (the workspace is `0.1.0`).
 - No macOS or Windows builds (Linux musl only).
@@ -86,7 +86,7 @@ These constraints govern any track below. They are non-negotiable for this codeb
 
 **Layer, not platform (added 2026-06-01).** Platforms consolidate (Datadog) or own a workflow end-to-end (PagerDuty). NQ is a layer that integrates with both, replaces neither. Track items that pull NQ toward owning workflows (incident management UI, runbook execution, ticketing) cross this line; refuse. The corresponding doctrine for responder-witness work (if any ever lands) lives in the Daywatch doctrine corpus (memory: `project_daywatch`), explicitly NOT as a sub-track here.
 
-**Co-residence is bounded defense-in-depth, not the architecture.** The witness and evaluator layers currently co-reside inside `nq serve`. This is permitted today; the architectural commitment is to keep the W/E boundary legible even when co-resident. A daemon split (Track 4) re-evaluates the co-residence — but the re-evaluation is not a foregone conclusion to split; it is a re-examination against then-current evidence.
+**Co-residence is bounded defense-in-depth, not the architecture.** The witness and evaluator layers currently co-reside inside `nq-monitor serve`. This is permitted today; the architectural commitment is to keep the W/E boundary legible even when co-resident. A daemon split (Track 4) re-evaluates the co-residence — but the re-evaluation is not a foregone conclusion to split; it is a re-examination against then-current evidence.
 
 **Forcing-case discipline for new architectural surfaces.** New surfaces — wire formats, schemas, daemon splits, public APIs — need either (a) a documented forcing case OR (b) direct check against irreversibility + speculation. Forcing-case was originally framed as a hard prerequisite; recalibrated 2026-06-01 — it is a *proxy* for the deeper concern (don't pour concrete around something you'll regret; don't build cathedral nobody asked for). When the deeper concern is directly addressable (e.g., Track 4's v0-wire-equals-current-wire constraint neutralizes irreversibility), the proxy is redundant. Track 4's promotion this revision is the application of this clarification, not its violation.
 
@@ -114,7 +114,7 @@ These constraints govern any track below. They are non-negotiable for this codeb
 
 **Risks / decisions to defer:**
 
-- Whether to include the CLI version `nq --version` in the binary metadata. Already pulled via `CARGO_PKG_VERSION` in the build commit chain; verify it surfaces in release builds.
+- Whether to include the CLI version `nq-monitor --version` in the binary metadata. Already pulled via `CARGO_PKG_VERSION` in the build commit chain; verify it surfaces in release builds.
 - Whether the COMPATIBILITY.md should pin specific schema-stability promises (probably not in v0.1.0 — pre-1.0 means "no promises"; pin promises when a downstream consumer files a forcing case).
 
 ---
@@ -127,7 +127,7 @@ These constraints govern any track below. They are non-negotiable for this codeb
 
 **Work:**
 
-1. **Dockerfile** — multi-stage build, final image based on `alpine` or `gcr.io/distroless/static` **with explicit CA cert copy** (`COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/`). **Landmine fix (caught by web-Claude 2026-06-01):** musl static-linking is orthogonal to the runtime cert bundle. `distroless/static` ships without `ca-certificates`; the first outbound TLS call from `reqwest` (any HTTPS Prom exporter or notification webhook) would fail without the explicit copy. Alpine ships `ca-certificates` natively and is more debuggable; lean toward alpine unless image-size pressure demands distroless. Image entrypoint defaults to `nq serve` with config path via env or volume mount.
+1. **Dockerfile** — multi-stage build, final image based on `alpine` or `gcr.io/distroless/static` **with explicit CA cert copy** (`COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/`). **Landmine fix (caught by web-Claude 2026-06-01):** musl static-linking is orthogonal to the runtime cert bundle. `distroless/static` ships without `ca-certificates`; the first outbound TLS call from `reqwest` (any HTTPS Prom exporter or notification webhook) would fail without the explicit copy. Alpine ships `ca-certificates` natively and is more debuggable; lean toward alpine unless image-size pressure demands distroless. Image entrypoint defaults to `nq-monitor serve` with config path via env or volume mount.
 2. **Publish to GHCR** — `ghcr.io/unpingable/nq:<version>`. Free for public repos; tied to the existing repo.
 3. **Build CI** — extend `.github/workflows/release.yml` (or add `container.yml`) to build + push multi-arch images on tag push. Buildx is the standard path.
 4. **`docker-compose.yml` example** — minimal recipe matching the operator's own three-host topology. Lands in `docs/examples/`. *Personal-use justification:* documents the operator's existing deployment shape in a reproducible form.
@@ -148,9 +148,9 @@ These constraints govern any track below. They are non-negotiable for this codeb
 
 ---
 
-## Track 3 — Prometheus `/metrics` export from `nq serve` (NQ-as-metric-source)
+## Track 3 — Prometheus `/metrics` export from `nq-monitor serve` (NQ-as-metric-source)
 
-**Goal:** operators running Prometheus can scrape `nq serve` for NQ's own substrate-state telemetry, so NQ folds into their existing monitoring without requiring a separate observability surface.
+**Goal:** operators running Prometheus can scrape `nq-monitor serve` for NQ's own substrate-state telemetry, so NQ folds into their existing monitoring without requiring a separate observability surface.
 
 **Current state:** NQ already scrapes Prom exporters at the edge (consumer side). The reverse — emitting Prom metrics about NQ itself — is not built.
 
@@ -164,7 +164,7 @@ These constraints govern any track below. They are non-negotiable for this codeb
 
 ### 3a — NQ-on-NQ self-telemetry metrics
 
-Substrate-state metrics about `nq serve` itself: things an SRE folding NQ into their existing Prom stack would want to know about NQ's own health.
+Substrate-state metrics about `nq-monitor serve` itself: things an SRE folding NQ into their existing Prom stack would want to know about NQ's own health.
 
 Candidate metrics (illustrative; needs operator review before building):
 
@@ -214,24 +214,24 @@ The proxy was costing more than it was protecting.
 
 **THE v0-WIRE CONSTRAINT (load-bearing, bold by request):**
 
-> **`nq-witness` v0 wire format MUST be exactly the `nq.witness_packet.v1` envelope the unified `nq publish` already emits. No new fields, no new shape, no new transport beyond HTTP POST. If the split reveals a wire-format wrinkle, fix the unified binary's emit first, ship that to v0.1.x, THEN split. The split inherits a settled shape; it does not invent one.**
+> **`nq-witness` v0 wire format MUST be exactly the `nq.witness_packet.v1` envelope the unified `nq-monitor publish` already emits. No new fields, no new shape, no new transport beyond HTTP POST. If the split reveals a wire-format wrinkle, fix the unified binary's emit first, ship that to v0.1.x, THEN split. The split inherits a settled shape; it does not invent one.**
 
 This is the gate that makes everything else safe. Any PR in this track that proposes wire-format changes alongside the binary split is refused — those are two separate slices, in that order.
 
 **Goal:** ship `nq-witness` as a separate binary in the same workspace. The operator can deploy `nq-witness` on a host where they don't want the full aggregator + detectors + web UI + SQLite — useful for the operator's own constrained hosts (proof + personal use) and for the cleaner W/E surface (legibility).
 
-**Current state:** `nq publish` is a subcommand of the unified `nq` binary. The witness path co-resides with the aggregator path in one process when an operator runs `nq serve`. The witness and evaluator layers run inside the same pulse loop; co-residence is bounded defense-in-depth per existing project doctrine.
+**Current state:** `nq-monitor publish` is a subcommand of the unified `nq` binary. The witness path co-resides with the aggregator path in one process when an operator runs `nq-monitor serve`. The witness and evaluator layers run inside the same pulse loop; co-residence is bounded defense-in-depth per existing project doctrine.
 
 **Work:**
 
-1. **Crate split.** Extract `nq-witness` as a new binary in the workspace, sharing collector code with `nq publish` via a new internal crate (`nq-witness-core` or similar). The aggregator / detectors / web UI / SQLite stay in `crates/nq` unchanged.
+1. **Crate split.** Extract `nq-witness` as a new binary in the workspace, sharing collector code with `nq-monitor publish` via a new internal crate (`nq-witness-core` or similar). The aggregator / detectors / web UI / SQLite stay in `crates/nq` unchanged.
 2. **Transport: HTTP POST only in v0.** File-drop is a candidate worth filing but explicitly out of this track. One transport, one shape, one contract.
 3. **Wire: existing `nq.witness_packet.v1`.** No new fields, no new shape. The unified binary's emit is the spec.
 4. **W/E discipline holds at the wire.** The W/E boundary gap (`docs/working/gaps/WITNESS_EVALUATOR_BOUNDARY_GAP.md`) articulates contract-vs-verdict discipline at the signal level when the layers are co-resident. When they split across processes, the discipline must hold at the wire — witness packets carry contracts about observations; evaluator findings carry verdicts. Field-naming convention is the v0 enforcement.
-5. **Migration story:** no-op for operators running unified `nq serve`. The split is additive — `nq-witness` becomes an alternative to `nq publish` for witness-only deployments. The unified binary remains supported and remains the default for full-deployment cases.
-6. **README story (paired with Track 5):** the README should be loud about "use `nq publish` as your witness today; `nq-witness` is the same role packaged separately." This closes the self-suppression loop independently — the operator-pattern is reachable today via the subcommand, so adopters can hit the pattern's friction (or absence of friction) before the dedicated binary ships.
+5. **Migration story:** no-op for operators running unified `nq-monitor serve`. The split is additive — `nq-witness` becomes an alternative to `nq-monitor publish` for witness-only deployments. The unified binary remains supported and remains the default for full-deployment cases.
+6. **README story (paired with Track 5):** the README should be loud about "use `nq-monitor publish` as your witness today; `nq-witness` is the same role packaged separately." This closes the self-suppression loop independently — the operator-pattern is reachable today via the subcommand, so adopters can hit the pattern's friction (or absence of friction) before the dedicated binary ships.
 
-**Acceptance:** `nq-witness` builds, runs, and emits the same `nq.witness_packet.v1` envelopes the unified `nq publish` emits. An aggregator running unified `nq serve` ingests them without distinguishing the source. Existing operator deployments are unaffected. The W/E boundary gap's §2 "co-residence reopens when peer-NQ Tier 2 arrives or external evaluator surfaces load-bearing case" trigger is re-examined — likely NOT to authorize further split (no peer-NQ yet) but the re-examination is documented.
+**Acceptance:** `nq-witness` builds, runs, and emits the same `nq.witness_packet.v1` envelopes the unified `nq-monitor publish` emits. An aggregator running unified `nq-monitor serve` ingests them without distinguishing the source. Existing operator deployments are unaffected. The W/E boundary gap's §2 "co-residence reopens when peer-NQ Tier 2 arrives or external evaluator surfaces load-bearing case" trigger is re-examined — likely NOT to authorize further split (no peer-NQ yet) but the re-examination is documented.
 
 **Estimate:** ~1 week for the crate/binary split + tests + docs, under the v0-wire constraint. Lower than the original 1–2 week estimate because no wire-format work is in scope.
 
@@ -259,7 +259,7 @@ This is the gate that makes everything else safe. Any PR in this track that prop
 
 **Items added 2026-06-01 (under proof/legibility justification):**
 
-8. **README "witness today via `nq publish`" loud paragraph.** Per Track 4: make the operator-pattern of running the publisher as a witness clearly readable from the README, before the dedicated `nq-witness` binary ships. *Legibility:* documents the role-vs-binary distinction explicitly. *Composes with:* Track 4's self-suppression-loop closure.
+8. **README "witness today via `nq-monitor publish`" loud paragraph.** Per Track 4: make the operator-pattern of running the publisher as a witness clearly readable from the README, before the dedicated `nq-witness` binary ships. *Legibility:* documents the role-vs-binary distinction explicitly. *Composes with:* Track 4's self-suppression-loop closure.
 
 **Acceptance:** the kept items land; the cut items are documented as cut (this is the documentation); future-self does not have to re-decide which items were dropped.
 
@@ -308,12 +308,12 @@ These are the questions worth taking to ChatGPT / claude-web (or to a public RFC
 **Track 1 (release):**
 
 - Tag as `v0.1.0` (signaling "real but pre-1.0") or `v0.0.1` (signaling "absolutely no guarantees")? Lean: `v0.1.0` is honest about the production deployments.
-- Should `nq --version` include the git commit SHA and dirty-flag? Lean: yes; standard build-metadata pattern.
+- Should `nq-monitor --version` include the git commit SHA and dirty-flag? Lean: yes; standard build-metadata pattern.
 
 **Track 2 (container):**
 
 - Distroless vs alpine vs scratch for the final image? Distroless is the smaller surface; alpine is more debuggable; scratch is the smallest but excludes `/etc/ssl/certs` which `reqwest` needs.
-- Should the published image include the operator guide / docs (so operators can `docker run --rm nq cat /docs/quickstart.md`)? Probably not — bloats the image; docs live in the repo.
+- Should the published image include the operator guide / docs (so operators can `docker run --rm nq-monitor cat /docs/quickstart.md`)? Probably not — bloats the image; docs live in the repo.
 - Multi-arch build via buildx is standard; should the first release also push to Docker Hub in addition to GHCR? Defer; GHCR alone is sufficient for v0.
 
 **Track 3 (Prom metrics):**
@@ -325,7 +325,7 @@ These are the questions worth taking to ChatGPT / claude-web (or to a public RFC
 
 **Track 4 (nq-witness — promoted 2026-06-01):**
 
-- Resolved: ship under v0-wire-equals-current-wire constraint. Open implementation questions: crate split layout (separate workspace member `nq-witness-core` for shared collector code, or duplicate-then-extract later?), test discipline for "same wire as unified `nq publish`" (probably a golden-envelope test per packet kind), CI matrix for the two binaries.
+- Resolved: ship under v0-wire-equals-current-wire constraint. Open implementation questions: crate split layout (separate workspace member `nq-witness-core` for shared collector code, or duplicate-then-extract later?), test discipline for "same wire as unified `nq-monitor publish`" (probably a golden-envelope test per packet kind), CI matrix for the two binaries.
 - Open architectural question (deferred to the slice): does `nq-witness` reuse `nq-core` in its current shape, or does shipping a separate binary surface that nq-core has accreted some aggregator-leaning types that should split out into a shared `nq-wire` crate? Lean: discover during implementation; don't pre-split.
 
 **Track 5 (recalibrated):**

@@ -185,7 +185,7 @@ Smallest useful cash-out — admit the substrate class, prove the inbound pipeli
 
 3. **One detector composition: `extraction_stale` via SILENCE_UNIFICATION.** When the fixture's `producer_extraction_time` exceeds a configured threshold relative to NQ's current time, emit a SILENCE_UNIFICATION-shaped finding with `silence_basis: age_threshold`, `silence_scope: extraction`, `silence_duration: <delta>`. Demonstrates that durable-artifact silence composes onto the existing silence contract rather than parallel-inventing.
 
-4. **Wire shape round-trip test.** Synthetic producer → ingest → `nq findings export` → consumer parses; `origin.source = "import"`, both clocks present, two-clock fields preserved.
+4. **Wire shape round-trip test.** Synthetic producer → ingest → `nq-monitor findings export` → consumer parses; `origin.source = "import"`, both clocks present, two-clock fields preserved.
 
 5. **Lifecycle-posture decision.** V1 picks one of `vouched re-emission` or `raw passthrough with origin tag` and writes the choice down in this gap doc. The conservative default is **raw passthrough with origin tag** (cleaner boundary, consumer-side branching is small and explicit), but the V1 author should ratify or deviate explicitly. Once chosen, the choice is locked for the V1 contract; revisiting requires contract-version bump.
 
@@ -254,7 +254,7 @@ This note is a forward-reference, not normative spec text. No fields are added b
 - The fixture round-trips through the inbound pipeline: validation against `MIN_SCHEMA_FOR_IMPORT`, ingestion into `warning_state` / `finding_observations` with `origin.source = "import"`, both clocks populated.
 - Under-versioned or malformed fixtures produce one `inbound_export_unparsable`-shaped finding and ingest no observations.
 - A SILENCE_UNIFICATION-shaped `extraction_stale` finding emits when the fixture's `producer_extraction_time` exceeds a configured threshold; the finding carries the silence contract fields (`silence_scope`, `silence_basis`, `silence_duration`) without inventing new ones.
-- `nq findings export` emits the ingested finding with `origin.source = "import"`, `producer_extraction_time`, `producer_id`, `extraction_run_id`, and `import_contract_version` populated, alongside the existing `nq.finding_snapshot.v1` envelope.
+- `nq-monitor findings export` emits the ingested finding with `origin.source = "import"`, `producer_extraction_time`, `producer_id`, `extraction_run_id`, and `import_contract_version` populated, alongside the existing `nq.finding_snapshot.v1` envelope.
 - The lifecycle-posture choice (vouched re-emission vs raw passthrough) is recorded in this gap doc and the implementation matches.
 - At least one downstream consumer (NS preferred) reads the synthetic-producer output and either consumes via existing admissibility path (admission ratified) or refuses with a typed error (admission blocked, gap revisited).
 - No new witness position is added.

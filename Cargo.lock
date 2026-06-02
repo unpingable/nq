@@ -855,29 +855,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nq"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "hostname",
- "libc",
- "nq-core",
- "nq-db",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "time",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "nq-core"
 version = "0.1.0"
 dependencies = [
@@ -905,6 +882,29 @@ dependencies = [
  "thiserror",
  "time",
  "tracing",
+]
+
+[[package]]
+name = "nq-monitor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "hostname",
+ "libc",
+ "nq-core",
+ "nq-db",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

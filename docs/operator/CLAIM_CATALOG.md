@@ -12,8 +12,8 @@ Two tracks are wire-shipping today:
 
 | Track | Where the testimony comes from | Where you call it |
 |---|---|---|
-| **A — operational** | Findings inside a running aggregator's DB (collected from `nq publish` hosts and probes) | HTTP `/api/preflight/*` on the running monitor; or `nq preflight disk-state` against the DB |
-| **B — CI / agentic** | Caller-supplied witness packets passed on the command line | `nq verify --claim <name> --witness …` |
+| **A — operational** | Findings inside a running aggregator's DB (collected from `nq-monitor publish` hosts and probes) | HTTP `/api/preflight/*` on the running monitor; or `nq-monitor preflight disk-state` against the DB |
+| **B — CI / agentic** | Caller-supplied witness packets passed on the command line | `nq-monitor verify --claim <name> --witness …` |
 
 Every claim ships with a `cannot_testify` list — conclusions no combination of witness output licenses, regardless of how many findings light up or how many witnesses pass. The list is part of the wire contract. It is not advisory.
 
@@ -23,7 +23,7 @@ Every preflight or verify call resolves to exactly one of the eight [verdicts](V
 
 ## Track A — operational claims
 
-These claims are preflighted against a running `nq serve`. They are read-only against the aggregator's database; running them does not produce new findings, mutate state, or trigger notifications.
+These claims are preflighted against a running `nq-monitor serve`. They are read-only against the aggregator's database; running them does not produce new findings, mutate state, or trigger notifications.
 
 The shipped wire shape is `nq.preflight_result.v1` (per-kind schemas). For the field-level definition see `crates/nq-core/src/preflight.rs` and the per-kind schemas at `nq.preflight.{disk_state,ingest_state,dns_state}.v1`.
 
@@ -38,7 +38,7 @@ The shipped wire shape is `nq.preflight_result.v1` (per-kind schemas). For the f
 **Smallest example (CLI):**
 
 ```bash
-nq preflight disk-state \
+nq-monitor preflight disk-state \
   --db /var/lib/nq/nq.db \
   --host storage01
 ```
@@ -104,14 +104,14 @@ curl -s http://127.0.0.1:9848/api/preflight/ingest-state | jq
 
 **Question NQ answers:** for one vantage / resolver / name / type tuple, what kind of response did the resolver return, and what claims is that response admissible support for?
 
-**Required testimony families:** `dns_observations` rows produced by `nq probe dns`.
+**Required testimony families:** `dns_observations` rows produced by `nq-monitor probe dns`.
 
 **Targeting:** vantage + resolver + name + type. Query parameters: `?vantage=&resolver=&name=&type=`.
 
 **Smallest example (probe + read):**
 
 ```bash
-nq probe dns \
+nq-monitor probe dns \
   --db /var/lib/nq/nq.db \
   --vantage sushi-k \
   --resolver 8.8.8.8 \
@@ -148,21 +148,21 @@ curl -s "http://127.0.0.1:9848/api/preflight/dns-state?vantage=sushi-k&resolver=
 
 These claims are evaluated against caller-supplied witness packets. They do not consult any aggregator or database. Use them in CI, scripts, or any context where you can produce a witness packet.
 
-The shipped catalog is hardcoded in `crates/nq-core/src/claim_registry.rs::ClaimRegistry::track_b_starter`. To use these claims from `nq verify`, pass `--claim <name>` and one or more `--witness <file>`.
+The shipped catalog is hardcoded in `crates/nq-core/src/claim_registry.rs::ClaimRegistry::track_b_starter`. To use these claims from `nq-monitor verify`, pass `--claim <name>` and one or more `--witness <file>`.
 
 ### `repo_clean`
 
 **What it says when admitted:** "git working tree has no uncommitted changes."
 
-**Required witness:** `git_status` (produced by `nq witness git-status`).
+**Required witness:** `git_status` (produced by `nq-monitor witness git-status`).
 
 **Condition:** the witness's `git_status_porcelain` observation has empty `porcelain`.
 
 **Smallest example:**
 
 ```bash
-nq witness git-status --subject repo:. > /tmp/git.json
-nq verify --claim repo_clean --subject repo:. --witness /tmp/git.json
+nq-monitor witness git-status --subject repo:. > /tmp/git.json
+nq-monitor verify --claim repo_clean --subject repo:. --witness /tmp/git.json
 ```
 
 **What it does not say:** the change is safe to apply, the change is reviewed, untracked files are gone, the working tree matches `origin/main`. The leaf describes itself at the witness scope; it is not a stronger claim by inference.
@@ -173,18 +173,18 @@ nq verify --claim repo_clean --subject repo:. --witness /tmp/git.json
 
 **What it says when admitted:** "pytest run exited zero in this checkout."
 
-**Required witness:** `pytest` (produced by `nq witness pytest -- <cmd>`).
+**Required witness:** `pytest` (produced by `nq-monitor witness pytest -- <cmd>`).
 
 **Condition:** the witness's `pytest_run` observation has `exit_code == 0`.
 
 **Smallest example:**
 
 ```bash
-nq witness pytest --subject repo:. -- pytest -q > /tmp/pytest.json
-nq verify --claim tests_passed --subject repo:. --witness /tmp/pytest.json
+nq-monitor witness pytest --subject repo:. -- pytest -q > /tmp/pytest.json
+nq-monitor verify --claim tests_passed --subject repo:. --witness /tmp/pytest.json
 ```
 
-The witness type is `pytest`, but the framework is irrelevant to the verdict — it is exit-code-based. You can run `nq witness pytest -- cargo test` or any other test command; the leaf only attests that the named command exited zero.
+The witness type is `pytest`, but the framework is irrelevant to the verdict — it is exit-code-based. You can run `nq-monitor witness pytest -- cargo test` or any other test command; the leaf only attests that the named command exited zero.
 
 **What it does not say:** all tests for the project ran, the test suite was sufficient, the change is correct, the change is safe to merge. *Exit zero is a fact about a process; it is not a fact about correctness.*
 
@@ -194,15 +194,15 @@ The witness type is `pytest`, but the framework is irrelevant to the verdict —
 
 **What it says when admitted:** "git diff matched the declared scope."
 
-**Required witness:** `diff_scope` (produced by `nq witness diff-scope --declared <scope>`).
+**Required witness:** `diff_scope` (produced by `nq-monitor witness diff-scope --declared <scope>`).
 
 **Condition:** the witness's `diff_scope_porcelain` observation has `matches_declared_scope == true`.
 
 **Smallest example:**
 
 ```bash
-nq witness diff-scope --declared docs-only --subject repo:. > /tmp/diff.json
-nq verify --claim diff_scope_matches_claim --subject repo:. --witness /tmp/diff.json
+nq-monitor witness diff-scope --declared docs-only --subject repo:. > /tmp/diff.json
+nq-monitor verify --claim diff_scope_matches_claim --subject repo:. --witness /tmp/diff.json
 ```
 
 Today the only declared scope shipped is `docs-only`. Additional scopes land as needed.
@@ -220,11 +220,11 @@ Today the only declared scope shipped is `docs-only`. Additional scopes land as 
 **Smallest example:**
 
 ```bash
-nq witness git-status --subject repo:. > .nq/git.json
-nq witness pytest --subject repo:. -- pytest -q > .nq/pytest.json
-nq witness diff-scope --declared docs-only --subject repo:. > .nq/diff.json
+nq-monitor witness git-status --subject repo:. > .nq/git.json
+nq-monitor witness pytest --subject repo:. -- pytest -q > .nq/pytest.json
+nq-monitor witness diff-scope --declared docs-only --subject repo:. > .nq/diff.json
 
-nq verify --claim ready_for_review --subject repo:. \
+nq-monitor verify --claim ready_for_review --subject repo:. \
   --witness .nq/git.json \
   --witness .nq/pytest.json \
   --witness .nq/diff.json
@@ -247,7 +247,7 @@ This is the strongest mintable Track B claim. If you wanted to say `safe_to_merg
 **What happens when you ask for it:**
 
 ```bash
-$ nq verify --claim safe_to_merge --subject repo:. \
+$ nq-monitor verify --claim safe_to_merge --subject repo:. \
     --witness .nq/git.json --witness .nq/pytest.json --witness .nq/diff.json
 status: not_verified
 reasons: non_mintable

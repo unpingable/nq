@@ -210,9 +210,9 @@ This is the load-bearing product move: strong claim denied, weaker honest senten
 
 Renderers convert receipts into human or machine output. Required renderers:
 
-- `nq receipt render --format human` — terminal output (default for `nq verify`)
-- `nq receipt render --format json` — passthrough
-- `nq receipt render --format markdown` — PR comments, dashboards
+- `nq-monitor receipt render --format human` — terminal output (default for `nq-monitor verify`)
+- `nq-monitor receipt render --format json` — passthrough
+- `nq-monitor receipt render --format markdown` — PR comments, dashboards
 
 A renderer describes the receipt; it does not adjudicate. No renderer is allowed to compute a status NQ did not put in the receipt. If the receipt says `partially_verified`, the renderer says `partially_verified`.
 
@@ -221,7 +221,7 @@ A renderer describes the receipt; it does not adjudicate. No renderer is allowed
 - **Consequence** (merge, deploy, page, replace, close incident). Receipts inform; they do not authorize.
 - **Mutation** of substrate, configuration, or external state.
 - **Global aggregation** — no health score, trust level, or readiness percentage across subjects.
-- **A scheduler/daemon in the evaluator.** Track A's `nq monitor` is a separate adapter that calls the evaluator on a schedule; the evaluator itself remains stateless and per-call.
+- **A scheduler/daemon in the evaluator.** Track A's `nq-monitor monitor` is a separate adapter that calls the evaluator on a schedule; the evaluator itself remains stateless and per-call.
 
 ## Relationship to existing docs
 
@@ -237,6 +237,6 @@ A renderer describes the receipt; it does not adjudicate. No renderer is allowed
 This document does not authorize phase-level implementation. Implementation lands through follow-up gap records, e.g.:
 
 - `docs/working/gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md` — project ZFS/SMART findings into witness packets so Track A.0 (disk-state DB-reading evaluator) can retire.
-- `docs/working/gaps/TRACK_B_WITNESS_PRODUCERS.md` — `nq witness git-status` / `nq witness pytest` / `nq witness diff-scope`, claim registry entries for the repo/CI claim catalog.
+- `docs/working/gaps/TRACK_B_WITNESS_PRODUCERS.md` — `nq-monitor witness git-status` / `nq-monitor witness pytest` / `nq-monitor witness diff-scope`, claim registry entries for the repo/CI claim catalog.
 
-Neither gap doc exists yet. They will be drafted when the corresponding implementation slice is approached, not preemptively. Coexistence note: `nq preflight disk-state` continues to read NQ findings directly. Normalizing its output to `nq.receipt.v1` is in scope for Phase 1; full witness-packet projection is the Track A.1 cut-over above and is not a precondition for Track B.
+Neither gap doc exists yet. They will be drafted when the corresponding implementation slice is approached, not preemptively. Coexistence note: `nq-monitor preflight disk-state` continues to read NQ findings directly. Normalizing its output to `nq.receipt.v1` is in scope for Phase 1; full witness-packet projection is the Track A.1 cut-over above and is not a precondition for Track B.

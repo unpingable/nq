@@ -137,7 +137,7 @@ Smallest useful cashout:
 
 1. **`coverage_basis_json` on `warning_state`.** Populated by detectors from witness coverage + collector status + regime sufficient_history. No consumers yet.
 2. **`decision` derivation rule** as one function, tested. Even unused downstream, its existence forces the axes' semantics to be written down.
-3. **`nq findings export` carries coverage_basis.** Night Shift gets the basis in the DTO from day one; it can choose what to render.
+3. **`nq-monitor findings export` carries coverage_basis.** Night Shift gets the basis in the DTO from day one; it can choose what to render.
 4. **Liveness `completeness` block** (sources-level only; witness-level in a follow-up). Minimal projection — does not require new storage.
 
 Explicitly deferred to later slices:

@@ -27,7 +27,7 @@ The existing **`nq-witness` reference impl** at `~/git/nq-witness/` (with `SPEC.
 
 ## The invariant
 
-> **nq-witness observes. nq evaluates. Consumers interpret. Other systems authorize.**
+> **nq-witness observes. nq-monitor evaluates. Consumers interpret. Other systems authorize.**
 
 ## Recursion rule (NQ-on-NQ adjacent)
 
@@ -69,8 +69,8 @@ Pattern B remains the active implementation pattern. The daemon's first user-vis
 
 Move this note into `docs/architecture/` (and authorize the binary split) when **any** of:
 
-1. The current `nq publish` binary's collector surface grows third-party witness adapters that don't fit cleanly into the publisher's HTTP surface.
-2. A real operational case where running the publisher with `nq serve` co-resident becomes operationally hostile (resource competition, security boundary, etc.).
+1. The current `nq-monitor publish` binary's collector surface grows third-party witness adapters that don't fit cleanly into the publisher's HTTP surface.
+2. A real operational case where running the publisher with `nq-monitor serve` co-resident becomes operationally hostile (resource competition, security boundary, etc.).
 3. A second consumer of witness packets surfaces that needs a non-HTTP transport (e.g., kafka-style push).
 4. The `nq-witness` reference impl repo grows enough form factors that the daemon shape becomes the natural unification target.
 

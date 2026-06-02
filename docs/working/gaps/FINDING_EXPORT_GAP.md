@@ -13,7 +13,7 @@
 **Live:**
 
 - `crates/nq-db/src/export.rs` — `FindingSnapshot` DTO + component structs + `export_findings(db, filter)` read helper. `Serialize`-only by design (the boundary forces explicit field mapping; consumers do not get `Deserialize` from internal types). Schema constants: `SCHEMA_ID = "nq.finding_snapshot.v1"`, `CONTRACT_VERSION = 1`. (commit `447db96`)
-- `crates/nq/src/cmd/findings.rs` + `crates/nq/src/cli.rs` `FindingsExportCmd` — `nq findings export` subcommand with the spec's flag set (`--format`, `--changed-since-generation`, `--detector`, `--host`, `--finding-key`, `--include-cleared`, `--include-suppressed`, `--observations-limit`). (commit `447db96`)
+- `crates/nq/src/cmd/findings.rs` + `crates/nq/src/cli.rs` `FindingsExportCmd` — `nq-monitor findings export` subcommand with the spec's flag set (`--format`, `--changed-since-generation`, `--detector`, `--host`, `--finding-key`, `--include-cleared`, `--include-suppressed`, `--observations-limit`). (commit `447db96`)
 - Schema preflight: `MIN_SCHEMA_FOR_EXPORT = 38` aborts with a specific actionable error when the DB schema predates the columns the contract reads, instead of producing an opaque `no such column` failure. (commit `be83e92`, first-contact scar from Night Shift Phase 1 consumer work 2026-04-18.)
 
 **Wire blocks beyond the 04-16 sketch (additive on the v1 contract):**
@@ -69,7 +69,7 @@ This closes the integration-acceptance bar described in the Forcing Consumer sec
 - **#1 stable-across-re-exports** — `export_is_stable_across_re_exports` exports twice from the same DB and asserts byte-equality of the snapshots after nulling `export.exported_at` (the only field permitted to vary across calls).
 - **#9 positive case for regime population** — `regime_persistence_populates_when_features_row_exists` inserts a `regime_features` row keyed by `(subject_kind='finding', subject_id=finding_key, feature_type='persistence')` and asserts the export's `regime.persistence` populates with the parsed payload. Pairs with the existing NULL-case test.
 
-**#12 deferred by design.** The consumer-semantics prose lives in the `Export(FindingsExportCmd)` variant doc-comment in `crates/nq/src/cli.rs`, which clap surfaces as the `nq findings export --help` description. Asserting clap's rendered output via integration tests would be brittle (clap version drift, terminal-width sensitivity, multi-line wrapping) for low marginal value when the doc string is plainly visible in source and any drift would be caught at code review. Re-evaluate if a future change makes the prose programmatically derivable.
+**#12 deferred by design.** The consumer-semantics prose lives in the `Export(FindingsExportCmd)` variant doc-comment in `crates/nq/src/cli.rs`, which clap surfaces as the `nq-monitor findings export --help` description. Asserting clap's rendered output via integration tests would be brittle (clap version drift, terminal-width sensitivity, multi-line wrapping) for low marginal value when the doc string is plainly visible in source and any drift would be caught at code review. Re-evaluate if a future change makes the prose programmatically derivable.
 
 **Coverage beyond the 12 criteria.** The suite also exercises post-04-16 wire blocks: 4 coverage-envelope tests, 3 admissibility tests + 1 universality test, 2 node_unobservable tests, 2 diagnosis-gating tests, 3 schema-preflight tests (first-contact scar from NS Phase 1 consumer work), 1 composition test (coverage under witness silence — proves the rot-pocket fix), plus identity helpers and robustness (`empty_db_is_not_an_error`, `condition_state_derivation`).
 
@@ -94,7 +94,7 @@ Today a consumer wanting "what's the current state of `wal_bloat on labelwatch-h
 - join `generations` for snapshot timestamps
 - compute `finding_key` themselves or know the URL-encoding convention
 
-That's internal schema knowledge leaking through to every consumer. The `nq query` subcommand exposes raw SQL, but *raw SQL is not a contract* — it's a permission slip for learning NQ's internals.
+That's internal schema knowledge leaking through to every consumer. The `nq-monitor query` subcommand exposes raw SQL, but *raw SQL is not a contract* — it's a permission slip for learning NQ's internals.
 
 ## Forcing Consumer
 
@@ -131,7 +131,7 @@ This is the consumer-side sibling of the OBSERVER_DISTORTION_GAP invariant (*"a 
 ## Proposed CLI
 
 ```
-nq findings export [--format json|jsonl]
+nq-monitor findings export [--format json|jsonl]
                    [--changed-since GENERATION]
                    [--detector DETECTOR]
                    [--host HOST]
@@ -149,7 +149,7 @@ Defaults:
 
 `--changed-since GENERATION` returns findings whose `last_seen_gen > GENERATION` OR whose `warning_state` row mutated after generation `GENERATION`. This is the incremental-read primitive; consumers store a watermark and fetch deltas.
 
-An HTTP surface (`GET /findings` on `nq serve`) mirrors the CLI for remote consumers; same query params. Deferred to v1.1 unless a consumer explicitly needs it for MVP.
+An HTTP surface (`GET /findings` on `nq-monitor serve`) mirrors the CLI for remote consumers; same query params. Deferred to v1.1 unless a consumer explicitly needs it for MVP.
 
 ## FindingSnapshot v1 — canonical DTO shape
 
@@ -284,9 +284,9 @@ pub struct FindingSnapshot {
 
 `pub fn export_findings(db: &ReadDb, filter: ExportFilter) -> anyhow::Result<Vec<FindingSnapshot>>` in the new export module. One query per finding is fine for MVP scale; a single-join query is a later optimization.
 
-### 3. `nq findings export` subcommand
+### 3. `nq-monitor findings export` subcommand
 
-`crates/nq/src/cmd/findings.rs` — mirrors `nq query` structure, outputs `serde_json::to_string(&snapshot)` per line for jsonl.
+`crates/nq/src/cmd/findings.rs` — mirrors `nq-monitor query` structure, outputs `serde_json::to_string(&snapshot)` per line for jsonl.
 
 ### 4. Tests
 
@@ -300,13 +300,13 @@ pub struct FindingSnapshot {
 
 ### 5. HTTP surface (v1.1, deferred)
 
-`GET /findings` on `nq serve` wraps the same `export_findings` helper. Same query params. Content-type `application/x-ndjson` for jsonl, `application/json` for json. Rate-limit and caching policy to be defined when the first remote consumer is concrete.
+`GET /findings` on `nq-monitor serve` wraps the same `export_findings` helper. Same query params. Content-type `application/x-ndjson` for jsonl, `application/json` for json. Rate-limit and caching policy to be defined when the first remote consumer is concrete.
 
 ## Non-goals
 
 - **Not a push surface.** No webhooks, no streaming, no server-sent events in v1. Pull model only.
 - **Not an authority interface.** Exporting a finding does not authorize action on it. Consumers route actions through their own authority layer (Night Shift → Governor).
-- **Not a general-purpose query API.** `nq query` already exists for raw SQL. `nq findings export` is a typed, stable, versioned surface for the specific "finding state" question — not a replacement for analytical SQL.
+- **Not a general-purpose query API.** `nq-monitor query` already exists for raw SQL. `nq-monitor findings export` is a typed, stable, versioned surface for the specific "finding state" question — not a replacement for analytical SQL.
 - **Not a transition-event stream.** Transitions (new / persisted / recovered / flapped / stale) are derivable from successive snapshots in MVP. First-class transition events are v2+ once a consumer has a real need for them.
 - **Not a rendering contract.** The DTO is for programmatic consumption. UI rendering, notification formatting, and operator-facing prose remain separate concerns (see ALERT_INTERPRETATION_GAP, DASHBOARD_MODE_SEPARATION_GAP).
 - **Not federation-ready beyond the scope field.** The `identity.scope` component reserves space for federated identity (`site/{site_id}`), but cross-NQ replication, trust, and signing are out of scope here.
@@ -314,7 +314,7 @@ pub struct FindingSnapshot {
 
 ## Acceptance Criteria (v1)
 
-1. `nq findings export --format jsonl` emits one `FindingSnapshot` per line, stable across re-exports (same finding_key, same state → same JSON).
+1. `nq-monitor findings export --format jsonl` emits one `FindingSnapshot` per line, stable across re-exports (same finding_key, same state → same JSON).
 2. `--changed-since GEN` returns only findings where lifecycle or observations changed after generation `GEN`.
 3. `--detector DETECTOR` and `--host HOST` filters work independently and in combination.
 4. `--finding-key KEY` returns exactly that one snapshot, or nothing with exit code 0 (empty result is not an error).
@@ -325,7 +325,7 @@ pub struct FindingSnapshot {
 9. `regime` section populates when `regime_features` rows exist for the finding; null payloads (not errors) when they don't.
 10. `schema: "nq.finding_snapshot.v1"` and `contract_version: 1` are present in every emitted snapshot.
 11. Night Shift can run `nightshift watchbill run wal-bloat-review` against this surface end-to-end — fetch, capture, reconcile, emit packet — without reading any NQ internal table directly. This is the integration-acceptance bar.
-12. The consumer semantics section is included in the `nq findings export --help` output (or linked from it) — consumers are informed, not assumed.
+12. The consumer semantics section is included in the `nq-monitor findings export --help` output (or linked from it) — consumers are informed, not assumed.
 
 ## Core invariant (reprise)
 
@@ -342,7 +342,7 @@ And the sibling rule to the Δq probe invariant:
 ## V2+ (explicitly deferred)
 
 - **HTTP `GET /findings`** surface with caching, rate-limit, ETag.
-- **Transition events** as a first-class endpoint: `nq findings transitions --since GEN` yielding `(finding_key, from_state, to_state, at_generation)` tuples.
+- **Transition events** as a first-class endpoint: `nq-monitor findings transitions --since GEN` yielding `(finding_key, from_state, to_state, at_generation)` tuples.
 - **Push surface** (webhook or WebSocket) for subscribers who cannot poll. Requires backpressure, dead-letter, retry policy — significant design surface.
 - **Federation wire format** — cross-NQ export where `scope = site/{site_id}`, with signing / provenance / trust discipline. Distinct from this gap.
 - **Bulk export optimizations** — single-pass SQL joins, streaming encoder, compression. MVP is a per-finding loop.

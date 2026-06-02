@@ -168,7 +168,7 @@ Abbreviated. This is the **post-consumer-contract-hardening** receipt shape (gap
 **`signals.sqlite_wal_state.pinned_reader = "present"` is deployment-shape-dependent, not anomalous on its own.** Any SQLite DB with a persistent service holding a long-running read transaction will report `present` steadily. Both production NQ deployments observe this as steady-state:
 
 - `labelwatch.db` — the labelwatch service holds a long-running writer connection (single-writer invariant) and the discovery sidecar holds read connections across full derive cycles (~60–80 min).
-- `nq.db` (NQ-on-NQ Tier 0) — `nq serve` legitimately holds a read transaction across pulse cycles. Same lock-pattern shape.
+- `nq.db` (NQ-on-NQ Tier 0) — `nq-monitor serve` legitimately holds a read transaction across pulse cycles. Same lock-pattern shape.
 
 That is design, not pathology. The WAL-bloat fingerprint per the 2026-04-22 incident lineage is the **combination**:
 
@@ -536,7 +536,7 @@ The last option is the cheapest and is already what the consumer prompt enforces
 
 This fixture's receipt JSON is ~600 KB. The markdown render is ~17,400 lines. 721 supports, 721 `verified` strings, 721 witnesses, all near-identical.
 
-For consumer agents this is a token-budget problem and a signal-to-noise problem. The verdict_note + supported_status carry the load-bearing claim in one sentence; the supports[] array is custody anchoring (so `nq receipt check` can re-verify against the wire-typed packets), not narrative.
+For consumer agents this is a token-budget problem and a signal-to-noise problem. The verdict_note + supported_status carry the load-bearing claim in one sentence; the supports[] array is custody anchoring (so `nq-monitor receipt check` can re-verify against the wire-typed packets), not narrative.
 
 **Mitigations (not pinned here):**
 - A `--summary` render mode that omits per-row supports / witnesses, keeps verdict + supported_status + cannot_testify + window + per-witness-family rollup.

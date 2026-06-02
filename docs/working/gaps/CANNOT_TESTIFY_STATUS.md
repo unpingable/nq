@@ -21,7 +21,7 @@ Operators, downstream consumers, and future detectors all need to tell those apa
 
 ### Concrete forcing case
 
-2026-04-24, Mac mini POC (Track 1 of the four-track macOS plan). NQ built cleanly on darwin-arm64 with zero `#[cfg]` gates. `nq collect` against a test SQLite file produced this map:
+2026-04-24, Mac mini POC (Track 1 of the four-track macOS plan). NQ built cleanly on darwin-arm64 with zero `#[cfg]` gates. `nq-monitor collect` against a test SQLite file produced this map:
 
 | Collector | Status | Meaning that was emitted | Meaning that was accurate |
 |-----------|--------|--------------------------|---------------------------|
@@ -137,7 +137,7 @@ Linux-only collectors (`host`, `services` for the `systemd` check type, `logs` j
 
 ### 3. JSON export contract
 
-`nq collect`, `/state`, and consumer-facing `findings` / `liveness` exports carry the new status verbatim. Schema version bumps where contract-bound.
+`nq-monitor collect`, `/state`, and consumer-facing `findings` / `liveness` exports carry the new status verbatim. Schema version bumps where contract-bound.
 
 ### 4. UI/dashboard rendering
 
@@ -164,7 +164,7 @@ Smallest useful cash-out:
 Deferred out of V1:
 - migrating the `services` / `logs` collectors (non-trivial — both shell out; reason adjudication per check_type)
 - full capability manifest (that's PORTABILITY_GAP §V1.1)
-- `nq preflight` integration (PORTABILITY_GAP §V1.3 — will compose naturally once both land)
+- `nq-monitor preflight` integration (PORTABILITY_GAP §V1.3 — will compose naturally once both land)
 - COMPLETENESS_PROPAGATION wiring to detectors downstream
 
 ## Non-goals
@@ -187,7 +187,7 @@ Deferred out of V1:
 ## Acceptance criteria
 
 - `CollectorStatus` has a first-class `cannot_testify` variant with `standing_basis`.
-- `nq collect --config <darwin-host-config>` emits `host → cannot_testify{linux_procfs_required}`, never `error` for `/proc` absence.
+- `nq-monitor collect --config <darwin-host-config>` emits `host → cannot_testify{linux_procfs_required}`, never `error` for `/proc` absence.
 - `sqlite_health` on darwin still emits `ok` with real data.
 - `skipped` on darwin is reserved for collectors that the operator did not configure (e.g. `zfs_witness` without a `zfs_witness` config block).
 - `error` on darwin means a collector that *should* run here actually failed (e.g. `sqlite_health` pointed at an unreadable path).

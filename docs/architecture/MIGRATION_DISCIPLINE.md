@@ -24,7 +24,7 @@ Invariant: **never let a daemon be the first place you learn a migration changed
 
 Stability order, most stable first:
 
-1. CLI / JSON export contract (`nq findings export`, `nq liveness export`)
+1. CLI / JSON export contract (`nq-monitor findings export`, `nq-monitor liveness export`)
 2. Stable DB views (`v_warnings`, `v_host_state`)
 3. Raw tables
 
@@ -92,7 +92,7 @@ These are **deferred, not abandoned** (see `project_migration_discipline` memory
 
 Tracked in memory as `project_next_migration_items`:
 
-1. **`nq doctor` command.** Prints `{build, schema, contracts, pending_migrations, db_path, last_backup_age}`. Exits nonzero on hard incompatibility. Highest operational leverage — a single call replaces the ad-hoc probe sequence I ran 2026-04-23.
+1. **`nq-monitor doctor` command.** Prints `{build, schema, contracts, pending_migrations, db_path, last_backup_age}`. Exits nonzero on hard incompatibility. Highest operational leverage — a single call replaces the ad-hoc probe sequence I ran 2026-04-23.
 2. **Contract versions in `liveness.json` and `findings export`.** Add a `contracts` field listing named capabilities. Lets nightshift branch on capability, not schema integer.
 3. **Snapshot migration tests.** Corpus of 2–3 fixture DBs (real-ish, noisy, pathological). CI migrates them forward and runs smoke queries. Empty-DB migration tests prove syntax; snapshots prove survival.
 

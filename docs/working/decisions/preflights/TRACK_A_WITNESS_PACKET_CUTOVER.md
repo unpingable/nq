@@ -37,7 +37,7 @@ Track A today builds claim preflight coverage from detector / finding state. Tha
 - Findings can feed evaluators.
 - **Findings are not themselves witness packets.**
 
-This means Track A receipts cannot cleanly name the observation artifact whose custody they depend on. `nq receipt replay` correctly returns `REPLAY_NOT_APPLICABLE` for every Track A receipt today (per `RECEIPT_REPLAY.md`), and that bounded-honest answer is what motivates this cut-over.
+This means Track A receipts cannot cleanly name the observation artifact whose custody they depend on. `nq-monitor receipt replay` correctly returns `REPLAY_NOT_APPLICABLE` for every Track A receipt today (per `RECEIPT_REPLAY.md`), and that bounded-honest answer is what motivates this cut-over.
 
 ## Three pipeline shapes
 
@@ -148,7 +148,7 @@ During cut-over, `disk_state` (and later `ingest_state`, `dns_state`) may accept
 
 This affects receipts too: `Receipt` already carries `WitnessRef.digest`, but the *kind* of custody behind that digest is currently invisible to receipt consumers. Two options for surfacing it:
 
-1. **Receipt-side derivation.** A future verb (e.g. `nq receipt check --packets` already-supplied case) reads the packets and reports their `custody_basis`. Custody kind never appears on the receipt itself.
+1. **Receipt-side derivation.** A future verb (e.g. `nq-monitor receipt check --packets` already-supplied case) reads the packets and reports their `custody_basis`. Custody kind never appears on the receipt itself.
 2. **Receipt-side anchoring.** A field on `WitnessRef` (e.g. `custody_basis: "native_observation" | "legacy_projection"`) records what the packet was at receipt-emit time. Future replays see the basis without needing the packet.
 
 Option 1 keeps the receipt envelope unchanged. Option 2 makes basis legible from the receipt alone. The design preflight does not pick — see open question 5 below.
@@ -279,9 +279,9 @@ Given green liveness material, when evaluating `disk_state` coverage, then cover
 
 ### 6. Slice 1d / 1e behavior on Track A receipts after cut-over
 
-- `nq receipt check` works on Track A receipts (worked before, still works).
-- `nq receipt replay` on a *native-custody* Track A receipt no longer returns `REPLAY_NOT_APPLICABLE` — it dispatches to a Track A replay path that re-runs the evaluator over supplied native packets, comparable to Track B.
-- `nq receipt replay` on a *legacy-projection* Track A receipt may still return a bounded status (e.g. `REPLAY_NOT_APPLICABLE` with a different detail, or a new `REPLAY_PROJECTION_BASIS` status) — design open question 4.
+- `nq-monitor receipt check` works on Track A receipts (worked before, still works).
+- `nq-monitor receipt replay` on a *native-custody* Track A receipt no longer returns `REPLAY_NOT_APPLICABLE` — it dispatches to a Track A replay path that re-runs the evaluator over supplied native packets, comparable to Track B.
+- `nq-monitor receipt replay` on a *legacy-projection* Track A receipt may still return a bounded status (e.g. `REPLAY_NOT_APPLICABLE` with a different detail, or a new `REPLAY_PROJECTION_BASIS` status) — design open question 4.
 
 ## Open design questions
 
@@ -316,7 +316,7 @@ Recommendation: do not generalize the registry shape in this slice. Disk first. 
 
 The HTTP preflight routes (`/api/preflight/disk-state/{host}` etc.) serve `PreflightResult` today. After cut-over, the evaluator's internal path changes (witness packets in, instead of finding state in) but the result shape should not. Public wire = unchanged.
 
-If the cut-over surfaces a need to expose witness packets via HTTP (e.g. so a consumer can supply them to `nq receipt replay`), that's a separate route surface. Out of scope for V1.
+If the cut-over surfaces a need to expose witness packets via HTTP (e.g. so a consumer can supply them to `nq-monitor receipt replay`), that's a separate route surface. Out of scope for V1.
 
 ## What the V1 cut-over does *not* do
 

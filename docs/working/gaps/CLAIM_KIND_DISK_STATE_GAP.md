@@ -52,7 +52,7 @@ verdict + supported weaker claim
 
 This gap does not authorize:
 
-- A `nq claim` CLI namespace, command surface, or invocation shape.
+- A `nq-monitor claim` CLI namespace, command surface, or invocation shape.
 - A wire schema or persistence format for claims, verdicts, or preflight results.
 - Free-text claim parsing.
 - A dashboard, status page, or operator UI of any kind.

@@ -40,7 +40,7 @@ NQ is not a SaaS, not a platform, not a marketplace. It's a single-binary local-
 
 1. **Wire contracts are durable.** A consumer can save a receipt today and verify it next year without trusting prose. (Hash, canonicalization, evaluator-version binding, witness-ref digests, freshness horizon, replay.) This is the only Phase that requires *invention* per the roadmap doc.
 2. **Internal seams are paid down.** Track A.0 (`disk_state` reading `FindingSnapshot` directly) is the named "acknowledged carry"; 1.0 honesty wants it cut over to the shared spine, or the keeper rule loses force.
-3. **At least one second consumer exists.** Today there's one operator (the author), one live demo. A second installation — anyone — that runs `nq serve` against their own host or `nq verify` in their own CI proves the spine externalizes.
+3. **At least one second consumer exists.** Today there's one operator (the author), one live demo. A second installation — anyone — that runs `nq-monitor serve` against their own host or `nq-monitor verify` in their own CI proves the spine externalizes.
 4. **The docs lead with operator, not architecture.** 50+ gap docs are valuable but inside-baseball. An outside reader needs: install/upgrade/backup/troubleshoot path, claim catalog reference, refusal-example library, "how to write a witness" — in that order.
 5. **Operational fundamentals hold.** Storage limits enforced, upgrade story tested, backup verified, auth/proxy guidance for non-private deployments.
 
@@ -56,7 +56,7 @@ Roadmap-internal (per `SPINE_AND_ROADMAP.md`):
 | Claim registry | live; Leaf / Composite / NonMintable categories; Track B starter catalog hardcoded |
 | Preflight / evaluator | live; 8-verdict taxonomy closed; per-kind wire schemas for `disk_state`, `ingest_state`, `dns_state`; Track B `claim_registry::evaluate` |
 | Receipt (`nq.receipt.v1`) | DTO + four renderers ship; hash / binding / replay are the Phase 2 gap |
-| Surface | CLI (`nq verify`, `nq witness {git-status,pytest,diff-scope}`, `nq preflight disk-state`, `nq probe dns`, `nq smoke …`); HTTP preflight endpoints; web UI; GitHub Action |
+| Surface | CLI (`nq-monitor verify`, `nq-monitor witness {git-status,pytest,diff-scope}`, `nq-monitor preflight disk-state`, `nq-monitor probe dns`, `nq-monitor smoke …`); HTTP preflight endpoints; web UI; GitHub Action |
 | Substrate | 19 shipped gap docs: EVIDENCE_LAYER, GENERATION_LINEAGE, FINDING_DIAGNOSIS, FINDING_EXPORT, REGIME_FEATURES (V1), DOMINANCE_PROJECTION (V1), STABILITY_AXIS, GENERALIZED_MASKING (V1), TESTIMONY_DEPENDENCY (V1), COVERAGE_HONESTY (V1), MAINTENANCE_DECLARATION (V1), OPERATIONAL_INTENT_DECLARATION (V1), DURABLE_ARTIFACT_SUBSTRATE (V1), FLEET_INDEX (V1), SENTINEL_LIVENESS (V1), ZFS_COLLECTOR (Phases A/B/C), EVIDENCE_RETIREMENT (V1.0 substrate), … |
 
 Operational:
@@ -85,7 +85,7 @@ Doctrine:
 | 2 (receipt discipline) | Receipt canonicalization + content hash | not started |
 | 2 (receipt discipline) | Evaluator-version binding | partial (per-kind contract versions exist) |
 | 2 (receipt discipline) | Explicit freshness-horizon field | implicit via `observed_at_min/max` |
-| 2 (receipt discipline) | `nq receipt check` / `nq receipt replay` verbs | not started |
+| 2 (receipt discipline) | `nq-monitor receipt check` / `nq-monitor receipt replay` verbs | not started |
 
 ### Roadmap-external (1.0 readiness for outside use)
 
@@ -119,7 +119,7 @@ graph TD
     A[Receipt durability: hash + canon] --> B[Witness ref digests]
     A --> C[Evaluator-version binding]
     A --> D[Freshness horizon field]
-    B --> E[nq receipt check / replay]
+    B --> E[nq-monitor receipt check / replay]
     C --> E
     D --> E
     E --> F[Phase 2 exit: receipt is durable]
@@ -165,8 +165,8 @@ The one piece of *invention* on the path. Decompose:
 - **1a**: witness ref content-hash. Populate the `digest` slot that already exists on `WitnessRef`. Canonical JSON form for witnesses, SHA-256, plumb through `From<PreflightResult>`. Touch: `crates/nq-core/src/witness.rs`, `crates/nq-core/src/receipt.rs`.
 - **1b**: receipt canonicalization + content hash. Canonical JSON, SHA-256, optional embedded hash field. Stamp evaluator version on every receipt. Touch: `crates/nq-core/src/receipt.rs`, `crates/nq-core/src/render.rs`.
 - **1c**: explicit `freshness_horizon` field on `Receipt`, computed from per-claim policy. Touch: `crates/nq-core/src/preflight.rs`, `crates/nq-core/src/receipt.rs`.
-- **1d** (Phase 2 exit minimum): `nq receipt check <file>` — structural verification only. Re-verify receipt hash, witness digests, canonicalization, schema/version sanity. Does not re-run the evaluator; does not need stored witnesses. Touch: `crates/nq/src/cmd/receipt.rs` (new), `crates/nq/src/cli.rs`.
-- **1e** (1.0-critical but separate risk profile): `nq receipt replay <file>` — semantic re-evaluation. Re-runs the evaluator over stored witnesses, compares verdict. Requires stored witnesses, evaluator-version compatibility shim, freshness-policy interpretation. May land with a documented bounded limitation (e.g. "only replays receipts from the same major evaluator version").
+- **1d** (Phase 2 exit minimum): `nq-monitor receipt check <file>` — structural verification only. Re-verify receipt hash, witness digests, canonicalization, schema/version sanity. Does not re-run the evaluator; does not need stored witnesses. Touch: `crates/nq/src/cmd/receipt.rs` (new), `crates/nq/src/cli.rs`.
+- **1e** (1.0-critical but separate risk profile): `nq-monitor receipt replay <file>` — semantic re-evaluation. Re-runs the evaluator over stored witnesses, compares verdict. Requires stored witnesses, evaluator-version compatibility shim, freshness-policy interpretation. May land with a documented bounded limitation (e.g. "only replays receipts from the same major evaluator version").
 
 Exit: 1d is the Phase 2 hard exit (open a receipt, verify its hash, done). 1e is the stronger property (open a receipt, re-derive its verdict from witnesses) and may ship with bounded limitations and still count as 1.0-shipped.
 
@@ -188,21 +188,21 @@ Three documents, written for an operator who is not the author:
 - **4b**: claim catalog reference. One page listing every shipped claim kind, its required witnesses, its non_mintable companions, its refusal vocabulary.
 - **4c**: refusal-example library. The "stronger claim refused / weaker claim admissible" pairs, written as worked examples not theory. This is Phase 1's named-but-not-built doc item.
 
-Exit: a stranger reads three pages and can write their own `nq verify` invocation.
+Exit: a stranger reads three pages and can write their own `nq-monitor verify` invocation.
 
 ### Slice 5 — Operational hardening
 Audit + close the items already designed in `DESIGN.md §6` and `AGENTS.md`:
 - Storage-budget enforcement: write the test that exercises the "DB exceeds max → degrade gracefully" path. If unimplemented, implement.
 - Upgrade test: build the binary at schema version N, point it at a DB at schema version N-1, observe automatic migration; verify no data loss.
 - Backup verification: cron-friendly `VACUUM INTO` example, plus a restore-and-query test.
-- Auth/proxy doc: explicit recipe for putting `nq serve` behind nginx/caddy with basic auth, since the README/quickstart assume private network. **Doc-only.** NQ does not grow native auth, TLS termination, OAuth, tenancy, or CORS hardening for 1.0. The 1.0 boundary is *operators get documented authentication and risk boundaries when they expose it via a conventional reverse proxy* — not *NQ becomes its own auth-handling service*.
+- Auth/proxy doc: explicit recipe for putting `nq-monitor serve` behind nginx/caddy with basic auth, since the README/quickstart assume private network. **Doc-only.** NQ does not grow native auth, TLS termination, OAuth, tenancy, or CORS hardening for 1.0. The 1.0 boundary is *operators get documented authentication and risk boundaries when they expose it via a conventional reverse proxy* — not *NQ becomes its own auth-handling service*.
 
-Exit: an operator can plausibly expose `nq serve` through a conventional reverse proxy with documented authentication and risk boundaries, without writing their own ops doc.
+Exit: an operator can plausibly expose `nq-monitor serve` through a conventional reverse proxy with documented authentication and risk boundaries, without writing their own ops doc.
 
 ### Slice 6 — Second consumer (validation, not invention)
 Either:
-- Find one person to install `nq serve` on their own host, log the friction, fix the top three rough edges.
-- Or: ship `nq verify` in one external repo's CI, log the friction, fix the top three rough edges.
+- Find one person to install `nq-monitor serve` on their own host, log the friction, fix the top three rough edges.
+- Or: ship `nq-monitor verify` in one external repo's CI, log the friction, fix the top three rough edges.
 
 Exit: rough-edge log exists, top items addressed, 1.0 tag lands.
 
@@ -216,12 +216,12 @@ The implication for time allocation: NQ's 1.0 is a single-project concern. Slice
 
 NQ may tag 1.0 when all of the following are true:
 
-- `nq receipt check` works on every CI-emitted receipt (Slice 1d).
-- `nq receipt replay` works for stored-witness receipts, **or has a documented bounded limitation** (Slice 1e).
+- `nq-monitor receipt check` works on every CI-emitted receipt (Slice 1d).
+- `nq-monitor receipt replay` works for stored-witness receipts, **or has a documented bounded limitation** (Slice 1e).
 - `disk_state` no longer bypasses the shared witness spine (Slice 2). The Track A.0 acknowledged-carry is paid down.
 - Operator entry doc, claim-catalog reference, and refusal-example library exist (Slice 4).
 - Storage-budget, upgrade, backup, and reverse-proxy/auth guidance have been tested or documented (Slice 5).
-- One non-author consumer has run either `nq serve` against their own host or `nq verify` in their own CI, and the top three friction items they hit have been addressed (Slice 6).
+- One non-author consumer has run either `nq-monitor serve` against their own host or `nq-monitor verify` in their own CI, and the top three friction items they hit have been addressed (Slice 6).
 - Slice 3 (`service_recovered`) is *either* shipped *or* explicitly re-deferred with the reason recorded in the spine doc.
 - Cargo workspace version is bumped to `1.0.0`; a git tag exists.
 
@@ -237,10 +237,10 @@ The friction of carrying a hobby project compounds in op fundamentals and outsid
 
 ## Verification (how we'd know 1.0 is real)
 
-- `nq receipt check` validates every CI-emitted receipt.
-- `nq receipt replay` round-trips eligible stored-witness receipts, or has a documented bounded limitation.
-- A non-author can follow the docs far enough to run `nq verify` or `nq serve`; any attempt to author a claim family records rough edges rather than gating 1.0.
-- `nq serve` is running on a host the author does not own.
+- `nq-monitor receipt check` validates every CI-emitted receipt.
+- `nq-monitor receipt replay` round-trips eligible stored-witness receipts, or has a documented bounded limitation.
+- A non-author can follow the docs far enough to run `nq-monitor verify` or `nq-monitor serve`; any attempt to author a claim family records rough edges rather than gating 1.0.
+- `nq-monitor serve` is running on a host the author does not own.
 - The author can answer "should I add X feature?" by reading the roadmap doc + this file, without re-reading the conversation history.
 - Cargo workspace version is bumped to `1.0.0` and there is a git tag.
 

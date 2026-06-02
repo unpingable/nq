@@ -2,7 +2,7 @@
 
 **Status:** `candidate` / `non-binding` / **no implementation authorized**. **Live production risk closed 2026-05-27 by Caddy method-block tourniquet** (see `project_known_bugs` entry `unauthenticated_lifecycle_mutation_exposure`). This gap names the doctrine the tourniquet bought time to write.
 **Scope:** the surfaces where operator authority over **finding lifecycle state** is exercised — today: `POST /api/finding/transition` (web), `nq` CLI verbs (none yet for ack/quiesce/suppress/close — gap), future MCP server verbs (deferred). Names the doctrinal distinction between **substrate-truth mutation** (forbidden everywhere) and **operator-lifecycle mutation** (admissible under explicit authority).
-**Composes with:** [`DASHBOARD_SQL_INSPECTION_GAP`](DASHBOARD_SQL_INSPECTION_GAP.md) (sibling — inspection is the *other* dashboard surface, deliberately separate), [`REMOTE_SURFACE_AUTH_AND_STANDING_GAP`](REMOTE_SURFACE_AUTH_AND_STANDING_GAP.md) (any remote exercise of this surface is bounded by that gap), [`OPERATIONAL_INTENT_DECLARATION_GAP`](OPERATIONAL_INTENT_DECLARATION_GAP.md) (shipped V1 — declarations carry separate suppression metadata; lifecycle transitions are operator-acknowledgment-shaped, declarations are operator-intent-shaped), [`MAINTENANCE_DECLARATION_GAP`](MAINTENANCE_DECLARATION_GAP.md) (shipped V1 — `nq maintenance declare|list` is the CLI parallel for declared-intent mutation; lifecycle transitions need a similar CLI surface)
+**Composes with:** [`DASHBOARD_SQL_INSPECTION_GAP`](DASHBOARD_SQL_INSPECTION_GAP.md) (sibling — inspection is the *other* dashboard surface, deliberately separate), [`REMOTE_SURFACE_AUTH_AND_STANDING_GAP`](REMOTE_SURFACE_AUTH_AND_STANDING_GAP.md) (any remote exercise of this surface is bounded by that gap), [`OPERATIONAL_INTENT_DECLARATION_GAP`](OPERATIONAL_INTENT_DECLARATION_GAP.md) (shipped V1 — declarations carry separate suppression metadata; lifecycle transitions are operator-acknowledgment-shaped, declarations are operator-intent-shaped), [`MAINTENANCE_DECLARATION_GAP`](MAINTENANCE_DECLARATION_GAP.md) (shipped V1 — `nq-monitor maintenance declare|list` is the CLI parallel for declared-intent mutation; lifecycle transitions need a similar CLI surface)
 **Blocks:** the doctrinally honest version of any lifecycle-mutation UI; the cleanup of today's unauthenticated HTTP surface (currently behind the Caddy tourniquet).
 **Filed:** 2026-05-27
 
@@ -77,11 +77,11 @@ If this surface is rebuilt (CLI, dashboard, MCP, or otherwise), it must:
 ## What the V0 CLI shape should be (if/when implemented)
 
 ```bash
-nq finding transition <host> <kind> <subject> --to <state> [--owner ...] [--note ...] [--expires-in <duration>]
-nq finding ack <host> <kind> <subject> --expires-in 4h --note "looking at it"
-nq finding suppress <host> <kind> <subject> --expires-in 24h --suppressed-by maintenance-window --note "..."
-nq finding close <host> <kind> <subject> --note "resolved"
-nq finding list --state acknowledged --owner alice
+nq-monitor finding transition <host> <kind> <subject> --to <state> [--owner ...] [--note ...] [--expires-in <duration>]
+nq-monitor finding ack <host> <kind> <subject> --expires-in 4h --note "looking at it"
+nq-monitor finding suppress <host> <kind> <subject> --expires-in 24h --suppressed-by maintenance-window --note "..."
+nq-monitor finding close <host> <kind> <subject> --note "resolved"
+nq-monitor finding list --state acknowledged --owner alice
 ```
 
 The verbs are explicit (`ack`, `suppress`, `close`) rather than generic (`set-state`) so the operator's intent is in the command name, not buried in flags. The audit trail records both the verb and the resulting state transition. The CLI is local-only in V0; the matching dashboard verb requires auth in V1.
@@ -98,7 +98,7 @@ The verbs are explicit (`ack`, `suppress`, `close`) rather than generic (`set-st
 
 - **`DASHBOARD_SQL_INSPECTION_GAP`** — sibling. Inspection (read-only, defense-in-depth) is the *other* dashboard surface; this gap is the mutation side. The two are doctrinally separate; conflating them produces the "unauthenticated ops panel" failure mode.
 - **`OPERATIONAL_INTENT_DECLARATION_GAP`** (shipped V1) — declarations carry *separate* suppression metadata (`warning_state.suppression_kind`, `warning_state.suppression_declaration_id`). Declaration-driven suppression is operator-intent-shaped (declared up front, file-based, with `valid_until`); lifecycle transitions are operator-acknowledgment-shaped (per-finding, post-observation, with explicit operator action). The two are complementary mutation surfaces with different shapes.
-- **`MAINTENANCE_DECLARATION_GAP`** (shipped V1) — the `nq maintenance declare|list` CLI is the existing parallel for declared-intent mutation. The lifecycle-transition CLI will share patterns (file-based source-of-truth where possible, audited mutations, explicit verbs) but addresses a different operational mode (response-to-observation, not pre-declared-context).
+- **`MAINTENANCE_DECLARATION_GAP`** (shipped V1) — the `nq-monitor maintenance declare|list` CLI is the existing parallel for declared-intent mutation. The lifecycle-transition CLI will share patterns (file-based source-of-truth where possible, audited mutations, explicit verbs) but addresses a different operational mode (response-to-observation, not pre-declared-context).
 - **`SQL_DERIVED_FINDINGS_GAP`** — derived findings produced from saved SQL checks must follow the same lifecycle discipline as any other finding. The SQL surface produces evidence; lifecycle authority remains here.
 - **`REMOTE_SURFACE_AUTH_AND_STANDING_GAP`** — bounds the remote-exposure question. The local CLI shape is local-first; any HTTP / MCP / network exposure adds auth in the same change.
 
@@ -106,7 +106,7 @@ The verbs are explicit (`ack`, `suppress`, `close`) rather than generic (`set-st
 
 This gap closes when **either**:
 
-- (a) The `POST /api/finding/transition` HTTP endpoint is either (i) removed entirely, with operator lifecycle mutation living only in the CLI, or (ii) rewritten to require authentication, with the transition graph bounded, the audit log enforced, and the smoke suite from `DASHBOARD_RED_TEAM_SMOKE_GAP` proving the auth requirement holds; **and** an `nq finding transition` (or equivalent) CLI exists with the discipline above; or
+- (a) The `POST /api/finding/transition` HTTP endpoint is either (i) removed entirely, with operator lifecycle mutation living only in the CLI, or (ii) rewritten to require authentication, with the transition graph bounded, the audit log enforced, and the smoke suite from `DASHBOARD_RED_TEAM_SMOKE_GAP` proving the auth requirement holds; **and** an `nq-monitor finding transition` (or equivalent) CLI exists with the discipline above; or
 - (b) An explicit decision lands that NQ removes the lifecycle-mutation feature entirely, and `warning_state` becomes detector-pipeline-only (no operator overlay), with response coordination living entirely in external systems (PagerDuty, Slack, etc.).
 
 Until then: tonight's Caddy method-block tourniquet stays in place; the endpoint exists in the binary but is unreachable from the public proxy. The localhost-bind protection is the second belt; anyone with shell access to the Linode host can still POST to `127.0.0.1:9848/api/finding/transition`. That is acceptable as a holding move (host access is its own auth surface); it is not acceptable as the long-term design.

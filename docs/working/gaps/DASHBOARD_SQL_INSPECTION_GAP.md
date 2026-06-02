@@ -88,15 +88,15 @@ All three tiers are **read-only.** Mutation is not a SQL-surface concern; it is 
 The operator affordance worth importing from prior art is target-addressed query execution. The CLI shape:
 
 ```bash
-nq query targets                                              # list configured targets
-nq query schema <target>                                      # show allowed_namespace
-nq query run <target> 'select * from active_maintenance_subjects'
-nq query check <target> ./queries/foo.sql                     # validate, do not run
-nq query explain <target> 'select ...'
-nq query export <target> 'select ...' --format ndjson
+nq-monitor query targets                                              # list configured targets
+nq-monitor query schema <target>                                      # show allowed_namespace
+nq-monitor query run <target> 'select * from active_maintenance_subjects'
+nq-monitor query check <target> ./queries/foo.sql                     # validate, do not run
+nq-monitor query explain <target> 'select ...'
+nq-monitor query export <target> 'select ...' --format ndjson
 ```
 
-What's worth **refusing** from prior art: the tendency for query CLIs in adjacent ecosystems to grow operator shells with mutation verbs, schema-admin commands, and remote control planes. NQ's `nq query` ships `run / check / explain / targets / schema / export`. It does not ship `delete` / `create` / `migrate` / `register-target` (registration is config-file, not CLI command) / anything that mutates target state.
+What's worth **refusing** from prior art: the tendency for query CLIs in adjacent ecosystems to grow operator shells with mutation verbs, schema-admin commands, and remote control planes. NQ's `nq-monitor query` ships `run / check / explain / targets / schema / export`. It does not ship `delete` / `create` / `migrate` / `register-target` (registration is config-file, not CLI command) / anything that mutates target state.
 
 The `<target>` slot is **not** a path, **not** a DSN, **not** an arbitrary string — see `QUERY_TARGET_PRIMITIVE_GAP` for the discipline.
 
@@ -143,7 +143,7 @@ If this surface is built or rewritten, V1 must:
 4. **Extension loading disabled.** `sqlite3_enable_load_extension(db, 0)`.
 5. **Targets, not paths.** Operator names a target; runner resolves source, standing, and namespace from the target registry per `QUERY_TARGET_PRIMITIVE_GAP`.
 6. **Output carries standing.** Display-only results are labeled as such in any rendered output. Operators reading a result know which standing class produced it.
-7. **No mutation verbs anywhere in the surface.** `nq query` has no write verbs. The dashboard SQL surface (if it exists) accepts only `SELECT` / `WITH` shapes that pass the authorizer.
+7. **No mutation verbs anywhere in the surface.** `nq-monitor query` has no write verbs. The dashboard SQL surface (if it exists) accepts only `SELECT` / `WITH` shapes that pass the authorizer.
 8. **Smoke suite (per `DASHBOARD_RED_TEAM_SMOKE_GAP`) passes on every build.** A SQL-inspection surface that doesn't prove its belts hold under adversarial input is not admissible.
 
 ## Non-goals
@@ -152,7 +152,7 @@ If this surface is built or rewritten, V1 must:
 - **Not a notification path.** Notifications consume derived findings; the SQL inspection surface produces neither findings nor notifications.
 - **Not a federation primitive.** SQL inspection is local-database-only (or local-target-only, post-target-primitive). Remote inspection is `REMOTE_SURFACE_AUTH_AND_STANDING_GAP` territory.
 - **Not a query language addition.** SQL only. No PromQL-equivalent, no expression DSL, no template engine.
-- **Not a replacement for `nq finding transition` or `nq maintenance declare`.** Those CLI surfaces own lifecycle and declared-context mutation. The query runner is read-only.
+- **Not a replacement for `nq-monitor finding transition` or `nq-monitor maintenance declare`.** Those CLI surfaces own lifecycle and declared-context mutation. The query runner is read-only.
 - **Not an admin shell, ever.** Repeating because it's the failure mode.
 
 ## Acceptance criteria for closing
@@ -160,7 +160,7 @@ If this surface is built or rewritten, V1 must:
 This gap closes when **either**:
 
 - (a) The current `query_read_only` surface gets rewritten to use the layered belts above (driven through `QUERY_TARGET_PRIMITIVE` targets), the smoke suite from `DASHBOARD_RED_TEAM_SMOKE_GAP` is in CI, and the dashboard SQL surface is bounded by the keeper line; or
-- (b) An explicit decision lands that NQ removes the operator-SQL surface entirely (no dashboard SQL box, no saved queries, no `nq query` CLI), and operators inspect NQ state only through the existing per-claim-kind HTTP routes + the CLI's finding-list verbs.
+- (b) An explicit decision lands that NQ removes the operator-SQL surface entirely (no dashboard SQL box, no saved queries, no `nq-monitor query` CLI), and operators inspect NQ state only through the existing per-claim-kind HTTP routes + the CLI's finding-list verbs.
 
 Until then: the existing surface is bounded by tonight's Caddy tourniquet (the proxy-layer 405 on `POST /api/saved*`) and the existing `query_read_only` blocklist (which is fragile-but-better-than-nothing for the surviving GET paths).
 

@@ -72,11 +72,11 @@ cannot_testify:
 You ran pytest. It exited zero. Your CI agent wants to write `safe_to_merge: yes` on the PR.
 
 ```bash
-nq witness pytest --subject repo:. -- pytest -q > .nq/pytest.json
-nq witness git-status --subject repo:. > .nq/git.json
-nq witness diff-scope --declared docs-only --subject repo:. > .nq/diff.json
+nq-monitor witness pytest --subject repo:. -- pytest -q > .nq/pytest.json
+nq-monitor witness git-status --subject repo:. > .nq/git.json
+nq-monitor witness diff-scope --declared docs-only --subject repo:. > .nq/diff.json
 
-nq verify --claim safe_to_merge --subject repo:. \
+nq-monitor verify --claim safe_to_merge --subject repo:. \
   --witness .nq/git.json \
   --witness .nq/pytest.json \
   --witness .nq/diff.json
@@ -111,7 +111,7 @@ suggested_weaker_claims:
 You probed your domain through a public recursive resolver. You got an answer. You want to write "DNS is healthy."
 
 ```bash
-nq probe dns \
+nq-monitor probe dns \
   --db /var/lib/nq/nq.db \
   --vantage sushi-k \
   --resolver 8.8.8.8 \
@@ -145,7 +145,7 @@ cannot_testify:
 
 ### Example 4 — NQ's pull succeeding is not "the source is healthy"
 
-Your `nq serve` shows green for a publisher. You want to write "the publisher is healthy" on your status page.
+Your `nq-monitor serve` shows green for a publisher. You want to write "the publisher is healthy" on your status page.
 
 ```bash
 curl -s http://127.0.0.1:9848/api/preflight/ingest-state | jq
@@ -167,7 +167,7 @@ cannot_testify:
 
 **Why NQ refuses "the publisher is healthy":** `ingest_state` describes what *NQ* did, not what the upstream system is doing. NQ pulled, NQ parsed the response, NQ wrote a generation row. The upstream substrate's actual health is a separate witness — and NQ does not have it.
 
-This is the self-witness firewall. *NQ's own overall health* is on the `cannot_testify` list because a witness cannot be its own complete audit. To assert NQ is up, ask an external observer: `nq sentinel` or `nq liveness export` consumed by something outside this host.
+This is the self-witness firewall. *NQ's own overall health* is on the `cannot_testify` list because a witness cannot be its own complete audit. To assert NQ is up, ask an external observer: `nq-monitor sentinel` or `nq-monitor liveness export` consumed by something outside this host.
 
 **What you say instead:** "NQ pulled from source `<name>` at `<observed_at>`." Or, if you need to say something about the upstream system, get an upstream witness — not an NQ ingest witness.
 

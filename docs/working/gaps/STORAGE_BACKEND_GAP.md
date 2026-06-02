@@ -263,7 +263,7 @@ And the separation of concerns, one more time:
 - **`FindingStore` trait implementation.** Concrete trait based on v1 audit output. `SqliteStore` extracted from current direct-rusqlite code.
 - **`PgStore` implementation.** Contract-tested against `SqliteStore`. Schema migrations for Postgres. Deployment docs with tradeoff matrix.
 - **Cross-backend testing infrastructure.** CI runs every contract test against both backends.
-- **Backup / restore across backends.** `nq backup --to postgres://...` / `nq restore --from sqlite:...` symmetric tooling.
+- **Backup / restore across backends.** `nq-monitor backup --to postgres://...` / `nq-monitor restore --from sqlite:...` symmetric tooling.
 - **Operational tooling for Postgres-specific features.** Partial indexes, partitioning, listen/notify (v2+ push surface for FINDING_EXPORT), read replicas.
 - **Read-replica discipline** for the FindingSnapshot export surface when it gets an HTTP endpoint.
 - **MariaDB / Percona / other SQL backends** — may be added if contract compliance is demonstrated AND a concrete operator need exists. Not a roadmap commitment.

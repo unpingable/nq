@@ -10,8 +10,8 @@ An `nq.receipt.v1` document records the result of a claim evaluation: which clai
 
 Receipts are emitted by:
 
-- `nq verify` (Track B, CI-shaped) — operator supplies witness packets on the command line; the receipt is written to stdout or a file.
-- The HTTP preflight routes on a running `nq serve` (Track A, operational) — receipts come back from `/api/preflight/{disk-state,ingest-state,dns-state}` as response bodies.
+- `nq-monitor verify` (Track B, CI-shaped) — operator supplies witness packets on the command line; the receipt is written to stdout or a file.
+- The HTTP preflight routes on a running `nq-monitor serve` (Track A, operational) — receipts come back from `/api/preflight/{disk-state,ingest-state,dns-state}` as response bodies.
 
 A receipt is not an alert, an incident report, an authorization, or a closure ticket. It is a structured artifact that says **what NQ was allowed to claim, given the testimony that was available, under which evaluator**.
 
@@ -21,15 +21,15 @@ After a receipt is emitted, two verbs operate on it:
 
 | Verb | Question it answers |
 |---|---|
-| `nq receipt check` | Is this receipt structurally intact? |
-| `nq receipt replay` | Can the original decision be reproduced from supplied witness material? |
+| `nq-monitor receipt check` | Is this receipt structurally intact? |
+| `nq-monitor receipt replay` | Can the original decision be reproduced from supplied witness material? |
 
 Neither verb answers *"is the underlying claim still true today?"* — that is a fresh preflight's job, not a verb over old receipts.
 
 ```text
-nq verify / preflight   = what may we claim now?
-nq receipt check        = has this receipt been tampered with?
-nq receipt replay       = does the same evaluator + same packets reproduce the same decision?
+nq-monitor verify / preflight   = what may we claim now?
+nq-monitor receipt check        = has this receipt been tampered with?
+nq-monitor receipt replay       = does the same evaluator + same packets reproduce the same decision?
 fresh preflight         = is the claim admissible right now?
 Governor / operator     = may anyone act on it?
 ```
@@ -40,21 +40,21 @@ That hierarchy is the most important thing on this page. If you remember nothing
 
 | Need | Command |
 |---|---|
-| Did this receipt get tampered with? | `nq receipt check` |
-| Do I still have the packets it cites? | `nq receipt check` (with `--witness`) or `nq receipt replay` |
-| Does the old decision reproduce from those packets? | `nq receipt replay` |
-| Is this claim fresh now? | `nq receipt check --fresh` / `nq receipt replay --fresh` |
-| What does the system claim about this subject *today*? | `nq verify` / `nq preflight` (fresh evaluation) |
+| Did this receipt get tampered with? | `nq-monitor receipt check` |
+| Do I still have the packets it cites? | `nq-monitor receipt check` (with `--witness`) or `nq-monitor receipt replay` |
+| Does the old decision reproduce from those packets? | `nq-monitor receipt replay` |
+| Is this claim fresh now? | `nq-monitor receipt check --fresh` / `nq-monitor receipt replay --fresh` |
+| What does the system claim about this subject *today*? | `nq-monitor verify` / `nq-monitor preflight` (fresh evaluation) |
 | Should automation act on this? | Not NQ alone — `nq` produces evidence; consequence belongs to a separate authority layer. |
 
 The last row matters. NQ does not authorize action. It tells systems what they are *allowed to honestly claim*, and `receipt check` / `receipt replay` tell you whether an old claim's evidence is intact and reproducible. Whether to act on that evidence is downstream of NQ entirely.
 
-## `nq receipt check`
+## `nq-monitor receipt check`
 
 Structural verification. Does not replay the evaluator, does not re-ratify the claim.
 
 ```bash
-nq receipt check --receipt receipt.json --witness witness-1.json --witness witness-2.json
+nq-monitor receipt check --receipt receipt.json --witness witness-1.json --witness witness-2.json
 ```
 
 Options:
@@ -79,12 +79,12 @@ Exit codes:
 - `2` — `BROKEN_CONTENT_HASH`: the receipt is forged or corrupted. This dominates regardless of `--strict`.
 - `64` — malformed input (file not found, bad JSON, packet validation failure).
 
-## `nq receipt replay`
+## `nq-monitor receipt replay`
 
 Semantic re-evaluation. Re-runs a compatible evaluator against supplied witness material and compares the semantic decision (verdict, supported claims, witness set) to the receipt's.
 
 ```bash
-nq receipt replay --receipt receipt.json --witness witness-1.json --witness witness-2.json
+nq-monitor receipt replay --receipt receipt.json --witness witness-1.json --witness witness-2.json
 ```
 
 Same options as `check` (`--strict`, `--fresh`, `--as-of`, `--json`).
@@ -135,21 +135,21 @@ The split between `BROKEN_CONTENT_HASH` (corruption) and `MISMATCH` (forgery / d
 
 ```bash
 # In CI, after running tests:
-nq witness git-status --subject repo:. > .nq/git.json
-nq witness pytest --subject repo:. -- pytest -q > .nq/pytest.json
-nq verify --claim tests_passed --subject repo:. \
+nq-monitor witness git-status --subject repo:. > .nq/git.json
+nq-monitor witness pytest --subject repo:. -- pytest -q > .nq/pytest.json
+nq-monitor verify --claim tests_passed --subject repo:. \
   --witness .nq/git.json --witness .nq/pytest.json --format json > .nq/receipt.json
 ```
 
 Later, on another machine or another day:
 
 ```bash
-nq receipt check --receipt .nq/receipt.json \
+nq-monitor receipt check --receipt .nq/receipt.json \
   --witness .nq/git.json --witness .nq/pytest.json
 # Receipt check: OK
 # exit 0
 
-nq receipt replay --receipt .nq/receipt.json \
+nq-monitor receipt replay --receipt .nq/receipt.json \
   --witness .nq/git.json --witness .nq/pytest.json
 # Receipt replay: OK
 #   status: OK
@@ -157,12 +157,12 @@ nq receipt replay --receipt .nq/receipt.json \
 # exit 0
 ```
 
-The receipt is structurally intact and the decision reproduces. Neither command says anything about whether the *current* repo state still satisfies the claim — for that, re-run `nq verify` with fresh witness packets.
+The receipt is structurally intact and the decision reproduces. Neither command says anything about whether the *current* repo state still satisfies the claim — for that, re-run `nq-monitor verify` with fresh witness packets.
 
 ### A receipt with missing witness material
 
 ```bash
-nq receipt replay --receipt .nq/receipt.json
+nq-monitor receipt replay --receipt .nq/receipt.json
 # Receipt replay: FAIL
 #   status: MISSING_WITNESS_MATERIAL
 #   integrity: ok
@@ -176,13 +176,13 @@ This is not a failure of the receipt. It is custody incomplete: the packets the 
 
 ```bash
 # An attacker (or a bug) modified the receipt JSON without re-sealing.
-nq receipt check --receipt tampered_receipt.json --witness .nq/git.json --witness .nq/pytest.json
+nq-monitor receipt check --receipt tampered_receipt.json --witness .nq/git.json --witness .nq/pytest.json
 # Receipt check: FAIL (broken)
 #   ! integrity broken — downstream check results are diagnostic only
 #   - content_hash: BROKEN_CONTENT_HASH — stored content_hash sha256:... does not match recomputed sha256:...
 # exit 2
 
-nq receipt replay --receipt tampered_receipt.json --witness .nq/git.json --witness .nq/pytest.json
+nq-monitor receipt replay --receipt tampered_receipt.json --witness .nq/git.json --witness .nq/pytest.json
 # Receipt replay: FAIL (broken)
 #   status: STRUCTURAL_FAILURE
 #   detail: receipt content_hash mismatch (1d); semantic replay refused
@@ -195,7 +195,7 @@ nq receipt replay --receipt tampered_receipt.json --witness .nq/git.json --witne
 
 ```bash
 # A Track A receipt with freshness_horizon = 14:05; checked at 15:00:
-nq receipt check --receipt dns_state.json --fresh
+nq-monitor receipt check --receipt dns_state.json --fresh
 # Receipt check: FAIL
 #   - freshness_horizon: STALE — as_of=2026-05-24T15:00:00Z horizon=2026-05-24T14:05:00Z
 # exit 1
@@ -209,7 +209,7 @@ Receipt is intact and the freshness horizon is part of its own truth (it was emi
 # Someone mutated `status: not_verified` to `status: verified` and re-sealed
 # the receipt so content_hash matches. Structural check passes; replay tells
 # the truth:
-nq receipt replay --receipt forged.json --witness .nq/git.json --witness .nq/pytest.json
+nq-monitor receipt replay --receipt forged.json --witness .nq/git.json --witness .nq/pytest.json
 # Receipt replay: FAIL
 #   status: MISMATCH
 #   integrity: ok
@@ -228,7 +228,7 @@ nq receipt replay --receipt forged.json --witness .nq/git.json --witness .nq/pyt
 ### A Track A receipt under replay
 
 ```bash
-nq receipt replay --receipt dns_state.json --witness anything.json
+nq-monitor receipt replay --receipt dns_state.json --witness anything.json
 # Receipt replay: FAIL
 #   status: NOT_APPLICABLE
 #   integrity: ok
@@ -249,7 +249,7 @@ Read this carefully. The point of the receipt surface is *to refuse what it is a
 - **They do not authorize action.** Even a fresh, replayable, well-anchored receipt is evidence. The decision to merge, deploy, page, restart, or close an incident lives in an authority layer outside NQ.
 - **They do not renew freshness.** A receipt's freshness horizon was set when the receipt was emitted. Replaying it does not extend the horizon. Get a fresh preflight if you need current standing.
 - **They do not re-ratify the claim.** Replay is reproduction, not ratification. Even if the evaluator would produce the same verdict today, the original claim was made then, with that evidence. Replay reports what reproduces; it does not authorize anything to lean on the receipt as if it were a fresh judgment.
-- **They do not replace a fresh preflight.** If you need to know what the system can honestly claim *now*, run `nq verify` or `nq preflight` against current witnesses.
+- **They do not replace a fresh preflight.** If you need to know what the system can honestly claim *now*, run `nq-monitor verify` or `nq-monitor preflight` against current witnesses.
 
 ## What this buys you
 

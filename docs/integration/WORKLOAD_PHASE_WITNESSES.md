@@ -330,7 +330,7 @@ Either emitter writes one JSONL line per phase to a local append-only file (see 
 
 1. **v0 — append-only JSONL.** Each emitter writes to `/var/lib/<app>/workload-phase-witness.jsonl` (or `~/.local/state/<app>/...` for user-scope services). No daemon, no broker, no schema registry. systemd timers, soak scripts, and NQ may read the file at their cadence.
 2. **v0.5 — NQ ingestion.** NQ adds a reader profile that consumes the JSONL into observation tables. Witness packet shape becomes `workload_phase_observation.v0` on the wire. Per-substrate evaluators consume the attachments.
-3. **v1 — `nq query` target.** Once the ingest path is stable, the witness corpus becomes a named query target per the QUERY_TARGET_PRIMITIVE_GAP discipline. Standing: `internal_readonly` for NQ-self witnesses; `external_observation` for adopted apps.
+3. **v1 — `nq-monitor query` target.** Once the ingest path is stable, the witness corpus becomes a named query target per the QUERY_TARGET_PRIMITIVE_GAP discipline. Standing: `internal_readonly` for NQ-self witnesses; `external_observation` for adopted apps.
 4. **v2+ — federation, signed envelopes, multi-vantage cross-checks.** Out of scope for this document; gated by forcing cases that have not yet fired.
 
 No part of the ladder requires a broker, a daemon, or a schema metropolis. The contract is the JSONL line.
