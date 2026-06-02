@@ -98,7 +98,7 @@ collector: logs
   target: journalctl/tail subprocesses
   mode: subprocess
 collector: nq-serve (its own DB)
-  target: /opt/notquery/nq.db
+  target: /opt/nq/nq.db
   mode: participatory_write (own)
 ```
 

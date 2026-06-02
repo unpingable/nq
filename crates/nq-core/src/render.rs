@@ -424,7 +424,7 @@ mod tests {
         r.target = Some(PreflightTarget {
             host: "labelwatch-host".into(),
             scope: "sqlite_wal".into(),
-            id: Some("/opt/notquery/nq.db".into()),
+            id: Some("/opt/nq/nq.db".into()),
         });
         r.cannot_testify = vec![
             "Whether the application that owns this DB will recover (application-state claim)".into(),
@@ -459,7 +459,7 @@ mod tests {
         assert!(s.contains("**Scope:**"));
         assert!(s.contains("`sqlite_wal`"));
         assert!(s.contains("**Id:**"));
-        assert!(s.contains("`/opt/notquery/nq.db`"));
+        assert!(s.contains("`/opt/nq/nq.db`"));
     }
 
     #[test]
@@ -529,7 +529,7 @@ mod tests {
         assert!(s.contains("Target:"));
         assert!(s.contains("Host:  labelwatch-host"));
         assert!(s.contains("Scope: sqlite_wal"));
-        assert!(s.contains("Id:    /opt/notquery/nq.db"));
+        assert!(s.contains("Id:    /opt/nq/nq.db"));
     }
 
     #[test]

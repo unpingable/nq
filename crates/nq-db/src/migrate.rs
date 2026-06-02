@@ -1431,7 +1431,7 @@ mod tests {
                 generation_id, host, binary_path, observation_status,
                 size_bytes, mtime, content_hash, observed_at, error_detail
              ) VALUES (
-                1, 'nq.neutral.zone', '/opt/notquery/nq',
+                1, 'nq.neutral.zone', '/opt/nq/nq',
                 'observed',
                 67108864, '2026-06-01T05:04:30Z',
                 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
@@ -1461,11 +1461,11 @@ mod tests {
                     generation_id, host, binary_path, observation_status,
                     size_bytes, mtime, content_hash, observed_at, error_detail
                  ) VALUES (
-                    1, 'nq.neutral.zone', '/opt/notquery/nq',
+                    1, 'nq.neutral.zone', '/opt/nq/nq',
                     'permission_denied',
                     NULL, NULL, NULL,
                     '2026-06-02T00:00:00Z',
-                    'permission denied reading /opt/notquery/nq'
+                    'permission denied reading /opt/nq/nq'
                  )",
                 [],
             )

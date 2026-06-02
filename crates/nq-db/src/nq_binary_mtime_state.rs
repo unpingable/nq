@@ -311,7 +311,7 @@ mod tests {
         let db = fresh_db();
         let target = NqBinaryMtimeStateTarget {
             host: "nq.neutral.zone",
-            binary_path: "/opt/notquery/nq",
+            binary_path: "/opt/nq/nq",
         };
         let r = evaluate_nq_binary_mtime_state_preflight_at(
             &db.conn,
@@ -325,7 +325,7 @@ mod tests {
         // Signals carry samples: 0 and the target binary_path.
         let s = r.signals.unwrap();
         assert_eq!(s["nq_binary_mtime_state"]["samples"], 0);
-        assert_eq!(s["nq_binary_mtime_state"]["binary_path"], "/opt/notquery/nq");
+        assert_eq!(s["nq_binary_mtime_state"]["binary_path"], "/opt/nq/nq");
     }
 
     #[test]
@@ -334,12 +334,12 @@ mod tests {
         insert_observed_row(
             &db.conn,
             "nq.neutral.zone",
-            "/opt/notquery/nq",
+            "/opt/nq/nq",
             "2026-06-02T00:00:00Z",
         );
         let target = NqBinaryMtimeStateTarget {
             host: "nq.neutral.zone",
-            binary_path: "/opt/notquery/nq",
+            binary_path: "/opt/nq/nq",
         };
         // 30 seconds after observation — well under the 300s threshold.
         let r = evaluate_nq_binary_mtime_state_preflight_at(
@@ -366,12 +366,12 @@ mod tests {
         insert_observed_row(
             &db.conn,
             "nq.neutral.zone",
-            "/opt/notquery/nq",
+            "/opt/nq/nq",
             "2026-06-02T00:00:00Z",
         );
         let target = NqBinaryMtimeStateTarget {
             host: "nq.neutral.zone",
-            binary_path: "/opt/notquery/nq",
+            binary_path: "/opt/nq/nq",
         };
         // 400 seconds after — > 300s threshold.
         let r = evaluate_nq_binary_mtime_state_preflight_at(
@@ -394,14 +394,14 @@ mod tests {
         insert_error_row(
             &db.conn,
             "nq.neutral.zone",
-            "/opt/notquery/nq",
+            "/opt/nq/nq",
             "permission_denied",
             "2026-06-02T00:00:00Z",
-            "permission denied reading /opt/notquery/nq",
+            "permission denied reading /opt/nq/nq",
         );
         let target = NqBinaryMtimeStateTarget {
             host: "nq.neutral.zone",
-            binary_path: "/opt/notquery/nq",
+            binary_path: "/opt/nq/nq",
         };
         let r = evaluate_nq_binary_mtime_state_preflight_at(
             &db.conn,
@@ -417,7 +417,7 @@ mod tests {
         );
         assert_eq!(
             s["nq_binary_mtime_state"]["error_detail"],
-            "permission denied reading /opt/notquery/nq"
+            "permission denied reading /opt/nq/nq"
         );
         let note = r.verdict_note.unwrap();
         assert!(note.contains("permission_denied"));
@@ -432,7 +432,7 @@ mod tests {
         insert_error_row(
             &db.conn,
             "nq.neutral.zone",
-            "/opt/notquery/nq",
+            "/opt/nq/nq",
             "permission_denied",
             "2026-06-02T00:00:00Z",
             "permission denied at first cycle",
@@ -440,12 +440,12 @@ mod tests {
         insert_observed_row(
             &db.conn,
             "nq.neutral.zone",
-            "/opt/notquery/nq",
+            "/opt/nq/nq",
             "2026-06-02T00:00:30Z",
         );
         let target = NqBinaryMtimeStateTarget {
             host: "nq.neutral.zone",
-            binary_path: "/opt/notquery/nq",
+            binary_path: "/opt/nq/nq",
         };
         let r = evaluate_nq_binary_mtime_state_preflight_at(
             &db.conn,
@@ -465,24 +465,24 @@ mod tests {
         insert_observed_row(
             &db.conn,
             "host-a",
-            "/opt/notquery/nq",
+            "/opt/nq/nq",
             "2026-06-02T00:00:00Z",
         );
         insert_error_row(
             &db.conn,
             "host-b",
-            "/opt/notquery/nq",
+            "/opt/nq/nq",
             "target_missing",
             "2026-06-02T00:00:00Z",
             "binary not found",
         );
         let target_a = NqBinaryMtimeStateTarget {
             host: "host-a",
-            binary_path: "/opt/notquery/nq",
+            binary_path: "/opt/nq/nq",
         };
         let target_b = NqBinaryMtimeStateTarget {
             host: "host-b",
-            binary_path: "/opt/notquery/nq",
+            binary_path: "/opt/nq/nq",
         };
         let now = t("2026-06-02T00:00:30Z");
 
@@ -503,7 +503,7 @@ mod tests {
         let db = fresh_db();
         let target = NqBinaryMtimeStateTarget {
             host: "nq.neutral.zone",
-            binary_path: "/opt/notquery/nq",
+            binary_path: "/opt/nq/nq",
         };
         let r = evaluate_nq_binary_mtime_state_preflight_at(
             &db.conn,

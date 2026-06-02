@@ -50,7 +50,7 @@ Lesson from the `state_kind` migration (2026-04-23, `ALERT_INTERPRETATION_GAP`):
 For anything with real operator state:
 
 ```bash
-sqlite3 /opt/notquery/nq.db "VACUUM INTO '/opt/notquery/nq.db.pre-<change>.bak'"
+sqlite3 /opt/nq/nq.db "VACUUM INTO '/opt/nq/nq.db.pre-<change>.bak'"
 ```
 
 Then migrate. Then smoke check. Then restart. Habit matters even when the migration is 30ms.

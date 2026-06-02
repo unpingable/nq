@@ -1,6 +1,6 @@
 # NQ-on-NQ Tier 1 — `nq_binary_mtime_state`
 
-**Status:** `design-preflight` — drafted 2026-05-27 as the first Tier 1 NQ-on-NQ slice. Builds on the Tier 0 precedent (`sqlite_wal_state` over `/opt/notquery/nq.db`, live on Linode and classified `admissible_with_scope / bounded`). Design only; no code, schema, or wire change authorized by this doc.
+**Status:** `design-preflight` — drafted 2026-05-27 as the first Tier 1 NQ-on-NQ slice. Builds on the Tier 0 precedent (`sqlite_wal_state` over `/opt/nq/nq.db`, live on Linode and classified `admissible_with_scope / bounded`). Design only; no code, schema, or wire change authorized by this doc.
 
 **Parent:** [NQ_ON_NQ_OPERATIONAL_CLAIMS_GAP](../../gaps/NQ_ON_NQ_OPERATIONAL_CLAIMS_GAP.md) (sixth-keeper proposal), [NQ_SELF_SQLITE_WAL](NQ_SELF_SQLITE_WAL.md) (Tier 0 precedent).
 
@@ -39,7 +39,7 @@ The kind-4 probe preflight refuses auto-discovery (§2: "operator-declared only,
 
 **Operator over-ride** (rare): publisher config may declare `nq_binary_path: "<absolute-path>"` to point at a different binary. Useful for testing or for operators running multiple `nq` instances under different binaries. The default is `/proc/self/exe`.
 
-**Target identity at the receipt layer:** `(host, binary_path)`. The `host` is canonical-host from the aggregator config (same source.name discipline as Tier 0). The `binary_path` is the canonical-resolved filesystem path (e.g., `/opt/notquery/nq` on Linode after symlink resolution).
+**Target identity at the receipt layer:** `(host, binary_path)`. The `host` is canonical-host from the aggregator config (same source.name discipline as Tier 0). The `binary_path` is the canonical-resolved filesystem path (e.g., `/opt/nq/nq` on Linode after symlink resolution).
 
 ## 3. External-witness justification
 
@@ -118,7 +118,7 @@ The evaluator is **simpler than kind-4** — there is no sustained-condition pre
 ```json
 "signals": {
   "nq_binary_mtime_state": {
-    "binary_path": "/opt/notquery/nq",
+    "binary_path": "/opt/nq/nq",
     "mtime": "2026-05-27T05:04:30Z",
     "size_bytes": 67108864,
     "content_hash": "sha256:abc123...",
@@ -205,8 +205,8 @@ Any of:
 - [NQ_ON_NQ_OPERATIONAL_CLAIMS_GAP](../../gaps/NQ_ON_NQ_OPERATIONAL_CLAIMS_GAP.md) — sixth-keeper proposal; this slice exercises (does not yet ratify) it.
 - [`KIND_4_SQLITE_WAL_PROBE`](preflights/KIND_4_SQLITE_WAL_PROBE.md) — substrate-table shape, observation_status closed-enum pattern, conditional CHECK constraint pattern. Reused here.
 - [WITNESS_IDENTITY_AND_ABSENCE_GAP](../../gaps/WITNESS_IDENTITY_AND_ABSENCE_GAP.md) — `content_hash` here is one concrete instance of "packet identity is content-addressed." When the spec ratifies, the binary-mtime kind's hash composes with the broader identity-and-absence story.
-- [project_three_host_discipline](../../../../../.claude/projects/-home-jbeck-git-notquery/memory/project_three_host_discipline.md) — forcing-case context for cross-host version-alignment.
-- [project_nq_witness_daemon_trajectory](../../../../../.claude/projects/-home-jbeck-git-notquery/memory/project_nq_witness_daemon_trajectory.md) — four-verb layering; this kind stays cleanly in observe + evaluate.
+- [project_three_host_discipline](../../../../../.claude/projects/-home-jbeck-git-nq/memory/project_three_host_discipline.md) — forcing-case context for cross-host version-alignment.
+- [project_nq_witness_daemon_trajectory](../../../../../.claude/projects/-home-jbeck-git-nq/memory/project_nq_witness_daemon_trajectory.md) — four-verb layering; this kind stays cleanly in observe + evaluate.
 
 ## 12. Closing line
 

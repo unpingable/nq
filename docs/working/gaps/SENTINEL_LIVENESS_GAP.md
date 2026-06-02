@@ -70,7 +70,7 @@ A new binary (or subcommand: `nq sentinel`) that:
 
 ```json
 {
-  "artifact_path": "/opt/notquery/liveness.json",
+  "artifact_path": "/opt/nq/liveness.json",
   "max_age_seconds": 180,
   "poll_interval_seconds": 60,
   "webhook_url": "https://discord.com/api/webhooks/..."
@@ -101,7 +101,7 @@ Description=NQ Sentinel — liveness witness
 After=network.target
 
 [Service]
-ExecStart=/opt/notquery/nq sentinel -c /opt/notquery/sentinel.json
+ExecStart=/opt/nq/nq sentinel -c /opt/nq/sentinel.json
 Restart=always
 RestartSec=10
 

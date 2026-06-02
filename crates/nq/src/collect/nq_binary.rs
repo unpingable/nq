@@ -331,7 +331,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("real-binary");
         std::fs::File::create(&path).unwrap().write_all(b"hi").unwrap();
-        let identity = "/opt/notquery/nq";
+        let identity = "/opt/nq/nq";
 
         let row = observe_at(&path, identity);
 
