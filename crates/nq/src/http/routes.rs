@@ -5,6 +5,9 @@ use axum::{
     routing::{get, post, delete},
     Json, Router,
 };
+use nq_db::nq_binary_mtime_state::{
+    evaluate_nq_binary_mtime_state_preflight, NqBinaryMtimeStateTarget,
+};
 use nq_db::sqlite_wal_state::{evaluate_sqlite_wal_state_preflight, SqliteWalTarget};
 use nq_db::component_testimony::evaluate_observation_loop_alive_preflight;
 use nq_db::{overview, host_detail, query_read_only, evaluate_disk_state_preflight, evaluate_dns_state_preflight, evaluate_ingest_state_preflight, DnsObservationTuple, QueryLimits, ReadDb, WriteDb};
@@ -96,6 +99,10 @@ pub fn router(db: Db) -> Router {
         .route(
             "/api/preflight/component-testimony-observation-loop-alive",
             get(api_preflight_component_testimony_observation_loop_alive),
+        )
+        .route(
+            "/api/preflight/nq-binary-mtime-state",
+            get(api_preflight_nq_binary_mtime_state),
         )
         .route("/finding/{kind}/{host}", get(finding_detail))
         .route("/finding/{kind}/{host}/{subject}", get(finding_detail_with_subject))
@@ -948,6 +955,55 @@ async fn api_preflight_component_testimony_observation_loop_alive(
         &time::OffsetDateTime::now_utc(),
         &evaluation_engine_id,
     ) {
+        Ok(result) => match serde_json::to_value(&result) {
+            Ok(v) => Ok(Json(v)),
+            Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
+        },
+        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+/// Required query params for the `nq_binary_mtime_state` route. Both
+/// fields are load-bearing for target identity: the witness is one
+/// nq publisher observing one binary path on one host. Empty values
+/// are 400 (request error), not evaluator verdicts.
+#[derive(Debug, serde::Deserialize)]
+struct PreflightNqBinaryMtimeStateQuery {
+    host: String,
+    binary_path: String,
+}
+
+/// Bounded `nq_binary_mtime_state` preflight surfaced over the
+/// monitor HTTP path. Emits the typed
+/// `nq.preflight.nq_binary_mtime_state.v1` PreflightResult. One
+/// envelope per `(host, binary_path)` target. The route does no
+/// probing itself — it reads the latest `nq_binary_observations` row
+/// the publisher-side collector wrote on its most recent pulse.
+async fn api_preflight_nq_binary_mtime_state(
+    State(db): State<Db>,
+    Query(params): Query<PreflightNqBinaryMtimeStateQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let host = params.host.trim();
+    let binary_path = params.binary_path.trim();
+    if host.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "query parameter `host` is required and must not be empty"
+            })),
+        ));
+    }
+    if binary_path.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "query parameter `binary_path` is required and must not be empty"
+            })),
+        ));
+    }
+    let db = db.lock().await;
+    let target = NqBinaryMtimeStateTarget { host, binary_path };
+    match evaluate_nq_binary_mtime_state_preflight(&db, &target) {
         Ok(result) => match serde_json::to_value(&result) {
             Ok(v) => Ok(Json(v)),
             Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
