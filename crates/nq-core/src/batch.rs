@@ -1,5 +1,5 @@
 use crate::status::{CollectorKind, CollectorStatus, GenerationStatus, ServiceStatus, SourceStatus};
-use crate::wire::{SmartWitnessReport, WalObservationData, ZfsWitnessReport};
+use crate::wire::{NqBinaryObservationData, SmartWitnessReport, WalObservationData, ZfsWitnessReport};
 use time::OffsetDateTime;
 
 /// A fully collected batch ready for atomic publish.
@@ -25,6 +25,14 @@ pub struct Batch {
     /// with the just-allocated `generation_id`. Empty sets are fine —
     /// publishers without declared targets emit zero rows.
     pub wal_observation_sets: Vec<WalObservationSet>,
+    /// NQ_BINARY_MTIME_STATE slice C: per-host nq_binary observation.
+    /// One entry per publisher per cycle — the publisher's own binary
+    /// stat + sha256. The aggregator inserts each entry into
+    /// `nq_binary_observations` with the just-allocated `generation_id`.
+    /// Unlike WAL observations, there is at most one observation per
+    /// publisher per cycle (single binary per publisher), so the row
+    /// is the data directly rather than wrapping a `Vec`.
+    pub nq_binary_observation_rows: Vec<NqBinaryObservationRow>,
 }
 
 /// A single conforming witness report keyed to its publisher host.
@@ -52,6 +60,19 @@ pub struct WalObservationSet {
     pub host: String,
     pub collected_at: OffsetDateTime,
     pub rows: Vec<WalObservationData>,
+}
+
+/// One publisher's nq_binary observation for this cycle. The wire-side
+/// `NqBinaryObservationData` carries the substrate testimony; this
+/// struct adds the per-host / per-cycle context. Single-row-per-host
+/// by construction: there is exactly one binary observed per
+/// publisher per cycle (the publisher's own `/proc/self/exe` or the
+/// `nq_binary_path` operator override).
+#[derive(Debug, Clone)]
+pub struct NqBinaryObservationRow {
+    pub host: String,
+    pub collected_at: OffsetDateTime,
+    pub data: NqBinaryObservationData,
 }
 
 impl Batch {

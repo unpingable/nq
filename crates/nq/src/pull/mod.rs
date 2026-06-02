@@ -5,7 +5,7 @@ use nq_core::batch::*;
 use nq_core::status::*;
 use nq_core::wire::PublisherState;
 use nq_core::{Config, SmartWitnessRow, SourceConfig, ZfsWitnessRow};
-use nq_core::batch::WalObservationSet;
+use nq_core::batch::{NqBinaryObservationRow, WalObservationSet};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 use time::OffsetDateTime;
@@ -49,6 +49,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
     let mut zfs_witness_rows = Vec::new();
     let mut smart_witness_rows = Vec::new();
     let mut wal_observation_sets = Vec::new();
+    let mut nq_binary_observation_rows = Vec::new();
 
     for handle in handles {
         let result = handle.await?;
@@ -64,6 +65,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
                 zfs_witness_row,
                 smart_witness_row,
                 wal_observation_set,
+                nq_binary_observation_row,
             } => {
                 source_runs.push(source_run);
                 collector_runs.extend(coll_runs);
@@ -91,6 +93,9 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
                 if let Some(ws) = wal_observation_set {
                     wal_observation_sets.push(ws);
                 }
+                if let Some(nb) = nq_binary_observation_row {
+                    nq_binary_observation_rows.push(nb);
+                }
             }
             PullResult::Failed(source_run) => {
                 source_runs.push(source_run);
@@ -114,6 +119,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
         zfs_witness_rows,
         smart_witness_rows,
         wal_observation_sets,
+        nq_binary_observation_rows,
     })
 }
 
@@ -129,6 +135,7 @@ enum PullResult {
         zfs_witness_row: Option<ZfsWitnessRow>,
         smart_witness_row: Option<SmartWitnessRow>,
         wal_observation_set: Option<WalObservationSet>,
+        nq_binary_observation_row: Option<NqBinaryObservationRow>,
     },
     Failed(SourceRun),
 }
@@ -222,6 +229,7 @@ async fn pull_one(source: SourceConfig) -> PullResult {
     let mut zfs_witness_row = None;
     let mut smart_witness_row = None;
     let mut wal_observation_set = None;
+    let mut nq_binary_observation_row = None;
 
     // Host collector
     if let Some(ref payload) = state.collectors.host {
@@ -455,6 +463,33 @@ async fn pull_one(source: SourceConfig) -> PullResult {
         }
     }
 
+    // nq_binary collector — one observation per pulse from the
+    // publisher's own /proc/self/exe (or operator override). Wire
+    // payload is a single struct, not a Vec; per-host packaging into
+    // a NqBinaryObservationRow happens here so the aggregator-side
+    // batch carries (host, collected_at, data) consistently.
+    if let Some(ref payload) = state.collectors.nq_binary_observations {
+        let entity_count = payload.data.as_ref().map(|_| 1u32);
+        coll_runs.push(CollectorRun {
+            source: canonical_host.clone(),
+            collector: CollectorKind::NqBinary,
+            status: payload.status,
+            collected_at: payload.collected_at,
+            entity_count,
+            error_message: payload.error_message.clone(),
+        });
+        if payload.status == CollectorStatus::Ok {
+            if let Some(ref data) = payload.data {
+                let collected_at = payload.collected_at.unwrap_or(state.collected_at);
+                nq_binary_observation_row = Some(NqBinaryObservationRow {
+                    host: canonical_host.clone(),
+                    collected_at,
+                    data: data.clone(),
+                });
+            }
+        }
+    }
+
     // sqlite_wal probe collector
     if let Some(ref payload) = state.collectors.sqlite_wal_observations {
         let entity_count = payload.data.as_ref().map(|d| d.len() as u32);
@@ -489,5 +524,6 @@ async fn pull_one(source: SourceConfig) -> PullResult {
         zfs_witness_row,
         smart_witness_row,
         wal_observation_set,
+        nq_binary_observation_row,
     }
 }

@@ -341,6 +341,7 @@ fn state_to_batch(state: &PublisherState, canonical_host: &str) -> Batch {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
     }
 }
 
@@ -2601,6 +2602,7 @@ fn sqlite_wal_probe_pipeline_end_to_end_smoke() {
             collected_at,
             rows: rows.clone(),
         }],
+        nq_binary_observation_rows: vec![],
     };
 
     // Persist via the production publish_batch path. This is the

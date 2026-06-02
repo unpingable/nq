@@ -62,6 +62,7 @@ fn batch_with_services(host: &str, services: &[&str]) -> Batch {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
     }
 }
 
@@ -110,6 +111,7 @@ fn batch_with_host(host: &str, cpu_load: f64) -> Batch {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
     }
 }
 

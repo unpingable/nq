@@ -35,10 +35,12 @@ const PREVIOUS_SCHEMA_VERSION: u32 = CURRENT_SCHEMA_VERSION - 1;
 /// existing tables becomes the latest, this constant becomes wrong and the
 /// test stops representing the upgrade path it claims to.
 ///
-/// Migration 054 adds `nq_binary_observations` — the Tier 1 NQ-on-NQ
-/// substrate for the publisher's own-binary mtime/size/content-hash
-/// observations (per docs/working/decisions/preflights/NQ_BINARY_MTIME_STATE.md).
-const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["nq_binary_observations"];
+/// Migration 055 widens the `collector_runs.collector` CHECK to admit
+/// the new `nq_binary` collector name; the table itself was added back
+/// in migration 007. No new tables, so the rollback fixture has nothing
+/// to drop — this latest migration is a CHECK-rewrite via the
+/// recreate-and-rename pattern.
+const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &[];
 
 #[test]
 fn upgrade_from_previous_version_preserves_data() {
@@ -207,5 +209,6 @@ fn make_batch(t: OffsetDateTime) -> Batch {
         zfs_witness_rows: vec![],
         smart_witness_rows: vec![],
         wal_observation_sets: vec![],
+        nq_binary_observation_rows: vec![],
     }
 }
