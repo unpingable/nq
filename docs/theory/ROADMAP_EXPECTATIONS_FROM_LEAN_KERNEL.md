@@ -19,6 +19,16 @@ Every roadmap entry below is a precision pressure, not a capability pressure. Ca
 3. **Future forcing-case expectation.** Wait for the case; named so it isn't reinvented badly when it arrives.
 4. **Explicit non-goal — downstream consumer responsibility.** NQ owes inputs to it but does not own it.
 
+## Lean module pinning discipline (anti-slop valve)
+
+As of Calculus 1.0 (`~/git/lean/LeanProofs/Admissibility/CalculusOne.lean`, named 2026-05-24), upstream modules carry an explicit tier tag in their README. Anywhere NQ docs cite a Lean module, respect the tier:
+
+- **`[1.0]`** — public surface; stable enough to pin testimony-shape against. Eight modules: `Authority`, `StateTransition`, `Derivation`, `Execution`, `Corrective`, `Freshness`, `SurfaceAuthorization`, `WitnessInvariance`. A retrofit cost incurred to align NQ vocabulary with one of these is justifiable on the upstream side.
+- **`[annex]`** — compiled, sorry-free, conceptually load-bearing, *but not an architectural dependency*. Future upstream versions may rename, refactor, or absorb without notice. NQ may cite an annex module as evidence (the refusal kernel exists, the countermodel is real) but must not pin a wire field or doc concept against an annex name. Examples currently in scope of this memo: `OpsMasking` (root-level specimen — same drift-risk posture applies), `RecoveryMargin`, `ConsolidationDenial`, `FiatAdmissibility`, the safety-bridge family.
+- **`[scratch]`** / *"Not in LeanProofs.lean"* — reconnaissance work; predicates and theorem-shapes are exploratory. Do not let scratch modules steer NQ implementation unless they graduate to `[annex]` (compiled and wired) or `[1.0]` (publicly promised). Example: `ProjectionLaundering.lean` as of 2026-06-02.
+
+The pinning discipline composes with everything else in this memo: a memo entry that says "NQ should preserve X for downstream consumer of Y.lean" lands at category 1 only if Y.lean is `[1.0]`. Annex-cited entries live at category 3 or 4 (forcing-case or explicit non-goal) by default, regardless of how conceptually mature the upstream work feels. The drift risk is real — an annex theorem may rename its key predicate during a 1.x refactor; an NQ wire field pinned against the old name then misleads consumers.
+
 ## What this memo does not duplicate
 
 Pressure points below compose onto existing gap surfaces. None of the entries propose a parallel structure where an existing gap already covers the territory:
@@ -247,6 +257,16 @@ Listed for the same reason every other gap doc carries non-goals: the temptation
 - Cybernetic-transition classification (causal / reinforcing / normalizing relations between domains); NQ tags individual findings.
 
 ## Provenance
+
+- **2026-06-02 reconnaissance pass on `~/git/lean`.** Walked the new annexes shipped between 2026-05-12 and 2026-06-02: the safety-bridge family (`SafetyBridge`, `SafetyTrajectory`, `AttestationLedger`, `AuthorizedNotSafe(Witness)`, `AuthorizedStepNotSafe(Witness)`); the cross-boundary specimens (`CrossBoundaryExposure/Degradation/FailureMint/Cascade`); the Frontier-3-adjacent work (`AmendmentFragment`, `ContractionHinge`, `RetroactiveLegitimation`); `ConsolidationDenial`; scratch annexes (`ProjectionLaundering`, `Conductance`); and the Calculus 1.0 public-surface naming (`CalculusOne.lean` aggregating 8 `[1.0]` modules, ~25 more as `[annex]`).
+
+   **No new memo entries.** The headline holds: every new annex sharpens consumer-side obligations, not NQ-side. Two confirmations worth recording:
+   - `RecoveryMargin` and `ConsolidationDenial` now explicitly cite NQ-style witness-standing findings as the obvious downstream consumer. This is receipt-language for the existing memo's posture, not a build pressure. A future Governor / Night Shift can lift these theorems against NQ findings without NQ implementing anything; NQ's discipline is to preserve the testimony-shape distinctions the refusal kernels operate on (already covered by the OpsMasking + Authority entries).
+   - `ProjectionLaundering` (scratch annex) refines the OpsMasking entry's predicate-erasure concern without changing the NQ-side discipline. The "what NQ should not absorb" line in the OpsMasking entry extends to projection-laundering proofs naturally.
+
+   The new **Lean module pinning discipline** section (above) was added in the same pass after the operator named the [1.0] / [annex] / [scratch] tier distinction as an "anti-slop valve." The discipline composes with every existing entry: it pins which entries can promote from category-3 to category-1 (only those citing `[1.0]` modules) and which stay candidate-only (annex/scratch citations).
+
+   The danger pattern the recon walk guarded against — *NQ sees "NQ-style witness-standing findings are the obvious downstream consumer" and decides that means "time to grow a Governor tumor"* — is exactly the move [[feedback_knob_facing]] and [[feedback_no_agent_subsumption]] refuse. Future Governor consumes NQ findings as inputs to theorems; NQ does not become theorem machinery.
 
 - 2026-05-12 reconnaissance pass on `~/git/lean` after the DURABLE_ARTIFACT_SUBSTRATE V1 commit (`24af098`).
 - Initial draft was a relationship doc (where the roads touch). Rewritten as roadmap-pressure memo (which roads now have traffic obligations) after operator + ChatGPT review caught the shape mismatch.
