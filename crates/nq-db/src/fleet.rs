@@ -174,7 +174,7 @@ mod tests {
                     { "id": "sushi-k", "class": "local", "support_tier": "active",
                       "url": "file:///home/jbeck/nq/liveness.json" },
                     { "id": "linode", "class": "remote", "support_tier": "active",
-                      "url": "ssh://root@labelwatch.neutral.zone/opt/notquery/liveness.json" }
+                      "url": "ssh://root@labelwatch.neutral.zone/opt/nq/liveness.json" }
                 ]
             }"#,
         );

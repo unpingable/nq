@@ -1,6 +1,6 @@
 # NQ Gap Specs
 
-Architectural gap specifications for NotQuery. Each spec identifies a missing layer, states its invariants, bounds its scope, and lists what neighboring layers must *not* absorb.
+Architectural gap specifications for NQ. Each spec identifies a missing layer, states its invariants, bounds its scope, and lists what neighboring layers must *not* absorb.
 
 Gap specs are constitutional documents, not feature tickets. They exist to prevent accidental architecture — to make sure the next layer of behavior is written on purpose, with a name, rather than emerging by osmosis in whatever detector or renderer happens to need it first.
 

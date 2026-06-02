@@ -796,7 +796,7 @@ mod tests {
         let target = PreflightTarget {
             host: "nq.neutral.zone".into(),
             scope: "nq_binary".into(),
-            id: Some("/opt/notquery/nq".into()),
+            id: Some("/opt/nq/nq".into()),
         };
         let r = PreflightResult::skeleton(
             ClaimKind::NqBinaryMtimeState,

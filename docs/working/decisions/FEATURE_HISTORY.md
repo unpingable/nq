@@ -1,6 +1,6 @@
 # Feature History
 
-The shipped-state ledger for NotQuery. Per-feature entries record what landed, when, with explicit evidence pointers (commits, paths, evidence summary, what's unblocked).
+The shipped-state ledger for NQ. Per-feature entries record what landed, when, with explicit evidence pointers (commits, paths, evidence summary, what's unblocked).
 
 This file exists because gap docs are *design records*, not shipped-state ledgers. See [`ARCHITECTURE_NOTES.md`](ARCHITECTURE_NOTES.md) § "Gap docs are design records, not shipped-state ledgers" for the doctrine; the cross-project audit (agent-governor's `feature-history.md` discipline) was the trigger.
 

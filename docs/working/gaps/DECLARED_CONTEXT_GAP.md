@@ -309,7 +309,7 @@ This gap is closed when a doctrine record exists that:
 
 ## Provenance
 
-Filed 2026-05-07 as a sidebar to a NotQuery session that closed eight legacy gap-status ratifications, shipped the REGIME_FEATURES V1.6 observability slice, and wired a CI tripwire enforcing the gap-status discipline. The operator returned from a separate conversation (ChatGPT) that worked through cross-language sealing-discipline (Ada / Erlang / Rust / Python audit) and surfaced two adjacent gap candidates: native witness construction libraries (filed as `LIBRARY_NATIVE_WITNESS_GAP` in `~/git/nq-witness/`) and declared context (this filing).
+Filed 2026-05-07 as a sidebar to a NQ session that closed eight legacy gap-status ratifications, shipped the REGIME_FEATURES V1.6 observability slice, and wired a CI tripwire enforcing the gap-status discipline. The operator returned from a separate conversation (ChatGPT) that worked through cross-language sealing-discipline (Ada / Erlang / Rust / Python audit) and surfaced two adjacent gap candidates: native witness construction libraries (filed as `LIBRARY_NATIVE_WITNESS_GAP` in `~/git/nq-witness/`) and declared context (this filing).
 
 The keepers, lifted from the ChatGPT conversation:
 

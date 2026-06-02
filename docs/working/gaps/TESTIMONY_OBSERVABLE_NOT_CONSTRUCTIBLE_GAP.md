@@ -40,7 +40,7 @@ The cross-system pattern — the thing that matters must be emitted by the proce
 
 ## What Already Exists
 
-Falsification grep at filing time, against `~/git/notquery` HEAD:
+Falsification grep at filing time, against `~/git/nq` HEAD:
 
 | Component | Location | Construction discipline today |
 |-----------|----------|------------------------------|
@@ -159,7 +159,7 @@ Filed 2026-05-07 during a session in which the operator returned from a parallel
 
 > Can NQ consumers construct or upgrade "findings/testimony" directly, or can they only observe testimony emitted by a conforming witness/export path?
 
-The audit was performed against `~/git/notquery` HEAD `5761870` and produced the falsification picture in §"What Already Exists": the in-process boundary is type-sealed (good), the wire boundary is shape-conformant only (gap). The gap was filed before any seal construction or schema change — preserves correct attribution (the gap is the absence of the seal, not the constructibility of any specific type) and prevents the construction-discipline finding from being conflated with whatever specific signing/path-binding mechanism eventually closes it.
+The audit was performed against `~/git/nq` HEAD `5761870` and produced the falsification picture in §"What Already Exists": the in-process boundary is type-sealed (good), the wire boundary is shape-conformant only (gap). The gap was filed before any seal construction or schema change — preserves correct attribution (the gap is the absence of the seal, not the constructibility of any specific type) and prevents the construction-discipline finding from being conflated with whatever specific signing/path-binding mechanism eventually closes it.
 
 This is independent-derivation evidence converging with the AG sibling, not an implementation seam. The two gaps remain separately filed because they live in different codebases at different scales, with potentially different close-out paths. Filing as siblings preserves the signal that both arrived at the same primitive from independent substrates (Lean kernel + Ada probe on the AG side; Rust wire-format audit on the NQ side).
 
