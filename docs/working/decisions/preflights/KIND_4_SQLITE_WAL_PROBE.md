@@ -1,6 +1,18 @@
 # Kind 4 — `sqlite_wal_probe` Witness — Design Preflight
 
-**Status:** candidate / non-binding. Design preflight for the probe (witness) side of kind 4. This document scopes the slice; no code is authorized by it. Companion to [`KIND_4_SQLITE_WAL_STATE.md`](KIND_4_SQLITE_WAL_STATE.md) (claim-side, slices 1–5, shipped). The probe is slices 6+ of the kind-4 sequence.
+**Status:** **shipped.** V0 of the probe (slices 6a–6c) is in-tree:
+
+- Slice 6a — migration 049 (`observation_status` closed enum + stat-derived field nullability + conditional CHECK) — commit `d7db22a`.
+- Slice 6b — probe scaffold at `crates/nq/src/collect/sqlite_wal_probe.rs` (~940 lines, 24 unit tests covering observed / target_missing / permission_denied / stat_error / `/proc/locks` matching / symlink resolution / malformed-line skipping) — commit `d95d2c0`.
+- Slice 6c — operator config surface via `SqliteWalTargetConfig` + `sqlite_wal_proc_locks_enabled` in `crates/nq-core/src/config.rs` (same commit).
+- Subsequent fix — migration 050 widens `collector_runs` CHECK for sqlite_wal_probe — commit `da40e71`.
+
+Companion to [`KIND_4_SQLITE_WAL_STATE.md`](KIND_4_SQLITE_WAL_STATE.md) (claim-side, slices 1–5, shipped). This document is the design record of the V0 probe; invariants are now upheld by code.
+
+**Operator-run remainder:**
+
+- Slice 6d (Linode three-host smoke) — operator's deploy/smoke-test step, not Claude work.
+- V1 per-PID enrichment — explicitly deferred until the V1 triggers in §0 fire (a real operational case where `pinned_reader_present = 1` was useful but the operator burned ≥15 min hand-correlating PIDs; a consumer needing `pinned_reader_pid` that doesn't reduce to "look in our own service inventory"; or a non-Linux host entering scope).
 
 **Depends on:** [`KIND_4_SQLITE_WAL_STATE.md`](KIND_4_SQLITE_WAL_STATE.md) (substrate shape, witness profile vocabulary, `proc_access` closed enum, `WalObservation` invariants). Substrate rules ratified there; this preflight does not relitigate them.
 
