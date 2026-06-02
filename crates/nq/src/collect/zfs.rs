@@ -240,6 +240,7 @@ mod tests {
             smart_witness: None,
             sqlite_wal_targets: vec![],
             sqlite_wal_proc_locks_enabled: false,
+            nq_binary_path: None,
         }
     }
 
@@ -372,6 +373,7 @@ mod tests {
             smart_witness: None,
             sqlite_wal_targets: vec![],
             sqlite_wal_proc_locks_enabled: false,
+            nq_binary_path: None,
         };
         let payload = collect(&config);
         assert_eq!(payload.status, CollectorStatus::Skipped);
