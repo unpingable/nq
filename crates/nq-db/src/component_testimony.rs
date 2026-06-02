@@ -92,43 +92,63 @@ pub enum EmitError {
     Db(String),
 }
 
-/// Look up the single active coverage rule for the given tuple. Returns
-/// `Ok(None)` when no active rule exists (the steady state when no
-/// operator has declared coverage; equivalent to `CoverageUnknown`
-/// downstream). Returns `Err` only on DB failure.
+/// Look up the single active coverage rule for the given tuple at
+/// `now`. Returns `Ok(None)` when no active rule exists at `now` — either
+/// no rule is declared at all, or the declared rule's `coverage_start`
+/// is still in the future. Both cases are `CoverageUnknown` downstream;
+/// the steady state until the operator has declared coverage AND that
+/// coverage has begun. Returns `Err` only on DB failure.
+///
+/// The partial unique index `idx_coverage_rules_active` already
+/// guarantees at most one row with `valid_until IS NULL` per
+/// `(component_id, subject_id, claim_kind)` tuple, so no `ORDER BY ...
+/// LIMIT 1` is needed at SQL level. `coverage_start <= now` is enforced
+/// in Rust via parsed RFC3339 comparison (mirroring the F2 fix in
+/// `classify_absence`): SQL-level lex comparison of RFC3339 strings is
+/// brittle across timezone-suffix variants.
 pub fn lookup_active_rule(
     conn: &rusqlite::Connection,
     component_id: &str,
     subject_id: &str,
     claim_kind: &str,
+    now: &OffsetDateTime,
 ) -> Result<Option<ActiveRule>, EmitError> {
     let row = conn
         .query_row(
             "SELECT coverage_rule_id, coverage_rule_hash,
                     expected_interval_s, grace_multiplier,
-                    standing_resolver_id, escalation_target
+                    standing_resolver_id, escalation_target,
+                    coverage_start
              FROM coverage_rules
              WHERE component_id = ?1
                AND subject_id = ?2
                AND claim_kind = ?3
-               AND valid_until IS NULL
-             ORDER BY coverage_start DESC
-             LIMIT 1",
+               AND valid_until IS NULL",
             params![component_id, subject_id, claim_kind],
             |row| {
-                Ok(ActiveRule {
-                    coverage_rule_id: row.get(0)?,
-                    coverage_rule_hash: row.get(1)?,
-                    expected_interval_s: row.get::<_, i64>(2)? as u32,
-                    grace_multiplier: row.get(3)?,
-                    standing_resolver_id: row.get(4)?,
-                    escalation_target: row.get(5)?,
-                })
+                Ok((
+                    ActiveRule {
+                        coverage_rule_id: row.get(0)?,
+                        coverage_rule_hash: row.get(1)?,
+                        expected_interval_s: row.get::<_, i64>(2)? as u32,
+                        grace_multiplier: row.get(3)?,
+                        standing_resolver_id: row.get(4)?,
+                        escalation_target: row.get(5)?,
+                    },
+                    row.get::<_, String>(6)?,
+                ))
             },
-        )
-        .map(Some);
+        );
     match row {
-        Ok(some) => Ok(some),
+        Ok((rule, coverage_start_str)) => {
+            let coverage_start = OffsetDateTime::parse(&coverage_start_str, &Rfc3339)
+                .map_err(|e| EmitError::Db(format!("coverage_start parse failed: {e}")))?;
+            if coverage_start > *now {
+                Ok(None)
+            } else {
+                Ok(Some(rule))
+            }
+        }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(EmitError::Db(e.to_string())),
     }
@@ -165,6 +185,7 @@ pub fn try_emit_observation_loop_alive(
         COMPONENT_ID_NQ_LOCAL,
         SUBJECT_ID_OBSERVATION_LOOP,
         KIND_OBSERVATION_LOOP_ALIVE,
+        &inputs.observed_at,
     )?
     else {
         return Ok(None);
@@ -332,7 +353,7 @@ pub fn classify_absence(
     claim_kind: &str,
     now: &OffsetDateTime,
 ) -> Result<AbsenceClassification, EmitError> {
-    let Some(rule) = lookup_active_rule(conn, component_id, subject_id, claim_kind)? else {
+    let Some(rule) = lookup_active_rule(conn, component_id, subject_id, claim_kind, now)? else {
         return Ok(AbsenceClassification::CoverageUnknown);
     };
 
@@ -1238,6 +1259,7 @@ mod tests {
             COMPONENT_ID_NQ_LOCAL,
             SUBJECT_ID_OBSERVATION_LOOP,
             KIND_OBSERVATION_LOOP_ALIVE,
+            &t("2026-05-28T12:00:00Z"),
         )
         .unwrap();
         assert!(r.is_none());
@@ -1253,6 +1275,7 @@ mod tests {
             COMPONENT_ID_NQ_LOCAL,
             SUBJECT_ID_OBSERVATION_LOOP,
             KIND_OBSERVATION_LOOP_ALIVE,
+            &t("2026-05-28T12:00:00Z"),
         )
         .unwrap()
         .unwrap();
@@ -1261,6 +1284,26 @@ mod tests {
         assert_eq!(r.expected_interval_s, 60);
         assert!((r.grace_multiplier - 2.0).abs() < 1e-9);
         assert!(r.coverage_rule_hash.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn lookup_active_rule_returns_none_when_coverage_start_is_future() {
+        let mut db = fresh_db();
+        // sample_rule_decl() declares coverage_start = 2026-05-28T00:00:00Z.
+        reconcile_coverage_rules(&mut db, &[sample_rule_decl()], &t("2026-05-27T11:00:00Z"))
+            .unwrap();
+        let r = lookup_active_rule(
+            &db.conn,
+            COMPONENT_ID_NQ_LOCAL,
+            SUBJECT_ID_OBSERVATION_LOOP,
+            KIND_OBSERVATION_LOOP_ALIVE,
+            &t("2026-05-27T12:00:00Z"),
+        )
+        .unwrap();
+        assert!(
+            r.is_none(),
+            "future-dated coverage_start must not surface as the active rule"
+        );
     }
 
     // -----------------------------------------------------------------
