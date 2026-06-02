@@ -149,10 +149,8 @@ async fn pull_one(source: SourceConfig) -> PullResult {
         .build()
         .expect("http client");
 
-    let url = format!("{}/state", source.base_url.trim_end_matches('/'));
-
-    let response = match client.get(&url).send().await {
-        Ok(resp) => resp,
+    let state: PublisherState = match nq_witness_api::fetch_state(&client, &source.base_url).await {
+        Ok(s) => s,
         Err(e) => {
             let status = if e.is_timeout() {
                 SourceStatus::Timeout
@@ -167,21 +165,6 @@ async fn pull_one(source: SourceConfig) -> PullResult {
                 collected_at: None,
                 duration_ms: Some(start.elapsed().as_millis() as u64),
                 error_message: Some(e.to_string()),
-            });
-        }
-    };
-
-    let state: PublisherState = match response.json().await {
-        Ok(s) => s,
-        Err(e) => {
-            warn!(source = %source.name, err = %e, "parse failed");
-            return PullResult::Failed(SourceRun {
-                source: source.name,
-                status: SourceStatus::Error,
-                received_at,
-                collected_at: None,
-                duration_ms: Some(start.elapsed().as_millis() as u64),
-                error_message: Some(format!("json parse: {e}")),
             });
         }
     };

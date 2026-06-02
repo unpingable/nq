@@ -2,6 +2,8 @@
 members = [
     "crates/nq-core",
     "crates/nq-db",
+    "crates/nq-witness-api",
+    "crates/nq-witness",
     "crates/nq-monitor",
 ]
 resolver = "2"

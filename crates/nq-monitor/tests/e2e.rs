@@ -2495,7 +2495,7 @@ async fn sqlite_wal_state_http_whitespace_host_returns_400() {
 
 #[test]
 fn sqlite_wal_probe_pipeline_end_to_end_smoke() {
-    use nq_monitor::collect::sqlite_wal_probe;
+    use nq_witness::collect::sqlite_wal_probe;
     use nq_core::batch::WalObservationSet;
     use nq_core::config::SqliteWalTargetConfig;
     use nq_core::PublisherConfig;

@@ -1,6 +1,5 @@
 mod cli;
 mod cmd;
-mod collect;
 mod http;
 mod probe;
 mod pull;
