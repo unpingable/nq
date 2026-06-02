@@ -34,6 +34,8 @@ The finding card in the UI walks you through this ladder. You can stop at the me
 
 ## Install
 
+> **Pre-1.0.** NQ is at `v0.x` — surfaces evolve as the instrument learns against real evidence. See [`docs/architecture/COMPATIBILITY.md`](docs/architecture/COMPATIBILITY.md) for what you can and cannot pin behavior against.
+
 Download from [GitHub Releases](https://github.com/unpingable/nq/releases):
 
 ```bash
