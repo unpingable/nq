@@ -74,7 +74,7 @@ mkdir -p /var/lib/nq
 ## 4. Start both processes
 
 ```bash
-nq-monitor publish -c publisher.json &
+nq-witness --config publisher.json &
 nq-monitor serve -c aggregator.json &
 ```
 
@@ -83,12 +83,12 @@ Or use systemd (recommended for production):
 ```ini
 # /etc/systemd/system/nq-publish.service
 [Unit]
-Description=nq-monitor publisher
+Description=nq-witness publisher
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/nq-monitor publish -c /etc/nq/publisher.json
+ExecStart=/usr/local/bin/nq-witness --config /etc/nq/publisher.json
 Restart=on-failure
 RestartSec=5
 

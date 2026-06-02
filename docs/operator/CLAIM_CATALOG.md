@@ -12,7 +12,7 @@ Two tracks are wire-shipping today:
 
 | Track | Where the testimony comes from | Where you call it |
 |---|---|---|
-| **A — operational** | Findings inside a running aggregator's DB (collected from `nq-monitor publish` hosts and probes) | HTTP `/api/preflight/*` on the running monitor; or `nq-monitor preflight disk-state` against the DB |
+| **A — operational** | Findings inside a running aggregator's DB (collected from `nq-witness` hosts and probes) | HTTP `/api/preflight/*` on the running monitor; or `nq-monitor preflight disk-state` against the DB |
 | **B — CI / agentic** | Caller-supplied witness packets passed on the command line | `nq-monitor verify --claim <name> --witness …` |
 
 Every claim ships with a `cannot_testify` list — conclusions no combination of witness output licenses, regardless of how many findings light up or how many witnesses pass. The list is part of the wire contract. It is not advisory.

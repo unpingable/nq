@@ -201,9 +201,29 @@ When a forcing case arrives, the unpark work composes with the FINDING_STATE_MOD
 
 ---
 
-## Track 4 — `nq-witness` as a separable deployable (PROMOTED 2026-06-01)
+## Track 4 — `nq-witness` as a separable deployable (SHIPPED 2026-06-02)
 
-**Status change 2026-06-01:** **promoted from "forcing-case territory; do not pre-build" to a real track under the v0-wire-equals-current-wire constraint.**
+**Status change 2026-06-02:** **SHIPPED.** Five commits:
+
+- `refactor: rename crate \`nq\` → \`nq-monitor\`; binary follows` (Slice B.1)
+- `refactor: extract nq-witness binary; new nq-witness-api contract crate` (Slice B.2, part 1: the new crates)
+- `refactor: rewire nq-monitor for nq-witness extraction (B.2 part 2)` (Slice B.2, part 2: remove from nq-monitor + wire pull through nq-witness-api)
+- `test: nq-witness separability receipts (Slice B.3)` (3 separability tests inside nq-witness)
+- (this commit) `docs: Track 4 acceptance — W/E boundary is now structural`
+
+The v0-wire constraint held throughout: zero edits to `crates/nq-core/src/wire.rs` or `crates/nq-core/src/batch.rs` across the slice; the 671-line consumer-side golden test suite in `crates/nq-core/tests/wire_payloads.rs` is untouched and green.
+
+The W/E §2 co-residence re-examination trigger fired and was answered: co-residence inside `nq-monitor serve` is no longer the model — the witness now runs in its own process by default. No peer-NQ Tier 2 yet, so the further-split question (multiple witness daemons per host? cross-host witness federation?) stays gated on a separate forcing case.
+
+**Architectural correction mid-implementation (operator, 2026-06-02):** the original sketch had `nq-monitor` depending on `nq-witness` as a library so `nq publish` could remain available as a subcommand. Caught: that would have made the W/E boundary conventional, not structural ("we promise not to call the wrong function"). Corrected by:
+
+1. Adding a third crate, `nq-witness-api`, owning the cross-process contract (HTTP client + endpoint constant). Both sides depend on it.
+2. `nq-monitor` depends on `nq-witness-api` only — `cargo tree -p nq-monitor --edges normal | grep -c "nq-witness[^-]"` returns 0.
+3. Removing `nq publish` (and `nq collect`) from `nq-monitor` entirely. Operators migrate by replacing `nq publish -c …` in systemd ExecStart with `nq-witness --config …`. Same wire output, same default bind, different process owner.
+
+Released-artifact name: `nq-monitor` (binary). The bare `nq` name does not survive into the release pipeline; the `nq` Unix job-queue tool keeps it in the wider ecosystem.
+
+**Original Status change 2026-06-01:** promoted from "forcing-case territory; do not pre-build" to a real track under the v0-wire-equals-current-wire constraint.
 
 **Promotion reasoning (web-Claude + ChatGPT cross-review, 2026-06-01):** the original "parked until forcing case" posture was structurally self-suppressing in the OSS-adoption regime — the complaint that gates the build cannot arrive until the build exists (no thin witness → nobody adopts witness-on-untrusted-host → nobody files the heavy-binary complaint). Forcing-case discipline is a **proxy** for two concerns: (a) irreversibility (don't pour concrete around a wire format you'll regret) and (b) speculation (don't build cathedral nobody asked for). Both concerns are directly addressable here:
 

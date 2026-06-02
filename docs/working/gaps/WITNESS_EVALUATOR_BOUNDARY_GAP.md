@@ -1,6 +1,8 @@
 # Gap: Witness / Evaluator Boundary — Co-Resident Pulse Loop with Articulated Discipline
 
-**Status:** `candidate` / recognition record / **does not authorize `nq-witness` as a daemon**. Articulates the witness/evaluator boundary pressure surfaced by the component-testimony heartbeat slice audit (2026-05-29). The slice's pulse loop is co-resident W+E; this gap names why that co-residence is allowed and what discipline holds it in place.
+**Status:** `partially resolved` 2026-06-02. §2 co-residence trigger fired and was answered: Track 4 of `OSS_READINESS_ROADMAP.md` shipped — the witness now runs in its own crate (`crates/nq-witness/`) and its own binary (`nq-witness`), separated from `nq-monitor` at the cargo dependency boundary. `cargo tree -p nq-monitor --edges normal` no longer shows the witness library in its release graph. The cross-process contract lives in `crates/nq-witness-api/`. The in-process co-residence inside the `nq-monitor serve` pulse loop is still permitted for the component-testimony heartbeat (the original 2026-05-29 case this gap was filed against) — that's bounded defense-in-depth, not the primary path. The architectural commitment (structural separation between witness and evaluator) is now backed by Rust's link boundary, not just discipline.
+
+**Original status (pre-Track-4):** `candidate` / recognition record / **does not authorize `nq-witness` as a daemon**. Articulates the witness/evaluator boundary pressure surfaced by the component-testimony heartbeat slice audit (2026-05-29). The slice's pulse loop is co-resident W+E; this gap names why that co-residence is allowed and what discipline holds it in place.
 
 **Filed:** 2026-05-29
 

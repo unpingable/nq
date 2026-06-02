@@ -39,9 +39,15 @@ The finding card in the UI walks you through this ladder. You can stop at the me
 Download from [GitHub Releases](https://github.com/unpingable/nq/releases):
 
 ```bash
+# Aggregator + dashboard
 curl -sSL https://github.com/unpingable/nq/releases/latest/download/nq-monitor-linux-amd64 -o nq-monitor
 chmod +x nq-monitor
 sudo mv nq-monitor /usr/local/bin/
+
+# Witness (run on each host you want to observe)
+curl -sSL https://github.com/unpingable/nq/releases/latest/download/nq-witness-linux-amd64 -o nq-witness
+chmod +x nq-witness
+sudo mv nq-witness /usr/local/bin/
 ```
 
 Or build from source (requires **Rust ≥ 1.88** — pinned in `rust-toolchain.toml`):
@@ -56,7 +62,7 @@ cargo build --release
 ## Quick start
 
 ```bash
-# Publisher (runs on each monitored host)
+# Witness (runs on each monitored host)
 cat > publisher.json << 'EOF'
 {
   "prometheus_targets": [
@@ -67,7 +73,7 @@ cat > publisher.json << 'EOF'
   ]
 }
 EOF
-nq-monitor publish -c publisher.json
+nq-witness --config publisher.json
 
 # Aggregator + web UI (runs centrally)
 cat > aggregator.json << 'EOF'
@@ -167,22 +173,22 @@ FROM v_hosts h JOIN v_services s ON h.host = s.host;
 ### Architecture
 
 ```
-Monitored hosts                  Central host
-┌──────────────────┐            ┌─────────────────────────┐
-│ nq-monitor       │──HTTP───→  │ nq-monitor serve        │
-│   publish        │            │  pull → publish → detect│
-│  host            │            │  lifecycle → notify     │
-│  services        │            │  web UI + SQL API       │
-│  sqlite          │            └──────────┬──────────────┘
-│  prometheus      │                       │
-│  logs            │                  ┌────▼────┐
-└──────────────────┘                  │ SQLite  │
-                                      └─────────┘
+Monitored hosts              Central host
+┌──────────────┐            ┌─────────────────────────┐
+│ nq-witness   │──HTTP───→  │ nq-monitor serve        │
+│  host        │            │  pull → publish → detect│
+│  services    │            │  lifecycle → notify     │
+│  sqlite      │            │  web UI + SQL API       │
+│  prometheus  │            └──────────┬──────────────┘
+│  logs        │                       │
+└──────────────┘                  ┌────▼────┐
+                                  │ SQLite  │
+                                  └─────────┘
 ```
 
-Schema version 53. 1274 workspace tests.
+Schema version 53. 1203 workspace tests.
 
-**The witness role today.** `nq-monitor publish` *is* the witness. It observes hosts, services, SQLite, Prometheus exporters, and log sources, then emits `nq.witness_packet.v1` envelopes for the aggregator to ingest. A separable `nq-witness` binary in the same role is roadmapped (Track 4 of [`docs/working/decisions/OSS_READINESS_ROADMAP.md`](docs/working/decisions/OSS_READINESS_ROADMAP.md)) under a `v0-wire-equals-current-wire` constraint — same envelope, same W/E boundary discipline, separated from the aggregator/dashboard. Until that ships, the witness pattern is reachable today via `nq-monitor publish`. The role-vs-binary distinction is structural: the role exists; today it's packaged inside the monitor binary.
+**Witness / evaluator separation.** `nq-witness` (the witness binary) observes hosts, services, SQLite, Prometheus exporters, and log sources, then emits `nq.witness_packet.v1` envelopes over HTTP `GET /state`. `nq-monitor` (the aggregator + dashboard binary) pulls those envelopes, evaluates them against detector rules, stores them in SQLite, and renders the result. The boundary is structural: `nq-monitor` does not link against `nq-witness` — it reaches the witness only through the wire contract in `nq-witness-api`. A witness cannot evaluate or store; an aggregator cannot observe.
 
 ## The deeper claim
 
