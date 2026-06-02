@@ -5,7 +5,7 @@ use tracing::info;
 /// with the last entry of `MIGRATIONS` below. Exposed for consumer
 /// surfaces (e.g. the finding export path) so they can preflight
 /// against a DB whose schema is older than the code was built for.
-pub const CURRENT_SCHEMA_VERSION: u32 = 53;
+pub const CURRENT_SCHEMA_VERSION: u32 = 54;
 
 /// Read `PRAGMA user_version` from an arbitrary connection. Returns 0
 /// for a freshly-opened SQLite file that's never been migrated.
@@ -69,6 +69,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (51, include_str!("../migrations/051_coverage_rules.sql")),
     (52, include_str!("../migrations/052_observation_loop_alive_observations.sql")),
     (53, include_str!("../migrations/053_coverage_testimony_absence_details.sql")),
+    (54, include_str!("../migrations/054_nq_binary_observations.sql")),
 ];
 
 pub fn migrate(db: &mut WriteDb) -> anyhow::Result<()> {
@@ -117,7 +118,7 @@ mod tests {
             .conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 53);
+        assert_eq!(version, 54);
 
         // Verify tables exist
         let count: i64 = db
@@ -1410,5 +1411,232 @@ mod tests {
             err.to_string().to_ascii_lowercase().contains("check"),
             "expected CHECK violation on empty last_success_at, got: {err}"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Migration 054 — nq_binary_observations CHECK constraints.
+    //
+    // The migration is schema-only; the projector/evaluator and the
+    // publisher-side collector land in follow-up slices. These tests
+    // pin the load-bearing invariants from NQ_BINARY_MTIME_STATE.md §4
+    // at the substrate boundary: observed rows are fully populated;
+    // non-observed rows are NULL on stat fields with error_detail set;
+    // content_hash carries the "sha256:<64-hex>" shape.
+    // -----------------------------------------------------------------
+
+    fn insert_clean_nq_binary_row(conn: &rusqlite::Connection) -> rusqlite::Result<i64> {
+        conn.execute(
+            "INSERT INTO nq_binary_observations (
+                generation_id, host, binary_path, observation_status,
+                size_bytes, mtime, content_hash, observed_at, error_detail
+             ) VALUES (
+                1, 'nq.neutral.zone', '/opt/notquery/nq',
+                'observed',
+                67108864, '2026-06-01T05:04:30Z',
+                'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                '2026-06-02T00:00:00Z', NULL
+             )",
+            [],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    #[test]
+    fn nq_binary_observations_accepts_well_formed_observed_row() {
+        let db = fresh_db();
+        let id = insert_clean_nq_binary_row(&db.conn).expect("clean row must insert");
+        assert!(id > 0);
+    }
+
+    #[test]
+    fn nq_binary_observations_accepts_well_formed_error_row() {
+        // Non-observed rows have all stat-derived fields NULL and
+        // error_detail populated. The permission_denied case is the
+        // canonical instance from the preflight §4.
+        let db = fresh_db();
+        db.conn
+            .execute(
+                "INSERT INTO nq_binary_observations (
+                    generation_id, host, binary_path, observation_status,
+                    size_bytes, mtime, content_hash, observed_at, error_detail
+                 ) VALUES (
+                    1, 'nq.neutral.zone', '/opt/notquery/nq',
+                    'permission_denied',
+                    NULL, NULL, NULL,
+                    '2026-06-02T00:00:00Z',
+                    'permission denied reading /opt/notquery/nq'
+                 )",
+                [],
+            )
+            .expect("well-formed error row must insert");
+    }
+
+    #[test]
+    fn nq_binary_observations_rejects_observed_missing_stat_fields() {
+        // observation_status='observed' must imply all stat-derived
+        // fields populated. A NULL size_bytes on an observed row
+        // claims observation without the substance to back it.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_binary_observations (
+                    generation_id, host, binary_path, observation_status,
+                    size_bytes, mtime, content_hash, observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/p', 'observed',
+                    NULL, '2026-06-01T05:04:30Z',
+                    'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                    '2026-06-02T00:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK constraint violation, got: {err}"
+        );
+    }
+
+    #[test]
+    fn nq_binary_observations_rejects_observed_with_error_detail() {
+        // observation_status='observed' must imply error_detail IS NULL.
+        // Setting error_detail on an observed row mixes the
+        // discriminator's two halves.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_binary_observations (
+                    generation_id, host, binary_path, observation_status,
+                    size_bytes, mtime, content_hash, observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/p', 'observed',
+                    1024, '2026-06-01T05:04:30Z',
+                    'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                    '2026-06-02T00:00:00Z',
+                    'should not be set on observed'
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn nq_binary_observations_rejects_non_observed_with_stat_fields() {
+        // observation_status != 'observed' must imply all stat-derived
+        // fields NULL. Faking a size on a permission-denied row would
+        // launder a non-observation into testimony.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_binary_observations (
+                    generation_id, host, binary_path, observation_status,
+                    size_bytes, mtime, content_hash, observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/p', 'permission_denied',
+                    1024, NULL, NULL,
+                    '2026-06-02T00:00:00Z',
+                    'permission denied'
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn nq_binary_observations_rejects_non_observed_missing_error_detail() {
+        // observation_status != 'observed' must imply error_detail
+        // populated. A non-observed row with no detail loses the
+        // human-readable signal the projector relies on.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_binary_observations (
+                    generation_id, host, binary_path, observation_status,
+                    size_bytes, mtime, content_hash, observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/p', 'target_missing',
+                    NULL, NULL, NULL,
+                    '2026-06-02T00:00:00Z',
+                    NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn nq_binary_observations_rejects_unknown_status_enum() {
+        // Closed enum on observation_status — unrecognized values are
+        // refused at the substrate boundary, not silently accepted.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_binary_observations (
+                    generation_id, host, binary_path, observation_status,
+                    size_bytes, mtime, content_hash, observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/p', 'mystery_failure',
+                    NULL, NULL, NULL,
+                    '2026-06-02T00:00:00Z',
+                    'unknown'
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn nq_binary_observations_rejects_malformed_content_hash() {
+        // content_hash structural CHECK: "sha256:" prefix + 64 hex.
+        // A 32-byte hash or a missing prefix is rejected at insert.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_binary_observations (
+                    generation_id, host, binary_path, observation_status,
+                    size_bytes, mtime, content_hash, observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/p', 'observed',
+                    1024, '2026-06-01T05:04:30Z',
+                    'sha256:tooshort',
+                    '2026-06-02T00:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn nq_binary_observations_rejects_negative_size() {
+        // size_bytes must be NULL or non-negative. Faking a negative
+        // size on an observed row is impossible-by-construction.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_binary_observations (
+                    generation_id, host, binary_path, observation_status,
+                    size_bytes, mtime, content_hash, observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', '/p', 'observed',
+                    -1, '2026-06-01T05:04:30Z',
+                    'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                    '2026-06-02T00:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
     }
 }
