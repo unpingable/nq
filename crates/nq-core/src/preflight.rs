@@ -46,6 +46,18 @@ pub const PREFLIGHT_SQLITE_WAL_STATE_SCHEMA: &str = "nq.preflight.sqlite_wal_sta
 pub const PREFLIGHT_COMPONENT_TESTIMONY_OBSERVATION_LOOP_ALIVE_SCHEMA: &str =
     "nq.preflight.component_testimony_observation_loop_alive.v1";
 
+/// Wire schema identifier for `nq_binary_mtime_state` preflight results.
+/// One envelope per `(host, binary_path)` target. Tier 1 NQ-on-NQ kind;
+/// the publisher emits one observation per cycle about its own binary's
+/// mtime + size + sha256 content-hash, and the evaluator turns the
+/// latest row into a receipt. The substrate-state observation does not
+/// license cross-host comparison, build-time provenance, or behavioral
+/// claims about the binary — those refusals are constitutional, see
+/// `nq_binary_mtime_state_cannot_testify`. Cross-host comparison is
+/// Tier 2 and out of scope for this kind.
+pub const PREFLIGHT_NQ_BINARY_MTIME_STATE_SCHEMA: &str =
+    "nq.preflight.nq_binary_mtime_state.v1";
+
 /// Contract version for the preflight wire shape. Bumps on breaking change.
 pub const PREFLIGHT_CONTRACT_VERSION: u32 = 1;
 
@@ -80,6 +92,14 @@ pub enum ClaimKind {
     /// external-component / app-level observers that might otherwise
     /// collide on bare names (operator decision 2026-05-28, scope question A).
     ComponentTestimonyObservationLoopAlive,
+    /// Tier 1 NQ-on-NQ: substrate-state observation of NQ's own binary
+    /// file. The publisher emits one row per cycle with mtime, size, and
+    /// sha256 content-hash of `/proc/self/exe` (canonicalized at startup;
+    /// operator may override via `nq_binary_path`). Target identity is
+    /// `(host, binary_path)`. Per-host single-target jurisdiction;
+    /// cross-host comparison is Tier 2 and refused at the kind level. See
+    /// `docs/working/decisions/preflights/NQ_BINARY_MTIME_STATE.md`.
+    NqBinaryMtimeState,
 }
 
 impl ClaimKind {
@@ -95,6 +115,7 @@ impl ClaimKind {
             Self::ComponentTestimonyObservationLoopAlive => {
                 "component_testimony_observation_loop_alive"
             }
+            Self::NqBinaryMtimeState => "nq_binary_mtime_state",
         }
     }
 }
@@ -417,6 +438,10 @@ impl PreflightResult {
                 PREFLIGHT_COMPONENT_TESTIMONY_OBSERVATION_LOOP_ALIVE_SCHEMA.to_string(),
                 component_testimony_observation_loop_alive_cannot_testify(),
             ),
+            ClaimKind::NqBinaryMtimeState => (
+                PREFLIGHT_NQ_BINARY_MTIME_STATE_SCHEMA.to_string(),
+                nq_binary_mtime_state_cannot_testify(),
+            ),
         };
         Self {
             schema,
@@ -614,6 +639,28 @@ pub fn component_testimony_observation_loop_alive_cannot_testify() -> Vec<String
     ]
 }
 
+/// Constitutional refusal surface for `nq_binary_mtime_state`. Each entry
+/// corresponds to a conclusion the substrate observation does not license,
+/// regardless of how often the file is observed or how confidently the
+/// content_hash is computed. Mirrors the `cannot_testify` enumeration in
+/// `docs/working/decisions/preflights/NQ_BINARY_MTIME_STATE.md` §6.
+///
+/// The disciplinary line: the receipt testifies that *a file at path P
+/// on host H had stat S and content_hash C at time T, as observed by an
+/// external probe*. It does not testify to build-time provenance,
+/// runtime behavior, cross-host parity, or operator intent.
+pub fn nq_binary_mtime_state_cannot_testify() -> Vec<String> {
+    vec![
+        "Whether the binary contains the source code the operator intended (build-time provenance; substrate observation cannot verify)".to_string(),
+        "Whether the binary will execute correctly (behavior, not substrate)".to_string(),
+        "Whether the binary's content_hash matches a peer host's binary (single-target jurisdiction; cross-host comparison is Tier 2)".to_string(),
+        "Whether the running process is using this binary (process inspection, not on-disk observation; /proc/<pid>/exe would be the substrate for that)".to_string(),
+        "Whether the binary was tampered with (signature verification is not part of this kind; content_hash is identity, not authenticity)".to_string(),
+        "Whether to redeploy, roll back, or page (consequence claim)".to_string(),
+        "Whether NQ as a whole is operationally sound (the binary is one substrate among many; binary identity alone does not testify to NQ standing; see the sixth-keeper rule in NQ_ON_NQ_OPERATIONAL_CLAIMS_GAP)".to_string(),
+    ]
+}
+
 /// Constitutional refusal surface for `disk_state`. Each entry corresponds to
 /// a conclusion no combination of ZFS / SMART / disk-pressure witness output
 /// licenses, regardless of how many findings light up. Mirrors the
@@ -686,6 +733,10 @@ mod tests {
             k.as_str(),
             "component_testimony_observation_loop_alive"
         );
+        let k = ClaimKind::NqBinaryMtimeState;
+        let s = serde_json::to_string(&k).unwrap();
+        assert_eq!(s, "\"nq_binary_mtime_state\"");
+        assert_eq!(k.as_str(), "nq_binary_mtime_state");
     }
 
     #[test]
@@ -701,6 +752,7 @@ mod tests {
             ClaimKind::DnsState,
             ClaimKind::SqliteWalState,
             ClaimKind::ComponentTestimonyObservationLoopAlive,
+            ClaimKind::NqBinaryMtimeState,
         ] {
             let s = serde_json::to_string(&k).unwrap();
             let back: ClaimKind = serde_json::from_str(&s).unwrap();
@@ -737,6 +789,68 @@ mod tests {
             .any(|s| s.contains("composed verdicts")));
         // Verdict starts at InsufficientCoverage like other kinds.
         assert!(matches!(r.verdict, Verdict::InsufficientCoverage));
+    }
+
+    #[test]
+    fn nq_binary_mtime_state_skeleton_has_constitutional_refusals() {
+        let target = PreflightTarget {
+            host: "nq.neutral.zone".into(),
+            scope: "nq_binary".into(),
+            id: Some("/opt/notquery/nq".into()),
+        };
+        let r = PreflightResult::skeleton(
+            ClaimKind::NqBinaryMtimeState,
+            target,
+            "2026-06-02T00:00:00Z".into(),
+        );
+        assert_eq!(r.schema, PREFLIGHT_NQ_BINARY_MTIME_STATE_SCHEMA);
+        assert_eq!(r.contract_version, PREFLIGHT_CONTRACT_VERSION);
+        // The pinned refusals must be present (sample from the §6 list).
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("source code the operator intended")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("peer host's binary")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("running process is using")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("tampered")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("redeploy")));
+        // Verdict starts at InsufficientCoverage like other kinds.
+        assert!(matches!(r.verdict, Verdict::InsufficientCoverage));
+    }
+
+    #[test]
+    fn nq_binary_mtime_state_cannot_testify_uses_no_alert_taxonomy() {
+        // Same wire-discipline check as the sibling kinds: refusal
+        // entries describe what NQ does NOT testify to; they must be
+        // phrased as denials, not as positive verdict-shaped claims.
+        let refusals = nq_binary_mtime_state_cannot_testify();
+        for entry in &refusals {
+            let lower = entry.to_lowercase();
+            assert!(
+                entry.starts_with("Whether ") || entry.starts_with("Why "),
+                "refusal entry must be phrased as a 'Whether/Why ...' \
+                 (denial-shaped), got: {entry}"
+            );
+            for forbidden_lead in ["alert", "page", "escalate", "warn", "critical"] {
+                assert!(
+                    !lower.starts_with(forbidden_lead),
+                    "refusal entry must not lead with action-vocabulary \
+                     {forbidden_lead:?}, got: {entry}"
+                );
+            }
+        }
     }
 
     #[test]

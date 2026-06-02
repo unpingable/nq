@@ -35,13 +35,10 @@ const PREVIOUS_SCHEMA_VERSION: u32 = CURRENT_SCHEMA_VERSION - 1;
 /// existing tables becomes the latest, this constant becomes wrong and the
 /// test stops representing the upgrade path it claims to.
 ///
-/// Migration 053 adds `coverage_testimony_absence_details` (the
-/// per-kind detail table for coverage_testimony_absent findings,
-/// per the NQ-on-NQ component-testimony foundation preflight §3 —
-/// operator-revised 2026-05-28 to use a detail table rather than
-/// sparse nullable columns on the generic finding substrate).
-const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] =
-    &["coverage_testimony_absence_details"];
+/// Migration 054 adds `nq_binary_observations` — the Tier 1 NQ-on-NQ
+/// substrate for the publisher's own-binary mtime/size/content-hash
+/// observations (per docs/working/decisions/preflights/NQ_BINARY_MTIME_STATE.md).
+const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["nq_binary_observations"];
 
 #[test]
 fn upgrade_from_previous_version_preserves_data() {
