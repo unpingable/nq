@@ -205,6 +205,19 @@ When a forcing case arrives, the unpark work composes with the FINDING_STATE_MOD
 
 **Status change 2026-06-02:** **SHIPPED.** Five commits:
 
+> **The W/E boundary is now Rust's link boundary, not operator discipline.**
+
+Receipt for that sentence — a structural assertion, not a test:
+
+```
+$ cargo tree -p nq-monitor --edges normal | grep -c "nq-witness[^-]"
+0
+```
+
+The monitor binary cannot reach the witness collector code through normal linkage. Everything else in this section is ceremony around that one number.
+
+
+
 - `refactor: rename crate \`nq\` → \`nq-monitor\`; binary follows` (Slice B.1)
 - `refactor: extract nq-witness binary; new nq-witness-api contract crate` (Slice B.2, part 1: the new crates)
 - `refactor: rewire nq-monitor for nq-witness extraction (B.2 part 2)` (Slice B.2, part 2: remove from nq-monitor + wire pull through nq-witness-api)
