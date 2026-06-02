@@ -891,10 +891,32 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "nq-core",
+ "nq-db",
+ "nq-witness",
+ "nq-witness-api",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "nq-witness"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
  "hostname",
  "libc",
  "nq-core",
- "nq-db",
+ "nq-witness-api",
  "reqwest",
  "rusqlite",
  "serde",
@@ -905,6 +927,16 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "nq-witness-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "nq-core",
+ "reqwest",
+ "serde",
 ]
 
 [[package]]
