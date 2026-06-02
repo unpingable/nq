@@ -1024,7 +1024,15 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
         .filter(|w| w.finding_class.as_deref().unwrap_or("signal") == "meta")
         .collect();
 
-    // Build terse status summary (signal only)
+    // Build terse status summary (signal only). Per
+    // docs/working/decisions/preflights/DASHBOARD_HEADER_SEVERITY_URGENCY_SPLIT.md
+    // and docs/architecture/FINDING_STATE_MODEL.md, severity (condition
+    // magnitude) and action_bias (urgency-of-response) are distinct
+    // axes that MUST render with axis-flavored labels. The earlier
+    // shape `parts.push("{N} critical")` rendered severity counts as
+    // bare summary labels operators read as urgency. The header is now
+    // multi-line: substrate/liveness on one line, Severity on its own,
+    // Response on its own.
     let summary = if vm.generation_id.is_some() {
         let hosts_up = vm.hosts.iter().filter(|h| !h.stale).count();
         let hosts_stale = vm.hosts.iter().filter(|h| h.stale).count();
@@ -1033,32 +1041,65 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
         let criticals = signal_warnings.iter().filter(|w| w.severity == "critical").count();
         let warnings = signal_warnings.iter().filter(|w| w.severity == "warning").count();
 
-        let mut parts = Vec::new();
+        // Count by action_bias in rank order (most urgent first). The
+        // five canonical values are the ones action_bias_rank in
+        // nq-db/src/views.rs recognizes; anything else is an unknown
+        // produced upstream and is not summarized here.
+        let action_bias_order: [&str; 5] = [
+            "intervene_now",
+            "intervene_soon",
+            "investigate_now",
+            "investigate_business_hours",
+            "watch",
+        ];
+        let response_counts: Vec<(usize, &str)> = action_bias_order
+            .iter()
+            .filter_map(|&ab| {
+                let n = signal_warnings
+                    .iter()
+                    .filter(|w| w.action_bias.as_deref() == Some(ab))
+                    .count();
+                if n > 0 { Some((n, ab)) } else { None }
+            })
+            .collect();
 
+        let mut substrate_parts: Vec<String> = Vec::new();
         if hosts_stale > 0 {
-            parts.push(format!("{} host(s) stale", hosts_stale));
+            substrate_parts.push(format!("{} host(s) stale", hosts_stale));
         } else {
-            parts.push(format!("{} host(s) up", hosts_up));
+            substrate_parts.push(format!("{} host(s) up", hosts_up));
         }
-
         if svcs_bad > 0 {
-            parts.push(format!("{} svc(s) down", svcs_bad));
+            substrate_parts.push(format!("{} svc(s) down", svcs_bad));
         } else {
-            parts.push(format!("{} svc(s) up", svcs_up));
+            substrate_parts.push(format!("{} svc(s) up", svcs_up));
         }
 
-        if criticals > 0 {
-            parts.push(format!("{} critical", criticals));
-        }
-        if warnings > 0 {
-            parts.push(format!("{} warning", warnings));
+        let mut lines: Vec<String> = Vec::new();
+        lines.push(substrate_parts.join(". ") + ".");
+
+        let mut sev_parts: Vec<String> = Vec::new();
+        if criticals > 0 { sev_parts.push(format!("{} critical", criticals)); }
+        if warnings > 0 { sev_parts.push(format!("{} warning", warnings)); }
+        if !sev_parts.is_empty() {
+            lines.push(format!("Severity: {}", sev_parts.join(", ")));
         }
 
-        if criticals == 0 && warnings == 0 && svcs_bad == 0 && hosts_stale == 0 {
-            parts.push("no active findings".to_string());
+        if !response_counts.is_empty() {
+            let response_parts: Vec<String> = response_counts
+                .iter()
+                .map(|(n, name)| format!("{} {}", n, name.replace('_', " ")))
+                .collect();
+            lines.push(format!("Response: {}", response_parts.join(", ")));
         }
 
-        parts.join(". ") + "."
+        if criticals == 0 && warnings == 0 && response_counts.is_empty()
+            && svcs_bad == 0 && hosts_stale == 0
+        {
+            lines.push("No open findings.".to_string());
+        }
+
+        lines.join("<br>")
     } else {
         String::new()
     };
@@ -1084,12 +1125,25 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
             let (crit, warn, info) = domain_counts.get(code as &str).copied().unwrap_or((0, 0, 0));
             let total = crit + warn + info;
             let active = if total > 0 { " active" } else { "" };
+            // Badge carries a severity count for this domain. The
+            // title attribute names the axis explicitly so the chip
+            // cannot be read as urgency-of-response. Per the keystone
+            // refusal in DASHBOARD_HEADER_SEVERITY_URGENCY_SPLIT.md.
             let badge = if crit > 0 {
-                format!("<span class=\"badge crit\">{}</span>", crit)
+                format!(
+                    "<span class=\"badge crit\" title=\"Severity: {} critical\">{}</span>",
+                    crit, crit
+                )
             } else if warn > 0 {
-                format!("<span class=\"badge warn\">{}</span>", warn)
+                format!(
+                    "<span class=\"badge warn\" title=\"Severity: {} warning\">{}</span>",
+                    warn, warn
+                )
             } else if info > 0 {
-                format!("<span class=\"badge info\">{}</span>", info)
+                format!(
+                    "<span class=\"badge info\" title=\"Severity: {} info\">{}</span>",
+                    info, info
+                )
             } else {
                 String::new()
             };
@@ -1576,7 +1630,7 @@ loadSaved();
             format!("<h2>Host State</h2><table><tr><th>Host</th><th>Dominant</th><th>Posture</th></tr>{}</table>", hs_rows)
         },
         signal_count = signal_warnings.len(),
-        no_findings = if signal_warnings.is_empty() { "<p style=\"color:#484f58;font-size:13px;\">No active findings.</p>" } else { "" },
+        no_findings = if signal_warnings.is_empty() { "<p style=\"color:#484f58;font-size:13px;\">No open findings.</p>" } else { "" },
         meta_section = if meta_warnings.is_empty() { String::new() } else {
             let meta_rows: String = meta_warnings.iter().map(|w| {
                 let (cell, tooltip) = format_age_gens(w.first_seen_at.as_deref(), w.consecutive_gens);
