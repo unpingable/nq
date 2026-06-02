@@ -1,0 +1,10 @@
+[package]
+name = "nq-witness-api"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+nq-core = { path = "../nq-core" }
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
