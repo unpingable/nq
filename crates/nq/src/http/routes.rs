@@ -1163,6 +1163,20 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
         })
         .collect();
 
+    // Build a (host, db_path) → SqliteDbSummaryVm lookup so substrate-
+    // as-evidence findings (e.g., freelist_bloat) can inline their
+    // substrate detail adjacent to the finding rather than relegating
+    // it to the SQLite footer table. Per the DASHBOARD_ORDERING_SLICE_PACKET:
+    // "when a finding's evidence IS substrate detail, surface that
+    // substrate detail adjacent to the finding." V0: freelist_bloat
+    // only; future kinds (wal_bloat, db_size_growth) can compose
+    // through the same lookup.
+    let sqlite_db_lookup: std::collections::HashMap<(&str, &str), &nq_db::views::SqliteDbSummaryVm> =
+        vm.sqlite_dbs
+            .iter()
+            .map(|db| ((db.host.as_str(), db.db_path.as_str()), db))
+            .collect();
+
     let findings_rows: String = signal_warnings
         .iter()
         .map(|w| {
@@ -1234,6 +1248,48 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
                 String::new()
             };
 
+            // Substrate-as-evidence inline detail. When the finding
+            // category names a substrate-detail relationship (V0:
+            // freelist_bloat → SQLite DB stats), the substrate row is
+            // surfaced under the finding rather than only in the
+            // footer SQLite DBs table. Per DASHBOARD_ORDERING_SLICE_PACKET §6.
+            let substrate_detail_row = if w.category == "freelist_bloat" {
+                w.subject
+                    .as_deref()
+                    .and_then(|db_path| sqlite_db_lookup.get(&(w.host.as_str(), db_path)))
+                    .map(|sd| {
+                        let db_size = sd.db_size_mb.map(|v| format!("{v:.1} MB")).unwrap_or_else(|| "—".into());
+                        let wal_size = sd.wal_size_mb.map(|v| format!("{v:.1} MB")).unwrap_or_else(|| "—".into());
+                        let ckpt_lag = sd
+                            .checkpoint_lag_s
+                            .map(|v| format!("{v}s"))
+                            .unwrap_or_else(|| "—".into());
+                        let quick_check = sd
+                            .last_quick_check
+                            .as_deref()
+                            .map(escape_html)
+                            .unwrap_or_else(|| "—".into());
+                        format!(
+                            "<tr class=\"{sev_class}\" data-domain=\"{domain}\" data-evidence=\"substrate\">\
+                                <td class=\"sev-dot\"></td>\
+                                <td colspan=\"4\" style=\"color:#8b949e;font-size:12px;padding-left:0;\">\
+                                    <span class=\"kind-sub\">substrate:</span> \
+                                    db {db_size} · WAL {wal_size} · checkpoint lag {ckpt_lag} · quick_check {quick_check}\
+                                </td>\
+                            </tr>",
+                            sev_class = sev_class,
+                            domain = escape_html(domain),
+                            db_size = db_size,
+                            wal_size = wal_size,
+                            ckpt_lag = ckpt_lag,
+                            quick_check = quick_check,
+                        )
+                    })
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+
             format!(
                 "<tr class=\"{sev_class}\" data-domain=\"{domain}\">
                     <td class=\"sev-dot\"></td>
@@ -1241,7 +1297,7 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
                     <td>{host}</td>
                     <td>{message}</td>
                     <td class=\"gens\"{gens_title_attr}>{gens_cell}</td>
-                </tr>",
+                </tr>{substrate_detail_row}",
                 detail_url = escape_html(&detail_url),
                 label = escape_html(label),
                 kind = escape_html(&w.category),
@@ -1250,6 +1306,7 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
                 message = escape_html(&w.message),
                 gens_cell = escape_html(&gens_cell),
                 gens_title_attr = gens_title_attr,
+                substrate_detail_row = substrate_detail_row,
             )
         })
         .collect();
@@ -1404,15 +1461,15 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 
 <div class="main">
 
-{host_state_section}
-
-<h2>Findings ({signal_count})</h2>
+<h2>Open Findings ({signal_count})</h2>
 <table id="findings-table">
 <tr><th></th><th>Diagnosis</th><th>Host</th><th>Message</th><th class="gens">Age · Gens</th></tr>
 {findings_rows}
 </table>
 {no_findings}
 {meta_section}
+
+{host_state_section}
 
 <h2>Hosts</h2>
 <table>
