@@ -5,7 +5,7 @@ use tracing::info;
 /// with the last entry of `MIGRATIONS` below. Exposed for consumer
 /// surfaces (e.g. the finding export path) so they can preflight
 /// against a DB whose schema is older than the code was built for.
-pub const CURRENT_SCHEMA_VERSION: u32 = 54;
+pub const CURRENT_SCHEMA_VERSION: u32 = 55;
 
 /// Read `PRAGMA user_version` from an arbitrary connection. Returns 0
 /// for a freshly-opened SQLite file that's never been migrated.
@@ -70,6 +70,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (52, include_str!("../migrations/052_observation_loop_alive_observations.sql")),
     (53, include_str!("../migrations/053_coverage_testimony_absence_details.sql")),
     (54, include_str!("../migrations/054_nq_binary_observations.sql")),
+    (55, include_str!("../migrations/055_collector_runs_nq_binary.sql")),
 ];
 
 pub fn migrate(db: &mut WriteDb) -> anyhow::Result<()> {
@@ -118,7 +119,7 @@ mod tests {
             .conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 54);
+        assert_eq!(version, 55);
 
         // Verify tables exist
         let count: i64 = db

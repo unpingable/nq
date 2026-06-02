@@ -198,6 +198,7 @@ fn partial_batch_then_recovery() {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
     };
 
     let r1 = publish_batch(&mut wdb, &batch1).unwrap();
@@ -331,6 +332,7 @@ fn partial_batch_then_recovery() {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
     };
 
     let r2 = publish_batch(&mut wdb, &batch2).unwrap();
@@ -407,6 +409,7 @@ fn service_lifecycle_three_generations() {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
         };
         publish_batch(&mut wdb, &batch).unwrap();
     }
@@ -453,6 +456,7 @@ fn service_lifecycle_three_generations() {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
         };
         publish_batch(&mut wdb, &batch).unwrap();
     }
@@ -500,6 +504,7 @@ fn service_lifecycle_three_generations() {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
         };
         let r3 = publish_batch(&mut wdb, &batch).unwrap();
 

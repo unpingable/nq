@@ -267,6 +267,36 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
         }
     }
 
+    // 6b. Persist nq_binary observations. Per NQ_BINARY_MTIME_STATE.md
+    // §4, the migration's conditional CHECK enforces honest discriminator
+    // values at the substrate boundary: observed rows must carry all
+    // stat-derived fields populated and error_detail NULL; non-observed
+    // rows must carry stat-derived fields NULL and error_detail
+    // populated. The publisher-side collector already produces rows
+    // matching this shape; this insert just lands them with the
+    // cycle's generation_id stamped on.
+    {
+        let mut ins = tx.prepare_cached(
+            "INSERT INTO nq_binary_observations (
+                generation_id, host, binary_path, observation_status,
+                size_bytes, mtime, content_hash, observed_at, error_detail
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        )?;
+        for row in &batch.nq_binary_observation_rows {
+            ins.execute(rusqlite::params![
+                generation_id,
+                &row.host,
+                &row.data.binary_path,
+                &row.data.observation_status,
+                row.data.size_bytes,
+                &row.data.mtime,
+                &row.data.content_hash,
+                &row.data.observed_at,
+                &row.data.error_detail,
+            ])?;
+        }
+    }
+
     // 7. Upsert series dictionary + delete+replace metrics_current
     {
         let mut series_upsert = tx.prepare_cached(
@@ -1932,6 +1962,7 @@ mod tests {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
         };
         let result = publish_batch(&mut db, &batch).unwrap();
         assert_eq!(result.sources_ok, 0);
@@ -1984,6 +2015,7 @@ mod tests {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
         };
         let result = publish_batch(&mut db, &batch).unwrap();
         assert_eq!(result.sources_ok, 1);
@@ -2064,6 +2096,7 @@ mod tests {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
         };
         publish_batch(&mut db, &batch1).unwrap();
 
@@ -2121,6 +2154,7 @@ mod tests {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
         };
         publish_batch(&mut db, &batch2).unwrap();
 
@@ -2184,6 +2218,7 @@ mod tests {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
         };
         let r1 = publish_batch(&mut db, &batch1).unwrap();
 
@@ -2209,6 +2244,7 @@ mod tests {
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
         };
         let r2 = publish_batch(&mut db, &batch2).unwrap();
         assert!(r2.generation_id > r1.generation_id);
@@ -4485,6 +4521,7 @@ mod tests {
             }],
             smart_witness_rows: vec![],
             wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
         }
     }
 
