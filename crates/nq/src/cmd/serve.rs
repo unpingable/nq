@@ -5,7 +5,7 @@ use nq_core::config::NotificationChannel;
 use nq_core::Config;
 use nq_db::component_testimony::{
     classify_absence, record_coverage_testimony_absent_finding, try_emit_observation_loop_alive,
-    AbsenceClassification, EmitContext, EmitInputs, COMPONENT_ID_NQ_LOCAL,
+    EmitContext, EmitInputs, COMPONENT_ID_NQ_LOCAL,
     KIND_OBSERVATION_LOOP_ALIVE, SUBJECT_ID_OBSERVATION_LOOP,
 };
 use nq_db::coverage_rules::{load_coverage_rules, reconcile_coverage_rules, LoadOutcome};
@@ -246,18 +246,18 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                                 }
                             }
 
-                            // Defense-in-depth: ALSO run absence
-                            // classification in the pulse. Within a
-                            // pulse where the emit just succeeded the
-                            // classification returns Active and no
-                            // finding is produced. If a future hiccup
-                            // prevents the emit (e.g., DB transient
-                            // error), this path catches the
-                            // PreviouslyObservedExpired state on the
-                            // next pulse and produces the
-                            // coverage_testimony_absent finding.
-                            // CoverageUnknown / Active never produce
-                            // findings (anti-laundering discipline).
+                            // Bounded: this path only matters when the
+                            // emit above failed inside this same pulse
+                            // (e.g., DB transient error, or coverage
+                            // rule just loaded with no observation row
+                            // yet). In steady state the emit just
+                            // succeeded, classify returns Active, and
+                            // no finding is produced — defense-in-depth
+                            // is silent. CoverageUnknown / Active never
+                            // produce findings (anti-laundering
+                            // discipline). See WITNESS_EVALUATOR_BOUNDARY_GAP
+                            // §2-§3: this is bounded defense-in-depth,
+                            // not the in-process evaluator.
                             let now = time::OffsetDateTime::now_utc();
                             match classify_absence(
                                 db.conn(),
@@ -292,9 +292,6 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                                     warn!(err = %e, "absence classification failed");
                                 }
                             }
-                            // Suppress unused warning when the import
-                            // is conditional below.
-                            let _ = AbsenceClassification::CoverageUnknown;
                         }
                         Err(e) => {
                             error!(err = %e, "publish failed");
