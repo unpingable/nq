@@ -21,6 +21,7 @@ pub mod publish;
 pub mod query;
 pub mod regime;
 pub mod retention;
+pub mod nq_binary_mtime_state;
 pub mod snapshot;
 pub mod sqlite_wal_state;
 pub mod sqlite_wal_state_witness_projection;
