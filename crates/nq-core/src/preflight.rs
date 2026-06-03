@@ -58,6 +58,21 @@ pub const PREFLIGHT_COMPONENT_TESTIMONY_OBSERVATION_LOOP_ALIVE_SCHEMA: &str =
 pub const PREFLIGHT_NQ_BINARY_MTIME_STATE_SCHEMA: &str =
     "nq.preflight.nq_binary_mtime_state.v1";
 
+/// Wire schema identifier for `nq_evaluator_state` preflight results.
+/// One envelope per `(host, claim_kind)` target. Tier 1 NQ-on-NQ kind;
+/// the pulse loop synthesizes a witness-owned fixture per supported
+/// claim_kind, invokes that kind's evaluator, and records the outcome
+/// shape. The evaluator turns the latest row into a receipt. The
+/// substrate-state observation is liveness + shape-validity only; it
+/// does not license correctness claims, route-reachability inferences,
+/// cross-host evaluator parity, or forward-going trust horizons —
+/// those refusals are constitutional, see
+/// `nq_evaluator_state_cannot_testify`. The probe excludes
+/// `nq_evaluator_state` itself (self-witness collapse refusal); see
+/// `docs/working/decisions/preflights/NQ_EVALUATOR_STATE.md` §2.
+pub const PREFLIGHT_NQ_EVALUATOR_STATE_SCHEMA: &str =
+    "nq.preflight.nq_evaluator_state.v1";
+
 /// Contract version for the preflight wire shape. Bumps on breaking change.
 pub const PREFLIGHT_CONTRACT_VERSION: u32 = 1;
 
@@ -100,6 +115,19 @@ pub enum ClaimKind {
     /// cross-host comparison is Tier 2 and refused at the kind level. See
     /// `docs/working/decisions/preflights/NQ_BINARY_MTIME_STATE.md`.
     NqBinaryMtimeState,
+    /// Tier 1 NQ-on-NQ: substrate-state observation of the per-kind
+    /// evaluator code path. The pulse loop synthesizes a witness-owned
+    /// fixture (sourced from `nq-witness-api`) per supported claim_kind,
+    /// invokes that kind's evaluator function against the fixture, and
+    /// records the outcome shape: shape-valid / shape-invalid /
+    /// kind_mismatch / panicked / substrate_unreachable / timed_out.
+    /// Target identity is `(host, claim_kind)`. Per-(host, claim_kind)
+    /// jurisdiction; cross-host evaluator parity is Tier 2 and refused
+    /// at the kind level. The probe excludes `nq_evaluator_state`
+    /// itself — self-witness collapse refusal. Liveness + shape-
+    /// validity only; correctness is untestifiable. See
+    /// `docs/working/decisions/preflights/NQ_EVALUATOR_STATE.md`.
+    NqEvaluatorState,
 }
 
 impl ClaimKind {
@@ -116,6 +144,7 @@ impl ClaimKind {
                 "component_testimony_observation_loop_alive"
             }
             Self::NqBinaryMtimeState => "nq_binary_mtime_state",
+            Self::NqEvaluatorState => "nq_evaluator_state",
         }
     }
 }
@@ -442,6 +471,10 @@ impl PreflightResult {
                 PREFLIGHT_NQ_BINARY_MTIME_STATE_SCHEMA.to_string(),
                 nq_binary_mtime_state_cannot_testify(),
             ),
+            ClaimKind::NqEvaluatorState => (
+                PREFLIGHT_NQ_EVALUATOR_STATE_SCHEMA.to_string(),
+                nq_evaluator_state_cannot_testify(),
+            ),
         };
         Self {
             schema,
@@ -661,6 +694,36 @@ pub fn nq_binary_mtime_state_cannot_testify() -> Vec<String> {
     ]
 }
 
+/// Constitutional refusal surface for `nq_evaluator_state`. Each entry
+/// corresponds to a conclusion the substrate observation does not
+/// license, regardless of how many shape-valid fixture probes
+/// accumulate. Mirrors the `cannot_testify` enumeration in
+/// `docs/working/decisions/preflights/NQ_EVALUATOR_STATE.md` §7.
+///
+/// The disciplinary line: the receipt testifies that *the per-kind
+/// evaluator code path on host H accepted the witness-owned fixture F
+/// and returned a shape-valid PreflightResult for the requested
+/// claim_kind at time T*. It does not testify to correctness, route
+/// reachability, cross-host parity, forward-going trust, or
+/// NQ-as-a-whole soundness. The `AdmissibleWithScope` verdict carries
+/// the narrow `verdict_scope = evaluator_liveness_shape_only` to make
+/// the refusal load-bearing at the consumer surface as well as in
+/// this list.
+pub fn nq_evaluator_state_cannot_testify() -> Vec<String> {
+    vec![
+        "Whether the evaluator's verdicts about real-world state are correct (fixture liveness is not correctness; a broken evaluator can pass its own fixture)".to_string(),
+        "Whether the route serves this kind (route-level testimony is nq_route_state's job; not designed)".to_string(),
+        "Whether all supported kinds work on this host (per-kind testimony only; aggregation would collapse the diagnostic axis the kind exists to preserve)".to_string(),
+        "Whether cross-host evaluator parity holds (Tier 2; not designed)".to_string(),
+        "Whether the evaluator's substrate is healthy in the abstract (this kind tests query-path reachability at observation time, not substrate health as an ongoing property)".to_string(),
+        "Whether the binary running is the right binary (nq_binary_mtime_state's job)".to_string(),
+        "Whether NQ as a whole is operationally sound (sixth-keeper refusal; per-kind evaluator readiness does not testify to NQ standing)".to_string(),
+        "Whether the evaluator should be trusted past this observation (the scope is per-observation; AdmissibleWithScope at time T does not license a forward-going trust horizon)".to_string(),
+        "Whether the evaluator is bug-free (fixture coverage is narrow; absence of fixture failure is not evidence of correctness)".to_string(),
+        "Whether to redeploy, roll back, page, or take any action (consequence claim)".to_string(),
+    ]
+}
+
 /// Constitutional refusal surface for `disk_state`. Each entry corresponds to
 /// a conclusion no combination of ZFS / SMART / disk-pressure witness output
 /// licenses, regardless of how many findings light up. Mirrors the
@@ -737,6 +800,10 @@ mod tests {
         let s = serde_json::to_string(&k).unwrap();
         assert_eq!(s, "\"nq_binary_mtime_state\"");
         assert_eq!(k.as_str(), "nq_binary_mtime_state");
+        let k = ClaimKind::NqEvaluatorState;
+        let s = serde_json::to_string(&k).unwrap();
+        assert_eq!(s, "\"nq_evaluator_state\"");
+        assert_eq!(k.as_str(), "nq_evaluator_state");
     }
 
     #[test]
@@ -753,6 +820,7 @@ mod tests {
             ClaimKind::SqliteWalState,
             ClaimKind::ComponentTestimonyObservationLoopAlive,
             ClaimKind::NqBinaryMtimeState,
+            ClaimKind::NqEvaluatorState,
         ] {
             let s = serde_json::to_string(&k).unwrap();
             let back: ClaimKind = serde_json::from_str(&s).unwrap();
@@ -836,6 +904,68 @@ mod tests {
         // entries describe what NQ does NOT testify to; they must be
         // phrased as denials, not as positive verdict-shaped claims.
         let refusals = nq_binary_mtime_state_cannot_testify();
+        for entry in &refusals {
+            let lower = entry.to_lowercase();
+            assert!(
+                entry.starts_with("Whether ") || entry.starts_with("Why "),
+                "refusal entry must be phrased as a 'Whether/Why ...' \
+                 (denial-shaped), got: {entry}"
+            );
+            for forbidden_lead in ["alert", "page", "escalate", "warn", "critical"] {
+                assert!(
+                    !lower.starts_with(forbidden_lead),
+                    "refusal entry must not lead with action-vocabulary \
+                     {forbidden_lead:?}, got: {entry}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nq_evaluator_state_skeleton_has_constitutional_refusals() {
+        let target = PreflightTarget {
+            host: "nq.neutral.zone".into(),
+            scope: "nq_evaluator".into(),
+            id: Some("disk_state".into()),
+        };
+        let r = PreflightResult::skeleton(
+            ClaimKind::NqEvaluatorState,
+            target,
+            "2026-06-03T00:00:00Z".into(),
+        );
+        assert_eq!(r.schema, PREFLIGHT_NQ_EVALUATOR_STATE_SCHEMA);
+        assert_eq!(r.contract_version, PREFLIGHT_CONTRACT_VERSION);
+        // The pinned refusals must be present (sample from the §7 list).
+        // The forward-going-trust refusal is load-bearing — it carries
+        // the verdict_scope contract at the constitutional surface.
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("fixture liveness is not correctness")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("route-level testimony is nq_route_state")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("per-kind testimony only")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("forward-going trust horizon")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("nq_binary_mtime_state's job")));
+        // Verdict starts at InsufficientCoverage like other kinds.
+        assert!(matches!(r.verdict, Verdict::InsufficientCoverage));
+    }
+
+    #[test]
+    fn nq_evaluator_state_cannot_testify_uses_no_alert_taxonomy() {
+        // Same wire-discipline check as the sibling kinds.
+        let refusals = nq_evaluator_state_cannot_testify();
         for entry in &refusals {
             let lower = entry.to_lowercase();
             assert!(
