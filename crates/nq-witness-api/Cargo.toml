@@ -8,3 +8,8 @@ nq-core = { path = "../nq-core" }
 anyhow = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -12,6 +12,16 @@
 //! that depends on `nq-witness-api` cannot accidentally reach into
 //! the witness's collector code. Library callers depend on the wire
 //! shape, not on how the wire shape was produced.
+//!
+//! ## Fixtures
+//!
+//! The `fixtures` module owns the witness-side input contract for
+//! `nq_evaluator_state` liveness probing. See
+//! `docs/working/decisions/preflights/NQ_EVALUATOR_STATE.md` §9.
+//! Fixtures live here — in the contract crate — so the per-kind
+//! evaluator under test cannot author or mutate its own fixture.
+
+pub mod fixtures;
 
 use nq_core::wire::PublisherState;
 
