@@ -20,6 +20,74 @@ The chronological order below is newest-first.
 
 ---
 
+## WITNESS_EVALUATOR_BOUNDARY Track 4
+
+**Status:** `partial` 2026-06-02. §2 of [`WITNESS_EVALUATOR_BOUNDARY_GAP`](../gaps/WITNESS_EVALUATOR_BOUNDARY_GAP.md) (co-residence trigger) fired and was answered structurally: the witness now runs in its own crate (`crates/nq-witness/`) and its own binary (`nq-witness`), separated from `nq-monitor` at the cargo dependency boundary. The cross-process contract lives in `crates/nq-witness-api/`. The W/E boundary is now Rust's link boundary, not operator discipline. §1, §3, §4, §5, §6 discipline lines from the gap doc remain in force; in-process co-residence inside `nq-monitor serve`'s pulse loop for the component-testimony heartbeat is still permitted as bounded defense-in-depth — that path is no longer the architectural commitment.
+
+**Shipped commits:**
+- `6665b46` refactor: rename crate `nq` → `nq-monitor`; binary follows (Slice B.1).
+- `2ec8a8e` refactor: extract nq-witness binary; new nq-witness-api contract crate (Slice B.2 part 1).
+- `ff80226` refactor: rewire nq-monitor for nq-witness extraction (Slice B.2 part 2).
+- `414898b` test: nq-witness separability receipts (Slice B.3).
+- `b29b694` docs: Track 4 acceptance — W/E boundary is now structural (Slice B.4).
+- `4af08b3` docs: pin the Track 4 keeper line in the roadmap closeout.
+
+**Evidence:**
+- Crate layout: `crates/nq-witness/` (publisher binary), `crates/nq-witness-api/` (contract surface), `crates/nq-monitor/` (renamed from `crates/nq/`).
+- Structural assertion — the receipt format that matters for a boundary like this is a single integer from the dependency graph, not a passing test suite. Tests can drift with discipline; cargo's link boundary cannot:
+  ```
+  cargo tree -p nq-monitor --edges normal | grep -c "nq-witness[^-]"
+  → 0
+  ```
+- Contract surface: `crates/nq-witness-api/` exports `STATE_PATH = "/state"`. Cross-process contract is shape-only; v0 wire equals current wire (constraint held throughout the slice).
+- Separability tests (`crates/nq-witness/tests/separability.rs`, 100 lines, 3 tests):
+  - `witness_emits_structurally_complete_publisher_state` — all 9 collector slots populated when `collect_state` runs against an empty `PublisherConfig`.
+  - `witness_emit_round_trips_through_serde` — serialize → deserialize → re-serialize is byte-identical at the JSON-value level. Catches any silent field rename, type narrowing, or default-value lossiness.
+  - `witness_state_path_matches_witness_api_contract` — `nq_witness_api::STATE_PATH = "/state"` matches the server-registered route; tripwire prevents drift between contract crate and server.
+- Wire-from-both-ends fencing: separability tests complement existing `crates/nq-core/tests/wire_payloads.rs` (671 lines of consumer-deserialize golden fixtures, unchanged).
+- Operator surfaces updated: README install downloads both binaries; quickstart spawns `nq-witness` on each host and `nq-monitor serve` centrally; release workflow builds `{nq-monitor,nq-witness}-linux-{amd64,arm64}` with sha256 sums.
+
+**Unblocks:**
+- [`WITNESS_EVALUATOR_BOUNDARY_GAP`](../gaps/WITNESS_EVALUATOR_BOUNDARY_GAP.md) §2 co-residence trigger — answered structurally. Reopens only if Tier 2 peer-NQ surfaces a load-bearing case the in-process classify cannot cover.
+
+**Field note:** Mid-slice the operator caught a candidate architecture (`nq-monitor` depending on `nq-witness` as a library) that would have made the W/E boundary conventional rather than structural. Corrected to the three-crate model with `nq-witness-api` as the contract surface. The lesson reinforced [[feedback_structure_over_discipline]]: when a boundary can be promoted from discipline to structure, promote it — and prove it with a structural assertion (cargo's link graph, type check, visibility), not a test. The gap doc remains open as `partial` until §1, §3, §4, §5, §6 either accumulate enough load-bearing usage to promote to structure or a future slice closes them with a documented decision.
+
+---
+
+## DISK_STATE_CUTOVER_TO_SHARED_SPINE
+
+**Status:** `landed / retired` 2026-05-27. The Track A.1 cut-over shipped: each Track A evaluator now projects findings (or substrate rows) into `legacy_projection` witness packets before evaluation. Track A.0 (DB-finding-reading evaluator) is retired across all three kinds. The SHARED_SPINE keeper rule — *"Witnesses observe. They do not promote."* — is uniformly upheld; the asterisk in `SPINE_AND_ROADMAP.md` seam #4 is closed. The disk_state gap is preserved as the calibration record that named the cut-over.
+
+**Shipped commits (disk_state — Slice 2 of Track A.1, 2026-05-24):**
+- `b3c9d2b` feat: add witness packet custody for legacy projections — introduces `custody_basis: "legacy_projection"` on `WitnessRef`.
+- `9c183e4` feat: add disk_state finding-to-witness-packet projector — `crates/nq-db/src/disk_state_witness_projection.rs` (465 lines).
+- `56b5c31` feat: route disk_state findings through the witness packet projector — `evaluate_disk_state_preflight` becomes packet-aware.
+- `c6b6b17` feat: stamp disk_state receipts from admitted witness supports.
+- `9bf5360` feat: thread custody_basis from packet to WitnessRef.
+- `0bde863` feat: surface witness custody basis in Track A replay detail string.
+
+**Cross-kind context (Track A.1 completion, 2026-05-25):**
+- `8531230` + `cdf10bb` — `ingest_state` cut-over (`crates/nq-db/src/ingest_state_witness_projection.rs`).
+- `43c7fad` + `6122833` — `dns_state` cut-over (`crates/nq-db/src/dns_state_witness_projection.rs`).
+- `92ad59a` refactor: share projection scaffolding across Slice 2 projectors.
+- `b9f57ed` docs: retire Track A.0 — see [`TRACK_A_0_RETIREMENT.md`](TRACK_A_0_RETIREMENT.md) for the architectural close-out.
+
+**Evidence:**
+- Architecture: each Track A evaluator now follows the shape — `FindingSnapshot` / substrate row → per-kind projector → `WitnessPacket { custody_basis: "legacy_projection", digest: <sha256>, ... }` → per-kind evaluator (`preflight.rs` / `dns.rs` / `sqlite_wal_state.rs`) → `PreflightResult` → `Receipt`. Documented in [`TRACK_A_0_RETIREMENT.md` § "What changed structurally"](TRACK_A_0_RETIREMENT.md).
+- Per-kind projector modules: `crates/nq-db/src/disk_state_witness_projection.rs`, `crates/nq-db/src/ingest_state_witness_projection.rs`, `crates/nq-db/src/dns_state_witness_projection.rs`. Each takes substrate rows and emits `nq.witness.v1` packets with subject-namespaced identity, preserved `observed_at = last_seen_at` (no laundering), per-witness `coverage_limits`, and `dependencies` carrying TESTIMONY_DEPENDENCY ancestry.
+- Custody discipline: `WitnessRef.custody_basis = "legacy_projection"` on every packet projected from substrate. Post-retirement semantic is "projected from substrate that pre-dates per-kind native witness emission," NOT "pre-cut-over Track A" — there is no pre-cut-over Track A in the codebase anymore.
+- Greenfield validation: `sqlite_wal_state` (kind 4, shipped 2026-05-26) was built on the post-cut-over pattern from day one — it never had a Track A.0 phase. See [`KIND_4_SQLITE_WAL_STATE.md`](preflights/KIND_4_SQLITE_WAL_STATE.md).
+- Operator-facing semantics preserved: the eight verdict kinds (`AdmissibleWithScope` / `ContradictoryTestimony` / `CannotTestify` / `InsufficientCoverage`, plus the `smart_status_lies` contradiction and the `disk_state_cannot_testify` refusal surface) survive the cut-over against the lil-nas-x forcing-case shape. Constitutional `cannot_testify` refusals remain wire-reachable.
+
+**Unblocks:**
+- [`DISK_STATE_CUTOVER_TO_SHARED_SPINE.md`](../gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md) — closed by this entry; gap doc preserved as the calibration record that named the work.
+- Track A.0 carry seam ([`SPINE_AND_ROADMAP.md`](../../architecture/SPINE_AND_ROADMAP.md) § "Intentional current seams" #4) — paid down.
+- The next gate is no longer "after the cut-over"; it is the registry-shape question in [`CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`](../gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md), which remains explicitly deferred until claim kind 5 forces it or a kind-4 follow-up wants to share temporal machinery.
+
+**Field note:** The cut-over delivered uniformity but not consolidation — each kind still has its own evaluator function. "Bespoke" post-retirement just means "per-kind evaluator code as opposed to a fully-generic registry"; it is no longer architecturally troubling. The single-generic-evaluator question is the registry-shape gap's, not the cut-over's.
+
+---
+
 ## DURABLE_ARTIFACT_SUBSTRATE V1 (synthetic-producer slice)
 
 **Status:** `shipped (V1)` 2026-05-12. All V1 acceptance criteria satisfied. Synthetic-producer cash-out per the V1 slice named in the gap doc — admits the substrate class, pins the inbound-testimony pipeline boundary, exercises one composition (`extraction_stale` via SILENCE_UNIFICATION). **NS consumer-alignment dry run completed same day, outcome (a)** — NS reads the synthetic-producer output through existing admissibility branching without `NqInadmissible`-shaped refusal. Substrate-class admission ratified. Real-producer ingestion + PROVENANCE_GRAPH_PROFILE + `dependency_cone_changed` + corpus-shaped subject-identity vocabulary remain explicit V1 deferrals.
