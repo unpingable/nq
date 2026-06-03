@@ -20,6 +20,56 @@ The chronological order below is newest-first.
 
 ---
 
+## NQ_EVALUATOR_STATE Tier 1 V0
+
+**Status:** `shipped (V0)` 2026-06-03. End-to-end: substrate accepts probe rows every pulse; the evaluator turns the latest row per `(host, claim_kind)` into a typed `PreflightResult`; the HTTP route surfaces it. The kind closes the silent-failure forcing case: an operator can now distinguish "no probe ever ran for kind K" (`InsufficientCoverage`) from "evaluator for kind K is wedged" (`CannotTestify` with `outcome_status` in signals). `AdmissibleWithScope` carries `verdict_scope = "evaluator_liveness_shape_only"` — the narrow scope refuses every forward-going-trust laundering shape as a constitutional matter, not via prose. The per-kind evaluator code path is now substrate; readiness inside the structural W/E boundary (Track 4) is observable.
+
+**Design preflight:** [`docs/working/decisions/preflights/NQ_EVALUATOR_STATE.md`](preflights/NQ_EVALUATOR_STATE.md) (shipped `6b26c38`).
+
+**Shipped commits:**
+- `ec68303` feat: nq_evaluator_state slice A — substrate + kind declaration (migration 056 + `ClaimKind::NqEvaluatorState` + `nq_evaluator_state_cannot_testify` + skeleton arm).
+- `3bb813c` feat: nq_evaluator_state slice B — fixture surface + probe orchestrator (5 `pub const` fixtures in `nq-witness-api`; `OutcomeStatus` enum + `classify_outcome` + `run_probe` + `invoke_for_fixture` in `nq-monitor`).
+- `0dd788d` feat: nq_evaluator_state slice C.1 — substrate insert + pulse-loop wiring (`insert_nq_evaluator_observation`; `run_probe_sweep` called every pulse; `NqEvaluatorObservation::into_db_row`).
+- `59c130a` feat: nq_evaluator_state slice C.2 — evaluator + HTTP route (`evaluate_nq_evaluator_state_preflight_at` with 4-arm verdict map; `GET /api/preflight/nq-evaluator-state?host=X&claim_kind=Y`).
+
+**Evidence:**
+- Substrate: migration 056 (`nq_evaluator_observations`) with 6-variant closed-enum `outcome_status` (shape_valid / shape_invalid / kind_mismatch / panicked / substrate_unreachable / timed_out) and asymmetric conditional CHECK — shape_valid requires populated evidence + NULL error_detail; non-shape_valid requires error_detail. The asymmetry exists so `kind_mismatch` legitimately carries `evaluator_returned_kind` (the dispatch-failure signal worth preserving).
+- Contract crate ownership: fixtures live in `crates/nq-witness-api/src/fixtures.rs`. Per W/E gap §1, the evaluator under test cannot author its own fixture; the contract crate is the structural enforcement.
+- Self-exclusion: `ClaimKind::NqEvaluatorState` cannot probe itself (preflight §2 self-witness collapse refusal). `invoke_for_fixture` returns an error for that kind.
+- ComponentTestimonyObservationLoopAlive deferred from V0 fixture surface (heartbeat shape needs its own fixture spec).
+- Verdict map (preflight §6): no rows → `InsufficientCoverage`; latest > 300s → `CannotTestify` (stale); `outcome_status != 'shape_valid'` → `CannotTestify` (error_detail in verdict_note + signals); `shape_valid` + fresh → `AdmissibleWithScope` with `verdict_scope = "evaluator_liveness_shape_only"`.
+- W/E §1/§6 forward guardrail satisfied: witness-contract fields (fixture_id, fixture_hash, outcome_status, evaluator_returned_kind, evaluator_invocation_ms, observed_at) and evaluator-verdict fields (verdict, verdict_scope, age_seconds, stale_threshold_seconds) are classified at the preflight doc and never share state at runtime.
+- Pulse cost: per-kind invocation budget 200ms; 5 kinds × 200ms = 1s headroom, well under the 500ms pulse-cost guard at the per-kind level.
+- Workspace tests: 1274 passing — 12 new substrate CHECK tests, 19 probe tests, 7 evaluator tests, plus the upgrade-fixture retarget.
+
+**Unblocks:**
+- The named [`WITNESS_EVALUATOR_BOUNDARY_GAP`](../gaps/WITNESS_EVALUATOR_BOUNDARY_GAP.md) §1 forward guardrail for component-testimony slices (a future `nq_route_state` or `nq_receipt_emission_state` slice now has a precedent for the witness-vs-evaluator field classification + the bounded co-residence pattern). The sixth keeper (per-host external-witness + kind-level refusal of NQ-standing claims) is exercised by a third kind; promotion of the keeper into `SPINE_AND_ROADMAP.md` still waits for a kind that *requires* the rule as an invariant rather than merely exercising it.
+
+**Field note:** Slice C.2 surfaced the `verdict_scope` contract at the constitutional refusal surface, not just in prose — `nq_evaluator_state_cannot_testify` includes "Whether the evaluator should be trusted past this observation (the scope is per-observation; AdmissibleWithScope at time T does not license a forward-going trust horizon)." A consumer reading bare verdict-kind without consulting `signals.nq_evaluator_state.verdict_scope` is performing the laundering this entry exists to refuse. The pattern is reusable for any future kind whose admissible verdict needs a narrow scope.
+
+---
+
+## SPENDABILITY_TESTIMONY_GAP (recognition-only filing)
+
+**Status:** `candidate` filing 2026-06-03 — recognition record, NOT a shipped feature. Logged here so future archaeology asking "when did NQ start thinking about consumption-of-shared-capacity claims?" finds the answer.
+
+**Filed:** [`docs/working/gaps/SPENDABILITY_TESTIMONY_GAP.md`](../gaps/SPENDABILITY_TESTIMONY_GAP.md) (`0a9a353`).
+
+**What was filed:** the recognition that NQ has no schema for double-spend / lease-reuse / quota-overrun testimony — the multiplicity/resource species lane is empty in NQ's source/temporal-only kind set. The gap names the boundary in NQ's own register ("NQ may testify that spendability was double-claimed. NQ may not mint spendability."), the four-stage testimony pipeline (capacity premise → allocation → consumption → reconciliation), and the third-party reconciler architectural concern. External cross-project audit confirms NQ is "clean on question A" (witness/allocator boundary intact) and "capability absent" (schema empty).
+
+**What was NOT filed:** no `ClaimKind` variant. No migration. No evaluator. No wire schema. No substrate-path choice. Per operator pin ("NQ schema is real, but second"), schema design waits until the allocator-side evidence shape exists in observable form — otherwise the schema is testimony around a ghost.
+
+**Forcing case (three required):**
+1. Real operational system with budget/lease/quota model whose double-spend NQ would be asked to witness.
+2. Reconciler exists that can be observed (allocator-as-witness OR external attestation; consumer-self-report alone is insufficient).
+3. Failure mode documentable as scar or named prior-art pattern.
+
+Linear accountant landing in AG is the named upcoming pull on condition (1). Conditions (2) + (3) wait on the same system's design choices.
+
+**Composes with:** the post-Slice-C lint pass filed in memory earlier the same session — same recognition at a different altitude ("multiplicity/resource species absent" vs "spendability testimony lane empty"). The taxonomy stays in the lint lane, not in NQ architecture.
+
+---
+
 ## WITNESS_EVALUATOR_BOUNDARY Track 4
 
 **Status:** `partial` 2026-06-02. §2 of [`WITNESS_EVALUATOR_BOUNDARY_GAP`](../gaps/WITNESS_EVALUATOR_BOUNDARY_GAP.md) (co-residence trigger) fired and was answered structurally: the witness now runs in its own crate (`crates/nq-witness/`) and its own binary (`nq-witness`), separated from `nq-monitor` at the cargo dependency boundary. The cross-process contract lives in `crates/nq-witness-api/`. The W/E boundary is now Rust's link boundary, not operator discipline. §1, §3, §4, §5, §6 discipline lines from the gap doc remain in force; in-process co-residence inside `nq-monitor serve`'s pulse loop for the component-testimony heartbeat is still permitted as bounded defense-in-depth — that path is no longer the architectural commitment.
