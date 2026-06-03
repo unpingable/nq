@@ -1,6 +1,6 @@
 # Gap: `disk_state` cut-over to the shared spine
 
-**Status:** **landed / retired 2026-05-27.** Cut-over shipped via [`TRACK_A_WITNESS_PACKET_CUTOVER`](../decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md) (Slice 2, 2026-05-24); Track A.0 carry is paid down. See [`TRACK_A_0_RETIREMENT.md`](../decisions/TRACK_A_0_RETIREMENT.md) for the timeline and the architectural close-out. This gap is preserved as the calibration record that named the work — the body below is historically accurate but no longer load-bearing.
+**Status:** `landed / retired` 2026-05-27 — shipped-state record is in [`FEATURE_HISTORY.md` § DISK_STATE_CUTOVER_TO_SHARED_SPINE](../decisions/FEATURE_HISTORY.md#disk_state_cutover_to_shared_spine). The cross-kind close-out lives in [`TRACK_A_0_RETIREMENT.md`](../decisions/TRACK_A_0_RETIREMENT.md). This gap is preserved as the calibration record that named the work — the body below is historically accurate but no longer load-bearing.
 **Depends on:** `../architecture/SHARED_SPINE.md` (pipeline definition), `CLAIM_KIND_DISK_STATE_GAP.md` (claim-kind spec), `../WITNESS_PACKET.md` (witness-side constraints), `CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md` (registry-shape guardrails)
 **Related:** `../CLAIM_PREFLIGHT.md`, `../VERDICTS.md`, `TESTIMONY_DEPENDENCY_GAP.md`
 **Blocks:** nothing — closed by the cut-over.
