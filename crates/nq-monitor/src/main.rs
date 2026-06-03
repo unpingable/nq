@@ -1,6 +1,7 @@
 mod cli;
 mod cmd;
 mod http;
+mod nq_evaluator_probe;
 mod probe;
 mod pull;
 mod smoke;

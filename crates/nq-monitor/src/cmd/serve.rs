@@ -292,6 +292,32 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                                     warn!(err = %e, "absence classification failed");
                                 }
                             }
+
+                            // nq_evaluator_state probe sweep — Slice C.1.
+                            // Per-(host, claim_kind) liveness probes of each
+                            // per-kind evaluator code path under bounded
+                            // co-residence (W/E gap §2). The sweep iterates
+                            // the witness-owned fixtures in nq-witness-api,
+                            // invokes each kind's evaluator against the
+                            // just-published substrate, classifies the
+                            // outcome shape, and lands one substrate row
+                            // per fixture. Failures inside individual
+                            // probes are recorded as substrate rows
+                            // (panicked / substrate_unreachable / etc.);
+                            // only INSERT-boundary errors surface as
+                            // warnings. Substrate is the testimony
+                            // boundary — operator decisions live downstream.
+                            let inserted = crate::nq_evaluator_probe::run_probe_sweep(
+                                db.conn(),
+                                result.generation_id,
+                                COMPONENT_ID_NQ_LOCAL,
+                                time::OffsetDateTime::now_utc(),
+                            );
+                            if inserted == 0 {
+                                warn!(
+                                    "nq_evaluator_state: probe sweep inserted no rows"
+                                );
+                            }
                         }
                         Err(e) => {
                             error!(err = %e, "publish failed");

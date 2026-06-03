@@ -42,11 +42,14 @@
 //!   route.
 
 use nq_core::preflight::{ClaimKind, PreflightResult};
-use nq_witness_api::fixtures::Fixture;
+use nq_db::nq_evaluator_state::{insert_nq_evaluator_observation, NqEvaluatorObservationRow};
+use nq_witness_api::fixtures::{Fixture, ALL_FIXTURES};
 use std::any::Any;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::time::Instant;
+use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use tracing::warn;
 
 /// Closed enum mirroring `nq_evaluator_observations.outcome_status`
 /// (migration 056). Six variants; ordering is significant only at
@@ -112,6 +115,31 @@ pub struct NqEvaluatorObservation {
     pub error_detail: Option<String>,
 }
 
+impl NqEvaluatorObservation {
+    /// Translate the probe-side observation into the substrate-row
+    /// shape that `nq-db::nq_evaluator_state::insert_nq_evaluator_observation`
+    /// consumes. Encodes the closed-enum string forms exactly as
+    /// migration 056's CHECK expects.
+    pub fn into_db_row(self, generation_id: i64) -> NqEvaluatorObservationRow {
+        let observed_at = self
+            .observed_at
+            .format(&Rfc3339)
+            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+        NqEvaluatorObservationRow {
+            generation_id,
+            host: self.host,
+            claim_kind: self.claim_kind.as_str().to_string(),
+            fixture_id: self.fixture_id,
+            fixture_hash: self.fixture_hash,
+            outcome_status: self.outcome_status.as_str().to_string(),
+            evaluator_returned_kind: self.evaluator_returned_kind.map(|k| k.as_str().to_string()),
+            evaluator_invocation_ms: self.evaluator_invocation_ms,
+            observed_at,
+            error_detail: self.error_detail,
+        }
+    }
+}
+
 /// Per-kind invocation budget. Evaluators that complete beyond this
 /// horizon classify as [`OutcomeStatus::TimedOut`]. Sized well under
 /// the 500ms pulse-cost guard so all 5 per-kind probes can run in
@@ -128,11 +156,10 @@ pub enum InvocationResult {
         elapsed_ms: u64,
     },
     /// The invocation panicked. The probe boundary unwound the panic
-    /// and recovered the payload as a string.
-    Panicked {
-        panic_message: String,
-        elapsed_ms: u64,
-    },
+    /// and recovered the payload as a string. Elapsed time is not
+    /// carried — panicked observations land with `evaluator_invocation_ms`
+    /// NULL on the substrate, so the metric serves no downstream purpose.
+    Panicked { panic_message: String },
 }
 
 /// Pure mapping `InvocationResult → outcome triple`. Implements the
@@ -144,7 +171,7 @@ pub fn classify_outcome(
     requested_kind: ClaimKind,
 ) -> (OutcomeStatus, Option<ClaimKind>, Option<String>) {
     match invocation {
-        InvocationResult::Panicked { panic_message, .. } => (
+        InvocationResult::Panicked { panic_message } => (
             OutcomeStatus::Panicked,
             None,
             Some(format!("panic: {panic_message}")),
@@ -224,7 +251,6 @@ where
         Ok(result) => InvocationResult::Returned { result, elapsed_ms },
         Err(panic_payload) => InvocationResult::Panicked {
             panic_message: panic_payload_to_string(panic_payload.as_ref()),
-            elapsed_ms,
         },
     };
 
@@ -363,6 +389,56 @@ pub fn invoke_for_fixture<'conn>(
     }
 }
 
+/// Run the V0 probe sweep: for each fixture in `ALL_FIXTURES`,
+/// invoke its evaluator under bounded co-residence, classify the
+/// outcome, and INSERT the substrate row. Returns the count of rows
+/// successfully inserted.
+///
+/// Failures (adapter refusal for excluded kinds, panic during INSERT)
+/// log a warning and continue — a single bad kind must not stop the
+/// other probes. Per-kind probe errors land as substrate rows
+/// (`outcome_status = panicked / substrate_unreachable / ...`); only
+/// errors at the INSERT boundary itself are logged.
+///
+/// The `probe_host` argument is the host identity recorded on each
+/// row. Per IslandPerHost discipline, an aggregator probes itself —
+/// V0 callers pass `nq.local` (the `COMPONENT_ID_NQ_LOCAL` constant
+/// from `nq-db::component_testimony`).
+pub fn run_probe_sweep(
+    conn: &rusqlite::Connection,
+    generation_id: i64,
+    probe_host: &str,
+    now: OffsetDateTime,
+) -> usize {
+    let mut inserted = 0usize;
+    for fixture in ALL_FIXTURES {
+        let invocation = match invoke_for_fixture(fixture, conn, probe_host, now) {
+            Ok(inv) => inv,
+            Err(e) => {
+                warn!(
+                    fixture = fixture.id,
+                    err = %e,
+                    "nq_evaluator_state: probe adapter refused fixture"
+                );
+                continue;
+            }
+        };
+        let observation = run_probe(fixture, invocation, probe_host, now);
+        let row = observation.into_db_row(generation_id);
+        match insert_nq_evaluator_observation(conn, &row) {
+            Ok(_) => inserted += 1,
+            Err(e) => {
+                warn!(
+                    fixture = fixture.id,
+                    err = %e,
+                    "nq_evaluator_state: substrate INSERT failed"
+                );
+            }
+        }
+    }
+    inserted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,7 +548,6 @@ mod tests {
     fn classify_panicked_propagates_panic_message() {
         let inv = InvocationResult::Panicked {
             panic_message: "index out of bounds".to_string(),
-            elapsed_ms: 1,
         };
         let (status, returned, detail) = classify_outcome(inv, ClaimKind::DiskState);
         assert_eq!(status, OutcomeStatus::Panicked);
@@ -679,5 +754,88 @@ mod tests {
     fn well_formed_disk_state_result_carries_expected_schema() {
         let result = well_formed_disk_state_result();
         assert_eq!(result.schema, PREFLIGHT_DISK_STATE_SCHEMA);
+    }
+
+    #[test]
+    fn observation_into_db_row_encodes_closed_enums_as_snake_case() {
+        let obs = NqEvaluatorObservation {
+            host: "nq.local".into(),
+            claim_kind: ClaimKind::DiskState,
+            fixture_id: "disk_state.v1.minimal".into(),
+            fixture_hash: "sha256:abcd".into(),
+            outcome_status: OutcomeStatus::KindMismatch,
+            evaluator_returned_kind: Some(ClaimKind::IngestState),
+            evaluator_invocation_ms: Some(7),
+            observed_at: fixed_now(),
+            error_detail: Some("requested=disk_state returned=ingest_state".into()),
+        };
+        let row = obs.into_db_row(42);
+        assert_eq!(row.generation_id, 42);
+        assert_eq!(row.host, "nq.local");
+        assert_eq!(row.claim_kind, "disk_state");
+        assert_eq!(row.outcome_status, "kind_mismatch");
+        assert_eq!(
+            row.evaluator_returned_kind.as_deref(),
+            Some("ingest_state")
+        );
+        assert_eq!(row.evaluator_invocation_ms, Some(7));
+        assert!(row.observed_at.starts_with("20"), "rfc3339 not formatted: {}", row.observed_at);
+    }
+
+    // The sweep test runs the full Slice C.1 path against an
+    // in-memory DB: fixtures → invoke_for_fixture → run_probe →
+    // into_db_row → insert_nq_evaluator_observation. Each fixture's
+    // evaluator runs against a freshly-migrated empty DB; the
+    // expected outcome per kind is shape_valid (the evaluators all
+    // return InsufficientCoverage for placeholder targets, which IS
+    // shape_valid).
+    #[test]
+    fn run_probe_sweep_inserts_one_row_per_fixture() {
+        // Use the nq-db test infrastructure to get a fresh DB with
+        // a seed generation_id=1 row.
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let mut db = nq_db::open_rw(&db_path).unwrap();
+        nq_db::migrate::migrate(&mut db).unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO generations
+                   (generation_id, started_at, completed_at, status,
+                    sources_expected, sources_ok, sources_failed, duration_ms)
+                 VALUES (1, '2026-06-03T00:00:00Z', '2026-06-03T00:00:00Z',
+                         'complete', 0, 0, 0, 0)",
+                [],
+            )
+            .unwrap();
+
+        let inserted = run_probe_sweep(db.conn(), 1, "nq.local", fixed_now());
+        assert_eq!(
+            inserted,
+            ALL_FIXTURES.len(),
+            "every fixture must produce one substrate row"
+        );
+
+        // Verify substrate-side count matches.
+        let row_count: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM nq_evaluator_observations WHERE generation_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(row_count, ALL_FIXTURES.len() as i64);
+
+        // Every row carries the probe_host we passed in.
+        let host_count: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM nq_evaluator_observations
+                 WHERE host = 'nq.local' AND generation_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(host_count, ALL_FIXTURES.len() as i64);
     }
 }
