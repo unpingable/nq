@@ -5,7 +5,7 @@ use tracing::info;
 /// with the last entry of `MIGRATIONS` below. Exposed for consumer
 /// surfaces (e.g. the finding export path) so they can preflight
 /// against a DB whose schema is older than the code was built for.
-pub const CURRENT_SCHEMA_VERSION: u32 = 55;
+pub const CURRENT_SCHEMA_VERSION: u32 = 56;
 
 /// Read `PRAGMA user_version` from an arbitrary connection. Returns 0
 /// for a freshly-opened SQLite file that's never been migrated.
@@ -71,6 +71,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (53, include_str!("../migrations/053_coverage_testimony_absence_details.sql")),
     (54, include_str!("../migrations/054_nq_binary_observations.sql")),
     (55, include_str!("../migrations/055_collector_runs_nq_binary.sql")),
+    (56, include_str!("../migrations/056_nq_evaluator_observations.sql")),
 ];
 
 pub fn migrate(db: &mut WriteDb) -> anyhow::Result<()> {
@@ -119,7 +120,7 @@ mod tests {
             .conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 55);
+        assert_eq!(version, 56);
 
         // Verify tables exist
         let count: i64 = db
@@ -1634,6 +1635,307 @@ mod tests {
                     -1, '2026-06-01T05:04:30Z',
                     'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
                     '2026-06-02T00:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    // -----------------------------------------------------------------
+    // Migration 056 — nq_evaluator_observations CHECK constraints.
+    //
+    // Schema-only at Slice A; the publisher-side probe (Slice B) and
+    // the aggregator ingest path + evaluator + HTTP route (Slice C)
+    // follow in their own commits. These tests pin the load-bearing
+    // invariants from NQ_EVALUATOR_STATE.md §4 at the substrate
+    // boundary: shape_valid rows are fully populated with error_detail
+    // NULL; non-shape_valid rows must carry error_detail; fixture_hash
+    // carries the "sha256:<64-hex>" shape; the 6-variant outcome_status
+    // enum is closed; the asymmetric invariant lets non-shape_valid
+    // rows legitimately carry evaluator_returned_kind (kind_mismatch
+    // exercises this).
+    // -----------------------------------------------------------------
+
+    fn insert_clean_nq_evaluator_row(conn: &rusqlite::Connection) -> rusqlite::Result<i64> {
+        conn.execute(
+            "INSERT INTO nq_evaluator_observations (
+                generation_id, host, claim_kind,
+                fixture_id, fixture_hash,
+                outcome_status,
+                evaluator_returned_kind, evaluator_invocation_ms,
+                observed_at, error_detail
+             ) VALUES (
+                1, 'nq.neutral.zone', 'disk_state',
+                'disk_state.v1.minimal',
+                'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                'shape_valid',
+                'disk_state', 4,
+                '2026-06-03T00:00:00Z', NULL
+             )",
+            [],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    #[test]
+    fn nq_evaluator_observations_accepts_well_formed_shape_valid_row() {
+        let db = fresh_db();
+        let id = insert_clean_nq_evaluator_row(&db.conn).expect("clean row must insert");
+        assert!(id > 0);
+    }
+
+    #[test]
+    fn nq_evaluator_observations_accepts_kind_mismatch_with_returned_kind() {
+        // kind_mismatch is the canonical asymmetry case: outcome_status
+        // is not shape_valid, but evaluator_returned_kind is the
+        // load-bearing signal (it's what the evaluator put in the
+        // result that disagreed with the requested kind). Migration
+        // 054 forced all stat-derived fields NULL on non-observed
+        // rows; 056 deliberately does NOT force that — the failure-
+        // side invariant only pins error_detail presence.
+        let db = fresh_db();
+        db.conn
+            .execute(
+                "INSERT INTO nq_evaluator_observations (
+                    generation_id, host, claim_kind,
+                    fixture_id, fixture_hash,
+                    outcome_status,
+                    evaluator_returned_kind, evaluator_invocation_ms,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', 'disk_state',
+                    'disk_state.v1.minimal',
+                    'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                    'kind_mismatch',
+                    'ingest_state', 3,
+                    '2026-06-03T00:00:00Z',
+                    'requested=disk_state returned=ingest_state'
+                 )",
+                [],
+            )
+            .expect("kind_mismatch row carrying evaluator_returned_kind must insert");
+    }
+
+    #[test]
+    fn nq_evaluator_observations_accepts_well_formed_panicked_row() {
+        let db = fresh_db();
+        db.conn
+            .execute(
+                "INSERT INTO nq_evaluator_observations (
+                    generation_id, host, claim_kind,
+                    fixture_id, fixture_hash,
+                    outcome_status,
+                    evaluator_returned_kind, evaluator_invocation_ms,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', 'sqlite_wal_state',
+                    'sqlite_wal_state.v1.minimal',
+                    'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                    'panicked',
+                    NULL, NULL,
+                    '2026-06-03T00:00:00Z',
+                    'panic: index out of bounds'
+                 )",
+                [],
+            )
+            .expect("panicked row with error_detail must insert");
+    }
+
+    #[test]
+    fn nq_evaluator_observations_rejects_shape_valid_missing_returned_kind() {
+        // shape_valid must imply evaluator_returned_kind populated.
+        // Without it, the shape-validity claim has no substance.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_evaluator_observations (
+                    generation_id, host, claim_kind,
+                    fixture_id, fixture_hash,
+                    outcome_status,
+                    evaluator_returned_kind, evaluator_invocation_ms,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', 'disk_state',
+                    'disk_state.v1.minimal',
+                    'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                    'shape_valid',
+                    NULL, 4,
+                    '2026-06-03T00:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("check"),
+            "expected CHECK constraint violation, got: {err}"
+        );
+    }
+
+    #[test]
+    fn nq_evaluator_observations_rejects_shape_valid_missing_invocation_ms() {
+        // shape_valid must imply evaluator_invocation_ms populated.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_evaluator_observations (
+                    generation_id, host, claim_kind,
+                    fixture_id, fixture_hash,
+                    outcome_status,
+                    evaluator_returned_kind, evaluator_invocation_ms,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', 'disk_state',
+                    'disk_state.v1.minimal',
+                    'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                    'shape_valid',
+                    'disk_state', NULL,
+                    '2026-06-03T00:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn nq_evaluator_observations_rejects_shape_valid_with_error_detail() {
+        // shape_valid must imply error_detail IS NULL. Mixing the
+        // discriminator's two halves is the laundering shape this
+        // pins against.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_evaluator_observations (
+                    generation_id, host, claim_kind,
+                    fixture_id, fixture_hash,
+                    outcome_status,
+                    evaluator_returned_kind, evaluator_invocation_ms,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', 'disk_state',
+                    'disk_state.v1.minimal',
+                    'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                    'shape_valid',
+                    'disk_state', 4,
+                    '2026-06-03T00:00:00Z',
+                    'should not be set on shape_valid'
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn nq_evaluator_observations_rejects_non_shape_valid_missing_error_detail() {
+        // outcome_status != 'shape_valid' must imply error_detail
+        // populated. A failure row with no detail loses the human-
+        // readable signal the projector relies on.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_evaluator_observations (
+                    generation_id, host, claim_kind,
+                    fixture_id, fixture_hash,
+                    outcome_status,
+                    evaluator_returned_kind, evaluator_invocation_ms,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', 'disk_state',
+                    'disk_state.v1.minimal',
+                    'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                    'timed_out',
+                    NULL, NULL,
+                    '2026-06-03T00:00:00Z',
+                    NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn nq_evaluator_observations_rejects_unknown_outcome_status_enum() {
+        // Closed enum on outcome_status — unrecognized values are
+        // refused at the substrate boundary, not silently accepted.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_evaluator_observations (
+                    generation_id, host, claim_kind,
+                    fixture_id, fixture_hash,
+                    outcome_status,
+                    evaluator_returned_kind, evaluator_invocation_ms,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', 'disk_state',
+                    'disk_state.v1.minimal',
+                    'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                    'mystery_failure',
+                    NULL, NULL,
+                    '2026-06-03T00:00:00Z',
+                    'unknown'
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn nq_evaluator_observations_rejects_malformed_fixture_hash() {
+        // fixture_hash structural CHECK: "sha256:" prefix + 64 hex.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_evaluator_observations (
+                    generation_id, host, claim_kind,
+                    fixture_id, fixture_hash,
+                    outcome_status,
+                    evaluator_returned_kind, evaluator_invocation_ms,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', 'disk_state',
+                    'disk_state.v1.minimal',
+                    'sha256:tooshort',
+                    'shape_valid',
+                    'disk_state', 4,
+                    '2026-06-03T00:00:00Z', NULL
+                 )",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn nq_evaluator_observations_rejects_negative_invocation_ms() {
+        // evaluator_invocation_ms must be NULL or non-negative.
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO nq_evaluator_observations (
+                    generation_id, host, claim_kind,
+                    fixture_id, fixture_hash,
+                    outcome_status,
+                    evaluator_returned_kind, evaluator_invocation_ms,
+                    observed_at, error_detail
+                 ) VALUES (
+                    1, 'h', 'disk_state',
+                    'disk_state.v1.minimal',
+                    'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                    'shape_valid',
+                    'disk_state', -1,
+                    '2026-06-03T00:00:00Z', NULL
                  )",
                 [],
             )

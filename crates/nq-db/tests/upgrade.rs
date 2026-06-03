@@ -35,12 +35,10 @@ const PREVIOUS_SCHEMA_VERSION: u32 = CURRENT_SCHEMA_VERSION - 1;
 /// existing tables becomes the latest, this constant becomes wrong and the
 /// test stops representing the upgrade path it claims to.
 ///
-/// Migration 055 widens the `collector_runs.collector` CHECK to admit
-/// the new `nq_binary` collector name; the table itself was added back
-/// in migration 007. No new tables, so the rollback fixture has nothing
-/// to drop — this latest migration is a CHECK-rewrite via the
-/// recreate-and-rename pattern.
-const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &[];
+/// Migration 056 adds the `nq_evaluator_observations` table — Slice A
+/// of NQ_EVALUATOR_STATE. The rollback fixture drops it to represent
+/// a real v(N-1) DB that never had it.
+const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["nq_evaluator_observations"];
 
 #[test]
 fn upgrade_from_previous_version_preserves_data() {
