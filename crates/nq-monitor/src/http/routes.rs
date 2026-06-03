@@ -8,6 +8,9 @@ use axum::{
 use nq_db::nq_binary_mtime_state::{
     evaluate_nq_binary_mtime_state_preflight, NqBinaryMtimeStateTarget,
 };
+use nq_db::nq_evaluator_state::{
+    evaluate_nq_evaluator_state_preflight, NqEvaluatorStateTarget,
+};
 use nq_db::sqlite_wal_state::{evaluate_sqlite_wal_state_preflight, SqliteWalTarget};
 use nq_db::component_testimony::evaluate_observation_loop_alive_preflight;
 use nq_db::{overview, host_detail, query_read_only, evaluate_disk_state_preflight, evaluate_dns_state_preflight, evaluate_ingest_state_preflight, DnsObservationTuple, QueryLimits, ReadDb, WriteDb};
@@ -99,6 +102,10 @@ pub fn router(db: Db) -> Router {
         .route(
             "/api/preflight/component-testimony-observation-loop-alive",
             get(api_preflight_component_testimony_observation_loop_alive),
+        )
+        .route(
+            "/api/preflight/nq-evaluator-state",
+            get(api_preflight_nq_evaluator_state),
         )
         .route(
             "/api/preflight/nq-binary-mtime-state",
@@ -1004,6 +1011,55 @@ async fn api_preflight_nq_binary_mtime_state(
     let db = db.lock().await;
     let target = NqBinaryMtimeStateTarget { host, binary_path };
     match evaluate_nq_binary_mtime_state_preflight(&db, &target) {
+        Ok(result) => match serde_json::to_value(&result) {
+            Ok(v) => Ok(Json(v)),
+            Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
+        },
+        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+/// Required query params for the `nq_evaluator_state` route. Both
+/// fields are load-bearing for target identity per preflight §2:
+/// `(host, claim_kind)` is per-(host, claim_kind), never aggregated.
+/// Empty values are 400 (request error), not evaluator verdicts.
+#[derive(Debug, serde::Deserialize)]
+struct PreflightNqEvaluatorStateQuery {
+    host: String,
+    claim_kind: String,
+}
+
+/// Bounded `nq_evaluator_state` preflight surfaced over the monitor
+/// HTTP path. Emits the typed `nq.preflight.nq_evaluator_state.v1`
+/// PreflightResult. One envelope per `(host, claim_kind)` target.
+/// The route does no probing itself — it reads the latest
+/// `nq_evaluator_observations` row the pulse-loop probe wrote on its
+/// most recent cycle.
+async fn api_preflight_nq_evaluator_state(
+    State(db): State<Db>,
+    Query(params): Query<PreflightNqEvaluatorStateQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let host = params.host.trim();
+    let claim_kind = params.claim_kind.trim();
+    if host.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "query parameter `host` is required and must not be empty"
+            })),
+        ));
+    }
+    if claim_kind.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "query parameter `claim_kind` is required and must not be empty"
+            })),
+        ));
+    }
+    let db = db.lock().await;
+    let target = NqEvaluatorStateTarget { host, claim_kind };
+    match evaluate_nq_evaluator_state_preflight(&db, &target) {
         Ok(result) => match serde_json::to_value(&result) {
             Ok(v) => Ok(Json(v)),
             Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
