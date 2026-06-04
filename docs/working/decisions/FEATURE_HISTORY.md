@@ -20,6 +20,28 @@ The chronological order below is newest-first.
 
 ---
 
+## ANTI_LAUNDERING_DOCTRINE_MAP + CUSTODIAN_BINDING_ACCOUNTABILITY_CANDIDATE (paired recognition-only filings)
+
+**Status:** `candidate` filings 2026-06-04 (evening) — recognition records, NOT shipped features. Logged here so future archaeology asking "when did the anti-laundering family crystallize as a map?" and "when did NQ start refusing instrumentation-to-accountability laundering?" find the answer.
+
+**Filed:**
+- [`docs/working/gaps/ANTI_LAUNDERING_DOCTRINE_MAP.md`](../gaps/ANTI_LAUNDERING_DOCTRINE_MAP.md) — index of the family (five rows: surface boundary, declaration completeness, witness identity, custodian binding, freshness/expiry).
+- [`docs/working/gaps/CUSTODIAN_BINDING_ACCOUNTABILITY_CANDIDATE.md`](../gaps/CUSTODIAN_BINDING_ACCOUNTABILITY_CANDIDATE.md) — the new instance that triggered the indexing.
+
+**Why both in one commit:** they share the archaeology moment. The candidate proliferation reached the density (four named families + one implicit lane) where indexing pays for itself, AND the next instance arrived. Filing the map without the new instance would be premature; filing the instance without the map would compound the proliferation it was supposed to organize.
+
+**What was filed (CUSTODIAN_BINDING):** the rule that *an observation edge cannot be promoted to an accountability claim unless a conversion edge binding a custodian exists*. The bad inference chain is `prometheus_scraped(S) → dashboard_exists(S) → alert_rule_exists(S) ⇒ service_accountably_monitored(S)`. Three concrete failure modes named: dashboard without oncall, exporter controlled by subject, owner-configured silence. NQ surface sketch (not authorized): a `service_accountably_monitored` claim kind with verdicts including `InstrumentedOnly` and `NoCustodianBinding` pinning the distinction.
+
+**What was NOT filed:** no `ClaimKind`, no preflight implementation, no Lean theorem, no auto-instrumentation surface, no PagerDuty/Alertmanager/ticketing integration. Scope guards explicitly refuse "essay metaphor in systems clothing" and "master accountability ontology."
+
+**Forcing case (CUSTODIAN_BINDING):** a real consumer proposes a "service S is monitored / covered / accountable" claim kind; an incident where NQ output is read as accountability testimony; a prom→nq preflight ships; a downstream agent reads NQ-mediated Prometheus evidence as accountability. NQ has `prometheus_targets` today (one entry, `node_exporter` on Linode); the bad move is foreseeable when a future claim kind ships. None firing yet.
+
+**Composes with:** parent [CLAIM_CUSTODY](../../architecture/CLAIM_CUSTODY.md); kin [SUBSTRATE_COVERAGE_DECLARATION_GAP](../gaps/SUBSTRATE_COVERAGE_DECLARATION_GAP.md) (completeness axis, not accountability); witness-identity row [WITNESS_IDENTITY_AND_ABSENCE_GAP](../gaps/WITNESS_IDENTITY_AND_ABSENCE_GAP.md); surface-boundary family [PROPAGATION_SCOPE_CANDIDATE](../gaps/PROPAGATION_SCOPE_CANDIDATE.md), [SURFACE_TYPED_REVOCATION_CANDIDATE](../gaps/SURFACE_TYPED_REVOCATION_CANDIDATE.md), [SPENDABILITY_TESTIMONY_GAP](../gaps/SPENDABILITY_TESTIMONY_GAP.md). The map is the index that organizes all of them.
+
+**Cadence note:** fourth recognition filing in 48 hours (SPENDABILITY 2026-06-03 → SURFACE_TYPED_REVOCATION 2026-06-04 morning → SUBSTRATE_COVERAGE 2026-06-04 afternoon → this pair 2026-06-04 evening). The map is partly the operator's response to that cadence — giving future records a bucket rather than letting the proliferation continue unstructured. The cross-project Prometheus → NQ analysis surfaced both: the candidate because the seam is real, and the map because the family reached indexing-pays-for-itself density.
+
+---
+
 ## SUBSTRATE_COVERAGE_DECLARATION_GAP (recognition-only filing)
 
 **Status:** `candidate` filing 2026-06-04 — recognition record, NOT a shipped feature. Logged here so future archaeology asking "when did NQ name the gap between watched-things and host-coverage?" finds the answer.
