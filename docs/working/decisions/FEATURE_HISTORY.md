@@ -20,6 +20,24 @@ The chronological order below is newest-first.
 
 ---
 
+## SURFACE_TYPED_REVOCATION_CANDIDATE (recognition-only filing)
+
+**Status:** `candidate` filing 2026-06-04 — recognition record, NOT a shipped feature. Logged here so future archaeology asking "when did NQ start naming the cross-surface revocation laundering pattern?" finds the answer.
+
+**Filed:** [`docs/working/gaps/SURFACE_TYPED_REVOCATION_CANDIDATE.md`](../gaps/SURFACE_TYPED_REVOCATION_CANDIDATE.md) (this commit).
+
+**Author:** operator-by-proxy via another Claude session in the constellation. The cross-repo "read-only" guard didn't bind that session; treat the file as operator-authored. Flagging for archaeology, not as a problem with the file.
+
+**What was filed:** the recognition that revocation has its own laundering chain — `revocation_observed(surface A) → invalidity_inferred(surface B)` — structurally identical to CLAIM_CUSTODY's success → safety → authorization. Rule: revocation on A does not imply death on B unless a coupling witness exists. Admissibility requires naming four parts (revocation surface / target / death surface / coupling witness). Substrate section lists nearby machinery (WLP `RevocationReceipt`, Wicket `revocation.*`, Lean `revoked_basis_*`, Nightshift deferred slice) as background only, NOT a unification target.
+
+**What was NOT filed:** no `ClaimKind` variant. No migration. No evaluator. No unification of existing revocation machinery. Per the file's own scope guards: "typed revocation is about refusing revocation laundering, not building a master revocation ontology."
+
+**Forcing case:** four conditions named in the file (cross-surface laundering incident; Nightshift opens its `RevocationReceipt` slice; two substrate surfaces start exchanging revocation signals; a consumer demands the claim kind). None firing yet.
+
+**Composes with:** [PROPAGATION_SCOPE_CANDIDATE](../gaps/PROPAGATION_SCOPE_CANDIDATE.md) (sibling anti-laundering kernel), [CLAIM_CUSTODY](../../architecture/CLAIM_CUSTODY.md), [SPENDABILITY_TESTIMONY_GAP](../gaps/SPENDABILITY_TESTIMONY_GAP.md). The file's open question #3 names a parent-doctrine candidate worth watching: "X not conserved across boundary Y without coupling witness" is now the shape of three sibling candidates; a unifying keeper may eventually want its own filing.
+
+---
+
 ## NQ_EVALUATOR_STATE Tier 1 V0
 
 **Status:** `shipped (V0)` 2026-06-03. End-to-end: substrate accepts probe rows every pulse; the evaluator turns the latest row per `(host, claim_kind)` into a typed `PreflightResult`; the HTTP route surfaces it. The kind closes the silent-failure forcing case: an operator can now distinguish "no probe ever ran for kind K" (`InsufficientCoverage`) from "evaluator for kind K is wedged" (`CannotTestify` with `outcome_status` in signals). `AdmissibleWithScope` carries `verdict_scope = "evaluator_liveness_shape_only"` — the narrow scope refuses every forward-going-trust laundering shape as a constitutional matter, not via prose. The per-kind evaluator code path is now substrate; readiness inside the structural W/E boundary (Track 4) is observable.
