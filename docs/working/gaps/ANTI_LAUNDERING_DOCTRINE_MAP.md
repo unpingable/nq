@@ -24,6 +24,18 @@ Where A and B differ along some axis — surface, completeness, identity, accoun
 | **Custodian binding / accountability** | observed / instrumented ⇒ accountable | [CUSTODIAN_BINDING_ACCOUNTABILITY_CANDIDATE](CUSTODIAN_BINDING_ACCOUNTABILITY_CANDIDATE.md) |
 | **Freshness / expiry** | was true at T ⇒ still admissible at T+Δ | *(no separate recognition record; implicit in evaluator `verdict_scope` contracts and `stale_threshold` logic — see the `nq_evaluator_state` preflight's "evaluator_liveness_shape_only" scope and the 300s stale gate in evaluator code)* |
 
+## Meta-pattern: control-flow laundering
+
+Some anti-laundering failures can be reintroduced by the checker's control flow rather than by its domain model.
+
+In particular, monadic short-circuiting (`Except.bind`, first-failure-wins validators, early-return gate chains) may collapse a multi-failure crossing into a single refusal. This silently converts a complete diagnosis into the first encountered failure and can erase independent refusal grounds.
+
+Boundary checks that claim to preserve refusal structure must use validation-shaped accumulation where complete diagnosis matters: run all relevant kernels, preserve each typed failure, and avoid netting failures into a scalar verdict.
+
+**This is not a separate refusal family. It is an implementation-level preservation rule for all refusal families.**
+
+Discovered 2026-06-04 from the `~/git/lean/LeanProofs/Scratch/BoundaryTransit.lean` scratch annex's 8-way exhaustive-match comment block, which explicitly refused `Except.bind` for exactly this reason. The Lean file is not promoted, wired, or used as discharge — it is fenced scratch proof-of-encodability; see [[feedback_lean_scratch_allowed]] for the refined Lean-discharge rule the file's existence prompted.
+
 ## Parent recognition (NOT yet authorized)
 
 Four named families and one implicit lane is enough to **notice** the parent. It is NOT yet enough to **name** it as its own doctrine. The family-keeper question is parked until clear forcing pressure arrives: an instance that none of the families buckets cleanly; a consumer asking for the parent rule; a real refactor where the abstraction would pay rent.
