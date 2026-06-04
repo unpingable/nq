@@ -20,6 +20,24 @@ The chronological order below is newest-first.
 
 ---
 
+## SUBSTRATE_COVERAGE_DECLARATION_GAP (recognition-only filing)
+
+**Status:** `candidate` filing 2026-06-04 — recognition record, NOT a shipped feature. Logged here so future archaeology asking "when did NQ name the gap between watched-things and host-coverage?" finds the answer.
+
+**Filed:** [`docs/working/gaps/SUBSTRATE_COVERAGE_DECLARATION_GAP.md`](../gaps/SUBSTRATE_COVERAGE_DECLARATION_GAP.md) (this commit).
+
+**Surfaced by:** post-deploy substrate inventory audit on the Linode VM, same session. Six running services (pds, postgresql@15-main, postgresql@17-main, labelwatch-lock-watcher, governor-bridge, nq-publish) were silently unwatched by publisher.json. Operator named `pds` from intuition; NQ did not. The config-debt close enrolled all six the same session, but the recognition is that the publisher's incompleteness was invisible until an operator (not NQ) noticed.
+
+**What was filed:** the rule that *a host-level witness may not imply host-level coverage unless unobserved substrate is either enrolled or explicitly excluded*. Equivalent shorter form: *unwatched substrate is not covered substrate.* Coverage claims about a host H are inadmissible without the four-part receipt: observed substrate inventory, declared watched inventory, declared ignored inventory (with reason), and the gap = observed − watched − ignored.
+
+**What was NOT filed:** no `ClaimKind::SubstrateCoverage`. No reconciliation collector. No service-discovery surface. No auto-enrollment. The scope guards explicitly refuse Prometheus/Datadog cosplay. The cheapest V0 discharge is NQ continuing to never claim host-level coverage; the rule is doctrine that this refusal is permanent.
+
+**Forcing case:** an NQ surface that starts emitting host-level rollups; a real incident where NQ output was read as host-coverage testimony; cross-host parity needs declared-inventory sets to compare; a consumer starts asking "is host H covered?" instead of "what does NQ say about service S on H?". The 2026-06-04 pds discovery is *prior art* (operator-caught, not NQ-caught) — a near-miss, not yet an incident.
+
+**Composes with:** [PROPAGATION_SCOPE_CANDIDATE](../gaps/PROPAGATION_SCOPE_CANDIDATE.md), [SURFACE_TYPED_REVOCATION_CANDIDATE](../gaps/SURFACE_TYPED_REVOCATION_CANDIDATE.md), [SPENDABILITY_TESTIMONY_GAP](../gaps/SPENDABILITY_TESTIMONY_GAP.md). **Note:** this is a *different* family from those three. Those refuse boundary-crossing inferences ("X observed at A implies Y at B"); this refuses completeness-of-declaration laundering ("X named in declaration implies Y covered in reality"). Worth pinning explicitly so a future parent-doctrine pass doesn't accidentally collapse them.
+
+---
+
 ## SURFACE_TYPED_REVOCATION_CANDIDATE (recognition-only filing)
 
 **Status:** `candidate` filing 2026-06-04 — recognition record, NOT a shipped feature. Logged here so future archaeology asking "when did NQ start naming the cross-surface revocation laundering pattern?" finds the answer.
