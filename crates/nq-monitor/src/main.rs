@@ -1,3 +1,4 @@
+mod artifact_registry;
 mod cli;
 mod cmd;
 mod http;

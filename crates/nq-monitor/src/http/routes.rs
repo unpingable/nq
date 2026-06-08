@@ -12,6 +12,7 @@ use nq_db::nq_evaluator_state::{
     evaluate_nq_evaluator_state_preflight, NqEvaluatorStateTarget,
 };
 use nq_db::sqlite_wal_state::{evaluate_sqlite_wal_state_preflight, SqliteWalTarget};
+use crate::artifact_registry::RegistryResponse;
 use crate::nq_sql_contract_state::{
     evaluate_nq_sql_contract_state_preflight, NqSqlContractStateTarget,
 };
@@ -118,6 +119,7 @@ pub fn router(db: Db) -> Router {
             "/api/preflight/nq-sql-contract-state",
             get(api_preflight_nq_sql_contract_state),
         )
+        .route("/api/artifact-registry", get(api_artifact_registry))
         .route("/finding/{kind}/{host}", get(finding_detail))
         .route("/finding/{kind}/{host}/{subject}", get(finding_detail_with_subject))
         .with_state(db)
@@ -1072,6 +1074,25 @@ async fn api_preflight_nq_evaluator_state(
             Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
         },
         Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+/// Artifact boundary registry: enumerates the receipt/artifact shapes
+/// this NQ instance produces and consumes, with directionality and
+/// (where applicable) the fixed external location at which each
+/// artifact can be observed.
+///
+/// Not an operational claim; not `nq_receipt_emission_state`. Pure
+/// visibility surface — the static declaration that NQ-on-NQ-002
+/// graduated this instance to producer+consumer. See
+/// `crates/nq-monitor/src/artifact_registry.rs` for the entries and
+/// the Reading-A / Reading-B-later doctrine.
+async fn api_artifact_registry() -> Json<serde_json::Value> {
+    use time::OffsetDateTime;
+    let snap = RegistryResponse::snapshot(OffsetDateTime::now_utc());
+    match serde_json::to_value(&snap) {
+        Ok(v) => Json(v),
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
     }
 }
 
