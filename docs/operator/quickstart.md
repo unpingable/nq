@@ -123,7 +123,15 @@ Browse to `http://localhost:9848`. You'll see:
 ## 6. Query with SQL
 
 The SQL console at the bottom accepts any read-only SELECT query against
-NQ's tables and views:
+NQ's tables and views.
+
+> **SQL surface note.** Examples below mix public contract views
+> (`v_hosts`, `v_metrics`, `v_warnings`) with operator-visible storage
+> tables (`hosts_history`, `generations`). Storage tables are
+> operator-visible only where explicitly documented; they are not the
+> public SQL contract and should not be used by dashboards, exporters,
+> external consumers, or durable automation. Prefer public views where
+> available. See [sql-contract.md](sql-contract.md).
 
 ```sql
 -- Current host metrics

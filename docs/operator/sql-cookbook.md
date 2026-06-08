@@ -1,11 +1,21 @@
 # SQL Cookbook
 
-NQ stores everything in SQLite. Every table and view is queryable from the
-web UI's SQL console or via `nq-monitor query --db /path/to/nq.db "SELECT ..."`.
+NQ stores everything in SQLite. The web UI's SQL console and
+`nq-monitor query --db /path/to/nq.db "SELECT ..."` accept read-only
+SELECT against the database.
+
+This cookbook is **organized by tier**. See
+[sql-contract.md](sql-contract.md) for the full contract.
+
+- **Public examples** query public contract views. Safe for dashboards,
+  exporters, and durable automation.
+- **Operator-visible storage** examples query raw tables for ad-hoc
+  investigation. Querying is permitted; dependency is not promised.
+- **Internal tables** are not documented as supported query surfaces.
 
 ---
 
-## Current state
+## Public examples — current state
 
 ```sql
 -- What's happening right now?
@@ -22,9 +32,20 @@ FROM v_sqlite_dbs
 SELECT severity, domain, kind, host, message, consecutive_gens
 FROM v_warnings
 ORDER BY severity DESC, consecutive_gens DESC
+
+-- Per-host operational summary with dominant finding
+SELECT host, dominant_kind, dominant_severity, dominant_service_impact,
+       dominant_action_bias, total_findings, observed_findings
+FROM v_host_state
+ORDER BY host
+
+-- Per-finding admissibility (testimony dependency)
+SELECT finding_key, state, reason, ancestor_finding_key
+FROM v_admissibility
+WHERE state != 'observable'
 ```
 
-## Prometheus metrics
+## Public examples — Prometheus metrics
 
 ```sql
 -- Search for a metric
@@ -32,30 +53,49 @@ SELECT metric_name, value, host FROM v_metrics
 WHERE metric_name LIKE 'node_load%'
 
 -- All metrics for a host
-SELECT s.metric_name, m.value
-FROM metrics_current m
-JOIN series s ON s.series_id = m.series_id
-WHERE m.host = 'my-host'
-ORDER BY s.metric_name
+SELECT metric_name, value
+FROM v_metrics
+WHERE host = 'my-host'
+ORDER BY metric_name
 
 -- Metrics with labels
-SELECT s.metric_name, s.labels_json, m.value
-FROM metrics_current m
-JOIN series s ON s.series_id = m.series_id
-WHERE s.metric_name = 'node_filesystem_avail_bytes'
+SELECT metric_name, labels_json, value
+FROM v_metrics
+WHERE metric_name = 'node_filesystem_avail_bytes'
 
--- How many unique metric series?
-SELECT COUNT(*) FROM series
-
--- Top metrics by series count (cardinality)
-SELECT metric_name, COUNT(*) as series_count
-FROM series
-GROUP BY metric_name
-ORDER BY series_count DESC
-LIMIT 20
+-- Publisher connectivity
+SELECT source, last_status, generations_behind, last_duration_ms
+FROM v_sources
 ```
 
-## History and trends
+## Public examples — domain-specific
+
+These views are public when the corresponding collector is enabled. If
+the collector is absent, the view returns no rows.
+
+```sql
+-- SMART devices
+SELECT host, device, model, hours_on, reallocated_sectors, status
+FROM v_smart_devices
+ORDER BY host, device
+
+-- ZFS pool health
+SELECT host, pool, state, capacity_pct, errors_read, errors_write, errors_cksum
+FROM v_zfs_pools
+ORDER BY host, pool
+```
+
+---
+
+## Operator-visible storage examples
+
+> **Storage queries below are operator-visible, not the public SQL
+> contract.** Use them for ad-hoc investigation, replay, and debugging.
+> Schemas may change across migrations; queries may need updates. Do not
+> wire these into dashboards, exporters, or durable automation — prefer
+> public views above. See [sql-contract.md](sql-contract.md).
+
+### History and trends
 
 ```sql
 -- CPU load over the last hour
@@ -88,7 +128,7 @@ WHERE s.metric_name = 'node_load1' AND mh.host = 'my-host'
 ORDER BY g.generation_id DESC LIMIT 60
 ```
 
-## Generation health
+### Generation health
 
 ```sql
 -- Recent generations
@@ -106,10 +146,6 @@ WHERE g.summary_hash != (
 )
 ORDER BY g.generation_id DESC LIMIT 20
 
--- Source reliability
-SELECT source, last_status, generations_behind, last_duration_ms
-FROM v_sources
-
 -- Collector success rates
 SELECT collector, status, COUNT(*) as runs
 FROM collector_runs
@@ -117,7 +153,13 @@ WHERE generation_id > (SELECT MAX(generation_id) - 60 FROM generations)
 GROUP BY collector, status
 ```
 
-## Findings deep-dive
+### Findings deep-dive
+
+> `v_warnings` is the public current-findings surface. `warning_state` is
+> operator-visible only for deep-dive / replay / debug cases that need
+> columns `v_warnings` omits. If you find yourself reaching for
+> `warning_state` repeatedly, that signals a missing view, not a blessing
+> of the table — file a gap.
 
 ```sql
 -- Warning lifecycle details
@@ -140,7 +182,7 @@ FROM warning_state
 GROUP BY domain
 ```
 
-## Storage and series management
+### Storage and series management
 
 ```sql
 -- Series dictionary stats
@@ -149,6 +191,13 @@ SELECT COUNT(*) as total_series,
        MIN(first_seen_gen) as oldest_series_gen,
        MAX(last_seen_gen) as newest_series_gen
 FROM series
+
+-- Top metrics by series count (cardinality)
+SELECT metric_name, COUNT(*) as series_count
+FROM series
+GROUP BY metric_name
+ORDER BY series_count DESC
+LIMIT 20
 
 -- History storage by table
 SELECT 'metrics_history' as tbl, COUNT(*) as rows FROM metrics_history
@@ -165,13 +214,10 @@ SELECT page_count * page_size / 1024 / 1024 as db_size_mb
 FROM pragma_page_count(), pragma_page_size()
 ```
 
-## Available views
+---
 
-| View | Description |
-|---|---|
-| `v_hosts` | Current host state with staleness |
-| `v_services` | Current service status with staleness |
-| `v_sqlite_dbs` | SQLite DB health with relative metrics |
-| `v_metrics` | Current Prometheus metrics via series dictionary |
-| `v_sources` | Publisher connectivity status |
-| `v_warnings` | Active findings from warning_state |
+## Contract summary
+
+For the full contract — which views are stable, which are evolving,
+which tables are operator-visible vs internal — see
+[sql-contract.md](sql-contract.md).

@@ -7,6 +7,13 @@ Each replay shows: what happened, what NQ found, what domain it classified,
 what an operator would investigate, and what a traditional monitor would
 have shown instead.
 
+> **SQL surface note.** This document includes raw-table queries for
+> operator investigation. Raw storage tables are operator-visible only
+> where explicitly documented; they are not the public SQL contract and
+> should not be used by dashboards, exporters, external consumers, or
+> durable automation. Prefer public views where available. See
+> [sql-contract.md](sql-contract.md).
+
 ---
 
 ## Replay 1: The Silent Database Rot
