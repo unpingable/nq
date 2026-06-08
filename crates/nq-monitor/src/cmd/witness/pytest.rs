@@ -73,6 +73,7 @@ pub fn run(cmd: WitnessPytestCmd) -> anyhow::Result<()> {
         custody_basis: None,
         source_finding_ref: None,
         projection_limits: vec![],
+        position: Some(nq_core::witness::WitnessPosition::ApplicationInternal),
     };
 
     packet.validate()?;

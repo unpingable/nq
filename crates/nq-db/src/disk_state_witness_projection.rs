@@ -161,6 +161,7 @@ pub fn project_disk_state_finding(
             "original detector run metadata not preserved".to_string(),
             "transport / encoding lineage unknown".to_string(),
         ],
+        position: Some(nq_core::witness::WitnessPosition::Substrate),
     };
 
     packet
@@ -305,6 +306,11 @@ mod tests {
         assert!(pkt
             .projection_limits
             .contains(&PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY.to_string()));
+        assert_eq!(
+            pkt.position,
+            Some(nq_core::witness::WitnessPosition::Substrate),
+            "disk_state legacy projections (zfs/smart/disk_pressure) must classify as Substrate per witness.position cut-over"
+        );
     }
 
     #[test]

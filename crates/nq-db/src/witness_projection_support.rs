@@ -68,6 +68,7 @@ pub(crate) fn packet_identity(packet: &WitnessPacket) -> Option<SupportingWitnes
         digest,
         observed_at: packet.observed_at.clone(),
         custody_basis: packet.custody_basis.clone(),
+        position: packet.position,
     })
 }
 
@@ -118,6 +119,7 @@ mod tests {
             custody_basis: Some(CUSTODY_BASIS_LEGACY_PROJECTION.to_string()),
             source_finding_ref: Some("sample:1".to_string()),
             projection_limits: vec![PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY.to_string()],
+            position: Some(nq_core::witness::WitnessPosition::Substrate),
         }
     }
 
@@ -143,6 +145,31 @@ mod tests {
             Some(CUSTODY_BASIS_LEGACY_PROJECTION)
         );
         assert!(!id.digest.is_empty());
+    }
+
+    #[test]
+    fn packet_identity_propagates_position() {
+        // The witness.position cut-over: packet_identity copies
+        // position from WitnessPacket onto SupportingWitnessPacket
+        // so consumers reading PreflightResult supports[].witness_packet
+        // see the producer's declared position without re-deriving.
+        let pkt = sample_packet();
+        let id = packet_identity(&pkt).expect("validated packet must have a digest");
+        assert_eq!(
+            id.position,
+            Some(nq_core::witness::WitnessPosition::Substrate)
+        );
+    }
+
+    #[test]
+    fn packet_identity_position_is_none_when_packet_predates_cutover() {
+        // Legacy-shape packets (no position field set) must surface
+        // as `None` through packet_identity. No silent default to
+        // Substrate.
+        let mut pkt = sample_packet();
+        pkt.position = None;
+        let id = packet_identity(&pkt).expect("validated packet must have a digest");
+        assert!(id.position.is_none());
     }
 
     #[test]

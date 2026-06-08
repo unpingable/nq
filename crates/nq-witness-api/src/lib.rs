@@ -25,6 +25,14 @@ pub mod fixtures;
 
 use nq_core::wire::PublisherState;
 
+/// Witness position re-exported as part of the consumer-facing
+/// contract. Consumers depend on `nq-witness-api::WitnessPosition`
+/// rather than reaching into `nq-core` directly, matching the rest
+/// of the boundary discipline this crate enforces. The enum itself
+/// is defined in `nq-core::witness` next to `WitnessPacket`; this
+/// re-export is the consumer surface.
+pub use nq_core::witness::WitnessPosition;
+
 /// HTTP path the witness binary exposes for its testimony payload.
 pub const STATE_PATH: &str = "/state";
 
