@@ -73,6 +73,26 @@ pub const PREFLIGHT_NQ_BINARY_MTIME_STATE_SCHEMA: &str =
 pub const PREFLIGHT_NQ_EVALUATOR_STATE_SCHEMA: &str =
     "nq.preflight.nq_evaluator_state.v1";
 
+/// Wire schema identifier for `nq_sql_contract_state` preflight results.
+/// NQ-on-NQ-002. One envelope per `(host, artifact_path)` target. This
+/// kind consumes a `nq.sql_contract.public_views.v1` receipt emitted at
+/// the test boundary by `crates/nq-db/tests/sql_contract.rs` and turns
+/// the receipt's pass/fail into a preflight verdict.
+///
+/// The receipt is the substrate. The receipt's own `scope.does_not_check`
+/// is preserved verbatim in the verdict's `signals` so consumers cannot
+/// inflate "public view existence holds" into "the operator SQL
+/// contract is fully satisfied." Constitutional refusals attach
+/// additional doctrinal limits that no receipt content licenses, see
+/// `nq_sql_contract_state_cannot_testify`.
+///
+/// The evaluator does not introspect the database directly — that would
+/// collapse the test/runtime separation the receipt boundary exists to
+/// maintain. The receipt is produced beside tests; the verdict is
+/// rendered at runtime; the two layers never meet.
+pub const PREFLIGHT_NQ_SQL_CONTRACT_STATE_SCHEMA: &str =
+    "nq.preflight.nq_sql_contract_state.v1";
+
 /// Contract version for the preflight wire shape. Bumps on breaking change.
 pub const PREFLIGHT_CONTRACT_VERSION: u32 = 1;
 
@@ -128,6 +148,17 @@ pub enum ClaimKind {
     /// validity only; correctness is untestifiable. See
     /// `docs/working/decisions/preflights/NQ_EVALUATOR_STATE.md`.
     NqEvaluatorState,
+    /// NQ-on-NQ-002: consumes a `nq.sql_contract.public_views.v1`
+    /// receipt emitted at the test boundary and turns its pass/fail
+    /// into a preflight verdict. Target identity is
+    /// `(host, artifact_path)`. The receipt's `scope.does_not_check`
+    /// list is preserved verbatim in the verdict signals so consumers
+    /// cannot inflate "public view existence holds" into "the operator
+    /// SQL contract is fully satisfied." Single-receipt jurisdiction;
+    /// federation across NQ instances is out of scope. See
+    /// `docs/operator/sql-contract.md` for the contract and
+    /// `crates/nq-db/tests/sql_contract.rs` for the receipt producer.
+    NqSqlContractState,
 }
 
 impl ClaimKind {
@@ -145,6 +176,7 @@ impl ClaimKind {
             }
             Self::NqBinaryMtimeState => "nq_binary_mtime_state",
             Self::NqEvaluatorState => "nq_evaluator_state",
+            Self::NqSqlContractState => "nq_sql_contract_state",
         }
     }
 }
@@ -483,6 +515,10 @@ impl PreflightResult {
                 PREFLIGHT_NQ_EVALUATOR_STATE_SCHEMA.to_string(),
                 nq_evaluator_state_cannot_testify(),
             ),
+            ClaimKind::NqSqlContractState => (
+                PREFLIGHT_NQ_SQL_CONTRACT_STATE_SCHEMA.to_string(),
+                nq_sql_contract_state_cannot_testify(),
+            ),
         };
         Self {
             schema,
@@ -732,6 +768,35 @@ pub fn nq_evaluator_state_cannot_testify() -> Vec<String> {
     ]
 }
 
+/// Constitutional refusal surface for `nq_sql_contract_state`. Each
+/// entry corresponds to a conclusion no `nq.sql_contract.public_views.v1`
+/// receipt licenses, regardless of what the receipt's `result` field
+/// says. The receipt's own `scope.does_not_check` list is the
+/// per-receipt negative scope; this list is the kind-level constitutional
+/// scope. Consumers receive both: per-receipt scope passes through to
+/// `signals.nq_sql_contract_state.scope_does_not_check`; constitutional
+/// refusals live here.
+///
+/// The disciplinary line: the receipt testifies that *the documented
+/// public views in `docs/operator/sql-contract.md` existed in a
+/// migrated database at test time*. It does not testify to column
+/// stability, semantic correctness, runtime DB state, operator-visible
+/// storage tables, internal derived views, or any consequence claim.
+pub fn nq_sql_contract_state_cannot_testify() -> Vec<String> {
+    vec![
+        "Whether the documented public-tier views have stable columns (existence check only; column drift is out of scope for this kind)".to_string(),
+        "Whether the documented public-tier views return semantically correct rows (existence check, not query-result correctness)".to_string(),
+        "Whether the live database matches the migrated schema (receipt is produced at the test boundary; runtime DB introspection is refused to preserve test/runtime separation)".to_string(),
+        "Whether operator-visible storage tables (warning_state, *_history, generations, etc.) match their cookbook examples (out of contract scope)".to_string(),
+        "Whether internal tables or internal derived views are bounded in any way (no stability claim; out of contract scope)".to_string(),
+        "Whether SQL query performance is acceptable (existence check only)".to_string(),
+        "Whether the contract documented in sql-contract.md was reviewed or correct (this kind tests adherence, not authorship)".to_string(),
+        "Whether the binary running this preflight is the right binary (that is nq_binary_mtime_state's jurisdiction)".to_string(),
+        "Whether NQ as a whole is operationally sound (sixth-keeper refusal; receipt adherence to one narrow contract slice does not testify to NQ standing)".to_string(),
+        "Whether to take any action (consequence claim; receipts attest, they do not authorize mutation)".to_string(),
+    ]
+}
+
 /// Constitutional refusal surface for `disk_state`. Each entry corresponds to
 /// a conclusion no combination of ZFS / SMART / disk-pressure witness output
 /// licenses, regardless of how many findings light up. Mirrors the
@@ -829,11 +894,41 @@ mod tests {
             ClaimKind::ComponentTestimonyObservationLoopAlive,
             ClaimKind::NqBinaryMtimeState,
             ClaimKind::NqEvaluatorState,
+            ClaimKind::NqSqlContractState,
         ] {
             let s = serde_json::to_string(&k).unwrap();
             let back: ClaimKind = serde_json::from_str(&s).unwrap();
             assert_eq!(back, k);
         }
+    }
+
+    #[test]
+    fn nq_sql_contract_state_skeleton_has_constitutional_refusals() {
+        let target = PreflightTarget {
+            host: "self".into(),
+            scope: "artifact".into(),
+            id: Some("/var/lib/nq/sql_contract_receipt.json".into()),
+        };
+        let r = PreflightResult::skeleton(
+            ClaimKind::NqSqlContractState,
+            target,
+            "2026-06-08T00:00:00Z".into(),
+        );
+        assert_eq!(r.schema, PREFLIGHT_NQ_SQL_CONTRACT_STATE_SCHEMA);
+        assert_eq!(r.contract_version, PREFLIGHT_CONTRACT_VERSION);
+        // The pinned refusals must be present (sample from the kind-level list).
+        assert!(r.cannot_testify.iter().any(|s| s.contains("stable columns")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("live database")));
+        assert!(r.cannot_testify.iter().any(|s| s.contains("consequence")));
+        assert!(r
+            .cannot_testify
+            .iter()
+            .any(|s| s.contains("sixth-keeper")));
+        // Verdict starts at InsufficientCoverage like other kinds.
+        assert!(matches!(r.verdict, Verdict::InsufficientCoverage));
     }
 
     #[test]

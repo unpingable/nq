@@ -12,6 +12,9 @@ use nq_db::nq_evaluator_state::{
     evaluate_nq_evaluator_state_preflight, NqEvaluatorStateTarget,
 };
 use nq_db::sqlite_wal_state::{evaluate_sqlite_wal_state_preflight, SqliteWalTarget};
+use crate::nq_sql_contract_state::{
+    evaluate_nq_sql_contract_state_preflight, NqSqlContractStateTarget,
+};
 use nq_db::component_testimony::evaluate_observation_loop_alive_preflight;
 use nq_db::{overview, host_detail, query_read_only, evaluate_disk_state_preflight, evaluate_dns_state_preflight, evaluate_ingest_state_preflight, DnsObservationTuple, QueryLimits, ReadDb, WriteDb};
 use std::sync::Arc;
@@ -110,6 +113,10 @@ pub fn router(db: Db) -> Router {
         .route(
             "/api/preflight/nq-binary-mtime-state",
             get(api_preflight_nq_binary_mtime_state),
+        )
+        .route(
+            "/api/preflight/nq-sql-contract-state",
+            get(api_preflight_nq_sql_contract_state),
         )
         .route("/finding/{kind}/{host}", get(finding_detail))
         .route("/finding/{kind}/{host}/{subject}", get(finding_detail_with_subject))
@@ -1064,6 +1071,66 @@ async fn api_preflight_nq_evaluator_state(
             Ok(v) => Ok(Json(v)),
             Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
         },
+        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+/// Query params for `/api/preflight/nq-sql-contract-state`.
+///
+/// `artifact` is the filesystem path to a `nq.sql_contract.public_views.v1`
+/// receipt produced by `crates/nq-db/tests/sql_contract.rs` with
+/// `NQ_EMIT_SQL_CONTRACT_RECEIPT=<path>` set.
+///
+/// `host` is optional and defaults to `"self"` — single-receipt
+/// jurisdiction. The receipt itself does not carry host identity (the
+/// drift test runs against a fresh ephemeral DB, not a host-tagged one),
+/// so the handler accepts the operator's chosen label for the
+/// `target.host` field of the returned `PreflightResult`.
+#[derive(Debug, serde::Deserialize)]
+struct PreflightNqSqlContractStateQuery {
+    artifact: String,
+    #[serde(default)]
+    host: Option<String>,
+}
+
+/// `nq_sql_contract_state` preflight surfaced over the monitor HTTP path.
+///
+/// Reads the JSON receipt at the `artifact` path, classifies it against
+/// the four-verdict mapping documented in
+/// `crates/nq-monitor/src/nq_sql_contract_state.rs`, and returns the
+/// typed `PreflightResult` (`nq.preflight.nq_sql_contract_state.v1`).
+///
+/// Empty `artifact` returns a 400 with an explicit error; absence of the
+/// artifact on disk is NOT a 400 — it produces a normal `CannotTestify`
+/// verdict in the JSON body. Refusal to render a verdict on the absence
+/// case would launder "missing artifact" into "transport error,"
+/// collapsing the test/runtime separation this kind exists to preserve.
+async fn api_preflight_nq_sql_contract_state(
+    Query(params): Query<PreflightNqSqlContractStateQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let artifact = params.artifact.trim();
+    if artifact.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "query parameter `artifact` is required and must not be empty"
+            })),
+        ));
+    }
+    let host = params
+        .host
+        .as_deref()
+        .map(|h| h.trim())
+        .filter(|h| !h.is_empty())
+        .unwrap_or("self")
+        .to_string();
+    let target = NqSqlContractStateTarget {
+        host,
+        artifact_path: std::path::PathBuf::from(artifact),
+    };
+    let result = evaluate_nq_sql_contract_state_preflight(&target);
+    match serde_json::to_value(&result) {
+        Ok(v) => Ok(Json(v)),
         Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
     }
 }
