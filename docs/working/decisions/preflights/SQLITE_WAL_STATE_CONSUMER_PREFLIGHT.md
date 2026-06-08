@@ -1,9 +1,39 @@
 # SQLite WAL State — Consumer-Preflight Beat
 
-**Status:** `design-preflight` — drafted 2026-05-26. Side-quest before the probe slices.
+**Status (2026-06-08):** **stable consumer call surface — V1 contract; awaiting labelwatch-side wire-up.** Original design-preflight drafted 2026-05-26; the rehearsal below has been exercised end-to-end (PreflightResult JSON + Receipt JSON + markdown rendering against the 2026-04-22 incident fixture). NQ side is wired; the unblocking work lives in the labelwatch repo, not here.
 **Parent slice:** kind-4 sqlite_wal_state, after the HTTP route landed.
 **Scope:** rehearse the labelwatch-Claude downstream-consumer contract against a realistic receipt **before** introducing probe/scheduler/permission complexity, and **before** building any MCP server. Find ambiguous receipt fields before they harden.
 **Not in scope:** MCP. Probe. Filesystem walk. `/proc`. Remediation. Action-shaped agent surfaces.
+
+## Stable call surface (added 2026-06-08)
+
+The canonical labelwatch-side call:
+
+```
+GET /api/preflight/sqlite-wal-state?host=<host>&db=<db_file_path>
+```
+
+Returns `nq.preflight.sqlite_wal_state.v1` as `PreflightResult` JSON (see below for the fixture-derived shape).
+
+**Target identity is `(host, db_file_path)`, not `(host, process)`.** The 3-services / 1-SQLite-inode topology of labelwatch (`labelwatch.service`, `labelwatch-discovery.service`, `labelwatch-api.service` all sharing `/var/lib/labelwatch/labelwatch.db`) is correctly resolved per-target by file path, not per-process.
+
+**Consumer must read three signal fields as a triple, not as a boolean:**
+
+- `signals.sqlite_wal_state.threshold_band` — `bounded | elevated | severe`
+- `signals.sqlite_wal_state.main_db_mtime_stale_across_window` — boolean (main-DB freshness across the observation window)
+- `signals.sqlite_wal_state.pinned_reader` — `present | absent` (long-lived transaction holding the WAL open)
+
+The 2026-04-22 incident shape (severe + stale + pinned) is the canonical compound; a single field firing in isolation is a different operational story than the triple firing together. Consumers that collapse the triple to a single "is this WAL bad?" boolean lose the operational signal the receipt exists to deliver. **Disambiguating the compound is the consumer's job, not NQ's.**
+
+**What NQ refuses to testify about (per the `cannot_testify` list emitted in the receipt):**
+
+- Whether the application owning this DB will recover.
+- Whether queries against this DB will return correct results.
+- Whether reports / downstream artifacts derived from this DB are stale.
+- WAL state on a different DB file (single-target jurisdiction).
+- Application-state claims generally — the WAL substrate does not testify to them.
+
+A labelwatch-side consumer that infers any of these from the receipt is laundering substrate testimony into application-state inference. The receipt's `cannot_testify` list is the boundary; the consumer is responsible for honoring it.
 
 ## Why this beat exists
 
