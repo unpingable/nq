@@ -6,6 +6,7 @@ mod nq_evaluator_probe;
 mod nq_sql_contract_state;
 mod probe;
 mod pull;
+mod served_surface_registry;
 mod smoke;
 
 use clap::Parser;

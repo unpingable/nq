@@ -2942,6 +2942,82 @@ async fn artifact_registry_marks_sql_contract_as_cross_boundary() {
     assert!(sql_contract.get("externally_observable_at").is_none());
 }
 
+// ---------------------------------------------------------------------------
+// (i) Served-surface registry: declares the HTTP routes this NQ
+//     instance serves + the evaluators it owns. Visibility surface;
+//     target-side declaration that a future observer-NQ can consume.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn served_surface_registry_endpoint_returns_routes_and_evaluators() {
+    let base = nq_sql_contract_router_addr().await;
+    let resp: serde_json::Value = reqwest::Client::new()
+        .get(format!("{base}/api/served-surface-registry"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(resp["schema"], "nq.served_surface_registry.v1");
+    assert!(resp["generated_at"].is_string());
+
+    let routes = resp["routes"].as_array().expect("routes array");
+    assert!(routes.len() >= 17, "expected >=17 routes; got {}", routes.len());
+
+    let evaluators = resp["evaluators"].as_array().expect("evaluators array");
+    assert_eq!(evaluators.len(), 8, "expected 8 evaluators; got {}", evaluators.len());
+
+    // Spot-check shape of a route entry.
+    let preflight_dns = routes
+        .iter()
+        .find(|r| r["route"] == "/api/preflight/dns-state")
+        .expect("dns-state route present");
+    assert_eq!(preflight_dns["method"], "GET");
+    assert_eq!(preflight_dns["supported_claim_kind"], "dns_state");
+    assert_eq!(preflight_dns["externally_observable"], true);
+
+    // Spot-check shape of an evaluator entry.
+    let sql_contract_eval = evaluators
+        .iter()
+        .find(|e| e["evaluator_kind"] == "nq_sql_contract_state")
+        .expect("nq_sql_contract_state evaluator present");
+    assert!(sql_contract_eval["evaluator_component"]
+        .as_str()
+        .unwrap()
+        .contains("nq_sql_contract_state"));
+    assert!(sql_contract_eval["evaluator_inputs_required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str().unwrap_or("").contains("public_views")));
+}
+
+#[tokio::test]
+async fn served_surface_registry_lists_itself_for_observer_discoverability() {
+    // The registry endpoint must list itself. An external observer
+    // discovering this NQ instance through one endpoint must be able
+    // to confirm the registry route exists without out-of-band
+    // knowledge.
+    let base = nq_sql_contract_router_addr().await;
+    let resp: serde_json::Value = reqwest::Client::new()
+        .get(format!("{base}/api/served-surface-registry"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let routes = resp["routes"].as_array().unwrap();
+    assert!(routes
+        .iter()
+        .any(|r| r["route"] == "/api/served-surface-registry"));
+    assert!(routes
+        .iter()
+        .any(|r| r["route"] == "/api/artifact-registry"));
+}
+
 #[tokio::test]
 async fn artifact_registry_preflight_entries_carry_http_routes() {
     let base = nq_sql_contract_router_addr().await;

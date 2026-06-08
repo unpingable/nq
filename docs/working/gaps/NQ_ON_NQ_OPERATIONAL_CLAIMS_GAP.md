@@ -69,6 +69,22 @@ Per [[feedback_preemptive_naming]] / [[feedback_name_broadly_build_narrowly]]: n
 
 Each kind would have its own substrate, its own witness profile(s), its own observation grammar, its own condition algebra, its own constitutional `cannot_testify` list. None of these are designed yet. Each would need its own design preflight when implementation is in scope.
 
+### `nq_route_state` — promotion criteria (parked)
+
+The candidate above is sharpened as of the served-surface registry packet (2026-06-08). Three conditions must fire before `nq_route_state` graduates from candidate to implementation:
+
+1. **External-NQ / sibling-NQ caller fires.** A concrete consumer requests route-reachability testimony about another NQ instance. Self-NQ checking its own route does not count — that is the "tiny chapel of self-attestation" this gap refuses.
+2. **Target-side served-surface registry exists.** Satisfied as of `/api/served-surface-registry` (`nq.served_surface_registry.v1`); the observer-NQ now has a declaration surface to consume rather than having to guess which routes a target NQ serves.
+3. **Concrete operator need.** Route reachability / admissibility from outside the target process must be requested by a named operator workflow, not by the elegance of the design.
+
+Explicit non-goals when promoted:
+- No self-route health check
+- No NQ-A reading NQ-A's own request log
+- No live-monitor self-attestation
+- No registry-side observation; the observer is a peer NQ, and the registry is target-side declaration
+
+Until all three conditions fire, this candidate stays parked. The served-surface registry stands alone as declaration.
+
 ## Abstraction trigger
 
 With two operational forcing consumers (labelwatch + NQ-on-NQ), the broader abstraction is:
