@@ -2668,3 +2668,216 @@ fn sqlite_wal_probe_pipeline_end_to_end_smoke() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// (g) Preflight HTTP surface: nq_sql_contract_state (NQ-on-NQ-002).
+//     The preflight ingests a sql-contract receipt artifact (produced
+//     by `crates/nq-db/tests/sql_contract.rs` with
+//     `NQ_EMIT_SQL_CONTRACT_RECEIPT=<path>`) and renders a typed verdict.
+//     These tests cover the HTTP wiring: query-param validation, the
+//     four verdict cases reachable over the wire, and that the
+//     constitutional refusal surface + per-receipt negative scope both
+//     survive the round trip.
+// ---------------------------------------------------------------------------
+
+async fn nq_sql_contract_router_addr() -> String {
+    use nq_monitor::http::routes::router;
+    let (_dir, db_path) = temp_db();
+    let read_db = open_ro(&db_path).unwrap();
+    std::mem::forget(_dir);
+    let app_db = Arc::new(Mutex::new(read_db));
+    let app = router(app_db);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://127.0.0.1:{}", addr.port())
+}
+
+fn write_receipt(dir: &TempDir, name: &str, body: &str) -> std::path::PathBuf {
+    let path = dir.path().join(name);
+    std::fs::write(&path, body).unwrap();
+    path
+}
+
+#[tokio::test]
+async fn preflight_nq_sql_contract_state_empty_artifact_returns_400() {
+    let base = nq_sql_contract_router_addr().await;
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/api/preflight/nq-sql-contract-state?artifact="))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["error"].as_str().unwrap().contains("artifact"));
+}
+
+#[tokio::test]
+async fn preflight_nq_sql_contract_state_missing_artifact_yields_cannot_testify() {
+    let base = nq_sql_contract_router_addr().await;
+    let resp: serde_json::Value = reqwest::Client::new()
+        .get(format!(
+            "{base}/api/preflight/nq-sql-contract-state?artifact=/nonexistent/no/such/path.json"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    // (1) Wire shape preserved.
+    assert_eq!(resp["schema"], "nq.preflight.nq_sql_contract_state.v1");
+    assert_eq!(resp["claim_kind"], "nq_sql_contract_state");
+    assert_eq!(resp["target"]["host"], "self");
+    assert_eq!(resp["target"]["scope"], "artifact");
+
+    // (2) Verdict.
+    assert_eq!(resp["verdict"], "cannot_testify");
+
+    // (3) Constitutional refusals survived the round trip.
+    let cannot = resp["cannot_testify"].as_array().unwrap();
+    assert!(cannot.len() >= 10);
+    let joined: String = cannot
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("column stability") || joined.contains("column"));
+    assert!(joined.contains("consequence"));
+    assert!(joined.contains("sixth-keeper"));
+}
+
+#[tokio::test]
+async fn preflight_nq_sql_contract_state_pass_receipt_yields_admissible_with_scope() {
+    let base = nq_sql_contract_router_addr().await;
+    let dir = TempDir::new().unwrap();
+    let body = r#"{
+        "schema": "nq.sql_contract.public_views.v1",
+        "claim_kind": "nq_sql_public_contract_state",
+        "producer": "nq-db::sql_contract::public_contract_views_exist_after_migration",
+        "contract_doc": "docs/operator/sql-contract.md",
+        "check_source": "Rust drift test inventory",
+        "observed_source": "sqlite_master",
+        "expected_public_views": ["v_hosts", "v_warnings"],
+        "observed_public_views": ["v_hosts", "v_warnings"],
+        "missing_public_views": [],
+        "unexpected_public_views": ["v_log_observations"],
+        "result": "pass",
+        "scope": {
+            "checks": ["public view existence"],
+            "does_not_check": [
+                "column stability",
+                "operator-visible tables",
+                "internal derived views"
+            ]
+        }
+    }"#;
+    let path = write_receipt(&dir, "pass.json", body);
+    let resp: serde_json::Value = reqwest::Client::new()
+        .get(format!(
+            "{base}/api/preflight/nq-sql-contract-state?artifact={}",
+            path.display()
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(resp["verdict"], "admissible_with_scope");
+
+    // The per-receipt negative scope MUST surface in the verdict signals
+    // — the wedge against consumer inflation.
+    let scope_dnc = resp["signals"]["nq_sql_contract_state"]["scope_does_not_check"]
+        .as_array()
+        .expect("scope_does_not_check present in signals");
+    assert_eq!(scope_dnc.len(), 3);
+    assert!(scope_dnc
+        .iter()
+        .any(|v| v.as_str() == Some("column stability")));
+}
+
+#[tokio::test]
+async fn preflight_nq_sql_contract_state_fail_receipt_yields_unsupported_as_stated() {
+    let base = nq_sql_contract_router_addr().await;
+    let dir = TempDir::new().unwrap();
+    let body = r#"{
+        "schema": "nq.sql_contract.public_views.v1",
+        "claim_kind": "nq_sql_public_contract_state",
+        "producer": "nq-db::sql_contract::public_contract_views_exist_after_migration",
+        "contract_doc": "docs/operator/sql-contract.md",
+        "check_source": "Rust drift test inventory",
+        "observed_source": "sqlite_master",
+        "expected_public_views": ["v_hosts", "v_warnings"],
+        "observed_public_views": ["v_hosts"],
+        "missing_public_views": ["v_warnings"],
+        "unexpected_public_views": [],
+        "result": "fail",
+        "scope": {
+            "checks": ["public view existence"],
+            "does_not_check": ["column stability"]
+        }
+    }"#;
+    let path = write_receipt(&dir, "fail.json", body);
+    let resp: serde_json::Value = reqwest::Client::new()
+        .get(format!(
+            "{base}/api/preflight/nq-sql-contract-state?artifact={}",
+            path.display()
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(resp["verdict"], "unsupported_as_stated");
+    let missing = resp["signals"]["nq_sql_contract_state"]["missing_public_views"]
+        .as_array()
+        .unwrap();
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0], "v_warnings");
+}
+
+#[tokio::test]
+async fn preflight_nq_sql_contract_state_wrong_schema_yields_insufficient_coverage() {
+    let base = nq_sql_contract_router_addr().await;
+    let dir = TempDir::new().unwrap();
+    let path = write_receipt(
+        &dir,
+        "wrong.json",
+        r#"{"schema": "nq.preflight.disk_state.v1", "result": "pass"}"#,
+    );
+    let resp: serde_json::Value = reqwest::Client::new()
+        .get(format!(
+            "{base}/api/preflight/nq-sql-contract-state?artifact={}",
+            path.display()
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(resp["verdict"], "insufficient_coverage");
+}
+
+#[tokio::test]
+async fn preflight_nq_sql_contract_state_custom_host_passes_through() {
+    let base = nq_sql_contract_router_addr().await;
+    let resp: serde_json::Value = reqwest::Client::new()
+        .get(format!(
+            "{base}/api/preflight/nq-sql-contract-state?artifact=/no/such&host=linode-prod"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(resp["target"]["host"], "linode-prod");
+}
+

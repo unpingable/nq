@@ -2,6 +2,7 @@ mod cli;
 mod cmd;
 mod http;
 mod nq_evaluator_probe;
+mod nq_sql_contract_state;
 mod probe;
 mod pull;
 mod smoke;

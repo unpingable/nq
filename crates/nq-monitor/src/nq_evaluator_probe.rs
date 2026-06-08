@@ -386,6 +386,14 @@ pub fn invoke_for_fixture<'conn>(
                  spec"
             )
         }
+        ClaimKind::NqSqlContractState => {
+            anyhow::bail!(
+                "nq_sql_contract_state deferred from V0 probe surface — \
+                 evaluator reads a file artifact, not a DB row; needs its \
+                 own fixture spec (artifact-file fixture, not synthetic \
+                 SQLite row)"
+            )
+        }
     }
 }
 
