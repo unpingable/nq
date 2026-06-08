@@ -186,6 +186,7 @@ pub fn project_dns_observation(
             PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY.to_string(),
             PROJECTION_LIMIT_DNS_OBSERVATION_RECOVERY.to_string(),
         ],
+        position: Some(nq_core::witness::WitnessPosition::Substrate),
     };
 
     packet
@@ -249,6 +250,11 @@ mod tests {
         assert!(pkt
             .projection_limits
             .contains(&PROJECTION_LIMIT_DNS_OBSERVATION_RECOVERY.to_string()));
+        assert_eq!(
+            pkt.position,
+            Some(nq_core::witness::WitnessPosition::Substrate),
+            "dns_resolver_legacy_projection must classify as Substrate per witness.position cut-over"
+        );
     }
 
     #[test]

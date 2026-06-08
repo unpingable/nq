@@ -321,6 +321,14 @@ pub struct SupportingWitnessPacket {
     /// `From<PreflightResult>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custody_basis: Option<String>,
+    /// Witness position copied from the underlying `WitnessPacket`.
+    /// Surfaces the producer's declared observation layer
+    /// (substrate / application_internal / platform) to consumers
+    /// like Nightshift that render by position rather than
+    /// reverse-engineering from `witness_type` strings. `None` for
+    /// packets that predate the witness.position cut-over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<crate::witness::WitnessPosition>,
 }
 
 /// One admissible weaker claim, with provenance back to the underlying

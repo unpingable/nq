@@ -629,6 +629,7 @@ mod tests {
             custody_basis: None,
             source_finding_ref: None,
             projection_limits: vec![],
+            position: None,
         }
     }
 

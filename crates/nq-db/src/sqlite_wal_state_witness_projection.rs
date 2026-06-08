@@ -298,6 +298,7 @@ pub fn project_wal_observation(
             PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY.to_string(),
             PROJECTION_LIMIT_SQLITE_WAL_OBSERVATION_RECOVERY.to_string(),
         ],
+        position: Some(nq_core::witness::WitnessPosition::ApplicationInternal),
     };
 
     packet
@@ -366,6 +367,11 @@ mod tests {
         assert!(pkt
             .projection_limits
             .contains(&PROJECTION_LIMIT_SQLITE_WAL_OBSERVATION_RECOVERY.to_string()));
+        assert_eq!(
+            pkt.position,
+            Some(nq_core::witness::WitnessPosition::ApplicationInternal),
+            "sqlite_wal projections observe an application's WAL file; classify as ApplicationInternal per witness.position cut-over"
+        );
     }
 
     #[test]

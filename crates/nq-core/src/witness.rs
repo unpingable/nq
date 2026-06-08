@@ -58,6 +58,39 @@ pub const CUSTODY_BASIS_LEGACY_PROJECTION: &str = "legacy_projection";
 /// the wire validator refuses projection packets that omit this declaration.
 pub const PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY: &str = "native_witness_custody";
 
+/// Where a witness observes — the layer of the stack the observation
+/// is anchored to. Producers set this explicitly per `witness_type`;
+/// consumers (Nightshift et al.) render by position rather than
+/// reverse-engineering from `witness_type` strings.
+///
+/// Three values, chosen narrow rather than expressive:
+///
+/// - **`Substrate`** — host hardware, kernel, on-host services that
+///   produce substrate-style facts (ZFS pool state, SMART self-test,
+///   filesystem byte counts, host-vantage DNS resolution). Observable
+///   without the application's cooperation.
+/// - **`ApplicationInternal`** — internal state of a specific
+///   application or component (NQ's own ingest generation row, a test
+///   runner's exit code, a SQLite database's WAL state, NQ's own
+///   binary mtime, NQ's own evaluator path). The witness is anchored
+///   to that application's state, not to host substrate.
+/// - **`Platform`** — shared platform / control plane / tooling
+///   layer (git tooling state, container orchestrator, Prometheus
+///   scrape vantage). Neither host hardware nor any single
+///   application's internals.
+///
+/// Default behavior on the wire: legacy packets without the field
+/// deserialize to `None` (unclassified). New producers in NQ-side
+/// code set this explicitly per the witness.position cut-over; no
+/// silent default to `Substrate`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WitnessPosition {
+    Substrate,
+    ApplicationInternal,
+    Platform,
+}
+
 /// One witness packet. Field shape per `docs/architecture/SHARED_SPINE.md`.
 ///
 /// `observations` is intentionally open-typed: each `witness_type` carries
@@ -94,6 +127,14 @@ pub struct WitnessPacket {
     /// pre-cut-over packets — this is not a general notes field.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub projection_limits: Vec<String>,
+
+    /// Where this witness observes — `substrate`, `application_internal`,
+    /// or `platform`. Producers set this explicitly per `witness_type`.
+    /// Absent for packets that predate the witness.position cut-over
+    /// (treated as unclassified by consumers; new NQ-side producers
+    /// must set it explicitly).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<WitnessPosition>,
 }
 
 /// Validation error. Soft typing — message-first so callers can surface
@@ -305,6 +346,10 @@ mod tests {
     use super::*;
 
     fn ok_packet() -> WitnessPacket {
+        // Intentionally keeps `position: None` to preserve the
+        // pre-cutover wire shape that the pinned-digest test below
+        // anchors. New tests that exercise the position cut-over
+        // build their own packets with `position: Some(...)`.
         WitnessPacket {
             schema: WITNESS_SCHEMA.into(),
             witness_type: "pytest".into(),
@@ -321,6 +366,7 @@ mod tests {
             custody_basis: None,
             source_finding_ref: None,
             projection_limits: vec![],
+            position: None,
         }
     }
 
@@ -399,6 +445,7 @@ mod tests {
                 PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY.into(),
                 "original detector run metadata not preserved".into(),
             ],
+            position: None,
         }
     }
 
@@ -647,5 +694,101 @@ mod tests {
         p3.dependencies = vec!["dep:x".into()];
 
         assert_ne!(p1.digest().unwrap(), p3.digest().unwrap());
+    }
+
+    // ---------------------------------------------------------------
+    // Position tests (witness.position cut-over)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn position_absent_when_none() {
+        let p = ok_packet();
+        assert!(p.position.is_none());
+        let json = serde_json::to_value(&p).unwrap();
+        assert!(
+            json.get("position").is_none(),
+            "position must be skipped from JSON when None: {json:#?}"
+        );
+    }
+
+    #[test]
+    fn position_serializes_in_snake_case() {
+        for (variant, expected) in [
+            (WitnessPosition::Substrate, "substrate"),
+            (WitnessPosition::ApplicationInternal, "application_internal"),
+            (WitnessPosition::Platform, "platform"),
+        ] {
+            let mut p = ok_packet();
+            p.position = Some(variant);
+            let json = serde_json::to_value(&p).unwrap();
+            assert_eq!(
+                json.get("position").and_then(|v| v.as_str()),
+                Some(expected),
+                "WitnessPosition::{variant:?} must serialize as {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn position_round_trips_through_serde() {
+        let mut p = ok_packet();
+        p.position = Some(WitnessPosition::ApplicationInternal);
+        let json = serde_json::to_string(&p).unwrap();
+        let back: WitnessPacket = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.position, Some(WitnessPosition::ApplicationInternal));
+    }
+
+    #[test]
+    fn missing_position_deserializes_as_none() {
+        // Pre-cutover wire shape — packet on the wire with no
+        // position field. Must deserialize to position: None.
+        let json = serde_json::json!({
+            "schema": WITNESS_SCHEMA,
+            "witness_type": "pytest",
+            "subject": "repo:.",
+            "access_path": "local_command",
+            "observed_at": "2026-05-15T14:00:00Z",
+            "generated_at": "2026-05-15T14:00:03Z",
+            "observations": [{"type": "pytest_run", "exit_code": 0}],
+            "coverage_limits": ["limited"],
+            "dependencies": []
+        });
+        let p: WitnessPacket = serde_json::from_value(json).unwrap();
+        assert!(p.position.is_none());
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn unknown_position_string_rejected_on_deserialize() {
+        let json = serde_json::json!({
+            "schema": WITNESS_SCHEMA,
+            "witness_type": "pytest",
+            "subject": "repo:.",
+            "access_path": "local_command",
+            "observed_at": "2026-05-15T14:00:00Z",
+            "generated_at": "2026-05-15T14:00:03Z",
+            "observations": [{"type": "pytest_run", "exit_code": 0}],
+            "coverage_limits": ["limited"],
+            "dependencies": [],
+            "position": "vibes"
+        });
+        let err = serde_json::from_value::<WitnessPacket>(json).unwrap_err();
+        assert!(
+            err.to_string().contains("position") || err.to_string().contains("vibes"),
+            "unknown position variant must be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn position_affects_digest_when_set() {
+        // Setting position changes the wire shape (additive field
+        // becomes present), which by design changes the digest.
+        // Packets that opt into position are intentionally a different
+        // packet identity than the pre-cutover shape.
+        let pre = ok_packet().digest().unwrap();
+        let mut with_pos = ok_packet();
+        with_pos.position = Some(WitnessPosition::ApplicationInternal);
+        let post = with_pos.digest().unwrap();
+        assert_ne!(pre, post);
     }
 }

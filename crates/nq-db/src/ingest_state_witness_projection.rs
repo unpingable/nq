@@ -126,6 +126,7 @@ pub fn project_ingest_generation(
             PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY.to_string(),
             PROJECTION_LIMIT_AGGREGATOR_ROW_RECOVERY.to_string(),
         ],
+        position: Some(nq_core::witness::WitnessPosition::ApplicationInternal),
     };
 
     packet
@@ -209,6 +210,7 @@ pub fn project_ingest_source(
             PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY.to_string(),
             PROJECTION_LIMIT_AGGREGATOR_ROW_RECOVERY.to_string(),
         ],
+        position: Some(nq_core::witness::WitnessPosition::ApplicationInternal),
     };
 
     packet
@@ -272,6 +274,11 @@ mod tests {
         assert!(pkt
             .projection_limits
             .contains(&PROJECTION_LIMIT_AGGREGATOR_ROW_RECOVERY.to_string()));
+        assert_eq!(
+            pkt.position,
+            Some(nq_core::witness::WitnessPosition::ApplicationInternal),
+            "ingest_generation projection observes NQ's own ingest state; classify as ApplicationInternal per witness.position cut-over"
+        );
     }
 
     #[test]
@@ -348,6 +355,11 @@ mod tests {
         assert_eq!(
             obs.get("generation_id").and_then(|v| v.as_i64()),
             Some(1742)
+        );
+        assert_eq!(
+            pkt.position,
+            Some(nq_core::witness::WitnessPosition::ApplicationInternal),
+            "ingest_source projection observes NQ's own ingest state; classify as ApplicationInternal per witness.position cut-over"
         );
     }
 
