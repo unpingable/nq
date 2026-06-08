@@ -2881,3 +2881,91 @@ async fn preflight_nq_sql_contract_state_custom_host_passes_through() {
     assert_eq!(resp["target"]["host"], "linode-prod");
 }
 
+// ---------------------------------------------------------------------------
+// (h) Artifact boundary registry: enumerates receipt/artifact shapes
+//     this NQ instance produces/consumes. Visibility surface only —
+//     not an operational claim. NQ-on-NQ-002 graduated this instance
+//     to producer+consumer; this endpoint makes the boundary
+//     inspectable.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn artifact_registry_endpoint_returns_registry_shape() {
+    let base = nq_sql_contract_router_addr().await;
+    let resp: serde_json::Value = reqwest::Client::new()
+        .get(format!("{base}/api/artifact-registry"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(resp["schema"], "nq.artifact_registry.v1");
+    assert!(resp["generated_at"].is_string());
+
+    let entries = resp["entries"].as_array().expect("entries array");
+    assert!(entries.len() >= 12, "expected >=12 entries; got {}", entries.len());
+
+    // Every entry has the 7 declared fields (externally_observable_at
+    // may be absent via skip_serializing_if).
+    for e in entries {
+        assert!(e["artifact_kind"].is_string());
+        assert!(e["direction"].is_string());
+        assert!(e["producer_component"].is_string());
+        assert!(e["consumer_component"].is_string());
+        assert!(e["storage_or_transport"].is_string());
+        assert!(e["claim_scope"].is_string());
+        assert!(e["status"].is_string());
+    }
+}
+
+#[tokio::test]
+async fn artifact_registry_marks_sql_contract_as_cross_boundary() {
+    let base = nq_sql_contract_router_addr().await;
+    let resp: serde_json::Value = reqwest::Client::new()
+        .get(format!("{base}/api/artifact-registry"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let entries = resp["entries"].as_array().unwrap();
+    let sql_contract = entries
+        .iter()
+        .find(|e| e["artifact_kind"] == "nq.sql_contract.public_views.v1")
+        .expect("sql_contract entry present");
+    assert_eq!(sql_contract["direction"], "produces_and_consumes");
+    // No fixed external location today.
+    assert!(sql_contract.get("externally_observable_at").is_none());
+}
+
+#[tokio::test]
+async fn artifact_registry_preflight_entries_carry_http_routes() {
+    let base = nq_sql_contract_router_addr().await;
+    let resp: serde_json::Value = reqwest::Client::new()
+        .get(format!("{base}/api/artifact-registry"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let entries = resp["entries"].as_array().unwrap();
+    for e in entries {
+        let kind = e["artifact_kind"].as_str().unwrap_or("");
+        if kind.starts_with("nq.preflight.") {
+            let path = e["externally_observable_at"]
+                .as_str()
+                .unwrap_or_else(|| panic!("preflight kind {} missing route hint", kind));
+            assert!(
+                path.starts_with("/api/preflight/"),
+                "expected /api/preflight/... route for {kind}; got {path:?}"
+            );
+        }
+    }
+}
+
