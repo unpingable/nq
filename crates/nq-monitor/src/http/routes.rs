@@ -16,6 +16,7 @@ use crate::artifact_registry::RegistryResponse;
 use crate::nq_sql_contract_state::{
     evaluate_nq_sql_contract_state_preflight, NqSqlContractStateTarget,
 };
+use crate::served_surface_registry::ServedSurfaceResponse;
 use nq_db::component_testimony::evaluate_observation_loop_alive_preflight;
 use nq_db::{overview, host_detail, query_read_only, evaluate_disk_state_preflight, evaluate_dns_state_preflight, evaluate_ingest_state_preflight, DnsObservationTuple, QueryLimits, ReadDb, WriteDb};
 use std::sync::Arc;
@@ -120,6 +121,10 @@ pub fn router(db: Db) -> Router {
             get(api_preflight_nq_sql_contract_state),
         )
         .route("/api/artifact-registry", get(api_artifact_registry))
+        .route(
+            "/api/served-surface-registry",
+            get(api_served_surface_registry),
+        )
         .route("/finding/{kind}/{host}", get(finding_detail))
         .route("/finding/{kind}/{host}/{subject}", get(finding_detail_with_subject))
         .with_state(db)
@@ -1090,6 +1095,24 @@ async fn api_preflight_nq_evaluator_state(
 async fn api_artifact_registry() -> Json<serde_json::Value> {
     use time::OffsetDateTime;
     let snap = RegistryResponse::snapshot(OffsetDateTime::now_utc());
+    match serde_json::to_value(&snap) {
+        Ok(v) => Json(v),
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+/// Served-surface registry: enumerates the HTTP routes this NQ
+/// instance serves and the evaluators it owns. Sibling to the
+/// artifact registry; pure declaration surface.
+///
+/// Not `nq_route_state` and not a self-route health check. This route
+/// declares which routes exist and which evaluators back them; it
+/// does not testify to whether routes are responsive, healthy, or
+/// admissible. That work is parked as observer-NQ (sibling NQ probing
+/// this target) per the gap doc.
+async fn api_served_surface_registry() -> Json<serde_json::Value> {
+    use time::OffsetDateTime;
+    let snap = ServedSurfaceResponse::snapshot(OffsetDateTime::now_utc());
     match serde_json::to_value(&snap) {
         Ok(v) => Json(v),
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),
