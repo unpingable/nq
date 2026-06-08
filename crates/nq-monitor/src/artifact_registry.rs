@@ -60,7 +60,6 @@ pub const ARTIFACT_REGISTRY_SCHEMA: &str = "nq.artifact_registry.v1";
 /// boundary, same schema both times).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-#[allow(dead_code)] // `Consumes` reserved for future consume-only artifacts
 pub enum Direction {
     Produces,
     Consumes,
@@ -283,6 +282,28 @@ pub const ENTRIES: &[RegistryEntry] = &[
         claim_scope: "Whether the documented public SQL views exist in a migrated database",
         status: Status::Stable,
     },
+    // ----- External wire shapes NQ consumes -----
+    RegistryEntry {
+        artifact_kind: "prometheus.exposition",
+        direction: Direction::Consumes,
+        // External producer: every Prometheus-compatible exporter the
+        // publisher is configured to scrape (node_exporter,
+        // postgres_exporter, blackbox_exporter, ...).
+        producer_component: "External Prometheus-compatible exporters (per prometheus_targets in PublisherConfig)",
+        consumer_component: "nq-witness collect::prometheus::collect (scrape + parse + provenance-stamp)",
+        storage_or_transport: "HTTP scrape of /metrics endpoints (Prom text exposition format)",
+        // Configured URLs vary per deployment; no fixed location on
+        // NQ's side. The scrape targets live in PublisherConfig and
+        // surface as scrape_target_name / scrape_target_url on each
+        // parsed MetricSample.
+        externally_observable_at: None,
+        // Treated as weak testimony per docs/operator/RELATIONSHIP_TO_PROMETHEUS.md
+        // ("Exporters as witnesses"); composition is shared-scrape-path
+        // sensitive and findings minted from this substrate inherit
+        // witness-composition discipline.
+        claim_scope: "Time-series metric samples from an external exporter; weak testimony per Exporters-as-witnesses doctrine",
+        status: Status::Stable,
+    },
 ];
 
 #[cfg(test)]
@@ -305,6 +326,7 @@ mod tests {
             "nq.witness.v1",
             "FindingSnapshot.v1",
             "nq.sql_contract.public_views.v1",
+            "prometheus.exposition",
         ] {
             assert!(
                 kinds.contains(&needed),
@@ -397,11 +419,18 @@ mod tests {
         // silent invention — the failure mode the operator warned
         // about. Pin the absence so a future "well it should go
         // somewhere" PR has to argue with the test.
+        //
+        // `prometheus.exposition` lives here for a different reason:
+        // it is consumed from many runtime-configured external URLs
+        // (per `prometheus_targets`), so no single fixed NQ-side
+        // location exists. The actual scrape URLs surface on each
+        // parsed MetricSample via scrape_target_name / scrape_target_url.
         for kind in [
             "nq.receipt.v1",
             "nq.witness.v1",
             "FindingSnapshot.v1",
             "nq.sql_contract.public_views.v1",
+            "prometheus.exposition",
         ] {
             let e = ENTRIES
                 .iter()
