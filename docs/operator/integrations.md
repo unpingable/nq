@@ -4,6 +4,14 @@ NQ ingests data from existing tools rather than replacing them. If your
 infrastructure already exports metrics, NQ can scrape them and apply
 failure domain classification on top.
 
+> **SQL surface note.** This document includes raw-table queries for
+> operator investigation (e.g. `metric_history_policy`, `metrics_history`).
+> Raw storage tables are operator-visible only where explicitly
+> documented; they are not the public SQL contract and should not be
+> used by dashboards, exporters, external consumers, or durable
+> automation. Prefer public views where available. See
+> [sql-contract.md](sql-contract.md).
+
 ---
 
 ## Prometheus Exporters
@@ -93,10 +101,9 @@ for the orientation framing, and
 SELECT metric_name, value FROM v_metrics WHERE metric_name LIKE 'node_cpu%'
 
 -- Specific metric with labels
-SELECT s.metric_name, s.labels_json, m.value
-FROM metrics_current m
-JOIN series s ON s.series_id = m.series_id
-WHERE s.metric_name = 'node_filesystem_avail_bytes'
+SELECT metric_name, labels_json, value
+FROM v_metrics
+WHERE metric_name = 'node_filesystem_avail_bytes'
 
 -- Metric history (if policy-included)
 SELECT g.completed_at, mh.value

@@ -24,6 +24,14 @@ NQ holds these regardless of how you deploy it:
 
 Worked examples of how this comes out in practice live in [REFUSAL_EXAMPLES.md](REFUSAL_EXAMPLES.md).
 
+> **SQL surface note.** This guide includes ad-hoc SQL examples that
+> touch both public views (`v_warnings`) and operator-visible storage
+> tables (`generations`). Storage tables are operator-visible only where
+> explicitly documented; they are not the public SQL contract and should
+> not be used by dashboards, exporters, external consumers, or durable
+> automation. Prefer public views where available. See
+> [sql-contract.md](sql-contract.md).
+
 ---
 
 ## Install
