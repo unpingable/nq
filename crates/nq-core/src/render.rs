@@ -418,6 +418,7 @@ mod tests {
     // -----------------------------------------------------------------
 
     use crate::preflight::PreflightTarget;
+    use crate::wire::{ClaimRefusal, RefusalKind};
 
     fn sample_with_consumer_fields() -> Receipt {
         let mut r = sample();
@@ -427,8 +428,14 @@ mod tests {
             id: Some("/opt/nq/nq.db".into()),
         });
         r.cannot_testify = vec![
-            "Whether the application that owns this DB will recover (application-state claim)".into(),
-            "Whether to restart, repoint, kill the pinned reader, or page (consequence claim)".into(),
+            ClaimRefusal::new(
+                RefusalKind::AboveSubstrate,
+                "Whether the application that owns this DB will recover (application-state claim)",
+            ),
+            ClaimRefusal::new(
+                RefusalKind::ConsequenceClaim,
+                "Whether to restart, repoint, kill the pinned reader, or page (consequence claim)",
+            ),
         ];
         r.signals = Some(serde_json::json!({
             "sqlite_wal_state": {

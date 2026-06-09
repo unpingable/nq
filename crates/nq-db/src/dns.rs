@@ -1180,7 +1180,7 @@ mod tests {
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("Endpoint reachability")));
+            .any(|s| s.statement.contains("Endpoint reachability")));
         assert_supports_are_bounded(&r);
     }
 
@@ -1366,7 +1366,7 @@ mod tests {
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("DNSSEC validation outcome")));
+            .any(|s| s.statement.contains("DNSSEC validation outcome")));
         assert_supports_are_bounded(&r);
     }
 
@@ -1550,31 +1550,31 @@ mod tests {
             assert!(
                 r.cannot_testify
                     .iter()
-                    .any(|s| s.contains("Endpoint reachability")),
+                    .any(|s| s.statement.contains("Endpoint reachability")),
                 "{label}: endpoint reachability refusal must be present"
             );
             assert!(
                 r.cannot_testify
                     .iter()
-                    .any(|s| s.contains("Global DNS truth")),
+                    .any(|s| s.statement.contains("Global DNS truth")),
                 "{label}: global DNS truth refusal must be present"
             );
             assert!(
                 r.cannot_testify
                     .iter()
-                    .any(|s| s.contains("Registrar / account")),
+                    .any(|s| s.statement.contains("Registrar / account")),
                 "{label}: registrar/account refusal must be present"
             );
             assert!(
                 r.cannot_testify
                     .iter()
-                    .any(|s| s.contains("DNSSEC validation outcome")),
+                    .any(|s| s.statement.contains("DNSSEC validation outcome")),
                 "{label}: DNSSEC refusal must be present"
             );
             assert!(
                 r.cannot_testify
                     .iter()
-                    .any(|s| s.starts_with("Whether to repoint")),
+                    .any(|s| s.statement.starts_with("Whether to repoint")),
                 "{label}: consequence-claim refusal must be present"
             );
             assert_supports_are_bounded(&r);

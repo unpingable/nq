@@ -836,11 +836,11 @@ mod tests {
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("Physical disk death")));
+            .any(|s| s.statement.contains("Physical disk death")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.starts_with("Replacement workflow")));
+            .any(|s| s.statement.starts_with("Replacement workflow")));
         assert_eq!(r.coverage.len(), 3);
     }
 
@@ -899,19 +899,19 @@ mod tests {
 
         // The constitutional refusal surface must remain populated. None of these
         // are licensed by the supporting findings regardless of count.
-        assert!(r.cannot_testify.iter().any(|s| s.contains("Physical disk death")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.contains("Physical disk death")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.starts_with("Replacement workflow")));
+            .any(|s| s.statement.starts_with("Replacement workflow")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("Incident closure")));
+            .any(|s| s.statement.contains("Incident closure")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("Drive is fine to keep")));
+            .any(|s| s.statement.contains("Drive is fine to keep")));
     }
 
     #[test]
@@ -1302,11 +1302,11 @@ mod tests {
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("Upstream source substrate")));
+            .any(|s| s.statement.contains("Upstream source substrate")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("NQ's own overall health")));
+            .any(|s| s.statement.contains("NQ's own overall health")));
         // Coverage records the witness as absent.
         let pulse = r
             .coverage
@@ -1337,7 +1337,7 @@ mod tests {
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("Future ingest")));
+            .any(|s| s.statement.contains("Future ingest")));
     }
 
     // -----------------------------------------------------------------------

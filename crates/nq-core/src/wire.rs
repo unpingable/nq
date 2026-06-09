@@ -311,6 +311,17 @@ impl ClaimRefusal {
     }
 }
 
+/// Operator-facing rendering: just the prose statement. The
+/// `refusal_kind` is machine identity and not part of the human
+/// rendering — the existing prose already embeds the category in
+/// parentheticals (e.g. "... (consequence claim)"), so rendering
+/// `statement` alone preserves the pre-v2 operator-facing output.
+impl std::fmt::Display for ClaimRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.statement)
+    }
+}
+
 /// Closed vocabulary of refusal categories harvested from the prose
 /// parentheticals in the 8 constitutional `*_cannot_testify()`
 /// functions. Promotion rule: new variants land when ≥2 kinds emit a

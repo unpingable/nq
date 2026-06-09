@@ -515,14 +515,14 @@ mod tests {
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("source code the operator intended")));
+            .any(|s| s.statement.contains("source code the operator intended")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("peer host's binary")));
+            .any(|s| s.statement.contains("peer host's binary")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("tampered")));
+            .any(|s| s.statement.contains("tampered")));
     }
 }

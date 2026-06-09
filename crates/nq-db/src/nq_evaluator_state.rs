@@ -672,14 +672,14 @@ mod tests {
             result
                 .cannot_testify
                 .iter()
-                .any(|s| s.contains("forward-going trust horizon")),
+                .any(|s| s.statement.contains("forward-going trust horizon")),
             "the load-bearing forward-going-trust refusal must surface"
         );
         assert!(
             result
                 .cannot_testify
                 .iter()
-                .any(|s| s.contains("fixture liveness is not correctness")),
+                .any(|s| s.statement.contains("fixture liveness is not correctness")),
             "the correctness refusal must surface"
         );
     }

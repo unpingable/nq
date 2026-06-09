@@ -260,7 +260,7 @@ This is the [[feedback_knob_facing]] discipline applied at the wire surface: NQ 
 The skeleton populates these regardless of verdict. Proposed list:
 
 - "Whether the application that owns this DB will recover" — outside witness scope.
-- "Whether queries against this DB will return correct results" — outside substrate.
+- "Whether queries against this DB will return correct results" — application-layer query semantics, above what WAL substrate licenses.
 - "Whether reports / downstream artifacts derived from this DB are stale" — application-layer claim, not substrate.
 - "Whether the WAL state on a *different* DB file is healthy" — single-target jurisdiction.
 - "Whether the WAL state will degrade in the future" — no forward-looking testimony.
