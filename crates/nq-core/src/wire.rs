@@ -269,6 +269,97 @@ pub struct MetricSample {
 }
 
 // ---------------------------------------------------------------------------
+// Typed refusal vocabulary — cross-cutting wire primitive used by
+// preflight (`PreflightResult.cannot_testify`) and witness coverage
+// (`*WitnessCoverage.cannot_testify`). See
+// `docs/working/gaps/WITNESS_CLAIM_SCOPE_GAP.md`.
+//
+// Driver is completeness, not new authority: every constitutional
+// `*_cannot_testify()` function and every witness coverage emission
+// already ships a refusal list as `Vec<String>`. Typing the row
+// preserves identity that prose loses on every consumer parse.
+//
+// Wire shape (JSON):
+//   { "refusal_kind": "consequence_claim",
+//     "statement":   "Whether to restart, reconfigure, ..." }
+// ---------------------------------------------------------------------------
+
+/// One refusal carried by a witness observation or evaluator claim.
+///
+/// `refusal_kind` is the stable machine category — consumers branch on
+/// this. `statement` is explanatory prose for renderers and is *not* a
+/// machine contract.
+///
+/// **Do not dedupe by `refusal_kind` alone.** A single kind (e.g.
+/// `OutOfJurisdiction`) can carry distinct statements ("wrong host" vs
+/// "wrong sibling kind") that are operationally different. Machine
+/// identity is `refusal_kind`; diagnostic inventory is
+/// `refusal_kind + statement + surface`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClaimRefusal {
+    pub refusal_kind: RefusalKind,
+    pub statement: String,
+}
+
+impl ClaimRefusal {
+    /// Convenience constructor — `ClaimRefusal::new(RefusalKind::X, "prose")`.
+    pub fn new(refusal_kind: RefusalKind, statement: impl Into<String>) -> Self {
+        Self {
+            refusal_kind,
+            statement: statement.into(),
+        }
+    }
+}
+
+/// Closed vocabulary of refusal categories harvested from the prose
+/// parentheticals in the 8 constitutional `*_cannot_testify()`
+/// functions. Promotion rule: new variants land when ≥2 kinds emit a
+/// shared category. Until then, kind-specific refusals carry
+/// [`RefusalKind::KindSpecific`] with the prose preserved in
+/// `statement`.
+///
+/// Variants are documented at the gap doc rather than here; see
+/// `docs/working/gaps/WITNESS_CLAIM_SCOPE_GAP.md` "The `RefusalKind`
+/// vocabulary, harvested" for the per-variant harvest sites and
+/// load-bearing rationale.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusalKind {
+    /// Refusal to license consequence / action / mutation. The
+    /// `feedback_knob_facing` boundary, typed.
+    ConsequenceClaim,
+    /// Refusal to forecast / make any future-tense claim.
+    FutureStateClaim,
+    /// Refusal to be sole witness to NQ-self standing.
+    /// (sixth-keeper rule per `NQ_ON_NQ_OPERATIONAL_CLAIMS_GAP`.)
+    SelfAuditRefusal,
+    /// Refusal — out of this kind's jurisdiction. Covers different
+    /// target, different host, or a sibling kind's territory; the
+    /// specific subreason lives in `statement`.
+    OutOfJurisdiction,
+    /// Refusal — semantic correctness or application-layer state,
+    /// above what substrate observation licenses.
+    AboveSubstrate,
+    /// Refusal — internals beneath this kind's substrate (engine
+    /// correctness, build-time provenance, runtime behavior).
+    BelowSubstrate,
+    /// Refusal — substrate doesn't testify to environmental context
+    /// (upstream substrate health, network connectivity).
+    EnvironmentalContext,
+    /// Refusal — absence has multiple causes the probe shape cannot
+    /// distinguish; absence is ambiguous, not negative testimony.
+    AbsenceSemantics,
+    /// Refusal — composition / re-emission discipline. Kept explicit
+    /// despite single emission today because the rule is structural
+    /// (per `NQ_NS_CHANNEL_SPLIT_NQ_SIDE`), not a frequency artifact.
+    CompositionReEmission,
+    /// Catchall — the refusal is real and shipping, but its category
+    /// is kind-specific and not yet shared across surfaces. Promote
+    /// out of this variant when ≥2 kinds emit a shared category.
+    KindSpecific,
+}
+
+// ---------------------------------------------------------------------------
 // nq-witness report — canonical shape consumed by the ZFS witness collector.
 // Mirrors nq.witness.v0 / nq.witness.zfs.v0. See ~/git/nq-witness/SPEC.md.
 // ---------------------------------------------------------------------------
@@ -572,4 +663,122 @@ pub struct SmartWitnessError {
     pub detail: String,
     #[serde(with = "time::serde::rfc3339")]
     pub observed_at: OffsetDateTime,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{from_value, json, to_value, Value};
+
+    /// Lock the JSON shape of `ClaimRefusal`. This test is the wire
+    /// contract — changing the field names or the enum casing here
+    /// breaks every persisted receipt.
+    #[test]
+    fn claim_refusal_serializes_with_snake_case_kind() {
+        let refusal = ClaimRefusal::new(
+            RefusalKind::ConsequenceClaim,
+            "Whether to restart, reconfigure, or deactivate a failing source",
+        );
+        let serialized: Value = to_value(&refusal).expect("serialize");
+        assert_eq!(
+            serialized,
+            json!({
+                "refusal_kind": "consequence_claim",
+                "statement":   "Whether to restart, reconfigure, or deactivate a failing source"
+            })
+        );
+    }
+
+    #[test]
+    fn claim_refusal_roundtrips_through_json() {
+        let original = ClaimRefusal::new(
+            RefusalKind::SelfAuditRefusal,
+            "NQ's own overall health (the witness cannot be its own complete audit)",
+        );
+        let serialized = serde_json::to_string(&original).expect("serialize");
+        let parsed: ClaimRefusal = serde_json::from_str(&serialized).expect("deserialize");
+        assert_eq!(parsed, original);
+    }
+
+    /// Every `RefusalKind` variant must round-trip. This test exists so
+    /// that a renamed variant is caught by a failing roundtrip, not by
+    /// a downstream consumer parsing a receipt and silently dropping
+    /// the refusal.
+    #[test]
+    fn every_refusal_kind_roundtrips() {
+        let kinds = [
+            RefusalKind::ConsequenceClaim,
+            RefusalKind::FutureStateClaim,
+            RefusalKind::SelfAuditRefusal,
+            RefusalKind::OutOfJurisdiction,
+            RefusalKind::AboveSubstrate,
+            RefusalKind::BelowSubstrate,
+            RefusalKind::EnvironmentalContext,
+            RefusalKind::AbsenceSemantics,
+            RefusalKind::CompositionReEmission,
+            RefusalKind::KindSpecific,
+        ];
+        for kind in kinds {
+            let serialized = serde_json::to_string(&kind).expect("serialize");
+            let parsed: RefusalKind = serde_json::from_str(&serialized).expect("deserialize");
+            assert_eq!(parsed, kind, "roundtrip failed for {kind:?}");
+        }
+    }
+
+    /// Lock the snake_case JSON rendering for every variant. If a
+    /// future rename changes the wire string, this test fails loudly
+    /// rather than letting the rename ship as a silent schema break.
+    #[test]
+    fn refusal_kind_wire_strings_are_pinned() {
+        let pairs = [
+            (RefusalKind::ConsequenceClaim, "consequence_claim"),
+            (RefusalKind::FutureStateClaim, "future_state_claim"),
+            (RefusalKind::SelfAuditRefusal, "self_audit_refusal"),
+            (RefusalKind::OutOfJurisdiction, "out_of_jurisdiction"),
+            (RefusalKind::AboveSubstrate, "above_substrate"),
+            (RefusalKind::BelowSubstrate, "below_substrate"),
+            (RefusalKind::EnvironmentalContext, "environmental_context"),
+            (RefusalKind::AbsenceSemantics, "absence_semantics"),
+            (RefusalKind::CompositionReEmission, "composition_re_emission"),
+            (RefusalKind::KindSpecific, "kind_specific"),
+        ];
+        for (kind, expected) in pairs {
+            let serialized = serde_json::to_string(&kind).expect("serialize");
+            assert_eq!(serialized, format!("\"{expected}\""), "{kind:?}");
+            let parsed: RefusalKind =
+                serde_json::from_str(&format!("\"{expected}\"")).expect("deserialize");
+            assert_eq!(parsed, kind);
+        }
+    }
+
+    #[test]
+    fn unknown_refusal_kind_string_is_a_deserialize_error() {
+        let r: Result<RefusalKind, _> = serde_json::from_str("\"made_up_variant\"");
+        assert!(
+            r.is_err(),
+            "closed enum must reject unknown variants — got {r:?}"
+        );
+    }
+
+    /// Same-kind, different-statement is intentionally not equal:
+    /// the dedupe-caution from the gap doc requires that two refusals
+    /// with shared kind but distinct statements remain distinguishable.
+    #[test]
+    fn same_kind_different_statement_not_equal() {
+        let a = ClaimRefusal::new(RefusalKind::OutOfJurisdiction, "wrong host");
+        let b = ClaimRefusal::new(RefusalKind::OutOfJurisdiction, "wrong sibling kind");
+        assert_ne!(a, b);
+        assert_eq!(a.refusal_kind, b.refusal_kind);
+    }
+
+    /// Round-trips through a generic `serde_json::Value` to catch any
+    /// `#[serde]` attribute that interferes with self-describing
+    /// deserialization (e.g. a `tag = "..."` accidentally added).
+    #[test]
+    fn claim_refusal_roundtrips_through_value() {
+        let original = ClaimRefusal::new(RefusalKind::AboveSubstrate, "semantic correctness");
+        let v = to_value(&original).expect("to_value");
+        let back: ClaimRefusal = from_value(v).expect("from_value");
+        assert_eq!(back, original);
+    }
 }
