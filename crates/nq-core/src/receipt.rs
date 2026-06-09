@@ -8,6 +8,9 @@
 //! boundary.
 
 use crate::preflight::{PreflightResult, PreflightTarget, Verdict};
+use crate::wire::ClaimRefusal;
+#[cfg(test)]
+use crate::wire::RefusalKind;
 use crate::witness::{DigestError, DIGEST_ALGORITHM_PREFIX};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -155,14 +158,18 @@ pub struct Receipt {
     /// authorize — without falling back to the (HTTP-route-only)
     /// PreflightResult.
     ///
-    /// Defaults to an empty list during deserialization for receipts
-    /// minted before this field landed; the empty-list case is
-    /// indistinguishable from "this evaluator declared no
+    /// **Wire shape** (preflight contract v2, 2026-06-09): each entry is
+    /// a [`ClaimRefusal`] carrying typed `refusal_kind` plus prose
+    /// `statement`. Consumers branch on `refusal_kind`; `statement` is
+    /// rendering only. Do not dedupe by kind alone.
+    ///
+    /// Defaults to an empty list during deserialization. The empty-list
+    /// case is the wire default for "this evaluator declared no
     /// constitutional refusals," which is itself a substantive
-    /// statement and worth preserving as the wire default. Always
-    /// populated by `From<PreflightResult>` going forward.
+    /// statement. Always populated by `From<PreflightResult>` going
+    /// forward.
     #[serde(default)]
-    pub cannot_testify: Vec<String>,
+    pub cannot_testify: Vec<ClaimRefusal>,
     pub witnesses: Vec<WitnessRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observed_at_min: Option<String>,
@@ -685,7 +692,7 @@ mod tests {
                 "{kind:?} receipt must carry cannot_testify"
             );
             assert!(
-                r.cannot_testify.iter().any(|s| s.contains(needle)),
+                r.cannot_testify.iter().any(|s| s.statement.contains(needle)),
                 "{kind:?} cannot_testify must include {needle:?}; got {:?}",
                 r.cannot_testify
             );
@@ -1207,7 +1214,10 @@ mod tests {
         let mut a = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
         let mut b = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
         a.cannot_testify = vec![];
-        b.cannot_testify = vec!["Whether X is true (out of scope)".into()];
+        b.cannot_testify = vec![ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "Whether X is true (out of scope)",
+        )];
         let bind = EvaluatorBinding {
             evaluator: "claim_registry".into(),
             version: 1,
@@ -1221,7 +1231,10 @@ mod tests {
 
         // Same length, different content.
         let mut c = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
-        c.cannot_testify = vec!["Whether Y is true (out of scope)".into()];
+        c.cannot_testify = vec![ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "Whether Y is true (out of scope)",
+        )];
         c.seal(bind.clone()).unwrap();
         assert_ne!(
             b.content_hash, c.content_hash,
@@ -1231,8 +1244,8 @@ mod tests {
         // Adding a second entry to a populated list.
         let mut d = Receipt::new("c", "s", "2026-05-15T14:00:00Z");
         d.cannot_testify = vec![
-            "Whether X is true (out of scope)".into(),
-            "Whether Z is true (out of scope)".into(),
+            ClaimRefusal::new(RefusalKind::KindSpecific, "Whether X is true (out of scope)"),
+            ClaimRefusal::new(RefusalKind::KindSpecific, "Whether Z is true (out of scope)"),
         ];
         d.seal(bind).unwrap();
         assert_ne!(

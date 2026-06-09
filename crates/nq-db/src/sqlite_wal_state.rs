@@ -1680,7 +1680,7 @@ mod tests {
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("application that owns this DB")));
+            .any(|s| s.statement.contains("application that owns this DB")));
 
         // (B) bounded WAL
         let rows = build_window(NOW, 60, 200, |_| 1_000_000);
@@ -1699,7 +1699,7 @@ mod tests {
         assert!(r2
             .cannot_testify
             .iter()
-            .any(|s| s.contains("checkpoint operations")));
+            .any(|s| s.statement.contains("checkpoint operations")));
     }
 
     // ---- wire shape ---------------------------------------------------

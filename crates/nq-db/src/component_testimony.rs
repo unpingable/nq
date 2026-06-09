@@ -1893,7 +1893,7 @@ mod tests {
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("NQ is healthy")));
+            .any(|s| s.statement.contains("NQ is healthy")));
     }
 
     #[test]
@@ -2083,7 +2083,7 @@ mod tests {
         assert!(
             r.cannot_testify
                 .iter()
-                .any(|s| s.contains("NQ is healthy")),
+                .any(|s| s.statement.contains("NQ is healthy")),
             "cannot_testify must contain the explicit health-absolution refusal"
         );
         // And the composition-rule refusal (preventing re-emission as
@@ -2091,7 +2091,7 @@ mod tests {
         assert!(
             r.cannot_testify
                 .iter()
-                .any(|s| s.contains("composed verdicts") && s.contains("re-emitted")),
+                .any(|s| s.statement.contains("composed verdicts") && s.statement.contains("re-emitted")),
             "cannot_testify must refuse re-emission of composed verdicts as claims"
         );
     }

@@ -10,6 +10,7 @@
 //! shared across claim kinds. Structured `ClaimKind` only — no operator-phrase
 //! intake at this layer.
 
+use crate::wire::{ClaimRefusal, RefusalKind};
 use serde::{Deserialize, Serialize};
 
 /// Wire schema identifier for `disk_state` preflight results.
@@ -94,7 +95,14 @@ pub const PREFLIGHT_NQ_SQL_CONTRACT_STATE_SCHEMA: &str =
     "nq.preflight.nq_sql_contract_state.v1";
 
 /// Contract version for the preflight wire shape. Bumps on breaking change.
-pub const PREFLIGHT_CONTRACT_VERSION: u32 = 1;
+///
+/// **v1 → v2 (2026-06-09)**: `PreflightResult.cannot_testify` and
+/// `Receipt.cannot_testify` changed from `Vec<String>` to
+/// `Vec<ClaimRefusal>`. The string form is gone — there is no
+/// dual-field bridge. Consumers must read `refusal_kind` for the
+/// stable machine category and `statement` for the prose. See
+/// `docs/working/gaps/WITNESS_CLAIM_SCOPE_GAP.md`.
+pub const PREFLIGHT_CONTRACT_VERSION: u32 = 2;
 
 /// Threshold (milliseconds) for the V1 receiver-side time-basis sanity
 /// check `observed_at_future_of_evaluator`. A support whose `observed_at`
@@ -424,7 +432,13 @@ pub struct PreflightResult {
     /// Constitutional refusal surface for this claim kind. Always populated.
     /// Per `CLAIM_KIND_DISK_STATE_GAP.md`, no combination of witness output
     /// licenses any of these conclusions.
-    pub cannot_testify: Vec<String>,
+    ///
+    /// **v2 wire shape** (see `PREFLIGHT_CONTRACT_VERSION`): each entry is
+    /// a `ClaimRefusal { refusal_kind, statement }`. Consumers bind on
+    /// `refusal_kind` for machine identity; `statement` is rendering only.
+    /// Do not dedupe by kind alone — same kind, different statement is
+    /// distinct testimony.
+    pub cannot_testify: Vec<ClaimRefusal>,
     pub coverage: Vec<PreflightCoverage>,
     pub generated_at: String,
     /// Oldest `observed_at` among `supports[]`. `None` when supports is
@@ -634,15 +648,30 @@ pub fn freshness_horizon_from(
 /// refusal is the self-witness firewall: a witness about itself is
 /// circular, and `ingest_state` is one channel among many that a
 /// downstream system might (separately) read.
-pub fn ingest_state_cannot_testify() -> Vec<String> {
+pub fn ingest_state_cannot_testify() -> Vec<ClaimRefusal> {
     vec![
-        "Upstream source substrate health (NQ observed its own pull attempt; the source's actual state is upstream and beyond witness)".to_string(),
-        "Future ingest success or failure".to_string(),
-        "Semantic correctness of ingested data (the pull cycle's structural state is testifiable; the content's truth is not)".to_string(),
-        "Network connectivity health".to_string(),
-        "Whether to restart, reconfigure, or deactivate a failing source (consequence claim)".to_string(),
-        "NQ's own overall health (the witness cannot be its own complete audit)".to_string(),
-        "Whether ingest will recover from the current failure shape (future-state claim)".to_string(),
+        ClaimRefusal::new(
+            RefusalKind::EnvironmentalContext,
+            "Upstream source substrate health (NQ observed its own pull attempt; the source's actual state is upstream and beyond witness)",
+        ),
+        ClaimRefusal::new(RefusalKind::FutureStateClaim, "Future ingest success or failure"),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Semantic correctness of ingested data (the pull cycle's structural state is testifiable; the content's truth is not)",
+        ),
+        ClaimRefusal::new(RefusalKind::EnvironmentalContext, "Network connectivity health"),
+        ClaimRefusal::new(
+            RefusalKind::ConsequenceClaim,
+            "Whether to restart, reconfigure, or deactivate a failing source (consequence claim)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::SelfAuditRefusal,
+            "NQ's own overall health (the witness cannot be its own complete audit)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::FutureStateClaim,
+            "Whether ingest will recover from the current failure shape (future-state claim)",
+        ),
     ]
 }
 
@@ -653,21 +682,60 @@ pub fn ingest_state_cannot_testify() -> Vec<String> {
 /// `docs/working/gaps/DNS_WITNESS_FAMILY_GAP.md`. The last entry is the
 /// `feedback_knob_facing` boundary preserved: `dns_state` classifies
 /// world-state testimony; consequence stays downstream.
-pub fn dns_state_cannot_testify() -> Vec<String> {
+pub fn dns_state_cannot_testify() -> Vec<ClaimRefusal> {
     vec![
-        "Endpoint reachability for the resolved name (DNS is not TCP)".to_string(),
-        "Service health at any address returned (DNS is not the service)".to_string(),
-        "User-visible availability (anycast / split horizon / per-network views unobserved)".to_string(),
-        "Global DNS truth for this name (one vantage, one resolver — not the world)".to_string(),
-        "Authoritative-zone correctness (V0 likely reads recursive/cached answers; authority is upstream)".to_string(),
-        "Future resolution (TTL is a hint, not a contract)".to_string(),
-        "Permanence of negative answers (NXDOMAIN now ≠ NXDOMAIN forever; cached denial is dated)".to_string(),
-        "Reverse mapping (address → name) for any A/AAAA result (PTR is a separate query)".to_string(),
-        "Registrar / account / ownership status (DNS responses do not testify to custody)".to_string(),
-        "DNSSEC validation outcome (V0 does not validate; reserve refusal slot for when it does)".to_string(),
-        "Resolver-internal substrate health (SERVFAIL is testimony about the resolver, not about the name)".to_string(),
-        "Recovery prediction for any error-class response (future-state claim)".to_string(),
-        "Whether to repoint, fail over, retry, or page (consequence claim)".to_string(),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Endpoint reachability for the resolved name (DNS is not TCP)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Service health at any address returned (DNS is not the service)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "User-visible availability (anycast / split horizon / per-network views unobserved)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "Global DNS truth for this name (one vantage, one resolver — not the world)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::EnvironmentalContext,
+            "Authoritative-zone correctness (V0 likely reads recursive/cached answers; authority is upstream)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::FutureStateClaim,
+            "Future resolution (TTL is a hint, not a contract)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::FutureStateClaim,
+            "Permanence of negative answers (NXDOMAIN now ≠ NXDOMAIN forever; cached denial is dated)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "Reverse mapping (address → name) for any A/AAAA result (PTR is a separate query)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Registrar / account / ownership status (DNS responses do not testify to custody)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "DNSSEC validation outcome (V0 does not validate; reserve refusal slot for when it does)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::BelowSubstrate,
+            "Resolver-internal substrate health (SERVFAIL is testimony about the resolver, not about the name)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::FutureStateClaim,
+            "Recovery prediction for any error-class response (future-state claim)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::ConsequenceClaim,
+            "Whether to repoint, fail over, retry, or page (consequence claim)",
+        ),
     ]
 }
 
@@ -679,18 +747,48 @@ pub fn dns_state_cannot_testify() -> Vec<String> {
 /// the [[feedback_knob_facing]] boundary preserved at the wire surface:
 /// NQ classifies WAL substrate testimony; consumer-side consequence
 /// (alert mapping, restart, repointing, page) stays with the consumer.
-pub fn sqlite_wal_state_cannot_testify() -> Vec<String> {
+pub fn sqlite_wal_state_cannot_testify() -> Vec<ClaimRefusal> {
     vec![
-        "Whether the application that owns this DB will recover (application-state claim; the WAL substrate does not testify to it)".to_string(),
-        "Whether queries against this DB will return correct results (query correctness is below substrate)".to_string(),
-        "Whether reports / downstream artifacts derived from this DB are stale (application-layer claim, not WAL substrate)".to_string(),
-        "Whether the WAL state on a different DB file is healthy (single-target jurisdiction)".to_string(),
-        "Whether the WAL state will degrade in the future (future-state claim)".to_string(),
-        "Whether checkpoint operations succeeded (the operation itself is below substrate; absence of effect is testifiable, the operation is not)".to_string(),
-        "Why the `-wal` sidecar is absent on a given observation (a non-WAL `journal_mode`, post-checkpoint cleanup, and post-close cleanup all produce `wal_present=false`; the probe stat()s the path and cannot distinguish them from substrate state alone — see `KIND_4_SQLITE_WAL_PROBE.md` §8)".to_string(),
-        "Whether the reader holding a pinned transaction is the right reader to hold it (operational-context claim)".to_string(),
-        "Whether SQLite's behavior is correct given its inputs (DB engine correctness is below substrate)".to_string(),
-        "Whether to restart, repoint, kill the pinned reader, or page (consequence claim)".to_string(),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Whether the application that owns this DB will recover (application-state claim; the WAL substrate does not testify to it)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Whether queries against this DB will return correct results (application-layer query semantics, above what WAL substrate licenses)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Whether reports / downstream artifacts derived from this DB are stale (application-layer claim, not WAL substrate)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "Whether the WAL state on a different DB file is healthy (single-target jurisdiction)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::FutureStateClaim,
+            "Whether the WAL state will degrade in the future (future-state claim)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::BelowSubstrate,
+            "Whether checkpoint operations succeeded (the operation itself is below substrate; absence of effect is testifiable, the operation is not)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AbsenceSemantics,
+            "Why the `-wal` sidecar is absent on a given observation (a non-WAL `journal_mode`, post-checkpoint cleanup, and post-close cleanup all produce `wal_present=false`; the probe stat()s the path and cannot distinguish them from substrate state alone — see `KIND_4_SQLITE_WAL_PROBE.md` §8)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Whether the reader holding a pinned transaction is the right reader to hold it (operational-context claim)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::BelowSubstrate,
+            "Whether SQLite's behavior is correct given its inputs (DB engine correctness is below substrate)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::ConsequenceClaim,
+            "Whether to restart, repoint, kill the pinned reader, or page (consequence claim)",
+        ),
     ]
 }
 
@@ -702,17 +800,44 @@ pub fn sqlite_wal_state_cannot_testify() -> Vec<String> {
 ///
 /// The disciplinary line: the heartbeat says *the observation loop reached
 /// a checkpoint at time T*. It says nothing else.
-pub fn component_testimony_observation_loop_alive_cannot_testify() -> Vec<String> {
+pub fn component_testimony_observation_loop_alive_cannot_testify() -> Vec<ClaimRefusal> {
     vec![
-        "Whether NQ is healthy (the observation loop running is one signal among many; an alive loop emitting heartbeats does not testify to NQ standing as a whole)".to_string(),
-        "Whether other NQ loops (reconciler, ack, ingest, export) are alive (this kind testifies only to the observation loop; sibling loops need their own component-testimony kinds)".to_string(),
-        "Whether NQ's stored claims are semantically correct (substrate observation only)".to_string(),
-        "Whether NQ's ingested witnesses are truthful (NQ does not certify producer truthfulness)".to_string(),
-        "Whether SQLite is an admissible architecture for this deployment (substrate-state observation does not endorse substrate-choice)".to_string(),
-        "Whether to escalate, restart, or page (consequence claim; per the escalation_target field, lifecycle resolution lives outside NQ when the subject is NQ-self)".to_string(),
-        "Whether absence of this testimony means NQ is unhealthy (absence under declared coverage is one of seven absence states; only the consumer routes it to escalation, NQ does not)".to_string(),
-        "Whether NQ's future operation is safe (no future-state testimony)".to_string(),
-        "Whether composed verdicts derived from this testimony may be re-emitted as claims (composition is read-side projection only; see NQ_NS_CHANNEL_SPLIT_NQ_SIDE §4 composition rule)".to_string(),
+        ClaimRefusal::new(
+            RefusalKind::SelfAuditRefusal,
+            "Whether NQ is healthy (the observation loop running is one signal among many; an alive loop emitting heartbeats does not testify to NQ standing as a whole)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "Whether other NQ loops (reconciler, ack, ingest, export) are alive (this kind testifies only to the observation loop; sibling loops need their own component-testimony kinds)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Whether NQ's stored claims are semantically correct (substrate observation only)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Whether NQ's ingested witnesses are truthful (NQ does not certify producer truthfulness)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "Whether SQLite is an admissible architecture for this deployment (substrate-state observation does not endorse substrate-choice)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::ConsequenceClaim,
+            "Whether to escalate, restart, or page (consequence claim; per the escalation_target field, lifecycle resolution lives outside NQ when the subject is NQ-self)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AbsenceSemantics,
+            "Whether absence of this testimony means NQ is unhealthy (absence under declared coverage is one of seven absence states; only the consumer routes it to escalation, NQ does not)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::FutureStateClaim,
+            "Whether NQ's future operation is safe (no future-state testimony)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::CompositionReEmission,
+            "Whether composed verdicts derived from this testimony may be re-emitted as claims (composition is read-side projection only; see NQ_NS_CHANNEL_SPLIT_NQ_SIDE §4 composition rule)",
+        ),
     ]
 }
 
@@ -726,15 +851,36 @@ pub fn component_testimony_observation_loop_alive_cannot_testify() -> Vec<String
 /// on host H had stat S and content_hash C at time T, as observed by an
 /// external probe*. It does not testify to build-time provenance,
 /// runtime behavior, cross-host parity, or operator intent.
-pub fn nq_binary_mtime_state_cannot_testify() -> Vec<String> {
+pub fn nq_binary_mtime_state_cannot_testify() -> Vec<ClaimRefusal> {
     vec![
-        "Whether the binary contains the source code the operator intended (build-time provenance; substrate observation cannot verify)".to_string(),
-        "Whether the binary will execute correctly (behavior, not substrate)".to_string(),
-        "Whether the binary's content_hash matches a peer host's binary (single-target jurisdiction; cross-host comparison is Tier 2)".to_string(),
-        "Whether the running process is using this binary (process inspection, not on-disk observation; /proc/<pid>/exe would be the substrate for that)".to_string(),
-        "Whether the binary was tampered with (signature verification is not part of this kind; content_hash is identity, not authenticity)".to_string(),
-        "Whether to redeploy, roll back, or page (consequence claim)".to_string(),
-        "Whether NQ as a whole is operationally sound (the binary is one substrate among many; binary identity alone does not testify to NQ standing; see the sixth-keeper rule in NQ_ON_NQ_OPERATIONAL_CLAIMS_GAP)".to_string(),
+        ClaimRefusal::new(
+            RefusalKind::BelowSubstrate,
+            "Whether the binary contains the source code the operator intended (build-time provenance; substrate observation cannot verify)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::BelowSubstrate,
+            "Whether the binary will execute correctly (behavior, not substrate)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "Whether the binary's content_hash matches a peer host's binary (single-target jurisdiction; cross-host comparison is Tier 2)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "Whether the running process is using this binary (process inspection, not on-disk observation; /proc/<pid>/exe would be the substrate for that)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "Whether the binary was tampered with (signature verification is not part of this kind; content_hash is identity, not authenticity)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::ConsequenceClaim,
+            "Whether to redeploy, roll back, or page (consequence claim)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::SelfAuditRefusal,
+            "Whether NQ as a whole is operationally sound (the binary is one substrate among many; binary identity alone does not testify to NQ standing; see the sixth-keeper rule in NQ_ON_NQ_OPERATIONAL_CLAIMS_GAP)",
+        ),
     ]
 }
 
@@ -753,18 +899,48 @@ pub fn nq_binary_mtime_state_cannot_testify() -> Vec<String> {
 /// the narrow `verdict_scope = evaluator_liveness_shape_only` to make
 /// the refusal load-bearing at the consumer surface as well as in
 /// this list.
-pub fn nq_evaluator_state_cannot_testify() -> Vec<String> {
+pub fn nq_evaluator_state_cannot_testify() -> Vec<ClaimRefusal> {
     vec![
-        "Whether the evaluator's verdicts about real-world state are correct (fixture liveness is not correctness; a broken evaluator can pass its own fixture)".to_string(),
-        "Whether the route serves this kind (route-level testimony is nq_route_state's job; not designed)".to_string(),
-        "Whether all supported kinds work on this host (per-kind testimony only; aggregation would collapse the diagnostic axis the kind exists to preserve)".to_string(),
-        "Whether cross-host evaluator parity holds (Tier 2; not designed)".to_string(),
-        "Whether the evaluator's substrate is healthy in the abstract (this kind tests query-path reachability at observation time, not substrate health as an ongoing property)".to_string(),
-        "Whether the binary running is the right binary (nq_binary_mtime_state's job)".to_string(),
-        "Whether NQ as a whole is operationally sound (sixth-keeper refusal; per-kind evaluator readiness does not testify to NQ standing)".to_string(),
-        "Whether the evaluator should be trusted past this observation (the scope is per-observation; AdmissibleWithScope at time T does not license a forward-going trust horizon)".to_string(),
-        "Whether the evaluator is bug-free (fixture coverage is narrow; absence of fixture failure is not evidence of correctness)".to_string(),
-        "Whether to redeploy, roll back, page, or take any action (consequence claim)".to_string(),
+        ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "Whether the evaluator's verdicts about real-world state are correct (fixture liveness is not correctness; a broken evaluator can pass its own fixture)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "Whether the route serves this kind (route-level testimony is nq_route_state's job; not designed)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "Whether all supported kinds work on this host (per-kind testimony only; aggregation would collapse the diagnostic axis the kind exists to preserve)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "Whether cross-host evaluator parity holds (Tier 2; not designed)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::FutureStateClaim,
+            "Whether the evaluator's substrate is healthy in the abstract (this kind tests query-path reachability at observation time, not substrate health as an ongoing property)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "Whether the binary running is the right binary (nq_binary_mtime_state's job)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::SelfAuditRefusal,
+            "Whether NQ as a whole is operationally sound (sixth-keeper refusal; per-kind evaluator readiness does not testify to NQ standing)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::FutureStateClaim,
+            "Whether the evaluator should be trusted past this observation (the scope is per-observation; AdmissibleWithScope at time T does not license a forward-going trust horizon)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "Whether the evaluator is bug-free (fixture coverage is narrow; absence of fixture failure is not evidence of correctness)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::ConsequenceClaim,
+            "Whether to redeploy, roll back, page, or take any action (consequence claim)",
+        ),
     ]
 }
 
@@ -782,18 +958,48 @@ pub fn nq_evaluator_state_cannot_testify() -> Vec<String> {
 /// migrated database at test time*. It does not testify to column
 /// stability, semantic correctness, runtime DB state, operator-visible
 /// storage tables, internal derived views, or any consequence claim.
-pub fn nq_sql_contract_state_cannot_testify() -> Vec<String> {
+pub fn nq_sql_contract_state_cannot_testify() -> Vec<ClaimRefusal> {
     vec![
-        "Whether the documented public-tier views have stable columns (existence check only; column drift is out of scope for this kind)".to_string(),
-        "Whether the documented public-tier views return semantically correct rows (existence check, not query-result correctness)".to_string(),
-        "Whether the live database matches the migrated schema (receipt is produced at the test boundary; runtime DB introspection is refused to preserve test/runtime separation)".to_string(),
-        "Whether operator-visible storage tables (warning_state, *_history, generations, etc.) match their cookbook examples (out of contract scope)".to_string(),
-        "Whether internal tables or internal derived views are bounded in any way (no stability claim; out of contract scope)".to_string(),
-        "Whether SQL query performance is acceptable (existence check only)".to_string(),
-        "Whether the contract documented in sql-contract.md was reviewed or correct (this kind tests adherence, not authorship)".to_string(),
-        "Whether the binary running this preflight is the right binary (that is nq_binary_mtime_state's jurisdiction)".to_string(),
-        "Whether NQ as a whole is operationally sound (sixth-keeper refusal; receipt adherence to one narrow contract slice does not testify to NQ standing)".to_string(),
-        "Whether to take any action (consequence claim; receipts attest, they do not authorize mutation)".to_string(),
+        ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "Whether the documented public-tier views have stable columns (existence check only; column drift is out of scope for this kind)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Whether the documented public-tier views return semantically correct rows (existence check, not query-result correctness)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "Whether the live database matches the migrated schema (receipt is produced at the test boundary; runtime DB introspection is refused to preserve test/runtime separation)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "Whether operator-visible storage tables (warning_state, *_history, generations, etc.) match their cookbook examples (out of contract scope)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "Whether internal tables or internal derived views are bounded in any way (no stability claim; out of contract scope)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Whether SQL query performance is acceptable (existence check only)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "Whether the contract documented in sql-contract.md was reviewed or correct (this kind tests adherence, not authorship)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "Whether the binary running this preflight is the right binary (that is nq_binary_mtime_state's jurisdiction)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::SelfAuditRefusal,
+            "Whether NQ as a whole is operationally sound (sixth-keeper refusal; receipt adherence to one narrow contract slice does not testify to NQ standing)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::ConsequenceClaim,
+            "Whether to take any action (consequence claim; receipts attest, they do not authorize mutation)",
+        ),
     ]
 }
 
@@ -801,21 +1007,112 @@ pub fn nq_sql_contract_state_cannot_testify() -> Vec<String> {
 /// a conclusion no combination of ZFS / SMART / disk-pressure witness output
 /// licenses, regardless of how many findings light up. Mirrors the
 /// `cannot_testify` enumeration in `docs/working/gaps/CLAIM_KIND_DISK_STATE_GAP.md`.
-pub fn disk_state_cannot_testify() -> Vec<String> {
+pub fn disk_state_cannot_testify() -> Vec<ClaimRefusal> {
     vec![
-        "Physical disk death".to_string(),
-        "Replacement workflow (authorization, initiation, skipping, completion, closure-criteria satisfaction)".to_string(),
-        "Physical component identity beyond witness coverage (sled / slot / enclosure / asset-record)".to_string(),
-        "Data loss occurrence, recoverability, or unrecoverability".to_string(),
-        "Future failure probability".to_string(),
-        "Incident closure readiness".to_string(),
-        "Drive is fine to keep / no action required (mirror consequence claim)".to_string(),
+        ClaimRefusal::new(RefusalKind::KindSpecific, "Physical disk death"),
+        ClaimRefusal::new(
+            RefusalKind::ConsequenceClaim,
+            "Replacement workflow (authorization, initiation, skipping, completion, closure-criteria satisfaction)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "Physical component identity beyond witness coverage (sled / slot / enclosure / asset-record)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Data loss occurrence, recoverability, or unrecoverability",
+        ),
+        ClaimRefusal::new(RefusalKind::FutureStateClaim, "Future failure probability"),
+        ClaimRefusal::new(RefusalKind::ConsequenceClaim, "Incident closure readiness"),
+        ClaimRefusal::new(
+            RefusalKind::ConsequenceClaim,
+            "Drive is fine to keep / no action required (mirror consequence claim)",
+        ),
     ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Deliberate-v2-shape witness — per the operator-review pin in
+    /// `docs/working/gaps/WITNESS_CLAIM_SCOPE_GAP.md` constraint 7,
+    /// the v2 bump needs a test that breaks loudly if the contract
+    /// regresses to v1 or if the typed shape gets re-flattened to
+    /// strings.
+    #[test]
+    fn preflight_contract_v2_is_deliberate() {
+        // (1) The version is pinned to the typed-refusal contract.
+        assert_eq!(PREFLIGHT_CONTRACT_VERSION, 2);
+
+        // (2) Every constitutional function returns ClaimRefusal entries
+        //     with non-empty statements. Empty statements would defeat
+        //     the dedupe-caution (kind + statement is the diagnostic
+        //     inventory; an empty statement makes two refusals
+        //     accidentally Eq when they should not be).
+        let all_constitutional = [
+            disk_state_cannot_testify(),
+            ingest_state_cannot_testify(),
+            dns_state_cannot_testify(),
+            sqlite_wal_state_cannot_testify(),
+            component_testimony_observation_loop_alive_cannot_testify(),
+            nq_binary_mtime_state_cannot_testify(),
+            nq_evaluator_state_cannot_testify(),
+            nq_sql_contract_state_cannot_testify(),
+        ];
+        for (i, refusals) in all_constitutional.iter().enumerate() {
+            assert!(!refusals.is_empty(), "function {i} returned empty refusal list");
+            for r in refusals {
+                assert!(
+                    !r.statement.is_empty(),
+                    "function {i} emitted ClaimRefusal with empty statement (refusal_kind = {:?})",
+                    r.refusal_kind
+                );
+            }
+        }
+
+        // (3) ConsequenceClaim is the universally-present refusal (per
+        //     feedback_knob_facing — every kind refuses consequence
+        //     authority). If a kind stops carrying ConsequenceClaim, the
+        //     wire boundary has eroded and the test must fail loudly.
+        for (i, refusals) in all_constitutional.iter().enumerate() {
+            assert!(
+                refusals.iter().any(|r| r.refusal_kind == RefusalKind::ConsequenceClaim),
+                "function {i} dropped the ConsequenceClaim refusal — knob_facing boundary broken"
+            );
+        }
+
+        // (4) Round-trip a populated PreflightResult through JSON and
+        //     confirm the v2 typed shape survives. A regression to v1
+        //     (Vec<String>) would either fail to deserialize or silently
+        //     lose the refusal_kind field.
+        let target = PreflightTarget {
+            host: "h".into(),
+            scope: "host".into(),
+            id: None,
+        };
+        let r = PreflightResult::skeleton(
+            ClaimKind::DiskState,
+            target,
+            "2026-06-09T00:00:00Z".into(),
+        );
+        let json = serde_json::to_value(&r).expect("serialize");
+        let first_refusal = &json["cannot_testify"][0];
+        assert!(
+            first_refusal.is_object(),
+            "v2 wire shape: cannot_testify entries must be objects, got: {first_refusal:?}"
+        );
+        assert!(
+            first_refusal.get("refusal_kind").is_some(),
+            "v2 wire shape: refusal_kind field missing from {first_refusal:?}"
+        );
+        assert!(
+            first_refusal.get("statement").is_some(),
+            "v2 wire shape: statement field missing from {first_refusal:?}"
+        );
+        let round_tripped: PreflightResult = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(round_tripped.cannot_testify, r.cannot_testify);
+    }
 
     #[test]
     fn disk_state_skeleton_has_constitutional_refusals() {
@@ -828,13 +1125,13 @@ mod tests {
         assert_eq!(r.schema, PREFLIGHT_DISK_STATE_SCHEMA);
         assert_eq!(r.contract_version, PREFLIGHT_CONTRACT_VERSION);
         // The seven constitutional refusals must be present.
-        assert!(r.cannot_testify.iter().any(|s| s.contains("Physical disk death")));
-        assert!(r.cannot_testify.iter().any(|s| s.starts_with("Replacement workflow")));
-        assert!(r.cannot_testify.iter().any(|s| s.contains("Incident closure")));
-        assert!(r.cannot_testify.iter().any(|s| s.contains("Drive is fine to keep")));
-        assert!(r.cannot_testify.iter().any(|s| s.contains("Data loss")));
-        assert!(r.cannot_testify.iter().any(|s| s.contains("Future failure probability")));
-        assert!(r.cannot_testify.iter().any(|s| s.contains("Physical component identity")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.contains("Physical disk death")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.starts_with("Replacement workflow")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.contains("Incident closure")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.contains("Drive is fine to keep")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.contains("Data loss")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.contains("Future failure probability")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.contains("Physical component identity")));
     }
 
     #[test]
@@ -917,16 +1214,16 @@ mod tests {
         assert_eq!(r.schema, PREFLIGHT_NQ_SQL_CONTRACT_STATE_SCHEMA);
         assert_eq!(r.contract_version, PREFLIGHT_CONTRACT_VERSION);
         // The pinned refusals must be present (sample from the kind-level list).
-        assert!(r.cannot_testify.iter().any(|s| s.contains("stable columns")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.contains("stable columns")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("live database")));
-        assert!(r.cannot_testify.iter().any(|s| s.contains("consequence")));
+            .any(|s| s.statement.contains("live database")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.contains("consequence")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("sixth-keeper")));
+            .any(|s| s.statement.contains("sixth-keeper")));
         // Verdict starts at InsufficientCoverage like other kinds.
         assert!(matches!(r.verdict, Verdict::InsufficientCoverage));
     }
@@ -949,15 +1246,15 @@ mod tests {
         );
         assert_eq!(r.contract_version, PREFLIGHT_CONTRACT_VERSION);
         // The pinned refusals must be present (sample from the §4 list).
-        assert!(r.cannot_testify.iter().any(|s| s.contains("NQ is healthy")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.contains("NQ is healthy")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("other NQ loops")));
+            .any(|s| s.statement.contains("other NQ loops")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("composed verdicts")));
+            .any(|s| s.statement.contains("composed verdicts")));
         // Verdict starts at InsufficientCoverage like other kinds.
         assert!(matches!(r.verdict, Verdict::InsufficientCoverage));
     }
@@ -980,23 +1277,23 @@ mod tests {
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("source code the operator intended")));
+            .any(|s| s.statement.contains("source code the operator intended")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("peer host's binary")));
+            .any(|s| s.statement.contains("peer host's binary")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("running process is using")));
+            .any(|s| s.statement.contains("running process is using")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("tampered")));
+            .any(|s| s.statement.contains("tampered")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("redeploy")));
+            .any(|s| s.statement.contains("redeploy")));
         // Verdict starts at InsufficientCoverage like other kinds.
         assert!(matches!(r.verdict, Verdict::InsufficientCoverage));
     }
@@ -1008,9 +1305,9 @@ mod tests {
         // phrased as denials, not as positive verdict-shaped claims.
         let refusals = nq_binary_mtime_state_cannot_testify();
         for entry in &refusals {
-            let lower = entry.to_lowercase();
+            let lower = entry.statement.to_lowercase();
             assert!(
-                entry.starts_with("Whether ") || entry.starts_with("Why "),
+                entry.statement.starts_with("Whether ") || entry.statement.starts_with("Why "),
                 "refusal entry must be phrased as a 'Whether/Why ...' \
                  (denial-shaped), got: {entry}"
             );
@@ -1044,23 +1341,23 @@ mod tests {
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("fixture liveness is not correctness")));
+            .any(|s| s.statement.contains("fixture liveness is not correctness")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("route-level testimony is nq_route_state")));
+            .any(|s| s.statement.contains("route-level testimony is nq_route_state")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("per-kind testimony only")));
+            .any(|s| s.statement.contains("per-kind testimony only")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("forward-going trust horizon")));
+            .any(|s| s.statement.contains("forward-going trust horizon")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("nq_binary_mtime_state's job")));
+            .any(|s| s.statement.contains("nq_binary_mtime_state's job")));
         // Verdict starts at InsufficientCoverage like other kinds.
         assert!(matches!(r.verdict, Verdict::InsufficientCoverage));
     }
@@ -1070,9 +1367,9 @@ mod tests {
         // Same wire-discipline check as the sibling kinds.
         let refusals = nq_evaluator_state_cannot_testify();
         for entry in &refusals {
-            let lower = entry.to_lowercase();
+            let lower = entry.statement.to_lowercase();
             assert!(
-                entry.starts_with("Whether ") || entry.starts_with("Why "),
+                entry.statement.starts_with("Whether ") || entry.statement.starts_with("Why "),
                 "refusal entry must be phrased as a 'Whether/Why ...' \
                  (denial-shaped), got: {entry}"
             );
@@ -1095,12 +1392,12 @@ mod tests {
         // no entry starts with a verdict-shaped word.
         let refusals = component_testimony_observation_loop_alive_cannot_testify();
         for entry in &refusals {
-            let lower = entry.to_lowercase();
+            let lower = entry.statement.to_lowercase();
             // The refusal entries describe what NQ does NOT testify to;
             // they may MENTION verdict words inside denials, but they
             // must not be authored AS verdicts.
             assert!(
-                entry.starts_with("Whether ") || entry.starts_with("Why "),
+                entry.statement.starts_with("Whether ") || entry.statement.starts_with("Why "),
                 "refusal entry must be phrased as a 'Whether/Why ...' \
                  (denial-shaped), got: {entry}"
             );
@@ -1131,29 +1428,29 @@ mod tests {
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("application that owns this DB")));
+            .any(|s| s.statement.contains("application that owns this DB")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("queries against this DB")));
+            .any(|s| s.statement.contains("queries against this DB")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("WAL state will degrade in the future")));
+            .any(|s| s.statement.contains("WAL state will degrade in the future")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("checkpoint operations")));
+            .any(|s| s.statement.contains("checkpoint operations")));
         assert!(
             r.cannot_testify
                 .iter()
-                .any(|s| s.contains("`wal_present=false`")),
+                .any(|s| s.statement.contains("`wal_present=false`")),
             "WAL-absence ambiguity refusal must be present (slice 6d wrinkle)"
         );
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("repoint, kill the pinned reader, or page")));
+            .any(|s| s.statement.contains("repoint, kill the pinned reader, or page")));
     }
 
     #[test]
@@ -1162,7 +1459,7 @@ mod tests {
         // the cannot_testify list itself must not use warn/critical/
         // alert language. The list refuses claims, not alert levels.
         for refusal in sqlite_wal_state_cannot_testify() {
-            let lower = refusal.to_ascii_lowercase();
+            let lower = refusal.statement.to_ascii_lowercase();
             for forbidden in ["warn", "critical", "alert", "incident", "p1", "p2"] {
                 assert!(
                     !lower.contains(forbidden),
@@ -1193,23 +1490,23 @@ mod tests {
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("Endpoint reachability")));
+            .any(|s| s.statement.contains("Endpoint reachability")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("Global DNS truth")));
+            .any(|s| s.statement.contains("Global DNS truth")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("DNSSEC validation outcome")));
+            .any(|s| s.statement.contains("DNSSEC validation outcome")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("Registrar / account")));
+            .any(|s| s.statement.contains("Registrar / account")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.starts_with("Whether to repoint")));
+            .any(|s| s.statement.starts_with("Whether to repoint")));
     }
 
     #[test]
@@ -1282,19 +1579,19 @@ mod tests {
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("Upstream source substrate")));
+            .any(|s| s.statement.contains("Upstream source substrate")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("NQ's own overall health")));
+            .any(|s| s.statement.contains("NQ's own overall health")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("Future ingest")));
+            .any(|s| s.statement.contains("Future ingest")));
         assert!(r
             .cannot_testify
             .iter()
-            .any(|s| s.contains("Semantic correctness")));
+            .any(|s| s.statement.contains("Semantic correctness")));
     }
 
     #[test]

@@ -16,13 +16,16 @@ use serde_json::Value;
 pub const EXPECTED_DISK_STATE_SCHEMA: &str = "nq.preflight.disk_state.v1";
 
 /// Contract version the disk_state preflight envelope must advertise.
-pub const EXPECTED_DISK_STATE_CONTRACT_VERSION: u64 = 1;
+/// Bumped 1 -> 2 on 2026-06-09 with the typed-refusal migration; see
+/// `docs/working/gaps/WITNESS_CLAIM_SCOPE_GAP.md`.
+pub const EXPECTED_DISK_STATE_CONTRACT_VERSION: u64 = 2;
 
 /// Wire schema the ingest_state preflight envelope must advertise.
 pub const EXPECTED_INGEST_STATE_SCHEMA: &str = "nq.preflight.ingest_state.v1";
 
 /// Contract version the ingest_state preflight envelope must advertise.
-pub const EXPECTED_INGEST_STATE_CONTRACT_VERSION: u64 = 1;
+/// Bumped 1 -> 2 on 2026-06-09 with the typed-refusal migration.
+pub const EXPECTED_INGEST_STATE_CONTRACT_VERSION: u64 = 2;
 
 /// Substrings that must not appear in any `supports[].claim` on an
 /// `ingest_state` envelope. Mirrors the constitutional `cannot_testify`
@@ -320,7 +323,7 @@ mod tests {
     fn admissible_envelope() -> Value {
         json!({
             "schema": "nq.preflight.disk_state.v1",
-            "contract_version": 1,
+            "contract_version": 2,
             "claim_kind": "disk_state",
             "target": { "host": "lil-nas-x", "scope": "host" },
             "verdict": "admissible_with_scope",
@@ -340,8 +343,8 @@ mod tests {
             ],
             "excludes": [],
             "cannot_testify": [
-                "Physical disk death",
-                "Replacement workflow"
+                { "refusal_kind": "kind_specific",     "statement": "Physical disk death" },
+                { "refusal_kind": "consequence_claim", "statement": "Replacement workflow" }
             ],
             "coverage": [
                 { "witness": "zfs_witness", "standing": "observable" }
@@ -355,7 +358,7 @@ mod tests {
     fn cannot_testify_envelope() -> Value {
         json!({
             "schema": "nq.preflight.disk_state.v1",
-            "contract_version": 1,
+            "contract_version": 2,
             "claim_kind": "disk_state",
             "target": { "host": "ghost", "scope": "host" },
             "verdict": "cannot_testify",
@@ -363,9 +366,9 @@ mod tests {
             "supports": [],
             "excludes": [],
             "cannot_testify": [
-                "Physical disk death",
-                "Replacement workflow",
-                "Data loss occurrence, recoverability, or unrecoverability"
+                { "refusal_kind": "kind_specific",     "statement": "Physical disk death" },
+                { "refusal_kind": "consequence_claim", "statement": "Replacement workflow" },
+                { "refusal_kind": "above_substrate",   "statement": "Data loss occurrence, recoverability, or unrecoverability" }
             ],
             "coverage": [
                 { "witness": "zfs_witness", "standing": "node_unobservable" }
@@ -411,7 +414,10 @@ mod tests {
     #[test]
     fn wrong_contract_version_fails() {
         let mut env = admissible_envelope();
-        env["contract_version"] = json!(2);
+        // Anything other than EXPECTED_DISK_STATE_CONTRACT_VERSION must
+        // be rejected. v1 (the pre-typed-refusal shape) is the canonical
+        // wrong version a producer might still emit.
+        env["contract_version"] = json!(1);
         let err = validate_disk_state_envelope(&env).unwrap_err();
         assert!(
             err.to_string().contains("contract_version mismatch"),
@@ -549,7 +555,7 @@ mod tests {
     fn ingest_admissible_envelope() -> Value {
         json!({
             "schema": "nq.preflight.ingest_state.v1",
-            "contract_version": 1,
+            "contract_version": 2,
             "claim_kind": "ingest_state",
             "target": { "host": "monitor", "scope": "ingest" },
             "verdict": "admissible_with_scope",
@@ -563,9 +569,9 @@ mod tests {
             ],
             "excludes": [],
             "cannot_testify": [
-                "Upstream source substrate health",
-                "Future ingest success or failure",
-                "Semantic correctness of ingested data"
+                { "refusal_kind": "environmental_context", "statement": "Upstream source substrate health" },
+                { "refusal_kind": "future_state_claim",    "statement": "Future ingest success or failure" },
+                { "refusal_kind": "above_substrate",       "statement": "Semantic correctness of ingested data" }
             ],
             "coverage": [
                 { "witness": "monitor_pull_cycles", "standing": "observable" }
@@ -579,7 +585,7 @@ mod tests {
     fn ingest_cannot_testify_envelope() -> Value {
         json!({
             "schema": "nq.preflight.ingest_state.v1",
-            "contract_version": 1,
+            "contract_version": 2,
             "claim_kind": "ingest_state",
             "target": { "host": "monitor", "scope": "ingest" },
             "verdict": "cannot_testify",
@@ -587,9 +593,9 @@ mod tests {
             "supports": [],
             "excludes": [],
             "cannot_testify": [
-                "Upstream source substrate health",
-                "Future ingest success or failure",
-                "Whether ingest will recover from the current failure shape"
+                { "refusal_kind": "environmental_context", "statement": "Upstream source substrate health" },
+                { "refusal_kind": "future_state_claim",    "statement": "Future ingest success or failure" },
+                { "refusal_kind": "future_state_claim",    "statement": "Whether ingest will recover from the current failure shape" }
             ],
             "coverage": [
                 { "witness": "monitor_pull_cycles", "standing": "no_rows" }

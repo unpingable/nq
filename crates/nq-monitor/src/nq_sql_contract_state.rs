@@ -403,8 +403,8 @@ mod tests {
         // Constitutional refusals are the kind-level wedge — they MUST be
         // present regardless of receipt content or verdict.
         assert!(r.cannot_testify.len() >= 10);
-        assert!(r.cannot_testify.iter().any(|s| s.contains("column")));
-        assert!(r.cannot_testify.iter().any(|s| s.contains("consequence")));
-        assert!(r.cannot_testify.iter().any(|s| s.contains("sixth-keeper")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.contains("column")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.contains("consequence")));
+        assert!(r.cannot_testify.iter().any(|s| s.statement.contains("sixth-keeper")));
     }
 }

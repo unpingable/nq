@@ -669,7 +669,7 @@ async fn preflight_disk_state_http_emits_bounded_testimony() {
 
     // (1) Wire contract preserved: schema, contract_version, claim_kind, target.
     assert_eq!(resp["schema"], "nq.preflight.disk_state.v1");
-    assert_eq!(resp["contract_version"], 1);
+    assert_eq!(resp["contract_version"], 2);
     assert_eq!(resp["claim_kind"], "disk_state");
     assert_eq!(resp["target"]["host"], "test-host");
 
@@ -689,9 +689,10 @@ async fn preflight_disk_state_http_emits_bounded_testimony() {
     let cannot_testify = resp["cannot_testify"]
         .as_array()
         .expect("cannot_testify array");
+    // v2 wire shape: each entry is { "refusal_kind": ..., "statement": ... }.
     let joined = cannot_testify
         .iter()
-        .filter_map(|v| v.as_str())
+        .filter_map(|v| v["statement"].as_str())
         .collect::<Vec<_>>()
         .join("\n");
     for needle in [
@@ -794,7 +795,7 @@ async fn preflight_disk_state_http_seeded_faulted_emits_bounded_testimony() {
 
     // (1) Wire contract preserved alongside live substrate.
     assert_eq!(resp["schema"], "nq.preflight.disk_state.v1");
-    assert_eq!(resp["contract_version"], 1);
+    assert_eq!(resp["contract_version"], 2);
     assert_eq!(resp["claim_kind"], "disk_state");
     assert_eq!(resp["target"]["host"], host);
 
@@ -884,9 +885,10 @@ async fn preflight_disk_state_http_seeded_faulted_emits_bounded_testimony() {
     let cannot_testify = resp["cannot_testify"]
         .as_array()
         .expect("cannot_testify array");
+    // v2 wire shape: each entry is { "refusal_kind": ..., "statement": ... }.
     let joined = cannot_testify
         .iter()
-        .filter_map(|v| v.as_str())
+        .filter_map(|v| v["statement"].as_str())
         .collect::<Vec<_>>()
         .join("\n");
     for needle in [
@@ -1018,7 +1020,7 @@ async fn serve_http_only_does_not_write_to_db() {
             resp["schema"], "nq.preflight.disk_state.v1",
             "wrong schema from http-only server: {resp:?}"
         );
-        assert_eq!(resp["contract_version"], 1);
+        assert_eq!(resp["contract_version"], 2);
     })();
     let _ = kill_result; // suppress unused warning if all asserts pass
 
@@ -1101,7 +1103,7 @@ async fn api_host_includes_bounded_disk_state_preflight() {
         "operator-encounter surface must carry nested disk_state_preflight; got {resp:?}"
     );
     assert_eq!(pf["schema"], "nq.preflight.disk_state.v1");
-    assert_eq!(pf["contract_version"], 1);
+    assert_eq!(pf["contract_version"], 2);
     assert_eq!(pf["claim_kind"], "disk_state");
     assert_eq!(pf["target"]["host"], host);
 
@@ -1125,9 +1127,10 @@ async fn api_host_includes_bounded_disk_state_preflight() {
     let cannot_testify = pf["cannot_testify"]
         .as_array()
         .expect("cannot_testify array");
+    // v2 wire shape: each entry is { "refusal_kind": ..., "statement": ... }.
     let joined_refusals = cannot_testify
         .iter()
-        .filter_map(|v| v.as_str())
+        .filter_map(|v| v["statement"].as_str())
         .collect::<Vec<_>>()
         .join("\n");
     for needle in [
@@ -1216,7 +1219,7 @@ async fn ingest_state_http_emits_admissible_with_scope_on_fresh_clean_generation
 
     // Wire contract.
     assert_eq!(resp["schema"], "nq.preflight.ingest_state.v1");
-    assert_eq!(resp["contract_version"], 1);
+    assert_eq!(resp["contract_version"], 2);
     assert_eq!(resp["claim_kind"], "ingest_state");
     // Target shape: not host-scoped — the witness is the monitor itself.
     assert_eq!(resp["target"]["host"], "monitor");
@@ -1240,9 +1243,10 @@ async fn ingest_state_http_emits_admissible_with_scope_on_fresh_clean_generation
     let cannot_testify = resp["cannot_testify"]
         .as_array()
         .expect("cannot_testify array");
+    // v2 wire shape: each entry is { "refusal_kind": ..., "statement": ... }.
     let joined = cannot_testify
         .iter()
-        .filter_map(|v| v.as_str())
+        .filter_map(|v| v["statement"].as_str())
         .collect::<Vec<_>>()
         .join("\n");
     for needle in [
@@ -1624,7 +1628,7 @@ async fn dns_state_http_nxdomain_emits_admissible_with_scope_with_bounded_wordin
 
     // Wire contract.
     assert_eq!(resp["schema"], "nq.preflight.dns_state.v1");
-    assert_eq!(resp["contract_version"], 1);
+    assert_eq!(resp["contract_version"], 2);
     assert_eq!(resp["claim_kind"], "dns_state");
     // Target shape: the tuple stays visible on the wire — this is the
     // registry-pressure point named in DNS_WITNESS_FAMILY_GAP.md.
@@ -1655,9 +1659,10 @@ async fn dns_state_http_nxdomain_emits_admissible_with_scope_with_bounded_wordin
     let cannot_testify = resp["cannot_testify"]
         .as_array()
         .expect("cannot_testify array");
+    // v2 wire shape: each entry is { "refusal_kind": ..., "statement": ... }.
     let joined = cannot_testify
         .iter()
-        .filter_map(|v| v.as_str())
+        .filter_map(|v| v["statement"].as_str())
         .collect::<Vec<_>>()
         .join("\n");
     for needle in [
@@ -2212,7 +2217,7 @@ async fn sqlite_wal_state_http_no_rows_emits_insufficient_coverage() {
 
     // Wire contract.
     assert_eq!(resp["schema"], "nq.preflight.sqlite_wal_state.v1");
-    assert_eq!(resp["contract_version"], 1);
+    assert_eq!(resp["contract_version"], 2);
     assert_eq!(resp["claim_kind"], "sqlite_wal_state");
     assert_eq!(resp["target"]["host"], "labelwatch.neutral.zone");
     assert_eq!(resp["target"]["scope"], "sqlite_wal");
@@ -2230,9 +2235,10 @@ async fn sqlite_wal_state_http_no_rows_emits_insufficient_coverage() {
     let cannot_testify = resp["cannot_testify"]
         .as_array()
         .expect("cannot_testify array");
+    // v2 wire shape: each entry is { "refusal_kind": ..., "statement": ... }.
     let joined = cannot_testify
         .iter()
-        .filter_map(|v| v.as_str())
+        .filter_map(|v| v["statement"].as_str())
         .collect::<Vec<_>>()
         .join("\n");
     for needle in [
@@ -2739,9 +2745,10 @@ async fn preflight_nq_sql_contract_state_missing_artifact_yields_cannot_testify(
     // (3) Constitutional refusals survived the round trip.
     let cannot = resp["cannot_testify"].as_array().unwrap();
     assert!(cannot.len() >= 10);
+    // v2 wire shape: each entry is { "refusal_kind": ..., "statement": ... }.
     let joined: String = cannot
         .iter()
-        .filter_map(|v| v.as_str())
+        .filter_map(|v| v["statement"].as_str())
         .collect::<Vec<_>>()
         .join("\n");
     assert!(joined.contains("column stability") || joined.contains("column"));
