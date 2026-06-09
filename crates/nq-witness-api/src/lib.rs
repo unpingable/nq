@@ -33,6 +33,12 @@ use nq_core::wire::PublisherState;
 /// re-export is the consumer surface.
 pub use nq_core::witness::WitnessPosition;
 
+/// Typed refusal vocabulary re-exported from `nq-core::wire`.
+/// Consumers bind to `nq-witness-api::{ClaimRefusal, RefusalKind}`
+/// rather than reaching into `nq-core` directly. See
+/// `docs/working/gaps/WITNESS_CLAIM_SCOPE_GAP.md`.
+pub use nq_core::wire::{ClaimRefusal, RefusalKind};
+
 /// HTTP path the witness binary exposes for its testimony payload.
 pub const STATE_PATH: &str = "/state";
 
