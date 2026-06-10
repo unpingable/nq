@@ -90,6 +90,7 @@ The detailed Shipped State narrative subsections that already exist in some gap 
 - [`SENTINEL_LIVENESS_GAP`](SENTINEL_LIVENESS_GAP.md) — `specified, ready to build`. Out-of-band "something stopped moving."
 - [`WRITE_TX_INSTRUMENTATION_GAP`](WRITE_TX_INSTRUMENTATION_GAP.md) — `specified, ready to build`. In-band lock-holder biography.
 - [`HISTORY_COMPACTION_GAP`](HISTORY_COMPACTION_GAP.md) — `specified, ready to build`. History storage compaction (orthogonal to regime features).
+- [`OBSERVATION_PLANE_GAP`](OBSERVATION_PLANE_GAP.md) — `candidate` / recognition. Filed 2026-06-10. Frames monitoring + witnessing as adjacent rungs, not rivals: observation-class artifacts (samples) vs claim-class artifacts (findings). Pins three boundary rules ("monitor never mints findings; charts are exhibits not verdicts; forward links go both ways") and the `nq-monitor`-crate naming collision. No implementation authorized; unifies EVIDENCE_LAYER + HISTORY_COMPACTION + STORAGE_BACKEND + DASHBOARD_* into one frame. Sidecars a SQL-inspection hardening verify-and-receipt for DASHBOARD_SQL_INSPECTION.
 
 ### Referenced-but-unwritten (stubs)
 Thin specs whose job is to prevent the referenced hole from being filled accidentally by nearby code. See full list below.
