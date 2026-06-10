@@ -40,9 +40,10 @@ pub const IMPORT_SCHEMA_ID: &str = "nq.finding_import.v1";
 pub const IMPORT_CONTRACT_VERSION: u32 = 1;
 
 /// Minimum DB schema version required to accept an inbound import.
-/// Mirror of `MIN_SCHEMA_FOR_EXPORT`. V1 requires the `origin_*` and
-/// `silence_*` columns added in migration 046.
-pub const MIN_SCHEMA_FOR_IMPORT: u32 = 46;
+/// Mirror of `MIN_SCHEMA_FOR_EXPORT`. Requires the `origin_*` and
+/// `silence_*` columns added in migration 046 and the
+/// `origin_mode` mint-provenance discriminator added in migration 057.
+pub const MIN_SCHEMA_FOR_IMPORT: u32 = 57;
 
 /// Refusal finding kind emitted when an import is malformed,
 /// unversioned, or under-versioned.
@@ -70,10 +71,53 @@ pub struct ImportedFinding {
     pub message: String,
     #[serde(default = "default_finding_class")]
     pub finding_class: String,
+    /// ORIGIN_MODE_DISCRIMINATOR (migration 057). Optional on the wire;
+    /// defaults to `"observed"` when absent (backward compat with V1
+    /// fixtures that predate this field). Closed vocabulary:
+    /// `{"observed", "drill", "replay", "synthetic"}`. Values outside
+    /// the closed set cause the ingest to refuse the manifest with an
+    /// `inbound_export_unparsable` finding (the same refusal path as
+    /// other manifest validation failures); see `validate_origin_mode`.
+    ///
+    /// **Hard rule (forcing case from AG-side custody audit, 2026-06-09):**
+    /// a drill harness's import MUST set this field to `"drill"`. The
+    /// ingest path does not infer drill provenance from any other
+    /// signal; if the producer does not declare it, the row is recorded
+    /// as `observed`, which is the value the consumer reads. Producers
+    /// that mint drill manifests without setting this field create
+    /// indistinguishable testimony — the exact laundering shape the
+    /// discriminator exists to refuse.
+    #[serde(default)]
+    pub origin_mode: Option<String>,
 }
 
 fn default_finding_class() -> String {
     "signal".to_string()
+}
+
+/// Closed vocabulary for `origin_mode`. Must match the SQL CHECK in
+/// migration 057. Adding a value requires its own migration plus an
+/// updated ratification record.
+pub const VALID_ORIGIN_MODES: &[&str] = &["observed", "drill", "replay", "synthetic"];
+
+/// Default `origin_mode` when the wire field is absent. Matches the SQL
+/// column default for backward compatibility with V1 fixtures predating
+/// migration 057.
+pub const DEFAULT_ORIGIN_MODE: &str = "observed";
+
+/// Validate an `origin_mode` value against the closed vocabulary.
+/// Returns `Ok(value)` on a recognized value, `Err(reason)` otherwise.
+/// The error reason is the human-readable string that becomes the
+/// refusal finding's message on manifest-level failure.
+fn validate_origin_mode(value: &str) -> Result<&str, String> {
+    if VALID_ORIGIN_MODES.contains(&value) {
+        Ok(value)
+    } else {
+        Err(format!(
+            "origin_mode `{}` is not in the closed vocabulary {:?}",
+            value, VALID_ORIGIN_MODES
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,7 +265,35 @@ pub fn ingest_finding_import(
         });
     }
 
-    // Ingest each finding with origin envelope populated.
+    // Per-finding origin_mode validation. Done before any insert so a
+    // single bad value refuses the manifest atomically rather than
+    // ingesting a prefix. Mirrors the wire-shape / contract-version
+    // refusal pattern: one inbound_export_unparsable finding, zero
+    // ingested findings.
+    for f in &manifest.findings {
+        let mode = f.origin_mode.as_deref().unwrap_or(DEFAULT_ORIGIN_MODE);
+        if let Err(reason) = validate_origin_mode(mode) {
+            emit_refusal_finding(
+                conn,
+                &manifest.producer_id,
+                &manifest.extraction_run_id,
+                &reason,
+                current_generation,
+                now_utc_rfc3339,
+            )?;
+            return Ok(IngestResult {
+                ingested_count: 0,
+                refused: true,
+                refusal_reason: Some(reason),
+                extraction_stale_emitted: false,
+            });
+        }
+    }
+
+    // Ingest each finding with origin envelope populated. Each row
+    // carries the producer-declared origin_mode (defaulting to
+    // `"observed"` when absent). Drill harnesses must set this field
+    // explicitly — see `ImportedFinding::origin_mode` doc for the rule.
     let mut ingested_count = 0usize;
     for f in &manifest.findings {
         insert_imported_finding(
@@ -319,7 +391,13 @@ fn emit_refusal_finding(
 
 /// Insert one ingested finding with the origin envelope populated.
 /// origin_source = 'import'; producer-clock fields carry the manifest's
-/// header values.
+/// header values. `origin_mode` is threaded from the per-finding
+/// declared value (or DEFAULT_ORIGIN_MODE when the producer did not
+/// declare). This is the forcing site referenced by the AG-side custody
+/// audit: previously every imported row was indistinguishable from an
+/// observed native finding; with the discriminator threaded here, a
+/// drill harness's import row stores `origin_mode = 'drill'` and is
+/// distinguishable on the wire via `FindingSnapshot.origin_mode`.
 fn insert_imported_finding(
     conn: &Connection,
     manifest: &FindingImportManifest,
@@ -327,6 +405,7 @@ fn insert_imported_finding(
     current_generation: i64,
     now_utc_rfc3339: &str,
 ) -> anyhow::Result<()> {
+    let origin_mode = f.origin_mode.as_deref().unwrap_or(DEFAULT_ORIGIN_MODE);
     conn.execute(
         "INSERT INTO warning_state (
             host, kind, subject, domain, message, severity,
@@ -334,13 +413,14 @@ fn insert_imported_finding(
             consecutive_gens, finding_class, rule_hash, absent_gens,
             visibility_state, basis_state, state_kind,
             origin_source, origin_producer_id, origin_extraction_run_id,
-            origin_producer_extraction_time, origin_import_contract_version
+            origin_producer_extraction_time, origin_import_contract_version,
+            origin_mode
          )
          VALUES (?1, ?2, ?3, '', ?4, ?5,
                  ?6, ?7, ?6, ?7,
                  1, ?8, ?9, 0,
                  'observed', 'unknown', 'incident',
-                 'import', ?10, ?11, ?12, ?13)
+                 'import', ?10, ?11, ?12, ?13, ?14)
          ON CONFLICT(host, kind, subject) DO UPDATE SET
              message       = excluded.message,
              severity      = excluded.severity,
@@ -351,7 +431,8 @@ fn insert_imported_finding(
              origin_producer_id              = excluded.origin_producer_id,
              origin_extraction_run_id        = excluded.origin_extraction_run_id,
              origin_producer_extraction_time = excluded.origin_producer_extraction_time,
-             origin_import_contract_version  = excluded.origin_import_contract_version",
+             origin_import_contract_version  = excluded.origin_import_contract_version,
+             origin_mode                     = excluded.origin_mode",
         rusqlite::params![
             f.identity.host,
             f.identity.detector,
@@ -366,6 +447,7 @@ fn insert_imported_finding(
             manifest.extraction_run_id,
             manifest.producer_extraction_time,
             manifest.contract_version as i64,
+            origin_mode,
         ],
     )?;
     Ok(())

@@ -53,10 +53,11 @@ pub const CONTRACT_VERSION: u32 = 1;
 /// `warning_state.failure_class` etc. (027), `warning_state.stability`
 /// (028), `regime_features` (030), the COVERAGE_HONESTY envelope
 /// columns (038), the MAINTENANCE_DECLARATION annotation columns
-/// (045), and the DURABLE_ARTIFACT_SUBSTRATE origin / SILENCE_UNIFICATION
-/// envelope columns (046). The most recent of those is 46; exporter
-/// requires `>= 46`.
-pub const MIN_SCHEMA_FOR_EXPORT: u32 = 46;
+/// (045), the DURABLE_ARTIFACT_SUBSTRATE origin / SILENCE_UNIFICATION
+/// envelope columns (046), and the ORIGIN_MODE_DISCRIMINATOR mint-
+/// provenance column (057). The most recent of those is 57; exporter
+/// requires `>= 57`.
+pub const MIN_SCHEMA_FOR_EXPORT: u32 = 57;
 
 // ---------------------------------------------------------------------------
 // Filter — what export_findings accepts.
@@ -132,6 +133,21 @@ pub struct FindingSnapshot {
     /// contract; older consumers ignore the field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<FindingOrigin>,
+    /// ORIGIN_MODE_DISCRIMINATOR (migration 057) mint-provenance axis.
+    /// Always present (every row has a value; default `"observed"` for
+    /// rows predating the migration). Closed vocabulary:
+    /// `{"observed", "drill", "replay", "synthetic"}`. Orthogonal to the
+    /// `origin` block above: `origin` answers ingest path (native vs.
+    /// import); `origin_mode` answers mint provenance (authentically
+    /// observed vs. drilled / replayed / synthesized). Additive on the
+    /// v1 contract; consumers ignoring the field remain functional, but
+    /// any consumer that admits findings as authority for downstream
+    /// consequence MUST branch on this field — admitting a drilled
+    /// finding as if it were observed is exactly the laundering shape
+    /// the discriminator exists to refuse. See
+    /// `~/git/agent_gov/working/nq-custody-gap-origin-discriminator.md`
+    /// for the forcing case.
+    pub origin_mode: String,
     /// SILENCE_UNIFICATION shared envelope (shipped here as
     /// DURABLE_ARTIFACT_SUBSTRATE V1's forcing case). Populated for
     /// silence-shaped findings using the unified contract — V1 covers
@@ -540,6 +556,7 @@ pub fn export_findings_from_conn(
                 maintenance_state, maintenance_id,
                 origin_source, origin_producer_id, origin_extraction_run_id,
                 origin_producer_extraction_time, origin_import_contract_version,
+                origin_mode,
                 silence_scope, silence_basis, silence_duration_s, silence_expected
          FROM warning_state{} ORDER BY host, kind, subject",
         where_clause
@@ -603,10 +620,11 @@ pub fn export_findings_from_conn(
             origin_extraction_run_id: row.get(50)?,
             origin_producer_extraction_time: row.get(51)?,
             origin_import_contract_version: row.get(52)?,
-            silence_scope: row.get(53)?,
-            silence_basis: row.get(54)?,
-            silence_duration_s: row.get(55)?,
-            silence_expected: row.get(56)?,
+            origin_mode: row.get(53)?,
+            silence_scope: row.get(54)?,
+            silence_basis: row.get(55)?,
+            silence_duration_s: row.get(56)?,
+            silence_expected: row.get(57)?,
         })
     })?;
 
@@ -748,6 +766,11 @@ pub fn export_findings_from_conn(
                 }),
                 _ => None,
             },
+            // ORIGIN_MODE_DISCRIMINATOR (migration 057): always populated.
+            // Default 'observed' for rows predating the migration. Closed
+            // vocabulary enforced by the CHECK constraint; consumers may
+            // assume one of the four values without further validation.
+            origin_mode: r.origin_mode,
             // DURABLE_ARTIFACT_SUBSTRATE_GAP V1: origin block present only
             // when this finding was ingested (origin_source = 'import').
             // Native NQ findings skip the block entirely (raw passthrough
@@ -862,6 +885,10 @@ struct WarningStateRow {
     origin_extraction_run_id: Option<String>,
     origin_producer_extraction_time: Option<String>,
     origin_import_contract_version: Option<i64>,
+    // ORIGIN_MODE_DISCRIMINATOR (migration 057) mint-provenance axis.
+    // Always populated by the CHECK constraint; default 'observed'.
+    // Closed vocabulary: 'observed' | 'drill' | 'replay' | 'synthetic'.
+    origin_mode: String,
     // SILENCE_UNIFICATION shared envelope. All NULL on every non-silence
     // finding and on the six legacy silence detectors. Populated by V1's
     // extraction_stale detector.

@@ -38,7 +38,25 @@ const PREVIOUS_SCHEMA_VERSION: u32 = CURRENT_SCHEMA_VERSION - 1;
 /// Migration 056 adds the `nq_evaluator_observations` table — Slice A
 /// of NQ_EVALUATOR_STATE. The rollback fixture drops it to represent
 /// a real v(N-1) DB that never had it.
-const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["nq_evaluator_observations"];
+///
+/// Migration 057 (ORIGIN_MODE_DISCRIMINATOR) does NOT add a new table;
+/// it adds the `warning_state.origin_mode` column and recreates the
+/// `v_warnings` view. The rollback fixture handles this via
+/// `COLUMNS_ADDED_IN_LATEST_MIGRATION` + view drop.
+const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &[];
+
+/// Columns added by the most recent migration, as (table, column)
+/// pairs. The rollback fixture drops these so the upgrade test
+/// represents a real v(N-1) DB that never had the column. SQLite's
+/// `ALTER TABLE DROP COLUMN` (3.35+) handles this directly.
+const COLUMNS_ADDED_IN_LATEST_MIGRATION: &[(&str, &str)] =
+    &[("warning_state", "origin_mode")];
+
+/// Views recreated by the most recent migration. The rollback fixture
+/// drops them so re-migration recreates them cleanly. `v_warnings` is
+/// the consumer-facing view that gets recreated on every shape change
+/// to `warning_state`; migration 057 is the latest revision.
+const VIEWS_RECREATED_IN_LATEST_MIGRATION: &[&str] = &["v_warnings"];
 
 #[test]
 fn upgrade_from_previous_version_preserves_data() {
@@ -59,6 +77,14 @@ fn upgrade_from_previous_version_preserves_data() {
         let raw = rusqlite::Connection::open(&db_path).unwrap();
         for table in TABLES_ADDED_IN_LATEST_MIGRATION {
             raw.execute(&format!("DROP TABLE IF EXISTS {table}"), [])
+                .unwrap();
+        }
+        for view in VIEWS_RECREATED_IN_LATEST_MIGRATION {
+            raw.execute(&format!("DROP VIEW IF EXISTS {view}"), [])
+                .unwrap();
+        }
+        for (table, column) in COLUMNS_ADDED_IN_LATEST_MIGRATION {
+            raw.execute(&format!("ALTER TABLE {table} DROP COLUMN {column}"), [])
                 .unwrap();
         }
         raw.pragma_update(None, "user_version", PREVIOUS_SCHEMA_VERSION)

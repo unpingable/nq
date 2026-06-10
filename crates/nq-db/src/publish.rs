@@ -1003,6 +1003,53 @@ pub fn update_warning_state_with_declarations(
     escalation: &EscalationConfig,
     active_declarations: &[crate::declarations::Declaration],
 ) -> anyhow::Result<()> {
+    // D0-Origin: existing callers get `origin_mode = "observed"`. The drill
+    // path uses `update_warning_state_with_origin_mode` below to thread a
+    // non-default mint-provenance value through the native detector pipeline.
+    update_warning_state_with_origin_mode(
+        db,
+        generation_id,
+        findings,
+        escalation,
+        active_declarations,
+        crate::import::DEFAULT_ORIGIN_MODE,
+    )
+}
+
+/// Same as `update_warning_state_with_declarations`, but accepts an explicit
+/// `origin_mode` value that is stamped on every native-detector finding upsert.
+///
+/// **Forcing case (D0-Origin, 2026-06-09):** the AG-side D0-Origin slice
+/// requires the native detector path to mint `origin_mode='drill'` when
+/// invoked under a staged condition. Migration 057 added the column with a
+/// SQL default of `'observed'`; the import path (`insert_imported_finding`)
+/// already threads the value through. This entry closes the symmetric seam
+/// on the native path so a drill harness invoking the real detector against
+/// a staged sandbox can mint `drill` provenance without inventing
+/// fake-finding shapes inside NQ.
+///
+/// `origin_mode` is validated against the closed vocabulary
+/// `{"observed", "drill", "replay", "synthetic"}` (the same set
+/// `crate::import::validate_origin_mode` honors). An invalid value returns
+/// `Err` before any DB writes — no silent fallback.
+pub fn update_warning_state_with_origin_mode(
+    db: &mut WriteDb,
+    generation_id: i64,
+    findings: &[crate::detect::Finding],
+    escalation: &EscalationConfig,
+    active_declarations: &[crate::declarations::Declaration],
+    origin_mode: &str,
+) -> anyhow::Result<()> {
+    // Closed-vocabulary refusal. Mirrors `import::validate_origin_mode` so
+    // both surfaces honor the same set.
+    if !crate::import::VALID_ORIGIN_MODES.contains(&origin_mode) {
+        anyhow::bail!(
+            "origin_mode `{}` is not in the closed vocabulary {:?}",
+            origin_mode,
+            crate::import::VALID_ORIGIN_MODES
+        );
+    }
+
     let tx = db.conn.transaction()?;
 
     // COVERAGE_HONESTY V1 composition validation: any health_claim_misleading
@@ -1018,7 +1065,7 @@ pub fn update_warning_state_with_declarations(
         v
     };
 
-    update_warning_state_inner(&tx, generation_id, &combined, escalation)?;
+    update_warning_state_inner(&tx, generation_id, &combined, escalation, origin_mode)?;
     apply_declaration_overlay(&tx, generation_id, active_declarations)?;
     let now = fmt_ts(&OffsetDateTime::now_utc());
     apply_maintenance_overlay(&tx, &now)?;
@@ -1031,21 +1078,30 @@ fn update_warning_state_inner(
     generation_id: i64,
     findings: &[crate::detect::Finding],
     escalation: &EscalationConfig,
+    origin_mode: &str,
 ) -> anyhow::Result<()> {
     let now = fmt_ts(&OffsetDateTime::now_utc());
 
     let recovery_window: i64 = 3; // require 3 clean gens before clearing
 
+    // D0-Origin: thread `origin_mode` through the upsert as ?39. The closed
+    // vocabulary is validated by the caller (`update_warning_state_with_origin_mode`);
+    // a value reaching this point is one of {observed, drill, replay, synthetic}
+    // and is honored by the SQL CHECK from migration 057. INSERT case stamps
+    // the value; ON CONFLICT case also overwrites so a re-firing detector in
+    // drill mode keeps minting `drill` — otherwise a previously-observed row
+    // would launder a subsequent drill back to `observed` at the UPDATE step.
     let mut upsert = tx.prepare_cached(
         "INSERT INTO warning_state (host, kind, subject, domain, message, severity, first_seen_gen, first_seen_at, last_seen_gen, last_seen_at, consecutive_gens, peak_value, finding_class, rule_hash, absent_gens, failure_class, service_impact, action_bias, synopsis, why_care, basis_state, basis_source_id, basis_witness_id, last_basis_generation, basis_state_at, state_kind,
           degradation_kind, degradation_metric, degradation_value, degradation_threshold,
           recovery_state, recovery_metric, recovery_comparator, recovery_threshold,
           recovery_sustained_for_s, recovery_evidence_since, recovery_satisfied_at,
           coverage_degraded_ref,
-          node_type, cause_candidate, evidence_finding_key, suppressed_descendant_count)
+          node_type, cause_candidate, evidence_finding_key, suppressed_descendant_count,
+          origin_mode)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9, ?10, ?11, 0, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22,
                  ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34,
-                 ?35, ?36, ?37, ?38)
+                 ?35, ?36, ?37, ?38, ?39)
          ON CONFLICT(host, kind, subject) DO UPDATE SET
              domain = ?4,
              message = ?5,
@@ -1108,7 +1164,11 @@ fn update_warning_state_inner(
              node_type = ?35,
              cause_candidate = ?36,
              evidence_finding_key = ?37,
-             suppressed_descendant_count = ?38",
+             suppressed_descendant_count = ?38,
+             -- D0-Origin: re-firing detector under drill mode keeps the
+             -- row stamped `drill`. Without this, an existing observed row
+             -- would silently launder the next drill cycle back to observed.
+             origin_mode = ?39",
     )?;
 
     let mut insert_obs = tx.prepare_cached(
@@ -1326,6 +1386,9 @@ fn update_warning_state_inner(
             cov_cause_candidate,
             cov_evidence_finding_key,
             cov_suppressed_descendant_count,
+            // D0-Origin (migration 057): native detector path now stamps the
+            // closed-vocabulary mint-provenance discriminator.
+            origin_mode,
         ])?;
     }
     drop(upsert);

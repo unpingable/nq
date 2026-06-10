@@ -67,8 +67,8 @@ pub use declarations::{
     Durability, InvalidDeclaration, LoadOutcome, Mode, Scope, SubjectKind,
 };
 pub use publish::{
-    publish_batch, update_warning_state, update_warning_state_with_declarations, EscalationConfig,
-    PublishResult,
+    publish_batch, update_warning_state, update_warning_state_with_declarations,
+    update_warning_state_with_origin_mode, EscalationConfig, PublishResult,
 };
 pub use query::{query_read_only, QueryLimits, QueryResult};
 pub use retention::{prune, PruneStats};

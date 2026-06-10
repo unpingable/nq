@@ -1,4 +1,5 @@
 pub mod check;
+pub mod drill;
 pub mod findings;
 pub mod fleet;
 pub mod liveness;
@@ -33,5 +34,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Receipt(cmd) => receipt::run(cmd),
         Command::Smoke(cmd) => smoke::run(cmd),
         Command::Probe(cmd) => probe::run(cmd),
+        Command::Drill(cmd) => drill::run(cmd),
     }
 }
