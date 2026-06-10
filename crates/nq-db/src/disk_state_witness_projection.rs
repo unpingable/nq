@@ -273,6 +273,7 @@ mod tests {
             node_unobservable: None,
             maintenance: None,
             origin: None,
+            origin_mode: "observed".into(),
             silence: None,
         }
     }

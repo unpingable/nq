@@ -73,6 +73,77 @@ pub enum Command {
     /// Decoupled from the aggregator publish transaction; the row is
     /// recorded in the latest existing generation context.
     Probe(ProbeCmd),
+    /// **D0-Origin (cross-repo bridge to AG, 2026-06-09)**: invoke the
+    /// real production evaluator pipeline against a staged sandbox
+    /// substrate and emit `FindingSnapshot` JSON stamped with a chosen
+    /// `origin_mode` from the closed vocabulary
+    /// `{observed, drill, replay, synthetic}` (NQ migration 057).
+    ///
+    /// This is **not** a synthetic-finding generator. The same
+    /// `sqlite_health::collect`, `publish_batch`, `detect::run_all`,
+    /// and `update_warning_state_with_origin_mode` code paths the
+    /// `serve` loop uses are invoked here in-process. The condition is
+    /// operator-staged (smoke machine), but the observation is real
+    /// (no fake alarm). See
+    /// `~/git/agent_gov/working/nq-custody-gap-origin-discriminator.md`
+    /// for the forcing case and
+    /// `~/git/agent_gov/working/campaign-standing-before-spendability.md`
+    /// §3 D0-Origin for the cross-repo slice spec.
+    Drill(DrillCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct DrillCmd {
+    #[command(subcommand)]
+    pub action: DrillAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DrillAction {
+    /// Run the WAL-bloat detector against a staged sandbox SQLite
+    /// substrate. The detector is the production
+    /// `nq_db::detect::detect_wal_bloat` reading
+    /// `monitored_dbs_current`; the sandbox is populated via the
+    /// production `nq_witness::collect::sqlite_health::collect` reader
+    /// followed by `nq_db::publish_batch`. The resulting findings are
+    /// stamped with the supplied `origin_mode`, then exported as
+    /// `nq.finding_snapshot.v1` JSON on stdout.
+    WalBloat(DrillWalBloatCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct DrillWalBloatCmd {
+    /// Path to the sandbox SQLite DB file. The collector also reads the
+    /// sibling `<path>-wal` file; the operator is responsible for
+    /// ensuring the WAL is bloated (Night Shift's
+    /// `wal_bloat_stager.rs` does this in the campaign D0-Origin slice).
+    #[arg(long)]
+    pub sandbox_db: PathBuf,
+
+    /// Path to NQ's own DB (where `monitored_dbs_current` and
+    /// `warning_state` live). A fresh path is fine — the command runs
+    /// migrations first. Default: a tmp dir per invocation.
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+
+    /// Origin-mode discriminator to stamp on every emitted finding's
+    /// `warning_state.origin_mode` column. Must be in the closed
+    /// vocabulary `{observed, drill, replay, synthetic}` (migration
+    /// 057). Default: `drill` because that is the forcing case D0-Origin
+    /// landed this command for.
+    #[arg(long, default_value = "drill")]
+    pub origin_mode: String,
+
+    /// Host label to record on the staged batch. Defaults to a stable
+    /// fixture value so the deterministic-transcript invariant on the
+    /// AG side does not flap on a real hostname.
+    #[arg(long, default_value = "host-drill")]
+    pub host: String,
+
+    /// Output format. `jsonl` (default, one snapshot per line) or
+    /// `json` (pretty-printed array).
+    #[arg(long, short, default_value = "jsonl")]
+    pub format: String,
 }
 
 #[derive(Debug, Args)]
