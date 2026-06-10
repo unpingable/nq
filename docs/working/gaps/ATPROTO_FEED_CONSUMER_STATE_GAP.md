@@ -1,8 +1,8 @@
 # Gap: `atproto_feed_consumer_state` — consumer-vantage feed admissibility
 
-**Status:** `proposed` — drafted 2026-06-10. Calibration record + V0 spec for one bespoke witness family with a live forcing case. Authorizes the smallest collector + four-leaf composite needed to make the original false-green inadmissible; does **not** authorize an ATProto/Bluesky platform witness, repair/restart of the feed-generator service, an XRPC-generic probe framework, a publisher-side pipeline-liveness witness, a website/feed split-brain composite, or any "feed healthy" claim outside the consumer-vantage scope below.
+**Status:** `proposed` — drafted 2026-06-10. Calibration record + V0 spec for one bespoke witness family with a live forcing case. Authorizes the smallest collector + four-leaf composite needed to make the original consumer-vantage false-green inadmissible; does **not** authorize an ATProto/Bluesky platform witness, repair/restart of the feed-generator service, an XRPC-generic probe framework, a website/feed split-brain composite, or any "feed healthy" claim outside the consumer-vantage scope below. (The publisher-side pipeline-progress analogue was initially parked under this gap's non-goals; it has since been opened as its own filing — see `ATPROTO_FEED_PUBLISHER_PIPELINE_STATE_GAP.md`.)
 **Depends on:** `../decisions/CLAIM_PREFLIGHT.md` (doctrine), `CLAIM_PREFLIGHT_EXISTING_WITNESSES.md` (statement-entitlement framing), `../VERDICTS.md` (verdict vocabulary), `WITNESS_CLAIM_SCOPE_GAP.md` (refusal envelope — reused, not modified)
-**Related:** `DNS_WITNESS_FAMILY_GAP.md` (sibling protocol witness — same V0 discipline; consumer-vantage analogue), `CLAIM_KIND_DISK_STATE_GAP.md` (first bespoke evaluator — kernel grammar reused), `WITNESS_PATH_ASSURANCE_GAP.md` (the testimony-side ladder this slice slots into at the lower rungs), `NQ_WITNESS_DAEMON_TRAJECTORY.md` (parked publisher-side sibling — pipeline-liveness witness lives there, not here), `OBSERVATION_PLANE_GAP.md` (this slice mints a claim; it does not extend the observation plane)
+**Related:** `ATPROTO_FEED_PUBLISHER_PIPELINE_STATE_GAP.md` (publisher-vantage sibling — same incident, different vantage; neither substitutes for the other; no longer parked), `DRIFTWATCH_LABELWATCH_PUBLICATION_STATE_GAP.md` (consumer-vantage analogue for other consumers), `DNS_WITNESS_FAMILY_GAP.md` (sibling protocol witness — same V0 discipline), `CLAIM_KIND_DISK_STATE_GAP.md` (first bespoke evaluator — kernel grammar reused), `WITNESS_PATH_ASSURANCE_GAP.md` (the testimony-side ladder this slice slots into at the lower rungs), `NQ_WITNESS_DAEMON_TRAJECTORY.md` (no longer a prerequisite for the publisher-side sibling — referenced for completeness only), `OBSERVATION_PLANE_GAP.md` (this slice mints a claim; it does not extend the observation plane)
 **Blocks:** nothing
 **Last updated:** 2026-06-10
 
@@ -10,9 +10,9 @@
 
 instantinternet.news, receipts-feed.service incident 2026-05-30 04:15–04:35 UTC.
 
-Estate-side testimony was uniformly green: systemd unit `active`, Caddy reverse-proxy 200, XRPC `app.bsky.feed.getFeedSkeleton` returned 200 OK with a cursor and a non-zero post count, disk fine, no TLS / proxy / systemd failure. The consumer-visible feed surface was nonetheless empty / stale / not consumer-useful. The website homepage carried fresh material; the custom feed surface did not.
+Estate-side testimony was uniformly green: systemd unit `active`, Caddy reverse-proxy 200, XRPC `app.bsky.feed.getFeedSkeleton` returned 200 OK with a cursor and a non-zero post count, disk fine, no TLS / proxy / systemd failure. The consumer-visible feed surface was nonetheless empty / stale / not consumer-useful. The website homepage carried fresh material; the custom feed surface did not. The operator's name for the pattern: **"200 OK cosplay"** — HTTP layers performing healthy-service without any of the underlying obligations being met.
 
-A second specimen surfaced inside the same process: websocket reconnect task stayed alive while the drain task died silently. Process liveness remained green while the internal ingest pipeline was dead. The publisher had no obligation to expose that distinction, and NQ had no claim that would have caught it from the outside.
+A second false-green shape surfaced inside the same process: websocket reconnect task stayed alive while the drain task died silently. Process liveness remained green while the internal ingest pipeline was dead. The publisher had no obligation to expose that distinction, and NQ had no claim that would have caught it. **That second shape is the publisher-vantage analogue, not a sub-case of this gap.** It is filed as `ATPROTO_FEED_PUBLISHER_PIPELINE_STATE_GAP.md`; its keeper line is "watchdogs must watch progress, not task aliveness." Different knives, same drawer.
 
 This is a consumer-trigger per [[feedback_consumer_trigger_vocab]] — a real, operator-owned production incident in which existing testimony was structurally insufficient to support the operator's actual question ("can a normal Bluesky client see fresh useful posts on this feed right now"). The claim NQ needs is named in the operator's tagline:
 
@@ -172,9 +172,9 @@ All six specimen tests live next to the collector (`crates/nq-witness/src/collec
 
 These are the explicit refusals that prevent the slice from sliding into the wrong shape.
 
-- **No publisher-side pipeline witness.** Queue backlog, drain-task liveness, cursor advancement, processed/dropped counters — all real, all evidence, all from a *different vantage*. Lives in [[NQ_WITNESS_DAEMON_TRAJECTORY]] when there is a forcing case for either publisher cooperation or host-process witnessing. Not built here.
+- **No publisher-side pipeline witness *here*.** Queue backlog, drain-task liveness, cursor advancement, processed/dropped counters — all real, all evidence, all from a *different vantage*. Opened as its own filing under `ATPROTO_FEED_PUBLISHER_PIPELINE_STATE_GAP.md`. Not built in *this* gap; cross-claim substitution is forbidden — the publisher composite is not evidence for the consumer composite, and vice versa.
 - **No website / feed split-brain composite.** A second-order claim composing two witnesses (homepage freshness vs feed freshness). Both component claims must exist in their own right first. File once consumer-vantage feed witness is real and a website-freshness witness exists; until then, no.
-- **No Jetstream reconnect rate as a substitute claim.** Telemetry only. If it lands at all it lives as a receipt field on the parked publisher-side witness, not as evidence for this composite.
+- **No Jetstream reconnect rate as a substitute claim.** Telemetry only. If it lands at all it lives as a receipt field on the publisher-side witness, not as evidence for this composite.
 - **No restart / repair authorization.** The user's fix to the receipts-feed service (`crash_on_task_done` on critical async tasks) is correct and outside NQ. NQ classifies world-state testimony; it does not authorize consequence. [[feedback_knob_facing]] holds.
 - **No "feed healthy" verdict.** The composite name is `consumer_state`, not `health`. A receipt body line that says "feed healthy" launders consumer-vantage testimony into a global claim.
 - **No XRPC-generic probe framework.** One collector, one protocol surface. The registry-pressure conversation lives in `CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md` and is not advanced by this slice.
@@ -199,11 +199,16 @@ None of these are paid for here. They are filed against the existing `CLAIM_PREF
 
 ## Doctrine candidate (not promoted)
 
-One line, kept in this doc until a second specimen earns it a memory leaf:
+One line, kept in this doc until a second specimen earns it a memory leaf. Updated 2026-06-10 to reflect that the original incident produced *two* false-green shapes (consumer-vantage and publisher-vantage), so the doctrine candidate is sharpened to three vantages:
 
-> Service liveness and consumer-claim usefulness witness different things. A receipt that does not say which vantage it tested is structurally permitted to lie.
+> Service liveness, publisher progress, and consumer usefulness witness different things. A receipt that does not say which vantage it tested is structurally permitted to lie.
 
-Promotion criteria: a second forcing case in which the failure mode is *not* "feed went stale" but the same shape — green-by-publisher / dead-by-consumer across a different protocol surface — would justify promoting this line to a witness-vantage discipline rule. Until then, candidate.
+Promotion criterion: promote only after a second specimen *outside the original incident* demonstrates the same false-green shape, either:
+
+* consumer-visible dead while producer/service liveness is green; or
+* publisher task/service alive while pipeline progress is dead.
+
+The publisher-vantage shape from this same incident is not a second specimen for promotion purposes — it is the second-shape *within* the original incident, and its own gap (`ATPROTO_FEED_PUBLISHER_PIPELINE_STATE_GAP.md`) carries the same candidate line under the same promotion rule. Until an out-of-incident specimen lands, both gaps hold the candidate line independently.
 
 ## Open seams (this gap surfaces, does not pay)
 
