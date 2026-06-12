@@ -12,6 +12,8 @@
 
 So today: provenance is **visible and honest**, but two probes with identical `metric_name`+`labels` from different targets **collapse** (and are flagged ambiguous, not distinguished).
 
+**Repair side-effect, classified (2026-06-12).** `publish_batch` section 7 (the series/metrics upsert) is now guarded by `if !batch.metric_sets.is_empty()`. This belongs to the **migration-058 forward-compat repair**, *not* to silence or any metrics policy — it was bundled into commit `d955578` only by timing. The guard exists because the unconditional `prepare_cached` of the series-upsert validated the 058 columns against the schema even with zero metric rows, which broke `publish_batch` on a pre-058 DB (the upgrade-path fixture). Empty `metric_sets` was already a no-op (the per-host delete+replace only runs for hosts present in `metric_sets`), so the guard is behavior-preserving — it is plumbing, not a decision. Naming it here so a future reader does not mistake it for a metrics-emission policy ("guards have a way of becoming policy wearing a hoodie").
+
 ## What this packet would build (the identity half)
 
 Make scrape-target part of series identity so different targets get different `series_id`s and never collapse.

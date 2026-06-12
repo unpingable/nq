@@ -37,6 +37,34 @@ AUDIT → PLAN → DISPATCH → EXECUTE → REVIEW → (AUDIT)
     Lane-A by completeness, or Lane-B with a recorded operator authorization? A green
     test does not launder an inadmissible dispatch.
 
+### Verification discipline (exit codes are the verdict)
+
+> **A verifier command must be run so that the tested command's exit code is the
+> observed exit code.** No naked `| tail`, no `| tee` without `pipefail`, no "looks green
+> from the bottom 20 lines." That is reading tea leaves in ANSI escape codes, not verifying.
+
+Hard rules for the evidence verdict:
+
+- **Default: run the command bare.** `cargo test --all` / `pytest` / `npm test`. Boring,
+  reliable. Background tasks report the true exit code, so prefer those for long runs.
+- **If you must capture output, preserve the real exit code:**
+  ```bash
+  set -o pipefail
+  cargo test 2>&1 | tee /tmp/test.log
+  status=${PIPESTATUS[0]}
+  test "$status" -eq 0
+  ```
+- **Never** judge pass/fail from a pipeline whose last stage is `tail`/`head`/`grep`/`sed`/
+  `awk` — those return *their* exit code, not the runner's.
+- **`--no-fail-fast` cuts both ways:** failures scroll past; a single `test result: ok`
+  line is *not* "all green." Confirm `0 failed` across **every** binary, or just trust the
+  exit code.
+
+**Audit checklist (every slice that touched code):** *Was the verifier's real exit code
+observed — bare run, or `pipefail` + `${PIPESTATUS[0]}`?* If not, the evidence verdict is
+unearned and the slice does not advance. (Scar 2026-06-12: migration 058 shipped with three
+red tests masked by `cargo test | tail`; the next slice's bare re-run caught it.)
+
 ## Single slice in flight
 
 `wip_limit: 1`. One slice is admitted at a time; everything else is backlog. Read-only
