@@ -299,12 +299,43 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
 
     // 7. Upsert series dictionary + delete+replace metrics_current
     {
+        // Series upsert carries scrape-target provenance (migration 058) with
+        // an HONEST collision guard. Identity is still (metric_name,
+        // labels_json), so one series_id can receive samples from >1 scrape
+        // target. We refuse to launder that as last-write-wins (which would
+        // make scrape_target_name a queryable lie): on a target mismatch the
+        // series is marked ambiguous — name/url nulled, collision flag set
+        // (sticky). Distinguishing the targets is the deferred identity
+        // migration (NQ_SCRAPE_TARGET_IDENTITY_SCOPE.md). ?5 = scrape target
+        // name, ?6 = scrape target url. All SET RHS see the pre-update row.
         let mut series_upsert = tx.prepare_cached(
-            "INSERT INTO series (metric_name, labels_json, metric_type, first_seen_gen, last_seen_gen)
-             VALUES (?1, ?2, ?3, ?4, ?4)
+            "INSERT INTO series (metric_name, labels_json, metric_type,
+                                 scrape_target_name, scrape_target_url,
+                                 first_seen_gen, last_seen_gen)
+             VALUES (?1, ?2, ?3, ?5, ?6, ?4, ?4)
              ON CONFLICT(metric_name, labels_json) DO UPDATE SET
                  last_seen_gen = ?4,
-                 metric_type = COALESCE(?3, series.metric_type)",
+                 metric_type = COALESCE(?3, series.metric_type),
+                 scrape_target_collision = CASE
+                     WHEN series.scrape_target_collision = 1 THEN 1
+                     WHEN series.scrape_target_name IS NOT NULL AND ?5 IS NOT NULL
+                          AND series.scrape_target_name <> ?5 THEN 1
+                     ELSE 0
+                 END,
+                 scrape_target_name = CASE
+                     WHEN series.scrape_target_collision = 1 THEN NULL
+                     WHEN series.scrape_target_name IS NOT NULL AND ?5 IS NOT NULL
+                          AND series.scrape_target_name <> ?5 THEN NULL
+                     WHEN ?5 IS NULL THEN series.scrape_target_name
+                     ELSE ?5
+                 END,
+                 scrape_target_url = CASE
+                     WHEN series.scrape_target_collision = 1 THEN NULL
+                     WHEN series.scrape_target_name IS NOT NULL AND ?5 IS NOT NULL
+                          AND series.scrape_target_name <> ?5 THEN NULL
+                     WHEN ?6 IS NULL THEN series.scrape_target_url
+                     ELSE ?6
+                 END",
         )?;
         let mut series_lookup = tx.prepare_cached(
             "SELECT series_id FROM series WHERE metric_name = ?1 AND labels_json = ?2",
@@ -334,12 +365,14 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
         for ms in &batch.metric_sets {
             del.execute(rusqlite::params![&ms.host])?;
             for row in &ms.rows {
-                // Upsert series
+                // Upsert series (?5/?6 = scrape-target provenance)
                 series_upsert.execute(rusqlite::params![
                     &row.metric_name,
                     &row.labels_json,
                     &row.metric_type,
                     generation_id,
+                    &row.scrape_target_name,
+                    &row.scrape_target_url,
                 ])?;
                 let series_id: i64 = series_lookup.query_row(
                     rusqlite::params![&row.metric_name, &row.labels_json],
@@ -2030,6 +2063,153 @@ mod tests {
         let result = publish_batch(&mut db, &batch).unwrap();
         assert_eq!(result.sources_ok, 0);
         assert_eq!(result.sources_failed, 0);
+    }
+
+    // ---- migration 058: scrape-target provenance + honest collision guard ----
+
+    fn metrics_only_batch(t: OffsetDateTime, host: &str, rows: Vec<MetricRow>) -> Batch {
+        Batch {
+            cycle_started_at: t,
+            cycle_completed_at: t,
+            sources_expected: 1,
+            source_runs: vec![SourceRun {
+                source: host.into(),
+                status: SourceStatus::Ok,
+                received_at: t,
+                collected_at: Some(t),
+                duration_ms: Some(1),
+                error_message: None,
+            }],
+            collector_runs: vec![],
+            host_rows: vec![],
+            service_sets: vec![],
+            sqlite_db_sets: vec![],
+            metric_sets: vec![MetricSet {
+                host: host.into(),
+                collected_at: t,
+                rows,
+            }],
+            log_sets: vec![],
+            zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
+            wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
+        }
+    }
+
+    fn probe_row(name: &str, target: Option<&str>, url: Option<&str>) -> MetricRow {
+        MetricRow {
+            metric_name: name.into(),
+            labels_json: "{}".into(),
+            value: 1.0,
+            metric_type: Some("gauge".into()),
+            scrape_target_name: target.map(|s| s.to_string()),
+            scrape_target_url: url.map(|s| s.to_string()),
+        }
+    }
+
+    fn series_provenance(db: &WriteDb) -> (Option<String>, Option<String>, i64) {
+        db.conn
+            .query_row(
+                "SELECT scrape_target_name, scrape_target_url, scrape_target_collision
+                 FROM series WHERE metric_name = 'probe_success'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn scrape_target_provenance_survives_ingest_and_keys_composition() {
+        let mut db = test_db();
+        let url = "http://localhost:9115/probe?module=http_2xx&target=labelwatch";
+        publish_batch(
+            &mut db,
+            &metrics_only_batch(
+                now(),
+                "box-1",
+                vec![probe_row(
+                    "probe_success",
+                    Some("blackbox_labelwatch_health"),
+                    Some(url),
+                )],
+            ),
+        )
+        .unwrap();
+
+        // Provenance survives ingest as queryable evidence on the series dict.
+        let (name, got_url, collision) = series_provenance(&db);
+        assert_eq!(name.as_deref(), Some("blackbox_labelwatch_health"));
+        assert_eq!(got_url.as_deref(), Some(url));
+        assert_eq!(collision, 0, "single-target series is not a collision");
+
+        // ...and it can KEY composition: filter samples by scrape target.
+        let n: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM v_metrics
+                 WHERE scrape_target_name = 'blackbox_labelwatch_health'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "provenance must be a usable composition key in v_metrics");
+    }
+
+    #[test]
+    fn multi_target_collision_is_marked_ambiguous_not_laundered() {
+        // Across two generations the SAME (metric_name, labels) series receives
+        // samples from DIFFERENT scrape targets. Identity is still
+        // (metric_name, labels_json) — the distinguishing rebuild is deferred —
+        // so they share one series_id. The honest guard refuses last-write-wins
+        // (which would make scrape_target_name a queryable lie): it marks the
+        // series ambiguous instead of attributing it to whichever wrote last.
+        let mut db = test_db();
+        publish_batch(
+            &mut db,
+            &metrics_only_batch(
+                now(),
+                "box-1",
+                vec![probe_row("probe_success", Some("target_A"), Some("http://a/probe"))],
+            ),
+        )
+        .unwrap();
+        // attributed cleanly after the first target
+        assert_eq!(series_provenance(&db).2, 0);
+
+        publish_batch(
+            &mut db,
+            &metrics_only_batch(
+                now(),
+                "box-1",
+                vec![probe_row("probe_success", Some("target_B"), Some("http://b/probe"))],
+            ),
+        )
+        .unwrap();
+
+        let (name, url, collision) = series_provenance(&db);
+        assert_eq!(collision, 1, "multi-target collapse must be flagged");
+        assert_eq!(
+            name, None,
+            "ambiguous series must NOT be attributed to one target (queryable lie)"
+        );
+        assert_eq!(url, None, "ambiguous series url must not be laundered either");
+
+        // Sticky: a later same-target sample does not clear the ambiguity.
+        publish_batch(
+            &mut db,
+            &metrics_only_batch(
+                now(),
+                "box-1",
+                vec![probe_row("probe_success", Some("target_A"), Some("http://a/probe"))],
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            series_provenance(&db).2,
+            1,
+            "collision flag is sticky until the identity migration lands"
+        );
     }
 
     #[test]
