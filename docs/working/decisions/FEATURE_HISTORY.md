@@ -20,6 +20,23 @@ The chronological order below is newest-first.
 
 ---
 
+## HOST_TRUST_BOUNDARY (NQ-CLOSE-003)
+
+**Status:** `shipped` (doc-only) 2026-06-12. Closure-stack slice #3 — a published constitutional note, no code, no schema.
+
+**Shipped artifact:** [`docs/architecture/HOST_TRUST_BOUNDARY.md`](../../architecture/HOST_TRUST_BOUNDARY.md) — the operator's pinned paragraph (verbatim) published as doctrine sibling to CLAIM_CUSTODY, with admits / rejects / changes-if-threat-model-changes framing and the explicit "doc-only until the threat model changes" stance.
+
+**Evidence:**
+- Pinned paragraph published verbatim: "NQ's local witness trusts the host on which it runs. Tamper-evidence begins after collection; it does not defeat root compromise, kernel compromise, or malicious local operators. Cross-host witness absence and hostile-host assurance are separate, higher-rung problems."
+- Acceptance criteria (gap §NQ-CLOSE-003): (1) paragraph in published docs ✓ `docs/architecture/`; (2) restating docs link instead of restating ✓ — published docs do not restate it (grep: only working/gap docs reference the boundary, and they link to the gap); the new doc's "Where this binds" section enumerates the inheriting surfaces; (3) no code ✓; (4) no schema ✓; (5) doc-only-until-threat-model-changes explicit ✓.
+- Anti-scope held: no crypto, no signing, no hash chains, no tamper-proof receipts.
+
+**Unblocks:** nothing mechanically; bounds the tamper-evidence anti-scope cited by EVIDENCE_FORGETTING (NQ-CLOSE-002) and OPERATOR_ATTESTATION (NQ-CLOSE-001).
+
+**Field notes:** authorized + shipped via the ag-claude execution loop (nq-claude stood down). Loop receipt: `.governor/loop-receipts/2026-06-12T1635Z.lane-b-floorboards.json`. Companion policy lock NQ_RETENTION_WINDOWS.md (NQ-CLOSE-002 policy half) landed in the same batch but is a decision record, not a shipped feature, so it is not a FEATURE_HISTORY entry.
+
+---
+
 ## ANTI_LAUNDERING_DOCTRINE_MAP + CUSTODIAN_BINDING_ACCOUNTABILITY_CANDIDATE (paired recognition-only filings)
 
 **Status:** `candidate` filings 2026-06-04 (evening) — recognition records, NOT shipped features. Logged here so future archaeology asking "when did the anti-laundering family crystallize as a map?" and "when did NQ start refusing instrumentation-to-accountability laundering?" find the answer.

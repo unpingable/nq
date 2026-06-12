@@ -1,0 +1,63 @@
+# NQ Retention Windows — locked decision (NQ-CLOSE-002 policy half)
+
+**Status:** decision locked 2026-06-12 — the *policy* (retention class structure + principles), not the *build*. The tombstone machinery, the three-state finding ladder rendering, and the retention sweep remain unbuilt and separately authorized. This record exists because the closure stack names NQ-CLOSE-002's retention-windows decision as **the most retrofit-sensitive thing to commit while the corpus is small** — so it is committed now, ahead of the build.
+**Authorizes:** nothing to build. Locks the policy the build will implement.
+**Design record:** [`../gaps/EVIDENCE_FORGETTING_GAP.md`](../gaps/EVIDENCE_FORGETTING_GAP.md) (NQ-CLOSE-002).
+**Bounded by:** [`../../architecture/HOST_TRUST_BOUNDARY.md`](../../architecture/HOST_TRUST_BOUNDARY.md) (NQ-CLOSE-003) — tombstone tamper-evidence is only against an honest host.
+
+## The doctrine (pinned, operator's 2026-06-10)
+
+> **Evidence may expire; citations may not silently dangle.**
+> **Expiration changes admissibility, not history.**
+> **Unlinked, not closed. Unlearned, not forgotten.**
+
+## LOCKED — retention class structure
+
+The load-bearing, retrofit-sensitive commitment is **which class each artifact lives in**, not the exact integer. A window can be lengthened before an artifact expires; an artifact placed in the wrong class is expensive to move later. The class assignment is therefore the thing locked now:
+
+| Artifact class                 | Retention class | Locked |
+| ------------------------------ | --------------- | :----: |
+| Raw samples / snapshots        | **weeks**       |   ✓    |
+| Consolidated rollups           | **months**      |   ✓    |
+| Findings                       | **forever**     |   ✓    |
+| Operator attestations          | **forever** (findings class) | ✓ |
+| Tombstones / deletion receipts | **forever**     |   ✓    |
+
+**Attestation tie-break resolved → forever (findings class).** The gap left this as "forever, or same as findings"; both readings coincide (findings are forever), and the operator's rationale — attestations are *compact and semantically load-bearing*, claim-class not sample-class (composes with NQ-CLOSE-001) — settles it at the findings class.
+
+## LOCKED — principles
+
+1. **Prospective only.** Windows apply from the moment NQ-CLOSE-002's build lands. No retroactive purge of the existing corpus.
+2. **No cross-rung coupling.** A finding survives *forever* even when its evidence sample-window is *weeks*. The forever class survives; the finding's *admissibility* changes when its basis expires. That decoupling is the entire point.
+3. **No silent purge path, anywhere.** Every deletion is a receipted act minting a tombstone `(what was deleted, generation range, expiry rule cited, observed_at)`. A citation downstream is always one of: valid, tombstone-linked-and-expired, or — if neither — a hygiene finding.
+4. **Tombstones are durable and forever.** No undo-tombstone. To retain longer, raise the window *before* the artifact reaches expiry; once tombstoned, the row is gone and the tombstone is the only durable record.
+5. **The sweep is observable** (cf. HISTORY_COMPACTION §17 — compaction is not a dark forest): a deletion sweep emits how many rows / chunks / sample-generations were tombstoned and why.
+6. **Tamper-evidence is host-trust-bounded.** No tombstone signing / hash-chaining. Bounded by [HOST_TRUST_BOUNDARY](../../architecture/HOST_TRUST_BOUNDARY.md).
+
+## PROPOSED — concrete starting integers (operator-confirmable)
+
+The exact integers are genuinely the operator's numeric call and were flagged for the authorization moment. These are proposed initial config values, chosen conservatively (longer is safer; windows can extend before expiry). **Not hard-minted — confirm or adjust:**
+
+| Artifact class        | Proposed initial window | Notes |
+| --------------------- | ----------------------- | ----- |
+| Raw samples           | **3 weeks**             | long enough to cover a fortnight incident + review tail |
+| Consolidated rollups  | **6 months**            | covers seasonal/quarterly comparison without unbounded growth |
+| Findings              | forever                 | (locked) |
+| Operator attestations | forever                 | (locked) |
+| Tombstones            | forever                 | (locked) |
+
+These integers should land as named configuration (or migration-level constants), one per row, when the build is authorized — so they are visible and adjustable, not buried.
+
+## NOT in this decision (deferred to the build's authorization)
+
+- The tombstone schema, the three-state finding ladder field names (`finding_active_with_evidence` / `finding_active_evidence_expired` / `finding_retired_evidence_expired` — candidate names, vocabulary review at build authorization).
+- The visual distinction of a dangling-citation finding from an evidenced one (acceptance criterion 4 of the gap).
+- Any code, migration, or sweep implementation. This record locks policy; the build is a separate operator act.
+
+## Anti-scope (inherited from the gap, restated so the decision can't drift)
+
+No legal-compliance modeling (GDPR/SOC2/HIPAA). No retroactive purging. No undo-tombstone. No cross-rung coupling. No tombstone signing / hash-chaining.
+
+---
+
+*Locked by ag-claude under operator authorization 2026-06-12 ("NQ-CLOSE-002: lock the retention-windows decision"). The class structure and principles are ratified; the integers are proposed for operator confirmation. The build remains unauthorized.*
