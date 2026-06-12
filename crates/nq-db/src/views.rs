@@ -1,6 +1,7 @@
 //! Typed query results for the UI. The overview page and host drill-down.
 
 use crate::ReadDb;
+use rusqlite::OptionalExtension;
 
 #[derive(Debug, Clone)]
 pub struct OverviewVm {
@@ -276,7 +277,72 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
 }
 
 pub fn host_detail(db: &ReadDb, host: &str) -> anyhow::Result<HostDetailVm> {
-    // Reuse overview queries filtered to one host, plus recent source_runs
+    let current_gen: i64 = db.conn.query_row(
+        "SELECT generation_id FROM generations ORDER BY generation_id DESC LIMIT 1",
+        [],
+        |row| row.get(0),
+    ).unwrap_or(0);
+
+    let host_row = db.conn.query_row(
+        "SELECT host, cpu_load_1m, mem_pressure_pct, disk_used_pct, disk_avail_mb,
+                uptime_seconds, as_of_generation
+         FROM hosts_current WHERE host = ?1",
+        [host],
+        |row| {
+            let gen: i64 = row.get(6)?;
+            Ok(HostSummaryVm {
+                host: row.get(0)?,
+                cpu_load_1m: row.get(1)?,
+                mem_pressure_pct: row.get(2)?,
+                disk_used_pct: row.get(3)?,
+                disk_avail_mb: row.get(4)?,
+                uptime_seconds: row.get(5)?,
+                as_of_generation: gen,
+                stale: current_gen - gen > 2,
+            })
+        },
+    ).optional()?;
+
+    let mut svc_stmt = db.conn.prepare(
+        "SELECT host, service, status, eps, queue_depth, as_of_generation
+         FROM services_current WHERE host = ?1 ORDER BY service",
+    )?;
+    let services: Vec<ServiceSummaryVm> = svc_stmt
+        .query_map([host], |row| {
+            let gen: i64 = row.get(5)?;
+            Ok(ServiceSummaryVm {
+                host: row.get(0)?,
+                service: row.get(1)?,
+                status: row.get(2)?,
+                eps: row.get(3)?,
+                queue_depth: row.get(4)?,
+                as_of_generation: gen,
+                stale: current_gen - gen > 2,
+            })
+        })?
+        .collect::<Result<_, _>>()?;
+
+    let mut db_stmt = db.conn.prepare(
+        "SELECT host, db_path, db_size_mb, wal_size_mb, checkpoint_lag_s,
+                last_quick_check, as_of_generation
+         FROM monitored_dbs_current WHERE host = ?1 ORDER BY db_path",
+    )?;
+    let sqlite_dbs: Vec<SqliteDbSummaryVm> = db_stmt
+        .query_map([host], |row| {
+            let gen: i64 = row.get(6)?;
+            Ok(SqliteDbSummaryVm {
+                host: row.get(0)?,
+                db_path: row.get(1)?,
+                db_size_mb: row.get(2)?,
+                wal_size_mb: row.get(3)?,
+                checkpoint_lag_s: row.get(4)?,
+                last_quick_check: row.get(5)?,
+                as_of_generation: gen,
+                stale: current_gen - gen > 2,
+            })
+        })?
+        .collect::<Result<_, _>>()?;
+
     let mut stmt = db.conn.prepare(
         "SELECT sr.generation_id, sr.status, sr.received_at, sr.duration_ms
          FROM source_runs sr
@@ -297,9 +363,9 @@ pub fn host_detail(db: &ReadDb, host: &str) -> anyhow::Result<HostDetailVm> {
 
     Ok(HostDetailVm {
         host: host.to_string(),
-        host_row: None,    // TODO: query hosts_current for this host
-        services: vec![],  // TODO: query services_current for this host
-        sqlite_dbs: vec![], // TODO: query monitored_dbs_current for this host
+        host_row,
+        services,
+        sqlite_dbs,
         recent_source_runs: recent_runs,
     })
 }

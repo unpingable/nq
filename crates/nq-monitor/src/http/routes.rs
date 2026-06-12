@@ -1322,7 +1322,14 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
             lines.push("No open findings.".to_string());
         }
 
-        lines.join("<br>")
+        // Each summary line gets its own element so the masthead reads
+        // as labeled axis rows (substrate / Severity / Response), not a
+        // single wrapped sentence. Label text stays contiguous within
+        // each line — the header_summary.rs pins depend on it.
+        lines
+            .iter()
+            .map(|l| format!("<div class=\"masthead-line\">{l}</div>"))
+            .collect::<String>()
     } else {
         String::new()
     };
@@ -1605,6 +1612,8 @@ body {{ font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; backgro
 .header {{ background: #161b22; border-bottom: 1px solid #30363d; padding: 12px 24px; display: flex; align-items: center; gap: 16px; }}
 .header h1 {{ font-size: 18px; color: #f0f6fc; font-weight: 600; }}
 .header .gen {{ color: #8b949e; font-size: 13px; }}
+.masthead-summary {{ margin-left: auto; text-align: right; color: #8b949e; font-size: 12px; line-height: 1.5; }}
+.masthead-line {{ white-space: nowrap; }}
 
 .layout {{ display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 48px); }}
 html.sidebar-collapsed .layout {{ grid-template-columns: 36px 1fr; }}
@@ -1613,7 +1622,13 @@ html.sidebar-collapsed .layout {{ grid-template-columns: 36px 1fr; }}
 .sidebar h2 {{ font-size: 11px; text-transform: uppercase; color: #8b949e; letter-spacing: 1px; margin-bottom: 12px; }}
 html.sidebar-collapsed .sidebar {{ padding: 16px 6px; }}
 html.sidebar-collapsed .sidebar > h2,
-html.sidebar-collapsed .sidebar > .domain-card {{ display: none; }}
+html.sidebar-collapsed .sidebar > .domain-card,
+html.sidebar-collapsed .sidebar > .posture-legend {{ display: none; }}
+
+.posture-legend {{ margin-top: 24px; }}
+.posture-note {{ font-size: 11px; color: #8b949e; margin-bottom: 8px; }}
+.posture-card {{ padding: 6px 12px; }}
+.posture-term {{ font-size: 13px; color: #c9d1d9; font-weight: 500; }}
 
 .sidebar-toggle {{ background: transparent; color: #8b949e; border: 1px solid #21262d; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-family: inherit; font-size: 11px; margin-bottom: 12px; width: 100%; }}
 .sidebar-toggle:hover {{ background: #161b22; color: #c9d1d9; border-color: #30363d; }}
@@ -1672,7 +1687,7 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 <div class="header">
     <h1>nq</h1>
     <span class="gen">{gen_line}</span>
-    <span class="gen" style="margin-left:auto;">{summary}</span>
+    <div class="masthead-summary">{summary}</div>
 </div>
 
 <div class="layout">
@@ -1680,6 +1695,30 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
     <button class="sidebar-toggle" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Toggle sidebar"><span id="sidebar-toggle-icon">◀</span></button>
     <h2>Failure Domains</h2>
     {domain_nav}
+    <div class="posture-legend">
+        <h2>Response Posture</h2>
+        <div class="posture-note">Recommended response shape, not severity.</div>
+        <div class="posture-card">
+            <div class="posture-term">intervene now</div>
+            <div class="domain-desc">Act on the system immediately.</div>
+        </div>
+        <div class="posture-card">
+            <div class="posture-term">intervene soon</div>
+            <div class="domain-desc">Plan an intervention; not this minute.</div>
+        </div>
+        <div class="posture-card">
+            <div class="posture-term">investigate now</div>
+            <div class="domain-desc">Diagnose now, before acting.</div>
+        </div>
+        <div class="posture-card">
+            <div class="posture-term">investigate business hours</div>
+            <div class="domain-desc">Diagnose during working hours.</div>
+        </div>
+        <div class="posture-card">
+            <div class="posture-term">watch</div>
+            <div class="domain-desc">No action; keep observing.</div>
+        </div>
+    </div>
 </div>
 
 <div class="main">
