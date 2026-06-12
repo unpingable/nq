@@ -1,10 +1,14 @@
 {
-  "phase": "AUDIT",
-  "current_slice": null,
-  "slice_spec": [],
-  "acceptance": null,
-  "lane": null,
-  "blocked_on": "operator direction (batch closed; loop idle)",
+  "phase": "EXECUTE",
+  "current_slice": "SCA batch: blackbox provenance persistence (A), re-attempt Bucket 1 (B), SILENCE_UNIFICATION scope+maybe-exec (C/D)",
+  "slice_spec": [
+    "docs/loop-protocol.md § Standing Conditional Authorization (new admission rule)",
+    "docs/working/decisions/NQ_ECOSYSTEM_TRIAGE.md § Re-survey under SCA (four buckets)"
+  ],
+  "acceptance": "provenance queryable + tested; harness landed; SILENCE scoped; audit close",
+  "lane": "Bucket 1 (SCA auto-executable)",
+  "authorization_mode": "Standing Conditional Authorization — operator approved classes (completeness repair / paper-built / probe promotion / doc-code reconciliation / local-governance-substrate); loop executes matches, refers exceptions",
+  "blocked_on": null,
   "completed_slices": [
     "inherited-slice-admission (A2): UI slice admitted 0f35a2c + path-fixups 834049c, mangled WAL doc reverted. Receipt: 2026-06-12T1615Z.inherited-slice-admission.json",
     "lane-a-nq-blackbox (A1): PARKED — probe promotion infra-gated (no exporter/nq-serve) AND a real upstream finding (scrape-target provenance is wire-only, not a queryable column). Receipt: 2026-06-12T1625Z.lane-a-blackbox-parked.json",
