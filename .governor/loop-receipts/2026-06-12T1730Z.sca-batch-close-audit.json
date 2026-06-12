@@ -1,0 +1,22 @@
+{
+  "kind": "audit",
+  "ts": "2026-06-12T17:30:00Z",
+  "batch": "SCA batch (operator-directed): Standing Conditional Authorization doctrine + re-survey + retention confirm + blackbox provenance (A) + blackbox re-attempt (B) + SILENCE_UNIFICATION scope (C/D)",
+  "phase_out": "AUDIT (batch closed; loop idle)",
+  "authorization_mode": "Standing Conditional Authorization — operator ratified classes + admission predicate; loop executed matches until it hit irreversibility/ambiguity, then referred",
+  "slices": [
+    {"slice": "sca-doctrine-patch", "class": "local-governance-substrate", "outcome": "done", "commit": "333da0d", "detail": "loop-protocol.md SCA rule; re-survey 4 buckets; retention 3wk/6mo confirmed; blackbox provenance reclassed C->A-blocker"},
+    {"slice": "blackbox-provenance-persistence (A)", "class": "completeness repair", "outcome": "shipped + tested", "commit": "1bd5c38", "detail": "migration 058 additive; provenance carried wire->batch->persist; HONEST collision guard (ambiguous-not-laundered, sticky); 587 nq-db tests green incl. 2 new"},
+    {"slice": "series-identity-rebuild", "class": "REFERRED (irreversibility + policy)", "outcome": "scope packet, NOT built", "artifact": "NQ_SCRAPE_TARGET_IDENTITY_SCOPE.md", "detail": "3-table FK-ON rebuild + historical-interpretation decision; hit SCA stop condition; referred to operator"},
+    {"slice": "blackbox-bucket1-reattempt (B)", "class": "probe promotion", "outcome": "precondition closed; harness landed; live run deferred", "commit": "nq-blackbox dcb8e66", "detail": "smoke_probe.sh implemented (5-step contract, per-incident exit codes); bash -n clean + absent-infra class-1 verified; promotion now blocked ONLY on deploy-session infra, not a missing data path"},
+    {"slice": "silence-unification-classify (C/D)", "class": "completeness (additive) — classified Lane A", "outcome": "scope packet; first slice named, not executed", "artifact": "NQ_SILENCE_UNIFICATION_SCOPE.md", "detail": "contract fields already shipped; smart_witness_silent retrofit is the clean executable first slice; OQ3/OQ4 (does stale_host/signal_dropout belong) gate the other four -> held per batch D (not all small-and-clean)"}
+  ],
+  "evidence_verdict": "pass — nq-db 587 tests green (migration 058 + 2 new provenance/collision tests); nq-blackbox harness bash -n clean + absent-infra diagnostic verified; doc/scope slices no-code",
+  "process_verdict": "WIP held; SCA applied as designed — executed completeness/paper-built/probe-promotion/local-substrate matches, REFERRED at irreversibility (series identity) and ambiguity (silence OQ3/4); collision guard added on operator catch so the partial fix cannot misrepresent (no queryable lie)",
+  "constraints_honored": ["nothing pushed", "no federation", "no OSS release", "no CLOSE-001 build", "no retention integers beyond 3wk/6mo", "completeness-vs-forcing-case distinction preserved"],
+  "referred_to_operator": [
+    "series-identity migration (NQ_SCRAPE_TARGET_IDENTITY_SCOPE.md) — authorize + answer historical-interpretation decisions 1-2",
+    "SILENCE_UNIFICATION OQ3/OQ4 — rule on stale_host/signal_dropout bucket, or defer to REGISTRY_PROJECTION"
+  ],
+  "next_action": "await operator. Clean executable next slices under standing authorization: smart_witness_silent silence-contract retrofit; zfs_witness_silent. Deploy-session: blackbox Bucket 1 live promotion."
+}
