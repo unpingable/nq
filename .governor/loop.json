@@ -14,6 +14,10 @@
     "smart_witness_silent + zfs_witness_silent silence contract SHIPPED (d955578, persist-derivation per OQ1); also REPAIRED batch-A migration-058 masked failures (CURRENT_SCHEMA_VERSION 57->58, upgrade-test constants, publish !metric_sets guard). Verified green with REAL exit codes (the masking scar is now in loop-protocol § REVIEW).",
     "Four non-witness silence detectors still deferred (OQ3/OQ4). Receipt: 2026-06-12T1830Z.silence-batch-close-audit.json"
   ],
+  "hardening_done": [
+    "verification-discipline hardening (77302ed): exit-codes-are-the-verdict rule in loop-protocol § REVIEW + audit checklist; promoted to ~/.claude/CLAUDE.md § Verification discipline; repo grep CLEAN (CI/scripts already bare/pipefail — masking was loop discipline, not repo); !metric_sets guard classified as 058-repair side-effect. Closed with bare `cargo test --all` exit 0, 1366 tests, 0 failures across 31 targets.",
+    "PUSHED 2026-06-12 (restrictions lifted, weekend): nq dc78b7d..77302ed -> main; nq-blackbox 5948531..dcb8e66 -> main. origin now synced incl. prior nq-claude unpushed work."
+  ],
   "completed_slices": [
     "inherited-slice-admission (A2): UI slice admitted 0f35a2c + path-fixups 834049c, mangled WAL doc reverted. Receipt: 2026-06-12T1615Z.inherited-slice-admission.json",
     "lane-a-nq-blackbox (A1): PARKED — probe promotion infra-gated (no exporter/nq-serve) AND a real upstream finding (scrape-target provenance is wire-only, not a queryable column). Receipt: 2026-06-12T1625Z.lane-a-blackbox-parked.json",
