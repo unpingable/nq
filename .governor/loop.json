@@ -1,14 +1,15 @@
 {
-  "phase": "EXECUTE",
-  "current_slice": "SCA batch: blackbox provenance persistence (A), re-attempt Bucket 1 (B), SILENCE_UNIFICATION scope+maybe-exec (C/D)",
-  "slice_spec": [
-    "docs/loop-protocol.md § Standing Conditional Authorization (new admission rule)",
-    "docs/working/decisions/NQ_ECOSYSTEM_TRIAGE.md § Re-survey under SCA (four buckets)"
+  "phase": "AUDIT",
+  "current_slice": null,
+  "slice_spec": [],
+  "acceptance": null,
+  "lane": null,
+  "authorization_mode": "Standing Conditional Authorization — operator approved classes (completeness repair / paper-built / probe promotion / doc-code reconciliation / local-governance-substrate); loop executes matches until policy/external/irreversibility/ambiguity, then refers",
+  "blocked_on": "operator direction (SCA batch closed; loop idle)",
+  "sca_batch_done": [
+    "doctrine 333da0d; provenance-persistence 1bd5c38 (+collision guard); blackbox harness nq-blackbox dcb8e66; series-identity REFERRED (scope packet); SILENCE_UNIFICATION classified Lane A, scope packet, first slice named",
+    "Receipts: 2026-06-12T1730Z.sca-batch-close-audit.json"
   ],
-  "acceptance": "provenance queryable + tested; harness landed; SILENCE scoped; audit close",
-  "lane": "Bucket 1 (SCA auto-executable)",
-  "authorization_mode": "Standing Conditional Authorization — operator approved classes (completeness repair / paper-built / probe promotion / doc-code reconciliation / local-governance-substrate); loop executes matches, refers exceptions",
-  "blocked_on": null,
   "completed_slices": [
     "inherited-slice-admission (A2): UI slice admitted 0f35a2c + path-fixups 834049c, mangled WAL doc reverted. Receipt: 2026-06-12T1615Z.inherited-slice-admission.json",
     "lane-a-nq-blackbox (A1): PARKED — probe promotion infra-gated (no exporter/nq-serve) AND a real upstream finding (scrape-target provenance is wire-only, not a queryable column). Receipt: 2026-06-12T1625Z.lane-a-blackbox-parked.json",
