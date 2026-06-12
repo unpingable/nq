@@ -1,0 +1,26 @@
+{
+  "kind": "audit",
+  "ts": "2026-06-12T16:45:00Z",
+  "batch": "operator-directed Option-3-amended: inherited-slice handling + Lane A + closure floorboards + Lane C analysis",
+  "phase_out": "AUDIT (batch closed; loop idle, awaiting next operator direction)",
+  "slices_this_batch": [
+    {"slice": "inherited-slice-admission", "lane": "A2", "outcome": "done", "commits": ["0f35a2c", "834049c"]},
+    {"slice": "lane-a-nq-blackbox", "lane": "A1", "outcome": "parked (infra + provenance finding)", "commits": ["2892432 (receipt)"]},
+    {"slice": "nq-close-003-host-trust", "lane": "B", "outcome": "shipped", "commits": ["2892432"]},
+    {"slice": "nq-close-002-retention", "lane": "B", "outcome": "policy locked (build deferred)", "commits": ["2892432"]},
+    {"slice": "lane-c-promotion-analysis", "lane": "analysis-only", "outcome": "done — promoted nothing", "commits": ["this commit"]}
+  ],
+  "verdicts": {
+    "cargo": "nq-db + nq-monitor green (45 tests) at admission; doc/decision slices no-code",
+    "process": "WIP-1 held; each slice receipted; two inherited slices kept provenance-distinct; authorization-gating respected (CLOSE-001 build NOT started, no fenced item promoted); blackbox restraint demonstrated (no fake-green)"
+  },
+  "open_items_for_operator": [
+    "NQ-CLOSE-002 integers: confirm samples=3wk / rollups=6mo or adjust",
+    "blackbox provenance persistence: completeness slice (wire it) OR fix integration doc (wire-only by design)",
+    "NQ-CLOSE-001: authorize 'nq attest' build when ready (no evidence gap, only authorization)",
+    "SILENCE_UNIFICATION: confirm it's completeness → can move to Lane A",
+    "OSS Track 1 release: authorize once public state is coherent (deferred this batch by operator)"
+  ],
+  "tree_state": "clean; all batch work committed (0f35a2c, 834049c, 1af1deb, 2892432, + this analysis commit)",
+  "next_action": "await operator direction. Loop is idle in AUDIT. Re-entry probes in loop.json."
+}
