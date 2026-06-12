@@ -1,0 +1,249 @@
+diff --git a/crates/nq-db/src/views.rs b/crates/nq-db/src/views.rs
+index 20584c5..83ba2f7 100644
+--- a/crates/nq-db/src/views.rs
++++ b/crates/nq-db/src/views.rs
+@@ -1,6 +1,7 @@
+ //! Typed query results for the UI. The overview page and host drill-down.
+ 
+ use crate::ReadDb;
++use rusqlite::OptionalExtension;
+ 
+ #[derive(Debug, Clone)]
+ pub struct OverviewVm {
+@@ -276,7 +277,72 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
+ }
+ 
+ pub fn host_detail(db: &ReadDb, host: &str) -> anyhow::Result<HostDetailVm> {
+-    // Reuse overview queries filtered to one host, plus recent source_runs
++    let current_gen: i64 = db.conn.query_row(
++        "SELECT generation_id FROM generations ORDER BY generation_id DESC LIMIT 1",
++        [],
++        |row| row.get(0),
++    ).unwrap_or(0);
++
++    let host_row = db.conn.query_row(
++        "SELECT host, cpu_load_1m, mem_pressure_pct, disk_used_pct, disk_avail_mb,
++                uptime_seconds, as_of_generation
++         FROM hosts_current WHERE host = ?1",
++        [host],
++        |row| {
++            let gen: i64 = row.get(6)?;
++            Ok(HostSummaryVm {
++                host: row.get(0)?,
++                cpu_load_1m: row.get(1)?,
++                mem_pressure_pct: row.get(2)?,
++                disk_used_pct: row.get(3)?,
++                disk_avail_mb: row.get(4)?,
++                uptime_seconds: row.get(5)?,
++                as_of_generation: gen,
++                stale: current_gen - gen > 2,
++            })
++        },
++    ).optional()?;
++
++    let mut svc_stmt = db.conn.prepare(
++        "SELECT host, service, status, eps, queue_depth, as_of_generation
++         FROM services_current WHERE host = ?1 ORDER BY service",
++    )?;
++    let services: Vec<ServiceSummaryVm> = svc_stmt
++        .query_map([host], |row| {
++            let gen: i64 = row.get(5)?;
++            Ok(ServiceSummaryVm {
++                host: row.get(0)?,
++                service: row.get(1)?,
++                status: row.get(2)?,
++                eps: row.get(3)?,
++                queue_depth: row.get(4)?,
++                as_of_generation: gen,
++                stale: current_gen - gen > 2,
++            })
++        })?
++        .collect::<Result<_, _>>()?;
++
++    let mut db_stmt = db.conn.prepare(
++        "SELECT host, db_path, db_size_mb, wal_size_mb, checkpoint_lag_s,
++                last_quick_check, as_of_generation
++         FROM monitored_dbs_current WHERE host = ?1 ORDER BY db_path",
++    )?;
++    let sqlite_dbs: Vec<SqliteDbSummaryVm> = db_stmt
++        .query_map([host], |row| {
++            let gen: i64 = row.get(6)?;
++            Ok(SqliteDbSummaryVm {
++                host: row.get(0)?,
++                db_path: row.get(1)?,
++                db_size_mb: row.get(2)?,
++                wal_size_mb: row.get(3)?,
++                checkpoint_lag_s: row.get(4)?,
++                last_quick_check: row.get(5)?,
++                as_of_generation: gen,
++                stale: current_gen - gen > 2,
++            })
++        })?
++        .collect::<Result<_, _>>()?;
++
+     let mut stmt = db.conn.prepare(
+         "SELECT sr.generation_id, sr.status, sr.received_at, sr.duration_ms
+          FROM source_runs sr
+@@ -297,9 +363,9 @@ pub fn host_detail(db: &ReadDb, host: &str) -> anyhow::Result<HostDetailVm> {
+ 
+     Ok(HostDetailVm {
+         host: host.to_string(),
+-        host_row: None,    // TODO: query hosts_current for this host
+-        services: vec![],  // TODO: query services_current for this host
+-        sqlite_dbs: vec![], // TODO: query monitored_dbs_current for this host
++        host_row,
++        services,
++        sqlite_dbs,
+         recent_source_runs: recent_runs,
+     })
+ }
+diff --git a/crates/nq-monitor/src/http/routes.rs b/crates/nq-monitor/src/http/routes.rs
+index 9ac748a..bb1da52 100644
+--- a/crates/nq-monitor/src/http/routes.rs
++++ b/crates/nq-monitor/src/http/routes.rs
+@@ -1322,7 +1322,14 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
+             lines.push("No open findings.".to_string());
+         }
+ 
+-        lines.join("<br>")
++        // Each summary line gets its own element so the masthead reads
++        // as labeled axis rows (substrate / Severity / Response), not a
++        // single wrapped sentence. Label text stays contiguous within
++        // each line — the header_summary.rs pins depend on it.
++        lines
++            .iter()
++            .map(|l| format!("<div class=\"masthead-line\">{l}</div>"))
++            .collect::<String>()
+     } else {
+         String::new()
+     };
+@@ -1605,6 +1612,8 @@ body {{ font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; backgro
+ .header {{ background: #161b22; border-bottom: 1px solid #30363d; padding: 12px 24px; display: flex; align-items: center; gap: 16px; }}
+ .header h1 {{ font-size: 18px; color: #f0f6fc; font-weight: 600; }}
+ .header .gen {{ color: #8b949e; font-size: 13px; }}
++.masthead-summary {{ margin-left: auto; text-align: right; color: #8b949e; font-size: 12px; line-height: 1.5; }}
++.masthead-line {{ white-space: nowrap; }}
+ 
+ .layout {{ display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 48px); }}
+ html.sidebar-collapsed .layout {{ grid-template-columns: 36px 1fr; }}
+@@ -1613,7 +1622,13 @@ html.sidebar-collapsed .layout {{ grid-template-columns: 36px 1fr; }}
+ .sidebar h2 {{ font-size: 11px; text-transform: uppercase; color: #8b949e; letter-spacing: 1px; margin-bottom: 12px; }}
+ html.sidebar-collapsed .sidebar {{ padding: 16px 6px; }}
+ html.sidebar-collapsed .sidebar > h2,
+-html.sidebar-collapsed .sidebar > .domain-card {{ display: none; }}
++html.sidebar-collapsed .sidebar > .domain-card,
++html.sidebar-collapsed .sidebar > .posture-legend {{ display: none; }}
++
++.posture-legend {{ margin-top: 24px; }}
++.posture-note {{ font-size: 11px; color: #8b949e; margin-bottom: 8px; }}
++.posture-card {{ padding: 6px 12px; }}
++.posture-term {{ font-size: 13px; color: #c9d1d9; font-weight: 500; }}
+ 
+ .sidebar-toggle {{ background: transparent; color: #8b949e; border: 1px solid #21262d; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-family: inherit; font-size: 11px; margin-bottom: 12px; width: 100%; }}
+ .sidebar-toggle:hover {{ background: #161b22; color: #c9d1d9; border-color: #30363d; }}
+@@ -1672,7 +1687,7 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
+ <div class="header">
+     <h1>nq</h1>
+     <span class="gen">{gen_line}</span>
+-    <span class="gen" style="margin-left:auto;">{summary}</span>
++    <div class="masthead-summary">{summary}</div>
+ </div>
+ 
+ <div class="layout">
+@@ -1680,6 +1695,30 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
+     <button class="sidebar-toggle" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Toggle sidebar"><span id="sidebar-toggle-icon">◀</span></button>
+     <h2>Failure Domains</h2>
+     {domain_nav}
++    <div class="posture-legend">
++        <h2>Response Posture</h2>
++        <div class="posture-note">Recommended response shape, not severity.</div>
++        <div class="posture-card">
++            <div class="posture-term">intervene now</div>
++            <div class="domain-desc">Act on the system immediately.</div>
++        </div>
++        <div class="posture-card">
++            <div class="posture-term">intervene soon</div>
++            <div class="domain-desc">Plan an intervention; not this minute.</div>
++        </div>
++        <div class="posture-card">
++            <div class="posture-term">investigate now</div>
++            <div class="domain-desc">Diagnose now, before acting.</div>
++        </div>
++        <div class="posture-card">
++            <div class="posture-term">investigate business hours</div>
++            <div class="domain-desc">Diagnose during working hours.</div>
++        </div>
++        <div class="posture-card">
++            <div class="posture-term">watch</div>
++            <div class="domain-desc">No action; keep observing.</div>
++        </div>
++    </div>
+ </div>
+ 
+ <div class="main">
+diff --git a/crates/nq-monitor/tests/header_summary.rs b/crates/nq-monitor/tests/header_summary.rs
+index fb6e286..32fce58 100644
+--- a/crates/nq-monitor/tests/header_summary.rs
++++ b/crates/nq-monitor/tests/header_summary.rs
+@@ -100,6 +100,25 @@ fn bare_critical_label_no_longer_appears_in_header_summary() {
+     );
+ }
+ 
++/// The masthead renders each axis as its own line element rather than a
++/// single `<br>`-joined blob, so the Severity and Response axes cannot
++/// visually run together into one sentence. The label text inside each
++/// line stays contiguous (the pins above depend on that).
++#[test]
++fn masthead_axes_render_as_separate_lines() {
++    let vm = vm_with_one_critical_business_hours();
++    let html = render_overview(&vm, &[]);
++
++    assert!(
++        html.contains("<div class=\"masthead-line\">Severity: 1 critical</div>"),
++        "Severity axis must render as its own masthead line"
++    );
++    assert!(
++        html.contains("<div class=\"masthead-line\">Response: 1 investigate business hours</div>"),
++        "Response axis must render as its own masthead line"
++    );
++}
++
+ /// The `"no active findings"` and `"No active findings."` strings
+ /// invented an axis (`active`) that FINDING_STATE_MODEL.md does not
+ /// define. The header packet §3 and the dashboard ordering packet both
+diff --git a/docs/working/decisions/NQ_CLOSURE_STACK.md b/docs/working/decisions/NQ_CLOSURE_STACK.md
+index 01d9398..0a875dc 100644
+--- a/docs/working/decisions/NQ_CLOSURE_STACK.md
++++ b/docs/working/decisions/NQ_CLOSURE_STACK.md
+@@ -70,4 +70,4 @@ The stack does not require strict-order authorization. The ranking is the operat
+ - [`../gaps/EVIDENCE_RETIREMENT_GAP.md`](../gaps/EVIDENCE_RETIREMENT_GAP.md) — shipped finding-side basis lifecycle; NQ-CLOSE-002 is its retention-policy counterpart.
+ - [`../gaps/SURFACE_TYPED_REVOCATION_CANDIDATE.md`](../gaps/SURFACE_TYPED_REVOCATION_CANDIDATE.md) — Lean-proved unlinked-not-closed kernel; NQ-CLOSE-002 adopts the shape locally.
+ - [`../gaps/SENTINEL_LIVENESS_GAP.md`](../gaps/SENTINEL_LIVENESS_GAP.md) — external vantage; bounded by NQ-CLOSE-003's paragraph as the doc-only structural-limit answer today.
+-- [`feedback_authority_effect_calibration`](../../../../home/jbeck/.claude/projects/-home-jbeck-git-notquery/memory/feedback_authority_effect_calibration.md) — governs review cadence on the candidate vocabulary in each slice.
++- [`feedback_authority_effect_calibration`](../../../../home/jbeck/.claude/projects/-home-jbeck-git-nq/memory/feedback_authority_effect_calibration.md) — governs review cadence on the candidate vocabulary in each slice.
+diff --git a/docs/working/decisions/preflights/NQ_SELF_SQLITE_WAL.md b/docs/working/decisions/preflights/NQ_SELF_SQLITE_WAL.md
+index ed9d282..d2290ac 100644
+--- a/docs/working/decisions/preflights/NQ_SELF_SQLITE_WAL.md
++++ b/docs/working/decisions/preflights/NQ_SELF_SQLITE_WAL.md
+@@ -8,7 +8,7 @@
+ 
+ **Last updated:** 2026-05-27
+ 
+-**Path note (rebrand-2026-06-02):** `/opt/nq/…` paths in this doc describe target state. Until the deployment-host cutover lands (renaming `/opt/notquery/` → `/opt/nq/` on Linode and updating configs + systemd units), the live filesystem path on Linode is still `/opt/notquery/nq.db`. Both names resolve to the same substrate post-cutover via symlink during transition if needed.
++**Path note (rebrand-2026-06-02):** `/opt/nq/…` paths in this doc describe target state. Until the deployment-host cutover lands (renaming `/opt/nq/` → `/opt/nq/` on Linode and updating configs + systemd units), the live filesystem path on Linode is still `/opt/nq/nq.db`. Both names resolve to the same substrate post-cutover via symlink during transition if needed.
+ 
+ ## 0. The Tier 0 wager
+ 
+diff --git a/docs/working/gaps/FEDERATION_GAP.md b/docs/working/gaps/FEDERATION_GAP.md
+index c596f45..b9792bb 100644
+--- a/docs/working/gaps/FEDERATION_GAP.md
++++ b/docs/working/gaps/FEDERATION_GAP.md
+@@ -85,7 +85,7 @@ Testimony flows up; **action stays local**, through each scope's own gauntlet. T
+ 
+ > **Read-only-upward isn't a feature flag. It's the constitution.**
+ 
+-(Composes with [`feedback_knob_facing`](../../../../home/jbeck/.claude/projects/-home-jbeck-git-notquery/memory/feedback_knob_facing.md): NQ classifies world-state testimony; it does not authorize consequence. The constitutional rule is the federation altitude of the same boundary.)
++(Composes with [`feedback_knob_facing`](../../../../home/jbeck/.claude/projects/-home-jbeck-git-nq/memory/feedback_knob_facing.md): NQ classifies world-state testimony; it does not authorize consequence. The constitutional rule is the federation altitude of the same boundary.)
+ 
+ ---
+ 

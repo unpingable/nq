@@ -1,0 +1,31 @@
+{
+  "phase": "PLAN",
+  "current_slice": null,
+  "slice_spec": [],
+  "acceptance": null,
+  "lane": null,
+  "blocked_on": null,
+  "completed_slices": [
+    "inherited-slice-admission (A2): UI slice admitted 0f35a2c + path-fixups 834049c, mangled WAL doc reverted. Receipt: .governor/loop-receipts/2026-06-12T1615Z.inherited-slice-admission.json"
+  ],
+  "next_action": "Lane A: nq-blackbox Bucket 1 probe config + smoke harness (landable in-repo); ingestion verification (criteria 4-5) deferred — no live exporter/nq-serve locally",
+  "batch_plan": [
+    "1. inherited dirty tree: admit-or-quarantine (UI slice + reorg path-fixups separately)",
+    "2. Lane A: nq-blackbox Bucket 1 probes, then Bucket 3",
+    "3. Lane B (operator-authorized): NQ-CLOSE-003 host-trust paragraph; NQ-CLOSE-002 retention-windows decision lock",
+    "4. Lane C promotion ANALYSIS only (not implementation) + summary table"
+  ],
+  "last_verified_commit": "5ed112c",
+  "last_updated": "2026-06-12T16:10:00Z",
+  "session_id": "ag-claude-drives-nq (operator-dispatched, impunity granted: nq-claude stood down)",
+  "loop_master": "opus (controller); escalate to fable for doctrine only",
+  "wip_limit": 1,
+  "dirty_tree_allowed": true,
+  "dirty_tree_reason": "inherited orphaned slice from prior nq-claude session (outage/reorg); preserved in .governor/inherited/, being admitted as current slice",
+  "re_entry_probes": [
+    "cat .governor/loop.json",
+    "git -C . log --oneline -8",
+    "git -C . status --short",
+    "cargo test -q -p nq-db -p nq-monitor --no-fail-fast 2>&1 | tail -5"
+  ]
+}
