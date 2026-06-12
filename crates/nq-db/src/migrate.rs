@@ -73,6 +73,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (55, include_str!("../migrations/055_collector_runs_nq_binary.sql")),
     (56, include_str!("../migrations/056_nq_evaluator_observations.sql")),
     (57, include_str!("../migrations/057_origin_mode_discriminator.sql")),
+    (58, include_str!("../migrations/058_scrape_target_provenance.sql")),
 ];
 
 pub fn migrate(db: &mut WriteDb) -> anyhow::Result<()> {

@@ -229,4 +229,9 @@ pub struct MetricRow {
     pub labels_json: String,
     pub value: f64,
     pub metric_type: Option<String>,
+    /// Scrape-target provenance carried from `MetricSample` (commit 1ea2000).
+    /// Persisted onto the `series` dictionary (migration 058) so SQL
+    /// composition can key off it. `None` for non-prometheus metrics.
+    pub scrape_target_name: Option<String>,
+    pub scrape_target_url: Option<String>,
 }

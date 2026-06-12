@@ -349,6 +349,13 @@ async fn pull_one(source: SourceConfig) -> PullResult {
                                 .unwrap_or_else(|_| "{}".to_string()),
                             value: m.value,
                             metric_type: m.metric_type.clone(),
+                            // Carry scrape-target provenance through to
+                            // persistence (migration 058) instead of dropping
+                            // it here — this was the drop point that left the
+                            // nq-blackbox "SQL composition keys off provenance"
+                            // precondition only half-satisfied.
+                            scrape_target_name: m.scrape_target_name.clone(),
+                            scrape_target_url: m.scrape_target_url.clone(),
                         })
                         .collect(),
                 });
