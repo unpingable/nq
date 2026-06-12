@@ -297,8 +297,15 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
         }
     }
 
-    // 7. Upsert series dictionary + delete+replace metrics_current
-    {
+    // 7. Upsert series dictionary + delete+replace metrics_current.
+    // Skipped entirely when there are no metric rows: the per-host
+    // delete+replace only runs for hosts present in metric_sets, so an empty
+    // metric_sets is already a no-op — but the unconditional prepare_cached of
+    // the series-upsert would otherwise validate its SQL (incl. the migration-058
+    // scrape_target columns) against the schema, breaking publish on a pre-058
+    // DB (e.g. the upgrade-path fixture). Guarding the whole block keeps publish
+    // forward-compatible when there's nothing to write.
+    if !batch.metric_sets.is_empty() {
         // Series upsert carries scrape-target provenance (migration 058) with
         // an HONEST collision guard. Identity is still (metric_name,
         // labels_json), so one series_id can receive samples from >1 scrape
@@ -1131,10 +1138,12 @@ fn update_warning_state_inner(
           recovery_sustained_for_s, recovery_evidence_since, recovery_satisfied_at,
           coverage_degraded_ref,
           node_type, cause_candidate, evidence_finding_key, suppressed_descendant_count,
-          origin_mode)
+          origin_mode,
+          silence_scope, silence_basis, silence_duration_s, silence_expected)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?8, 1, ?9, ?10, ?11, 0, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22,
                  ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34,
-                 ?35, ?36, ?37, ?38, ?39)
+                 ?35, ?36, ?37, ?38, ?39,
+                 ?40, ?41, ?42, ?43)
          ON CONFLICT(host, kind, subject) DO UPDATE SET
              domain = ?4,
              message = ?5,
@@ -1201,7 +1210,15 @@ fn update_warning_state_inner(
              -- D0-Origin: re-firing detector under drill mode keeps the
              -- row stamped `drill`. Without this, an existing observed row
              -- would silently launder the next drill cycle back to observed.
-             origin_mode = ?39",
+             origin_mode = ?39,
+             -- SILENCE_UNIFICATION V1 (witness pair): silence-contract fields are
+             -- overwritten each cycle the detector re-fires, so silence_duration_s
+             -- tracks how long the witness has been quiet. Non-silence findings
+             -- pass NULL for all four (no contract).
+             silence_scope = ?40,
+             silence_basis = ?41,
+             silence_duration_s = ?42,
+             silence_expected = ?43",
     )?;
 
     let mut insert_obs = tx.prepare_cached(
@@ -1380,6 +1397,30 @@ fn update_warning_state_inner(
             cov_suppressed_descendant_count,
         ])?;
 
+        // SILENCE_UNIFICATION V1: derive the shared silence contract from
+        // existing finding fields — the gap's "documented set of finding-meta
+        // fields" option (kind -> scope+basis, value -> duration_s), chosen over
+        // a Finding struct field to avoid churning 67 unrelated construction
+        // sites for a contract that is fully derivable here. Only the
+        // unambiguous witness-silence pair; the four non-witness silence
+        // detectors (presence_delta / baseline_collapse) are deferred pending
+        // SILENCE_UNIFICATION OQ3/OQ4 (silence vs intended-liveness bucket).
+        // Values use the shipped migration-046 CHECK vocabulary.
+        let (silence_scope, silence_basis, silence_duration_s, silence_expected): (
+            Option<&str>,
+            Option<&str>,
+            Option<i64>,
+            Option<&str>,
+        ) = match f.kind.as_str() {
+            "smart_witness_silent" | "zfs_witness_silent" => (
+                Some("witness"),
+                Some("age_threshold"),
+                f.value.map(|v| v as i64),
+                Some("none"),
+            ),
+            _ => (None, None, None, None),
+        };
+
         upsert.execute(rusqlite::params![
             &f.host,
             &f.kind,
@@ -1422,6 +1463,11 @@ fn update_warning_state_inner(
             // D0-Origin (migration 057): native detector path now stamps the
             // closed-vocabulary mint-provenance discriminator.
             origin_mode,
+            // SILENCE_UNIFICATION V1 (?40-?43): witness-silence contract.
+            silence_scope,
+            silence_basis,
+            silence_duration_s,
+            silence_expected,
         ])?;
     }
     drop(upsert);
@@ -3527,6 +3573,120 @@ mod tests {
         CoverageDegradedEnvelope, CoverageEnvelope, HealthClaimMisleadingEnvelope,
         RecoveryComparator, RecoveryState,
     };
+
+    // ---- SILENCE_UNIFICATION V1: witness-silence contract retrofit ----
+
+    fn witness_silent_finding(host: &str, kind: &str, witness_id: &str, age: i64) -> Finding {
+        Finding {
+            host: host.into(),
+            kind: kind.into(),
+            subject: witness_id.into(),
+            domain: "Δo".into(),
+            message: format!("{kind} {witness_id} silent for {age}s"),
+            value: Some(age as f64),
+            finding_class: "meta".into(),
+            rule_hash: None,
+            state_kind: crate::detect::StateKind::Degradation,
+            diagnosis: None,
+            basis_source_id: Some(witness_id.into()),
+            basis_witness_id: Some(witness_id.into()),
+            coverage_envelope: None,
+            node_unobservable_envelope: None,
+        }
+    }
+
+    #[test]
+    fn silence_contract_emitted_for_witness_silent_and_not_for_others() {
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "lil-nas-x");
+
+        update_warning_state(
+            &mut db,
+            1,
+            &[
+                witness_silent_finding("lil-nas-x", "smart_witness_silent", "smart.local.lil-nas-x", 3600),
+                witness_silent_finding("lil-nas-x", "zfs_witness_silent", "zfs.local.lil-nas-x", 7200),
+                // Control: an unrelated finding must NOT acquire the contract.
+                Finding {
+                    host: "lil-nas-x".into(),
+                    kind: "cpu_saturated".into(),
+                    subject: "cpu".into(),
+                    domain: "Δs".into(),
+                    message: "cpu hot".into(),
+                    value: Some(0.99),
+                    finding_class: "signal".into(),
+                    rule_hash: None,
+                    state_kind: crate::detect::StateKind::Degradation,
+                    diagnosis: None,
+                    basis_source_id: None,
+                    basis_witness_id: None,
+                    coverage_envelope: None,
+                    node_unobservable_envelope: None,
+                },
+            ],
+            &esc,
+        )
+        .unwrap();
+
+        // smart_witness_silent carries the full contract, queryable as columns
+        // (consumer never parses the kind string).
+        let (scope, basis, dur, expected): (Option<String>, Option<String>, Option<i64>, Option<String>) =
+            db.conn
+                .query_row(
+                    "SELECT silence_scope, silence_basis, silence_duration_s, silence_expected
+                     FROM warning_state WHERE kind = 'smart_witness_silent'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .unwrap();
+        assert_eq!(scope.as_deref(), Some("witness"));
+        assert_eq!(basis.as_deref(), Some("age_threshold"));
+        assert_eq!(dur, Some(3600));
+        assert_eq!(expected.as_deref(), Some("none"));
+
+        // zfs_witness_silent too, with its own silence duration.
+        let (zscope, zbasis, zdur): (Option<String>, Option<String>, Option<i64>) = db
+            .conn
+            .query_row(
+                "SELECT silence_scope, silence_basis, silence_duration_s
+                 FROM warning_state WHERE kind = 'zfs_witness_silent'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(zscope.as_deref(), Some("witness"));
+        assert_eq!(zbasis.as_deref(), Some("age_threshold"));
+        assert_eq!(zdur, Some(7200));
+
+        // A consumer can iterate "all silence-contract findings" without kind
+        // strings — exactly the two witness detectors carry it.
+        let n: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM warning_state WHERE silence_scope IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 2, "only the two witness-silence findings carry the contract");
+
+        // Unrelated finding semantics are untouched: NULL across the contract.
+        let (cscope, cbasis, cdur, cexpected): (Option<String>, Option<String>, Option<i64>, Option<String>) =
+            db.conn
+                .query_row(
+                    "SELECT silence_scope, silence_basis, silence_duration_s, silence_expected
+                     FROM warning_state WHERE kind = 'cpu_saturated'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .unwrap();
+        assert_eq!(
+            (cscope, cbasis, cdur, cexpected),
+            (None, None, None, None),
+            "non-silence findings must not carry the silence contract"
+        );
+    }
 
     fn coverage_degraded_finding(host: &str, subject: &str) -> Finding {
         Finding {
