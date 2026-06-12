@@ -139,3 +139,39 @@ The workspace CI runs **1227 tests** (per OSS_READINESS_ROADMAP). Any slice's RE
 - Not a roadmap (no timeline, no resourcing).
 - Not a replacement for the gap docs, the closure stack, or the OSS roadmap — it is the *dispatch ordering across* them.
 - Not exhaustive of future slices — it triages the *currently-filed* corpus (84 gap specs + 2 sibling-repo gap sets + the probe catalog + the OSS roadmap), 2026-06-12.
+
+---
+
+## Re-survey under Standing Conditional Authorization (2026-06-12, amended)
+
+The original A/B/C lanes above were drawn under an over-conservative reading — "naming ≠ authorizing" collapsed into "every floorboard needs fresh approval." The operator corrected this: **ratified doctrine + an admission predicate creates *standing conditional authorization*; the operator approves classes, not slices** (see `docs/loop-protocol.md` § Standing Conditional Authorization). Much of the "no implementation authorized" language on NQ gap docs is now *historical* — the specs are on paper. Re-running the survey under the new rule sorts the corpus into four buckets.
+
+**Taxonomy fix:** the blackbox scrape-target-provenance item was filed "C(finding)" because it surfaced during C-ish analysis. Ontologically it is **not C** — it is a failed precondition under an *already-admitted* Lane A probe path. Reclassified: **A-blocker / completeness repair.**
+
+### Bucket 1 — newly auto-executable (SCA mandate covers; loop may chug)
+
+- **blackbox scrape-target provenance persistence** — completeness repair under an admitted surface. Smallest slice: migration + persist path + query/read path + test proving `scrape_target_name`/`url` survive ingest and can key composition. (No external effect, no policy choice, bounded, receiptable.)
+- **SILENCE_UNIFICATION** — completeness ("promote existing per-witness primitives from metadata to governance"; already-emitted signals). Auto-executable **after a scope statement** confirms unification is *additive* (shared envelope) and changes no detector's emitted contract. If it does change a contract, that edge is a policy choice → gated (see Ambiguous).
+- **Remaining Lane A2 completeness repairs** with a documented pending boundary (EVIDENCE_RETIREMENT pending surfaces; WITNESS_CLAIM_SCOPE pending; ZFS_COLLECTOR remaining phase) — each auto-executable *to its documented boundary*, verified per-item before dispatch.
+- **Local-only governance substrate** — loop docs, receipts, lane tables, closeouts. Always auto.
+- **Paper-built implementations** where docs already fix semantics and tests can witness them — admitted per-item (the predicate's class 2); most NQ `proposed` gaps are *not* fully semantically fixed, so this is a per-item check, not a sweep.
+
+### Bucket 2 — still operator-gated
+
+- **NQ-CLOSE-001 (operator attestation)** — carries candidate vocabulary (`nq attest` shape, `effect_claimed`, record format) = an unresolved naming/policy choice → predicate condition 3 fails. Operator deferred it; if the provenance slice forces it, produce an *authorization packet*, not implementation.
+- **OSS Track 1 (release)** — public/external effect; explicitly deferred.
+- **Retention-integer changes beyond 3wk/6mo** — the defaults are ratified; changes are gated.
+- **WRITE_TX_INSTRUMENTATION** — new observation surface (forcing-case), not completion.
+- **New witness/security profiles** (UDP/unix exposure, etc.) — new surfaces.
+
+### Bucket 3 — still fenced (predicate fails: new surface / unresolved policy / external)
+
+- **Federation / NQ-FED-000** — sequenced last; cross-host effect.
+- **nq-witness library / REMOTE_SUBSTRATE_WITNESS** — new shared surface, forcing-case-gated (profile #3 trigger).
+- **Framing / recognition records** — OBSERVATION_PLANE, ANTI_LAUNDERING_DOCTRINE_MAP, prior-art maps, the candidate/non-binding family, stubs. Their whole job is to stay unbuilt; promotion is a child gap filing a forcing case.
+
+### Bucket 4 — ambiguous (exact ambiguity named)
+
+- **blackbox Bucket 1 probe *promotion*** (distinct from the provenance repair) — the provenance persistence is auto-executable, and the smoke *harness* is local-substrate auto. But the catalog's promotion criteria 1–2/5 require a **live exporter run** to produce real `probe_*` samples. **Exact ambiguity:** the live verification is *infra-gated* (deploy session), not operator-gated. So: persistence + harness land now; the probe-config promotion re-parks on infra, one step further along.
+- **SILENCE_UNIFICATION boundary** — **exact ambiguity:** does unifying the six silence detectors change any detector's *emitted* contract, or purely add the shared envelope alongside existing output? Additive → Bucket 1 auto. Contract-changing → policy choice → Bucket 2. Resolved by the scope packet before any code.
+- **HISTORY_COMPACTION** — **exact ambiguity:** does the oldest-tier downsample change which findings can be *derived* from history (semantic compaction), or only storage footprint? Footprint-only → completeness/auto. Semantics-changing → the named anti-pattern "compaction absorbing semantics" → gated. Needs the spec read before classification.

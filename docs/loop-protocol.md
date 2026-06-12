@@ -38,33 +38,84 @@ AUDIT → PLAN → DISPATCH → EXECUTE → REVIEW → (AUDIT)
 probing and drills do not count — they mutate nothing. Anything that lands a diff, edits a
 spec, or moves loop state is admitted work and waits its turn.
 
-## The admission gate (NQ-specific)
+## The admission gate — Standing Conditional Authorization
 
-NQ's planning corpus is authorization-gated: closure stack, OSS roadmap, gap specs, the
-probe catalog — all say *naming a thing is not authorizing it*. The loop honors that. A
-slice is admissible to DISPATCH only if it is one of:
+**"Naming ≠ authorizing" still stands** — a roadmap entry, gap name, stub, or candidate
+note does not by itself authorize implementation. That was a correct guardrail. But it is
+wrong as an *execution policy*: the loop must NOT treat every already-specified slice as
+needing fresh operator approval, or the governor becomes an elaborate button that says "ask
+the operator." (Historical note: NQ ran on a deliberately conservative footing through its
+formation; much of the "no implementation authorized" language on gap docs is now
+*historical* — the specs are on paper, the doctrine is ratified. The fence language outlived
+the caution that motivated it.)
 
-1. **Completeness on an already-open surface.** A `partial`/shipped gap with a documented
-   pending surface, finished to exactly that boundary. **Completeness does not need a
-   forcing case** — in a monitoring system an undocumented hole is a deferred incident, so
-   finishing what is morally already open is the default-admissible move, not the timid one.
-   If finishing reveals a *new* surface, the slice stops; the new surface is Lane B/C.
-2. **Mechanical sub-repo promotion.** A candidate whose promotion path is a checklist, not
-   an operator's judgement call (e.g. an `nq-blackbox` probe: module + target + smoke +
-   NQ-ingest + the testifies/inadmissible rows survive real output). The checklist is the
-   acceptance.
-3. **Operator-authorized Lane-B work.** The operator said "do X." The authorization is
-   recorded as a loop transition with the exact words; dispatch proceeds against the
-   ratified shape, not the candidate shape.
+The reframe:
 
-Everything else — `candidate` / `non-binding` / `stub` / "no implementation authorized",
-federation, the witness library, forcing-case-gated profiles — is **fenced**. The loop
-never self-authorizes it. The most the loop may do with a fenced item is write a
-*promotion analysis* (what fence, what is missing, the smallest Lane-B slice that would
-promote it, what stays forbidden, the exact operator decision needed). Analysis is not
-promotion.
+> **Doctrine is not authorization by itself. But ratified doctrine + an explicit admission
+> predicate creates standing conditional authorization.** The operator approves *classes*,
+> not slices. The loop matches a slice to a class; it refers only exceptions.
 
-The lane map for the current corpus is `docs/working/decisions/NQ_ECOSYSTEM_TRIAGE.md`.
+So the loop does not get to say "this gap exists, therefore I build it." It *can* say: "this
+item matches a pre-authorized work class, has bounded blast radius, no unresolved policy
+choice, no public/external effect, and produces receipts — therefore I may execute."
+
+### Standing Conditional Authorization — the predicate
+
+A slice may execute **without fresh operator approval** when ALL of these hold:
+
+1. The target surface is **already admitted** by repo doctrine, roadmap, tests, or prior
+   implementation.
+2. The work is one of the **standing authorized classes**:
+   - **Completeness repair** — existing surface; missing query column, test, doc binding,
+     route, fixture, parser, display, or receipt edge. No new doctrine, no public release,
+     no external behavior beyond making an existing claim true.
+   - **Paper-built implementation** — docs/specs already fix the behavior; no unresolved
+     semantic choice; implementation is mechanical translation of ratified doctrine; tests
+     can witness the promised behavior.
+   - **Probe promotion** — probe already in the catalog; preconditions satisfied or
+     repairable as completeness work (incl. required persistence/queryability/test fixes).
+   - **Doc/code reconciliation** — docs promise X, code partially implements X; align them.
+     *But if the docs are wrong, stale, or policy-bearing, park and report.*
+   - **Local-only governance substrate** — `.governor`, receipts, audit docs, lane tables,
+     closeout records. No pushes, no release artifacts, no external publication.
+3. The slice introduces **no new policy choice**.
+4. The slice has **bounded local blast radius**.
+5. The slice has **no external/public effect**.
+6. The slice does **not** push, publish, deploy, federate, release, delete data, rotate
+   secrets, or perform an irreversible migration.
+7. The loop can **state the precondition, intended evidence, and stop condition before
+   editing**.
+8. The closeout **records what was executed, what was refused, and what remains
+   operator-gated**.
+
+### Still operator-gated (the mandate does NOT cover)
+
+- public release / OSS Track 1
+- federation
+- new witness / security profiles
+- **new doctrine** (as opposed to implementation of existing, ratified doctrine)
+- irreversible migrations
+- retention-integer changes beyond approved defaults
+- external services, credentials, publication, deployment, destructive cleanup
+- any slice where the loop **cannot distinguish implementation from policy choice**
+
+### Lane B, reframed
+
+> **Lane B = mandate-authorized when it matches a standing authorization class and the
+> admission predicate holds; operator-authorize-first ONLY when the predicate fails or a
+> policy/external-effect gate is present.**
+
+This is not relaxed governance. It moves from **per-item permission** to **typed mandate** —
+less TSA checkpoint, more building code. The loop chugs through admitted, bounded, local,
+receiptable work and stops to ask only at the real gates above.
+
+A genuinely **fenced** item (predicate fails: new surface, unresolved policy, external
+effect) still gets at most a *promotion analysis* — what fence, what is missing, the
+smallest promoting slice, what stays forbidden, the exact operator decision needed. Analysis
+is not promotion.
+
+The lane map for the current corpus is `docs/working/decisions/NQ_ECOSYSTEM_TRIAGE.md`;
+the per-item promotion analysis is `NQ_LANE_C_PROMOTION_ANALYSIS.md`.
 
 ## Inherited slices (dirty tree from a prior session)
 

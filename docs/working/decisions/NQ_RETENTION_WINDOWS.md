@@ -34,19 +34,19 @@ The load-bearing, retrofit-sensitive commitment is **which class each artifact l
 5. **The sweep is observable** (cf. HISTORY_COMPACTION §17 — compaction is not a dark forest): a deletion sweep emits how many rows / chunks / sample-generations were tombstoned and why.
 6. **Tamper-evidence is host-trust-bounded.** No tombstone signing / hash-chaining. Bounded by [HOST_TRUST_BOUNDARY](../../architecture/HOST_TRUST_BOUNDARY.md).
 
-## PROPOSED — concrete starting integers (operator-confirmable)
+## CONFIRMED — concrete integers (operator-ratified 2026-06-12, policy defaults)
 
-The exact integers are genuinely the operator's numeric call and were flagged for the authorization moment. These are proposed initial config values, chosen conservatively (longer is safer; windows can extend before expiry). **Not hard-minted — confirm or adjust:**
+Operator confirmed the proposed integers as **policy defaults — not eternal doctrine**. If later evidence forces a change, the change lands by **explicit migration / receipt**, not silent edit (a retention-integer change beyond these defaults is itself operator-gated; see loop-protocol Standing Conditional Authorization "still operator-gated").
 
-| Artifact class        | Proposed initial window | Notes |
-| --------------------- | ----------------------- | ----- |
-| Raw samples           | **3 weeks**             | long enough to cover a fortnight incident + review tail |
-| Consolidated rollups  | **6 months**            | covers seasonal/quarterly comparison without unbounded growth |
-| Findings              | forever                 | (locked) |
-| Operator attestations | forever                 | (locked) |
-| Tombstones            | forever                 | (locked) |
+| Artifact class        | Window (default) | Notes |
+| --------------------- | ---------------- | ----- |
+| Raw samples / short operational | **3 weeks**  | covers a fortnight incident + review tail |
+| Consolidated rollups / long-audit | **6 months** | seasonal/quarterly comparison without unbounded growth |
+| Findings              | forever          | (locked) |
+| Operator attestations | forever          | (locked) |
+| Tombstones            | forever          | (locked) |
 
-These integers should land as named configuration (or migration-level constants), one per row, when the build is authorized — so they are visible and adjustable, not buried.
+These integers land as named configuration (or migration-level constants), one per row, when the build is authorized — visible and adjustable, not buried. The defaults are ratified; the **build** that enforces them remains a separate authorization.
 
 ## NOT in this decision (deferred to the build's authorization)
 
