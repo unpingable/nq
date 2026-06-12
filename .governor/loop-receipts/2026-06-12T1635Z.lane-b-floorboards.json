@@ -1,0 +1,39 @@
+{
+  "kind": "review",
+  "ts": "2026-06-12T16:35:00Z",
+  "slice": "lane-b-closure-floorboards",
+  "lane": "B (operator-authorized)",
+  "authorization": "operator, this session: 'Authorize the closure floorboards as Lane B: NQ-CLOSE-003 host-trust paragraph, doc-only; NQ-CLOSE-002 lock the retention-windows decision. Do not start CLOSE-001 build work.'",
+  "slices": {
+    "NQ-CLOSE-003": {
+      "shape": "doc-only constitutional note (publish operator's pinned host-trust paragraph)",
+      "outcome": "shipped",
+      "artifacts": [
+        "docs/architecture/HOST_TRUST_BOUNDARY.md (new published note)",
+        "docs/working/decisions/FEATURE_HISTORY.md (#host_trust_boundary-nq-close-003 entry)",
+        "docs/working/gaps/HOST_TRUST_BOUNDARY.md (status → shipped + pointer)"
+      ],
+      "acceptance": "all 5 gap criteria met; pinned paragraph verbatim; no code, no schema; doc-only-until-threat-model-changes explicit",
+      "standing_verdict": "admissible — operator-authorized; no candidate vocabulary to review (paragraph is operator-pinned verbatim)"
+    },
+    "NQ-CLOSE-002": {
+      "shape": "lock the retention-windows DECISION (policy half), not the build",
+      "outcome": "policy locked",
+      "artifacts": [
+        "docs/working/decisions/NQ_RETENTION_WINDOWS.md (new locked decision)",
+        "docs/working/gaps/EVIDENCE_FORGETTING_GAP.md (status → policy LOCKED, build still candidate)"
+      ],
+      "locked": "5 retention classes (samples=weeks, rollups=months, findings/attestations/tombstones=forever); attestation tie-break resolved to forever (findings class); 6 principles (prospective-only, no-cross-rung-coupling, no-silent-purge, tombstones-durable-forever, observable-sweep, host-trust-bounded)",
+      "proposed_not_minted": "exact integers (samples 3 weeks / rollups 6 months) — operator's numeric call, flagged confirmable; NOT hard-ratified",
+      "deferred_to_build_auth": "tombstone schema, three-state ladder field names, dangling-citation rendering, any code/migration",
+      "standing_verdict": "admissible — operator authorized the decision-lock; respected the gap's 'exact numbers reviewed at authorization' by proposing not minting them"
+    }
+  },
+  "evidence_verdict": {
+    "result": "pass",
+    "basis": "doc-only / decision-only slices; no code path; acceptance is documentary. Verified: published doc carries pinned paragraph verbatim; FEATURE_HISTORY anchor matches gap pointer; decision doc locks class structure and tees integers as confirmable.",
+    "note": "no cargo run needed — zero code touched"
+  },
+  "discipline_note": "Held the authorization-gating line: NQ-CLOSE-001 build NOT started (no documented precondition forced it). Completeness-overrules-forcing-case applied correctly — these are operator-authorized Lane B, not completeness, so authorization (not a forcing case) was the gate, and the operator supplied it.",
+  "next_action": "Lane C promotion ANALYSIS (not implementation) + final summary table; then report to operator."
+}

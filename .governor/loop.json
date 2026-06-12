@@ -6,9 +6,11 @@
   "lane": null,
   "blocked_on": null,
   "completed_slices": [
-    "inherited-slice-admission (A2): UI slice admitted 0f35a2c + path-fixups 834049c, mangled WAL doc reverted. Receipt: .governor/loop-receipts/2026-06-12T1615Z.inherited-slice-admission.json"
+    "inherited-slice-admission (A2): UI slice admitted 0f35a2c + path-fixups 834049c, mangled WAL doc reverted. Receipt: 2026-06-12T1615Z.inherited-slice-admission.json",
+    "lane-a-nq-blackbox (A1): PARKED — probe promotion infra-gated (no exporter/nq-serve) AND a real upstream finding (scrape-target provenance is wire-only, not a queryable column). Receipt: 2026-06-12T1625Z.lane-a-blackbox-parked.json",
+    "lane-b-closure-floorboards (B): NQ-CLOSE-003 shipped (docs/architecture/HOST_TRUST_BOUNDARY.md); NQ-CLOSE-002 policy locked (docs/working/decisions/NQ_RETENTION_WINDOWS.md). Receipt: 2026-06-12T1635Z.lane-b-floorboards.json"
   ],
-  "next_action": "Lane A: nq-blackbox Bucket 1 probe config + smoke harness (landable in-repo); ingestion verification (criteria 4-5) deferred — no live exporter/nq-serve locally",
+  "next_action": "Lane C promotion ANALYSIS only (not implementation) + final summary table; then report to operator",
   "batch_plan": [
     "1. inherited dirty tree: admit-or-quarantine (UI slice + reorg path-fixups separately)",
     "2. Lane A: nq-blackbox Bucket 1 probes, then Bucket 3",

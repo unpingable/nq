@@ -1,6 +1,6 @@
 # Gap: Host-Trust Boundary — named, not crypto'd
 
-**Status:** doc-only constitutional note. **Slice handle: NQ-CLOSE-003.** Ranked #3 in the closure stack — necessary, but doc-only for now. No build, no schema, no project.
+**Status:** shipped (doc-only) 2026-06-12; see [`FEATURE_HISTORY.md#host_trust_boundary-nq-close-003`](../decisions/FEATURE_HISTORY.md#host_trust_boundary-nq-close-003). Published constitutional note at [`../../architecture/HOST_TRUST_BOUNDARY.md`](../../architecture/HOST_TRUST_BOUNDARY.md). **Slice handle: NQ-CLOSE-003.** No build, no schema, no project — and none authorized by the shipping.
 **Composes with:** [`AGGREGATOR_SELF_INTEGRITY_GAP`](AGGREGATOR_SELF_INTEGRITY_GAP.md) (self-witness firewall — same structural-limit shape), [`SENTINEL_LIVENESS_GAP`](SENTINEL_LIVENESS_GAP.md) (external vantage closes the witness's-own-Δo cell), [`INSTANCE_WITNESS_GAP`](INSTANCE_WITNESS_GAP.md) (multi-instance; another vantage), [`FEDERATION_GAP`](FEDERATION_GAP.md) (cross-host federation), [`EVIDENCE_FORGETTING_GAP`](EVIDENCE_FORGETTING_GAP.md) (tombstone tamper-evidence is bounded by this paragraph), [`../decisions/JURISDICTIONAL_COMPLETENESS.md`](../decisions/JURISDICTIONAL_COMPLETENESS.md) (structural Δo at top of stack), [`../decisions/NQ_CLOSURE_STACK.md`](../decisions/NQ_CLOSURE_STACK.md) (sequencing).
 **Last updated:** 2026-06-10
 

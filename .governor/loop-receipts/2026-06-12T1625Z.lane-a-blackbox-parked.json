@@ -1,0 +1,35 @@
+{
+  "kind": "park",
+  "ts": "2026-06-12T16:25:00Z",
+  "slice": "lane-a-nq-blackbox-bucket-1",
+  "lane": "A1 (mechanical sub-repo promotion)",
+  "intended": "Promote nq-blackbox Bucket 1 overlap probes (nq_aggregator_http_localhost, labelwatch_health_localhost, dns_neutralzone_localhost) from catalog to working blackbox.yml module + targets/local.yml entries + smoke harness, per the catalog's 5-criterion promotion path.",
+  "outcome": "PARKED — not promoted. The loop refused to land probe configs that cannot satisfy the promotion criteria. (\"Blackbox supplies vantage. NQ supplies restraint.\")",
+  "missing_preconditions": [
+    {
+      "id": "infra-1",
+      "what": "Live blackbox_exporter on :9115",
+      "status": "absent locally (not on PATH, :9115 not responding)",
+      "blocks": "promotion criteria 2,3,5 (probe returns probe_success; smoke step; rows survive real exporter output)",
+      "resolution": "deploy session — install/run blackbox_exporter on the host that needs the vantage"
+    },
+    {
+      "id": "infra-2",
+      "what": "Live nq-serve scrape loop ingesting the exporter",
+      "status": "absent locally (:9848 not responding)",
+      "blocks": "promotion criterion 4 (NQ ingests probe_* samples)",
+      "resolution": "deploy session — nq-monitor serve with prometheus_targets pointed at the exporter"
+    },
+    {
+      "id": "nq-gap-provenance-not-persisted",
+      "what": "scrape-target provenance is wire-only, NOT a queryable column",
+      "status": "FINDING — needs nq-side confirmation",
+      "detail": "MetricSample.scrape_target_name/scrape_target_url are stamped on the in-memory wire struct (crates/nq-witness/src/collect/prometheus.rs:75, per commit 1ea2000), but: (a) no migration in crates/nq-db/migrations/ mentions scrape_target; (b) crates/nq-db/src never references scrape_target_name. So provenance appears dropped at persistence. The blackbox lab's NQ_INTEGRATION.md asserts 'SQL composition keys off the provenance fields' and smoke-contract step 4 requires 'the stored MetricSample carries scrape_target_name' — neither is satisfiable through SQLite today.",
+      "blocks": "promotion criterion 4 INDEPENDENT of live infra — even with exporter + nq-serve running, the provenance is not queryable in the store",
+      "resolution": "an nq-side slice: migration adding scrape_target_name/scrape_target_url columns to the prometheus-sample persistence path + wiring the persist code. This is the ACTUAL gating precondition, upstream of the deploy session. Authorization-gated (Lane B) — not filed as a gap here; surfaced to operator."
+    }
+  ],
+  "harness_decision": "Did NOT write scripts/smoke_probe.sh. Its steps 1-2 need a live exporter to verify; steps 4-5 query persisted provenance that does not exist yet. Writing it now would be building belief by accretion against absent infra and an unconfirmed schema — exactly the reduction-over-integration trap. The harness lands when its preconditions (esp. provenance persistence) exist.",
+  "wheel_status": "turned correctly — the loop discovered a half-true precondition rather than manufacturing a fake-green promotion. This is the restraint, demonstrated.",
+  "next_action": "Lane B floorboards: NQ-CLOSE-003 host-trust paragraph (doc-only); NQ-CLOSE-002 retention-windows decision lock."
+}
