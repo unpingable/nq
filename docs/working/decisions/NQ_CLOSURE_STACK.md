@@ -70,4 +70,4 @@ The stack does not require strict-order authorization. The ranking is the operat
 - [`../gaps/EVIDENCE_RETIREMENT_GAP.md`](../gaps/EVIDENCE_RETIREMENT_GAP.md) — shipped finding-side basis lifecycle; NQ-CLOSE-002 is its retention-policy counterpart.
 - [`../gaps/SURFACE_TYPED_REVOCATION_CANDIDATE.md`](../gaps/SURFACE_TYPED_REVOCATION_CANDIDATE.md) — Lean-proved unlinked-not-closed kernel; NQ-CLOSE-002 adopts the shape locally.
 - [`../gaps/SENTINEL_LIVENESS_GAP.md`](../gaps/SENTINEL_LIVENESS_GAP.md) — external vantage; bounded by NQ-CLOSE-003's paragraph as the doc-only structural-limit answer today.
-- [`feedback_authority_effect_calibration`](../../../../home/jbeck/.claude/projects/-home-jbeck-git-notquery/memory/feedback_authority_effect_calibration.md) — governs review cadence on the candidate vocabulary in each slice.
+- [`feedback_authority_effect_calibration`](../../../../home/jbeck/.claude/projects/-home-jbeck-git-nq/memory/feedback_authority_effect_calibration.md) — governs review cadence on the candidate vocabulary in each slice.

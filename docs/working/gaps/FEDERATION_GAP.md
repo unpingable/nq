@@ -85,7 +85,7 @@ Testimony flows up; **action stays local**, through each scope's own gauntlet. T
 
 > **Read-only-upward isn't a feature flag. It's the constitution.**
 
-(Composes with [`feedback_knob_facing`](../../../../home/jbeck/.claude/projects/-home-jbeck-git-notquery/memory/feedback_knob_facing.md): NQ classifies world-state testimony; it does not authorize consequence. The constitutional rule is the federation altitude of the same boundary.)
+(Composes with [`feedback_knob_facing`](../../../../home/jbeck/.claude/projects/-home-jbeck-git-nq/memory/feedback_knob_facing.md): NQ classifies world-state testimony; it does not authorize consequence. The constitutional rule is the federation altitude of the same boundary.)
 
 ---
 
