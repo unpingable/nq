@@ -100,6 +100,25 @@ fn bare_critical_label_no_longer_appears_in_header_summary() {
     );
 }
 
+/// The masthead renders each axis as its own line element rather than a
+/// single `<br>`-joined blob, so the Severity and Response axes cannot
+/// visually run together into one sentence. The label text inside each
+/// line stays contiguous (the pins above depend on that).
+#[test]
+fn masthead_axes_render_as_separate_lines() {
+    let vm = vm_with_one_critical_business_hours();
+    let html = render_overview(&vm, &[]);
+
+    assert!(
+        html.contains("<div class=\"masthead-line\">Severity: 1 critical</div>"),
+        "Severity axis must render as its own masthead line"
+    );
+    assert!(
+        html.contains("<div class=\"masthead-line\">Response: 1 investigate business hours</div>"),
+        "Response axis must render as its own masthead line"
+    );
+}
+
 /// The `"no active findings"` and `"No active findings."` strings
 /// invented an axis (`active`) that FINDING_STATE_MODEL.md does not
 /// define. The header packet §3 and the dashboard ordering packet both
