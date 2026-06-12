@@ -1,0 +1,10 @@
+ M crates/nq-db/src/views.rs
+ M crates/nq-monitor/src/http/routes.rs
+ M crates/nq-monitor/tests/header_summary.rs
+ M docs/working/decisions/NQ_CLOSURE_STACK.md
+ M docs/working/decisions/preflights/NQ_SELF_SQLITE_WAL.md
+ M docs/working/gaps/FEDERATION_GAP.md
+?? .governor/
+?? crates/nq-db/tests/host_detail_view.rs
+?? crates/nq-monitor/tests/posture_legend.rs
+?? docs/working/decisions/NQ_ECOSYSTEM_TRIAGE.md

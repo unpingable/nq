@@ -1,0 +1,50 @@
+{
+  "kind": "review",
+  "ts": "2026-06-12T16:15:00Z",
+  "slice": "inherited-slice-admission",
+  "lane": "A2",
+  "description": "Orphaned prior-session dirty tree, classified and resolved. Two provenance-distinct slices, not one blob.",
+  "inputs": {
+    "dirty_tree_at_start": [
+      "crates/nq-db/src/views.rs (M)",
+      "crates/nq-monitor/src/http/routes.rs (M)",
+      "crates/nq-monitor/tests/header_summary.rs (M)",
+      "crates/nq-db/tests/host_detail_view.rs (??)",
+      "crates/nq-monitor/tests/posture_legend.rs (??)",
+      "docs/working/decisions/NQ_CLOSURE_STACK.md (M)",
+      "docs/working/gaps/FEDERATION_GAP.md (M)",
+      "docs/working/decisions/preflights/NQ_SELF_SQLITE_WAL.md (M)"
+    ],
+    "preserved_to": ".governor/inherited/orphaned-slice-2026-06-12.*"
+  },
+  "classification": {
+    "ui_slice": {
+      "files": 5,
+      "shape": "completeness — fills documented host_detail TODOs + adds response-posture legend",
+      "verdict": "admit"
+    },
+    "reorg_path_fixups": {
+      "files": 3,
+      "good": ["NQ_CLOSURE_STACK.md notquery→nq", "FEDERATION_GAP.md notquery→nq"],
+      "broken": ["NQ_SELF_SQLITE_WAL.md — sed conflated repo-rename with un-cutover deployment path; reverted"],
+      "verdict": "admit-good / revert-broken"
+    }
+  },
+  "evidence_verdict": {
+    "result": "pass",
+    "basis": "cargo test -p nq-db -p nq-monitor --no-fail-fast: 45 tests pass (38 nq-db lib + 5 header_summary + 2 posture_legend + others), exit 0. Worker claim re-run by controller, not trusted.",
+    "rerun_by_controller": true
+  },
+  "standing_verdict": {
+    "result": "admissible",
+    "basis": "Lane A2 — completeness on an already-open surface (documented TODOs). No fresh forcing case required (monitoring completeness rule). No new surface opened."
+  },
+  "outcome": {
+    "commits": [
+      "0f35a2c feat(ui): host detail view query population + response-posture legend",
+      "834049c docs: follow notquery→nq memory-path rename in two cross-refs"
+    ],
+    "reverts": ["docs/working/decisions/preflights/NQ_SELF_SQLITE_WAL.md (sed-mangled, restored to HEAD)"]
+  },
+  "next_action": "commit loop standup; then Lane A nq-blackbox Bucket 1 (config+harness landable; ingestion verification deferred — no live exporter/nq-serve locally)"
+}
