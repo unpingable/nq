@@ -27,7 +27,12 @@ AUDIT → PLAN → DISPATCH → EXECUTE → REVIEW → (AUDIT)
 - **REVIEW** — two verdicts, evidence-verdict checked first:
   - **evidence verdict** — did the acceptance hold? Re-run the worker's claimed tests;
     do not trust the claim (`cargo test -q -p <crate>`, smoke output, etc.). Grep over trust.
-    A slice that passed by costume does not advance.
+    A slice that passed by costume does not advance. **Check the runner's REAL exit code —
+    never pipe it through `tail`/`head`/`grep`** (a pipeline returns the *last* command's
+    exit code, so `cargo test | tail` reports 0 even when cargo failed). Scar 2026-06-12:
+    migration 058 shipped with three red tests masked exactly this way; the next slice's
+    re-run caught it. Run the test command bare (background tasks report the true exit
+    code) or `… ; echo "EXIT=$?"` before the pipe.
   - **standing verdict** — was this slice *admissible to dispatch* in the first place?
     Lane-A by completeness, or Lane-B with a recorded operator authorization? A green
     test does not launder an inadmissible dispatch.

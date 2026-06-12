@@ -1,6 +1,6 @@
 # Scope packet — SILENCE_UNIFICATION V1 (classified Lane A; first slice named)
 
-**Status:** scope packet (batch C deliverable). Classifies SILENCE_UNIFICATION under Standing Conditional Authorization and names the exact executable first slice. The full six-detector rollout is **not all small-and-clean** (open design questions below), so per batch D the loop stops here with a precise hand-off rather than rushing the code.
+**Status:** scope packet — **witness pair now SHIPPED** (`smart_witness_silent` + `zfs_witness_silent`, 2026-06-12, commit `d955578`; see [`FEATURE_HISTORY.md#silence_unification-v1-witness-pair`](FEATURE_HISTORY.md#silence_unification-v1-witness-pair)). This packet classified SILENCE_UNIFICATION under Standing Conditional Authorization and named the executable first slice; that slice (and its `zfs` twin) is built. The four non-witness detectors remain deferred — the full rollout is **not all small-and-clean** (OQ3/OQ4 below), so the loop stopped at the witness pair per batch D rather than rushing the ambiguous four.
 **Filed:** 2026-06-12 (ag-claude loop).
 **Design record:** [`../gaps/SILENCE_UNIFICATION_GAP.md`](../gaps/SILENCE_UNIFICATION_GAP.md).
 
