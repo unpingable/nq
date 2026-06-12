@@ -20,6 +20,22 @@ The chronological order below is newest-first.
 
 ---
 
+## SILENCE_UNIFICATION V1 (witness pair)
+
+**Status:** `partial` 2026-06-12. The two witness-silence detectors carry the shared silence contract; the four non-witness silence detectors are deferred (OQ3/OQ4).
+
+**Shipped commit:** `d955578` feat(silence): SILENCE_UNIFICATION V1 witness contract (+ batch-A migration-058 repair).
+
+**What landed:** `smart_witness_silent` and `zfs_witness_silent` findings now carry `silence_scope='witness'`, `silence_basis='age_threshold'`, `silence_duration_s=<received_age>`, `silence_expected='none'` on `warning_state` (columns from migration 046). Derived at the persist seam (`publish.rs` `update_warning_state_inner`) from existing finding fields — `detect.rs` is untouched, so the detectors' semantics are structurally unaffected. Implementation choice (OQ1) recorded: "documented set of finding-meta fields" (the gap's sanctioned alternative) over a `Finding` struct field, to avoid churning 67 construction sites for a fully-derivable contract.
+
+**Evidence:** `publish::tests::silence_contract_emitted_for_witness_silent_and_not_for_others` — both detectors emit the contract, it is queryable as columns (no kind-string parsing), and a control non-silence finding carries NULL across the contract. nq-db suite green (real exit codes).
+
+**What remains (deferred, not built):** `stale_host`, `stale_service`, `signal_dropout`, `log_silence` — these carry genuine bucket-assignment questions (silence vs intended-liveness, OQ3/OQ4 in `SILENCE_UNIFICATION_GAP`). Scope: [`NQ_SILENCE_UNIFICATION_SCOPE.md`](NQ_SILENCE_UNIFICATION_SCOPE.md). Consumers must read missing `silence_scope` as "not yet unified," not "not silence."
+
+**Field notes:** the slice surfaced and repaired a batch-A defect — migration 058 shipped (commit `1bd5c38`) with `CURRENT_SCHEMA_VERSION` un-bumped and the upgrade/backup/migrate_fresh_db tests red, masked because `cargo test | tail` returns tail's exit code. Repaired in `d955578`. Lesson recorded in `docs/loop-protocol.md` § Receipts.
+
+---
+
 ## HOST_TRUST_BOUNDARY (NQ-CLOSE-003)
 
 **Status:** `shipped` (doc-only) 2026-06-12. Closure-stack slice #3 — a published constitutional note, no code, no schema.

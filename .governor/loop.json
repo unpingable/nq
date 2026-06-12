@@ -10,13 +10,17 @@
     "doctrine 333da0d; provenance-persistence 1bd5c38 (+collision guard); blackbox harness nq-blackbox dcb8e66; series-identity REFERRED (scope packet); SILENCE_UNIFICATION classified Lane A, scope packet, first slice named",
     "Receipts: 2026-06-12T1730Z.sca-batch-close-audit.json"
   ],
+  "silence_batch_done": [
+    "smart_witness_silent + zfs_witness_silent silence contract SHIPPED (d955578, persist-derivation per OQ1); also REPAIRED batch-A migration-058 masked failures (CURRENT_SCHEMA_VERSION 57->58, upgrade-test constants, publish !metric_sets guard). Verified green with REAL exit codes (the masking scar is now in loop-protocol § REVIEW).",
+    "Four non-witness silence detectors still deferred (OQ3/OQ4). Receipt: 2026-06-12T1830Z.silence-batch-close-audit.json"
+  ],
   "completed_slices": [
     "inherited-slice-admission (A2): UI slice admitted 0f35a2c + path-fixups 834049c, mangled WAL doc reverted. Receipt: 2026-06-12T1615Z.inherited-slice-admission.json",
     "lane-a-nq-blackbox (A1): PARKED — probe promotion infra-gated (no exporter/nq-serve) AND a real upstream finding (scrape-target provenance is wire-only, not a queryable column). Receipt: 2026-06-12T1625Z.lane-a-blackbox-parked.json",
     "lane-b-closure-floorboards (B): NQ-CLOSE-003 shipped (docs/architecture/HOST_TRUST_BOUNDARY.md); NQ-CLOSE-002 policy locked (docs/working/decisions/NQ_RETENTION_WINDOWS.md). Receipt: 2026-06-12T1635Z.lane-b-floorboards.json",
     "lane-c-promotion-analysis: analysis-only, promoted nothing (docs/working/decisions/NQ_LANE_C_PROMOTION_ANALYSIS.md). Receipt: 2026-06-12T1645Z.batch-close-audit.json"
   ],
-  "next_action": "await operator direction — loop idle in AUDIT. Open items: confirm CLOSE-002 integers; decide blackbox provenance-persistence; authorize CLOSE-001 when ready; confirm SILENCE_UNIFICATION is completeness; authorize OSS Track 1 when public state coherent",
+  "next_action": "await operator direction — loop idle in AUDIT. Referred (operator decision): series-identity migration; SILENCE OQ3/OQ4 (four non-witness detectors). Clean under standing authorization if desired: DETECTOR_TAXONOMY bucket-2 silence sub-taxonomy doc (now 2 detectors carry the contract). Deploy-session: blackbox Bucket 1 live promotion (harness ready). Still pending earlier: CLOSE-001 authorize; OSS Track 1 when public state coherent",
   "batch_plan": [
     "1. inherited dirty tree: admit-or-quarantine (UI slice + reorg path-fixups separately)",
     "2. Lane A: nq-blackbox Bucket 1 probes, then Bucket 3",

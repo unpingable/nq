@@ -1,0 +1,26 @@
+{
+  "kind": "audit",
+  "ts": "2026-06-12T18:30:00Z",
+  "batch": "SCA-governed silence batch (operator-authorized A+B+C+D): witness-silence contract retrofit + audit close",
+  "phase_out": "AUDIT (batch closed; loop idle)",
+  "authorization_mode": "Standing Conditional Authorization — completeness/paper-built, no policy choice, no external effect; classes pre-ratified by operator",
+  "slices": [
+    {"slice": "A smart_witness_silent silence-contract", "outcome": "shipped", "commit": "d955578"},
+    {"slice": "B zfs_witness_silent silence-contract", "outcome": "shipped (same persist-derivation, clean)", "commit": "d955578"},
+    {"slice": "C tests", "outcome": "shipped", "detail": "silence_contract_emitted_for_witness_silent_and_not_for_others — contract emitted + queryable without kind-parsing + unrelated findings NULL (does not alter unrelated semantics)"},
+    {"slice": "D stop + audit close", "outcome": "done", "detail": "four non-witness detectors NOT classified (OQ3/OQ4 deferred per operator); series-identity NOT rebuilt (referred); did not smooth ambiguity"}
+  ],
+  "implementation_choice_recorded": "OQ1 (struct-field vs finding-meta lookup): chose persist-derivation from existing finding fields (kind->scope+basis, value->duration) — the gap's sanctioned 'documented finding-meta fields' option — over a Finding struct field, to avoid churning 67 construction sites for a fully-derivable contract. detect.rs untouched -> unrelated witness semantics structurally unaffected. An implementation choice (not policy/semantic), made under SCA with this recorded reason.",
+  "unplanned_repair": {
+    "what": "batch-A migration-058 shipped broken (commit 1bd5c38): CURRENT_SCHEMA_VERSION never bumped 57->58; migrate_fresh_db hardcoded 57; upgrade/backup integration tests red",
+    "why_missed": "SCAR: `cargo test | tail` returns tail's exit code, not cargo's — batch A's verification reported exit 0 while 3 tests were red",
+    "caught_by": "this slice's evidence-verdict re-run (bare exit code) surfaced it; reduction (stash publish.rs) isolated it to 058 not silence",
+    "fixed_in": "d955578 — version bump, constant-not-literal assertion, upgrade.rs per-migration constants for 058, publish section-7 guarded by !metric_sets.is_empty() (behavior-preserving forward-compat)",
+    "doctrine_update": "loop-protocol.md § REVIEW: never pipe the test runner through tail/head/grep; check the real exit code"
+  },
+  "evidence_verdict": "pass (REAL exit codes, not pipe-masked): nq-db all green incl. upgrade/backup/migrate_fresh_db/silence; nq-core 177+ green; nq-monitor green",
+  "process_verdict": "WIP held; SCA muscle-memory exercised cleanly on the authorized silence retrofits; the masking scar was caught and repaired by the loop's own re-run discipline rather than shipping a second broken slice",
+  "constraints_honored": ["nothing pushed", "no federation", "no OSS release", "no CLOSE-001 build", "no series-identity rebuild", "no stale_host/signal_dropout classification", "doctrine touched only to record the SCA stop reason + the exit-code scar", "stopped rather than smoothing ambiguity (the four detectors)"],
+  "still_referred": ["series-identity migration (NQ_SCRAPE_TARGET_IDENTITY_SCOPE.md)", "SILENCE OQ3/OQ4 — four non-witness detectors"],
+  "next_action": "await operator. Clean executable under standing authorization if desired: the silence sub-taxonomy doc (DETECTOR_TAXONOMY bucket 2) now that 2 detectors carry the contract."
+}
