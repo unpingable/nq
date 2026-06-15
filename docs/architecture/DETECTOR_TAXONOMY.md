@@ -50,7 +50,36 @@ Typical shape: direct or thresholded-direct; noisy without duration/magnitude ga
 
 NQ today: `stale_host`, `stale_service`, `service_down`, `signal_dropout`, `log_silence`, `zfs_witness_silent`, `smart_witness_silent`.
 
-This is where **down is down**. Direct present-tense findings live here. The six detectors collapse into three mechanism shapes (age-threshold, presence-delta, baseline-collapse) that share an operator-facing concept but not a SQL pattern — see [`gaps/SILENCE_UNIFICATION_GAP.md`](../working/gaps/SILENCE_UNIFICATION_GAP.md) for the proposed contract.
+This is where **down is down**. Direct present-tense findings live here. `service_down` is the pure case. The other six are **silence-shaped** — they answer "did this thing go quiet?" — and collapse into three mechanism shapes (age-threshold, presence-delta, baseline-collapse) that share an operator-facing concept but not a SQL pattern. See the silence sub-taxonomy below and [`gaps/SILENCE_UNIFICATION_GAP.md`](../working/gaps/SILENCE_UNIFICATION_GAP.md).
+
+#### 2a. Silence sub-taxonomy (SILENCE_UNIFICATION — contract V1 shipped, partial)
+
+Silence is a **positive finding class, not the absence of findings**: NQ observed that something stopped reporting, and that absence is itself evidence (distinct from a coverage gap, which is "we failed to observe" — bucket 9). All six emit `FailureClass::Silence`, but historically each reinvented the contract for the same question.
+
+SILENCE_UNIFICATION defines a shared contract every silence finding carries, regardless of mechanism, so consumers (CLI export, dashboard, Night Shift) iterate over silence findings without parsing `kind` strings:
+
+```text
+silence_scope:      host | service | source | witness | series | log_source | extraction
+silence_basis:      age_threshold | presence_delta | baseline_collapse
+silence_duration_s: how long the object has been silent
+silence_expected:   none | maintenance | intended_liveness   (bridge to MAINTENANCE / REGISTRY_PROJECTION)
+```
+
+The **mechanism is not the contract** — three implementation shapes stay distinct in SQL while sharing the operator-facing fields:
+
+| Mechanism (`silence_basis`) | Predicate | Detectors |
+|---|---|---|
+| `age_threshold` | last evidence older than threshold | `stale_host`, `stale_service`, `zfs_witness_silent`, `smart_witness_silent` |
+| `presence_delta` | existed in recent history, absent in current | `signal_dropout` |
+| `baseline_collapse` | was producing nonzero output, now zero | `log_silence` |
+
+**Shipped (V1, 2026-06-12):** the two witness detectors — `smart_witness_silent` + `zfs_witness_silent` — carry the full contract, **derived at the persist seam** (`publish.rs`) from existing finding fields; `detect.rs` is untouched, so detector semantics are structurally unaffected (OQ1 resolved as "documented finding-meta fields," not a `Finding` struct field). `extraction_stale` (DURABLE_ARTIFACT_SUBSTRATE V1) also composes onto the contract. Consumers must read a missing `silence` block as **"not yet unified," not "not silence."**
+
+**Deferred (the four non-witness detectors):** `stale_host`, `stale_service`, `signal_dropout`, `log_silence` await OQ3/OQ4 — whether `stale_*` reclassify to bucket 8 once REGISTRY_PROJECTION lands, and whether `signal_dropout` is liveness or inventory. They emit `FailureClass::Silence` today but do not yet carry the contract fields.
+
+**Witness-silence is parent-node evidence, not a peer alert.** Under TESTIMONY_DEPENDENCY_GAP, `*_witness_silent` detects that *a producer of other findings has stopped testifying* and promotes to a `node_unobservable` parent that suppresses the descendants the witness produced (one parent alert, not N peer alerts). The detector stays — kind string and mechanism preserved — but its role on the alerting surface changes. This is why these two straddle bucket 2 and bucket 9 (see §9).
+
+Full spec + acceptance: [`gaps/SILENCE_UNIFICATION_GAP.md`](../working/gaps/SILENCE_UNIFICATION_GAP.md); landed-work record: [`decisions/FEATURE_HISTORY.md` § SILENCE_UNIFICATION V1](../working/decisions/FEATURE_HISTORY.md).
 
 ### 3. Functional correctness
 
@@ -185,7 +214,7 @@ These are **not** taxonomy buckets. They cut across buckets and must remain orth
 | Bucket | NQ coverage | Notes |
 |--------|-------------|-------|
 | 1. Resource | partial | host metrics yes; net/inodes/latency no |
-| 2. Liveness | strong | five-detector silence family; unification candidate |
+| 2. Liveness | strong | service_down + six-detector silence family; SILENCE_UNIFICATION contract V1 on 2 witness detectors (§2a), 4 deferred (OQ3/OQ4) |
 | 3. Correctness | partial | error_shift, regime_shift, smart_status_lies |
 | 4. Progress | **gap** | queue/lag fields collected, no detector |
 | 5. Dependency | **gap** | docker absent-vs-unreachable split is the only example |
