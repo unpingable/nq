@@ -25,7 +25,7 @@
     "lane-c-promotion-analysis: analysis-only, promoted nothing (docs/working/decisions/NQ_LANE_C_PROMOTION_ANALYSIS.md). Receipt: 2026-06-12T1645Z.batch-close-audit.json",
     "detector-taxonomy-silence-subtaxonomy (2026-06-15, cold context-switch from AG): SILENCE_UNIFICATION V1 step 4 — DETECTOR_TAXONOMY bucket 2 grew §2a (silence contract fields + 3 mechanism shapes + shipped-vs-deferred detector status + witness-as-parent-evidence); flipped bucket-2 table row. Docs-only, commit 3b7c0da, doc-code reconciliation under standing auth. HEAD re-verified green on cold entry (cargo test --workspace exit 0). Receipt: 2026-06-15T1612Z.detector-taxonomy-silence-subtaxonomy.json"
   ],
-  "next_action": "await operator direction — loop idle in AUDIT. DONE 2026-06-15: DETECTOR_TAXONOMY bucket-2 silence sub-taxonomy doc (was the standing-auth clean item; commit 3b7c0da). Referred (operator decision): series-identity migration; SILENCE OQ3/OQ4 (four non-witness detectors — tagging them with the contract is gated on these). Deploy-session: blackbox Bucket 1 live promotion (harness ready). Still pending earlier: CLOSE-001 authorize; OSS Track 1 when public state coherent. MICRO-OBSERVATION (not fixed): re_entry_probes[3] still pipes `cargo test ... | tail -5` — masks exit code, mild tension with the verification-discipline hardening shipped in 77302ed; left for a future probe-hygiene slice.",
+  "next_action": "await operator direction — loop idle in AUDIT. DONE 2026-06-15: DETECTOR_TAXONOMY bucket-2 silence sub-taxonomy doc (was the standing-auth clean item; commit 3b7c0da). Referred (operator decision): series-identity migration; SILENCE OQ3/OQ4 (four non-witness detectors — tagging them with the contract is gated on these). Deploy-session: blackbox Bucket 1 live promotion (harness ready). Still pending earlier: CLOSE-001 authorize; OSS Track 1 when public state coherent. PROBE HYGIENE DONE 2026-06-15: re_entry_probes[3] no longer masks the verifier exit — now `set -o pipefail; cargo test … | tail -5; echo EXIT=${PIPESTATUS[0]}` (tail kept for glance, cargo's real exit surfaced; aligned with the 77302ed verification hardening). No masked verifier exit remains in re_entry_probes.",
   "batch_plan": [
     "1. inherited dirty tree: admit-or-quarantine (UI slice + reorg path-fixups separately)",
     "2. Lane A: nq-blackbox Bucket 1 probes, then Bucket 3",
@@ -44,6 +44,6 @@
     "cat .governor/loop.json",
     "git -C . log --oneline -8",
     "git -C . status --short",
-    "cargo test -q -p nq-db -p nq-monitor --no-fail-fast 2>&1 | tail -5"
+    "set -o pipefail; cargo test -q -p nq-db -p nq-monitor --no-fail-fast 2>&1 | tail -5; echo EXIT=${PIPESTATUS[0]}"
   ]
 }

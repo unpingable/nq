@@ -1,0 +1,26 @@
+{
+  "receipt": "probe-hygiene-exit-masking",
+  "timestamp": "2026-06-15T1619Z",
+  "session_id": "ag-claude-drives-nq (cold context switch from agent_gov P4 close)",
+  "class": "loop/verification-discipline hygiene (Standing Conditional Authorization)",
+  "slice": "Fix loop.json re_entry_probes that mask the verifier exit code (operator-directed micro-observation follow-up)",
+  "drift_found": "re_entry_probes[3] was `cargo test -q -p nq-db -p nq-monitor --no-fail-fast 2>&1 | tail -5` — a pipeline ending in tail returns tail's exit (always 0), masking cargo's real status. A fossil of the exact masked-exit pathology the 2026-06-12 hardening (77302ed) closed, sitting in the loop's own re-entry probe. Inspected all 4 probes; this was the only masked verifier pipeline (the other 3 are cat/git, non-verifier).",
+  "change": {
+    "file": ".governor/loop.json",
+    "before": "cargo test -q -p nq-db -p nq-monitor --no-fail-fast 2>&1 | tail -5",
+    "after": "set -o pipefail; cargo test -q -p nq-db -p nq-monitor --no-fail-fast 2>&1 | tail -5; echo EXIT=${PIPESTATUS[0]}",
+    "rationale": "Sanctioned form per loop-protocol § REVIEW (pipefail + PIPESTATUS). Tail kept for the glance (operator allowance: 'may still show log tails, but only after preserving the verifier status'); cargo's real exit is both surfaced as EXIT=<n> and propagated by pipefail. Crate subset and flags unchanged — exit-masking fix only, no scope change.",
+    "scope": "loop state only; no detector code, schema, migration, UI, or OQ3/OQ4 touched"
+  },
+  "proof": {
+    "non_zero_surfaces": "synthetic `set -o pipefail; (exit 3) | tail -5; echo EXIT=${PIPESTATUS[0]}` printed EXIT=3 (old form would print EXIT=0)",
+    "real_probe_green": "ran the fixed probe verbatim against the real nq-db + nq-monitor subset: EXIT=0 (background task exit 0)",
+    "json_valid": true
+  },
+  "acceptance_met": "no masked cargo/test exit path remains in re_entry_probes; loop state validates; verifier probe exits 0; committed as its own small slice; no push.",
+  "two_verdict": {
+    "cargo": "fixed probe exits 0 (real subset); exit code now observed, not inferred from tail",
+    "dogfood": "HELD — smallest edit, in-class, reversible, no schema/UI/code/referred-item touched, no push; the loop no longer grades itself through a kaleidoscope"
+  },
+  "push": "NOT pushed (operator owns the signal)"
+}
