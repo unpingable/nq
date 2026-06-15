@@ -1,0 +1,29 @@
+{
+  "receipt": "witness-position-export-projection-gap",
+  "timestamp": "2026-06-15T1631Z",
+  "session_id": "ag-claude-drives-nq (cold context switch from agent_gov P4 close)",
+  "class": "doc-only gap-spec (operator-authorized this turn; names a referred policy gap — NOT standing-auth implementation)",
+  "slice": "File NQ gap-spec for witness.position export-projection boundary mismatch",
+  "preceded_by": "read-only constellation topology sweep (NQ ↔ Nightshift ↔ Wicket/WLP/Continuity) — topology report delivered to operator before this doc",
+  "topology_finding": {
+    "produced": "WitnessPosition on nq.witness.v1 WitnessPacket (nq-core/src/witness.rs:137) + PreflightResult.supports[] SupportingWitnessPacket",
+    "consumed_boundary": "Nightshift ingests ONLY nq.finding_snapshot.v1 (nq findings export); does NOT ingest witness packets / preflight supports",
+    "consumer_state": "Nightshift FULLY wired: NqExportDto.position -> translate_nq -> FindingSnapshot.position -> nq_peek render; no-inference sentinel (tests/witness_position_sentinel.rs) pins absence->'not testified', never a guessed lane",
+    "drop_point": "NQ export: nq findings export does not project position onto nq.finding_snapshot.v1 -> dto.position always None -> consumer starved (renders 'not testified' for every real finding)"
+  },
+  "why_referred_not_standing_auth": "Closing it is an attribution POLICY decision, not a wiring fix: a finding has plural supporting-witness custody (different positions possible), so a single finding-level scalar collapses plural custody into a badge (weak->strong laundering shape). Also: NQ core edit + nq.finding_snapshot.v1 schema/contract touch + invents policy — all three are fenced.",
+  "deliverable": {
+    "doc": "docs/working/gaps/WITNESS_POSITION_EXPORT_PROJECTION_GAP.md (status: candidate / referred to operator policy; no implementation authorized)",
+    "index": "registered in docs/working/gaps/README.md under Consumer contract",
+    "candidate_shapes_named_none_selected": [
+      "(A) scalar FindingSnapshot.position — documented risk: badge/laundering, needs a collapse rule",
+      "(B) sorted-set FindingSnapshot.witness_positions — preserves plurality, loses per-witness attribution",
+      "(C) support-level FindingSnapshot.supporting_witnesses[].position — most faithful, largest export-shape change"
+    ],
+    "operator_lean_recorded_nonbinding": "operator leans away from scalar (A) toward set (B) / preferably support-level (C): 'scalar position turns plural custody into a badge.' Recorded as input; doc selects nothing."
+  },
+  "acceptance_met": "durable handle exists + registered; states why referred/operator-policy not standing-auth; recommends candidate shapes without selecting; no projection/schema/export/Nightshift change; scalar-vs-set-vs-support-level NOT decided; support-level rendering NOT decided.",
+  "fences_honored": "no projection implemented; no schema/export code touched; no Nightshift edit; no shape selected; no NQ core code change (doc + index only); no push.",
+  "loop_state": "returns to AUDIT idle",
+  "push": "NOT pushed (operator owns the signal)"
+}

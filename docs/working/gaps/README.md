@@ -78,6 +78,7 @@ The detailed Shipped State narrative subsections that already exist in some gap 
 
 ### Consumer contract
 - [`FINDING_EXPORT_GAP`](FINDING_EXPORT_GAP.md) — `shipped` (see [FEATURE_HISTORY § FINDING_EXPORT V1](../decisions/FEATURE_HISTORY.md#finding_export-v1)). Canonical `FindingSnapshot` DTO + `nq-monitor findings export` CLI. Identity + lifecycle + diagnosis + regime + observations + admissibility + coverage + node_unobservable + basis as one versioned object. Findings are evidence, not commands.
+- [`WITNESS_POSITION_EXPORT_PROJECTION_GAP`](WITNESS_POSITION_EXPORT_PROJECTION_GAP.md) — `candidate` / **referred to operator policy; no implementation authorized**. `WitnessPosition` is produced on `nq.witness.v1` / preflight `supports[]` and Nightshift is already wired to preserve + render it (with a no-inference sentinel), but `nq findings export` does not project it onto `nq.finding_snapshot.v1` — the consumer is starved. Not a wiring fix: a finding has plural supporting-witness custody, so collapsing many positions into one finding-level scalar is the badge / weak→strong laundering shape. Names candidate shapes (scalar / sorted-set / support-level) and selects none; the attribution decision is operator policy.
 
 ### Storage
 - [`STORAGE_BACKEND_GAP`](STORAGE_BACKEND_GAP.md) — `proposed`. SQLite default, Postgres production target, contract-first. V1 is audit + fence (no `PgStore` implementation). Separates target-substrate (what NQ monitors) from own-substrate (where NQ records state). Scaling the store must not scale the trust assumptions.
