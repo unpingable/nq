@@ -1,0 +1,27 @@
+{
+  "receipt": "detector-taxonomy-silence-subtaxonomy",
+  "timestamp": "2026-06-15T1612Z",
+  "session_id": "ag-claude-drives-nq (cold context switch from agent_gov P4 close)",
+  "class": "doc-code reconciliation (Standing Conditional Authorization)",
+  "slice": "SILENCE_UNIFICATION V1 step 4 — DETECTOR_TAXONOMY bucket-2 silence sub-taxonomy doc",
+  "cold_entry_audit": {
+    "git": "HEAD 7436fe6 == origin/main, 0 ahead / 0 behind, tree clean, no unpushed commits",
+    "verifier": "bare `cargo test --workspace` per loop-protocol § REVIEW; re-ran HEAD on cold entry: exit 0 (the verdict; per-target counts scrolled past tail-capture, exit code is the verdict by rule, not the tail)",
+    "stale_stamp_noted": "loop.json last_verified_commit was 5ed112c — stale; repo current at 7436fe6"
+  },
+  "drift_found": "DETECTOR_TAXONOMY bucket 2 called the silence contract 'proposed' and named the contract field vocabulary (silence_scope/silence_basis) zero times, while V1 shipped on smart_witness_silent + zfs_witness_silent 2026-06-12 (FEATURE_HISTORY, commit d955578).",
+  "change": {
+    "file": "docs/architecture/DETECTOR_TAXONOMY.md",
+    "commit": "3b7c0da",
+    "added": "§2a Silence sub-taxonomy — positive-finding-class framing (vs bucket-9 coverage gap), the four contract fields, the three mechanism shapes (age_threshold/presence_delta/baseline_collapse: mechanism is not the contract), SHIPPED-vs-DEFERRED detector status, witness-silence-as-parent-evidence (TESTIMONY_DEPENDENCY); flipped the bucket-2 summary-table row to six-detector family + V1-on-2/4-deferred.",
+    "scope": "docs-only; no code/detector/schema change"
+  },
+  "acceptance_met": "SILENCE_UNIFICATION acceptance line 'DETECTOR_TAXONOMY bucket 2 references the contract' satisfied; the witness-silence discipline is now legible from the taxonomy without leaving for the gap spec.",
+  "two_verdict": {
+    "cargo": "N/A (docs-only); HEAD green pre-edit (cargo test --workspace exit 0)",
+    "dogfood": "HELD — in-class standing-auth slice, reversible, no schema/UI/product expansion, no push; scope preference (smallest witness-discipline slice, avoid UI churn, no migration) honored"
+  },
+  "boundaries_honored": "no code change (tagging the 4 non-witness detectors stays gated on OQ3/OQ4 — referred); no schema migration; no UI; no new typed enums; no push",
+  "fresh_finding_or_referral": "none new; OQ3/OQ4 (bucket placement of stale_*/signal_dropout) remain operator-referred",
+  "push": "NOT pushed (operator owns the signal)"
+}
