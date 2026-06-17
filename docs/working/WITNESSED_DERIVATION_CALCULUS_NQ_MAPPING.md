@@ -28,13 +28,17 @@ not co-located with NQ and not reachable from any NQ commit.
 |---|---|
 | Result custody | **Private working repo** (lean/agent_gov constellation). Compiles sorry-free there. |
 | Private axiom receipt | commit `51921b4` — **breadcrumb only, NOT fetchable from NQ.** Do not cite as a verifiable anchor. |
-| Public Lean mirror | **LAGS the private repo as of 2026-06-17.** The result is not fully landed publicly yet. |
-| Public hash anchor | ⟨OPERATOR TODO 2026-06-17⟩ — fill in `<public-repo-url>@<commit>` once pushed. Until filled, the public mirror is **not** a verification path for this note's claims. |
+| Public Lean repo | `github:unpingable/lean`, path `experiments/no_free_lift_wiring/` (`Successor/`). As of 2026-06-17 the result **has landed in the local working tree** — committed, then ratified — but is **NOT pushed**: local `main` is ahead 4 of `origin/main`, so these commits are not on `origin` and not publicly fetchable yet. |
+| Hash anchor | Landing commit `df9e7b7` ("successor, witness derivation"); ratified at HEAD `28616b4` ("ratified, sure, why not"). **Unverifiable until pushed** — recorded, not yet a public reproducibility path. Successor sources carry no `sorry`/`admit` (comments at `Normalization.lean:177,239` assert sorry-free); a full `lake build` has **not** been run from the NQ side. |
 
-> **Custody honesty:** the verifiable artifact lives in the private repo. This note's
-> claims about the calculus are testimony *about* that repo, not something a reader of
-> NQ can independently `lake build`. When the public mirror catches up, replace the TODO
-> with the real `url@hash` and this note's pillar claims become publicly checkable.
+> **Custody honesty (both directions):** a private hash must not masquerade as public
+> reproducibility — and neither may a *committed-but-unpushed local* commit. As of
+> 2026-06-17, `df9e7b7` / `28616b4` exist only in the local `unpingable/lean` working
+> tree (ahead 4 of `origin/main`); a reader outside the workstation cannot fetch them.
+> The anchor becomes a real verification path only after `git push origin main` **and**
+> the repo actually being public — at which point this note's pillar claims move from
+> testimony to independently `lake build`-checkable. Until then they remain reported,
+> not verified.
 
 ---
 
