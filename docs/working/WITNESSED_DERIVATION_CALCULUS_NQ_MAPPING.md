@@ -86,6 +86,17 @@ conjunctive. That is exactly the shape the calculus's normalization theorem addr
 This is a **candidate**, not a proven NQ property. Whether NQ's real paths normalize to
 this form is an open question the specimen exists to probe — see §5 non-claims.
 
+> **Terminology is provisional — "weaken" is a placeholder, and may be wrong.** In the
+> proof-theoretic sense, *weakening* is a structural rule that **adds** to the context.
+> What NQ does at the export boundary is **forget a field** (drop `position`) — that is
+> **projection / forgetting**, not obviously structural weakening. The two must not be
+> conflated: calling a projection "weakening" would itself be a theorem-name laundering of
+> the kind this effort prosecutes. The operation's exact proof-theoretic identity is
+> **open** and must be pinned (specimen plan §2.4 / exit criteria) before `carry* ;
+> weaken*` may be asserted rather than entertained. The load-bearing law is a property of
+> *projection*: `forget(w) ⊬ w` — you cannot recover `position` from the scalar finding.
+> Until pinned, read the normal form as `carry* ; forget*` (candidate).
+
 ---
 
 ## 4. Why the correspondence is suspiciously clean
@@ -117,6 +128,19 @@ real correspondence and not a flattering analogy:
 - **Discrimination / fail-closed:** the `Verdict` enum and the constitutional
   `cannot_testify` refusal list (`nq/crates/nq-core/src/preflight.rs`) are proto-sequent
   outcomes — they classify whether available premises support the requested conclusion.
+
+Read strongly: NQ had **independently evolved a local witnessed-derivation discipline
+before the general calculus was named.** Two laws are already embodied in executable Rust,
+not imposed retrospectively:
+
+```text
+Finding ⊬ Witness(Finding)        -- no self-authorization (disk_state_witness_projection.rs:83-85)
+MissingBridge ⟹ Refusal           -- not  MissingBridge ⟹ FabricatedWitness  (refuses rather than fakes, :14-18,103-117)
+```
+
+This is the load-bearing reason the correspondence is not a taxonomy applied after the
+fact: the code was already computing the prohibition. It is also why this stays a
+*candidate* mapping and not a claim of identity — see the terminology caveat in §3.
 
 ---
 

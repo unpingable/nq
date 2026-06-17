@@ -91,12 +91,25 @@ inhabitant must satisfy. Sketch only:
 - `Export : FindingClaim → ExportClaim` — drops nothing that was present (the finding had
   no position); declares strictly less than the witnesses know. An *explicit weakening*.
 
-### 2.4 Explicit weakening relation
+### 2.4 Forgetting relation (provisionally "weakening" — name to be pinned)
 
-Define `weaken : Claim → Claim` as the only sanctioned way to lose information: it may
-*remove* an assertion (e.g. position) but may never *add* or *upgrade* one. `Export` must
-factor as `carry* ; weaken*` with the weakening accounting for exactly the withheld
-position. The normal-form target: every accepted path = `carry* ; weaken*`.
+**First task of this deliverable: decide what the operation actually is.** NQ's export
+boundary *forgets a field* (drops `position`). In the proof-theoretic sense that is
+**projection / forgetting**, which is **not** the same as structural *weakening* (a rule
+that adds to the context). Pin this before anything downstream uses the word:
+
+- Define `forget : Claim → Claim` as the only sanctioned way to lose information — it may
+  *remove* an assertion (e.g. position) but never *add* or *upgrade* one.
+- The load-bearing law (a property of projection): `forget(w) ⊬ w` — the scalar
+  `ExportClaim` does not entail the lane-qualified `WitnessClaim` it came from. This is the
+  no-free-standing-bridge family in executable form.
+- **Open question (must be answered, may be "no"):** is `forget` here actually structural
+  weakening in the calculus's sense, or strictly projection? If projection, the candidate
+  normal form is `carry* ; forget*`, **not** `carry* ; weaken*`, and the note's slogan is
+  corrected accordingly. Do not assert `weaken` until this is settled.
+
+`Export` must factor as `carry* ; forget*`, with the forgetting accounting for exactly the
+withheld position.
 
 ### 2.5 Forbidden strengthening examples (must be unrepresentable or refused)
 
@@ -155,8 +168,12 @@ to a side condition on `cut`. **Writing this Lean is a separate, gated step (§3
 ### 2.10 Exit criteria & stop conditions
 
 **Done when (exit):**
-- The four claims, three bridges, `weaken`, and the four forbidden-strengthening examples
+- The four claims, three bridges, `forget`, and the four forbidden-strengthening examples
   are written down and reviewed.
+- **The operation name is pinned (§2.4):** projection/forgetting vs structural weakening is
+  decided with justification, and the candidate normal form is written as whichever it
+  actually is (`carry* ; forget*` until proven `carry* ; weaken*`). Asserting "weaken"
+  without this is a stop condition, not a finish.
 - The one positive path and one refusal path are traced against the cited tests and agree.
 - Each model bridge is justified by a `file:line` in current source (no aspirational
   bridges).
