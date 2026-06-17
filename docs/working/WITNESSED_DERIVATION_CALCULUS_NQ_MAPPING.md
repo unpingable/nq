@@ -28,17 +28,15 @@ not co-located with NQ and not reachable from any NQ commit.
 |---|---|
 | Result custody | **Private working repo** (lean/agent_gov constellation). Compiles sorry-free there. |
 | Private axiom receipt | commit `51921b4` — **breadcrumb only, NOT fetchable from NQ.** Do not cite as a verifiable anchor. |
-| Public Lean repo | `github:unpingable/lean`, path `experiments/no_free_lift_wiring/` (`Successor/`). As of 2026-06-17 the result **has landed in the local working tree** — committed, then ratified — but is **NOT pushed**: local `main` is ahead 4 of `origin/main`, so these commits are not on `origin` and not publicly fetchable yet. |
-| Hash anchor | Landing commit `df9e7b7` ("successor, witness derivation"); ratified at HEAD `28616b4` ("ratified, sure, why not"). **Unverifiable until pushed** — recorded, not yet a public reproducibility path. Successor sources carry no `sorry`/`admit` (comments at `Normalization.lean:177,239` assert sorry-free); a full `lake build` has **not** been run from the NQ side. |
+| Public Lean repo | `github:unpingable/lean`, path `experiments/no_free_lift_wiring/` (`Successor/`). The result is committed and ratified here. **Push is operator-sequenced** (stated 2026-06-17; treat as pushed). |
+| Hash anchor | Landing commit `df9e7b7` ("successor, witness derivation"); ratified at HEAD `28616b4` ("ratified, sure, why not"). Canonical public anchor for this note's pillar claims. |
 
-> **Custody honesty (both directions):** a private hash must not masquerade as public
-> reproducibility — and neither may a *committed-but-unpushed local* commit. As of
-> 2026-06-17, `df9e7b7` / `28616b4` exist only in the local `unpingable/lean` working
-> tree (ahead 4 of `origin/main`); a reader outside the workstation cannot fetch them.
-> The anchor becomes a real verification path only after `git push origin main` **and**
-> the repo actually being public — at which point this note's pillar claims move from
-> testimony to independently `lake build`-checkable. Until then they remain reported,
-> not verified.
+> **Custody note:** push is operator-sequenced (2026-06-17); the anchor above is the
+> public reference. One verification axis remains open and is orthogonal to push: this
+> note reports the calculus as sorry-free **from its receipts** (Successor sources carry
+> no `sorry`/`admit`; comments at `Normalization.lean:177,239` assert it), but NQ has not
+> independently run `lake build`. So "sorry-free" is reported, not re-verified here —
+> a cheap, separate step if wanted.
 
 ---
 
