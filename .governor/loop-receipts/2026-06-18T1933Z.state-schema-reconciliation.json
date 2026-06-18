@@ -1,0 +1,32 @@
+{
+  "receipt": "state-schema-reconciliation",
+  "timestamp": "2026-06-18T1933Z",
+  "session_id": "ag-claude-drives-nq (operator-dispatched; AG Classic frozen — actuator-only, no promotion)",
+  "class": "OPERATOR-DIRECTED contract reconciliation — aligning the exported /state wire to a promise the docs already made. Explicitly NOT Lane A: this is not under-testing an already-real surface; the wire genuinely did not carry the schema the docs (COMPATIBILITY.md, CHANGELOG 0.1.0, separability.rs) all asserted.",
+  "slice": "Add the documented nq.witness_packet.v1 schema field to the GET /state PublisherState envelope + pin it",
+  "base_commit": "1ccf659 (slice 3: freshness-horizon-repackaging-invariant)",
+  "branch": "witnessed-derivation-calculus-capture",
+  "preceded_by": "read-only nq-witness backlog audit (this session) + direct verification: PublisherState (wire.rs) carried no schema/version field, contradicting COMPATIBILITY.md:24,43 + CHANGELOG 0.1.0 + separability.rs:13. AUDIT cold-start: tree clean at 1ccf659 (audit was read-only), HEAD = last-verified green.",
+  "what_executed": {
+    "constant": "crates/nq-core/src/wire.rs — pub const PUBLISHER_STATE_SCHEMA = \"nq.witness_packet.v1\" (documented value; no canonical constant existed — WITNESS_SCHEMA=nq.witness.v1 is the DIFFERENT nq-core WitnessPacket surface).",
+    "field": "PublisherState.schema: Option<String>, #[serde(default, skip_serializing_if = Option::is_none)], placed first so it serializes first (matches COMPATIBILITY.md:43 shape).",
+    "constructor": "PublisherState::current(host, collected_at, collectors) stamps schema=Some(PUBLISHER_STATE_SCHEMA). Single honest producer path — resolves the struct-field source fallout cleanly (operator caution).",
+    "producer_update": "crates/nq-witness/src/collect/mod.rs — collect_state now builds via PublisherState::current (the only construction site in the workspace).",
+    "tests_wire": "wire.rs 3 tests: current_stamps_documented_envelope_schema; absent_schema_deserializes_to_none_not_v1 (anti-laundering); none_schema_serializes_to_absent_field (absence symmetry).",
+    "tests_golden": "separability.rs witness_emit_carries_versioned_envelope_schema: collect_state output carries schema=nq.witness_packet.v1 + golden top-level key set {collected_at,collectors,host,schema}. Fixed the separability.rs:13 doc claim (now TRUE, not merely less false).",
+    "docs": "CHANGELOG.md [Unreleased] ### Fixed entry; COMPATIBILITY.md needed NO change (now satisfied, was already promising it)."
+  },
+  "compatibility_and_source_breakage_note": {
+    "source_breakage": "Adding a public field to PublisherState would break struct-literal construction. Resolved with the PublisherState::current constructor; the ONLY construction site (collect_state) updated. No other workspace site constructs the struct.",
+    "deserialization_compat": "Field is Option<String> + serde(default) + skip_serializing_if. Old/external schema-less payloads (e.g. nq-monitor/tests/e2e.rs builds JSON without schema) deserialize to schema=None — verified by full regression passing. NO source break at deserialize sites (fetch_state, nq-monitor pull, e2e).",
+    "anti_laundering": "Absence is NEVER laundered into v1 (operator caution honored): missing schema -> None (pinned by publisher_state_absent_schema_deserializes_to_none_not_v1), and None re-serializes to an ABSENT field, not null (pinned by none_schema_serializes_to_absent_field). The producer always emits Some(v1).",
+    "wire_change_class": "Additive. The v1 envelope finally carries its v1 label; consumers ignoring unknown fields are unaffected; this is the additive coexistence COMPATIBILITY.md already sanctions, not a breaking bump.",
+    "residual": "Three docs (COMPATIBILITY.md, CHANGELOG 0.1.0, separability.rs) had asserted the schema before the wire carried it — that drift is now closed. nq-monitor PULL side does not yet pin/refuse on schema value (it tolerates None); enforcing a consumer-side schema check would be a SEPARATE operator-directed slice (not in this scope)."
+  },
+  "evidence_verdict": "PASS — cargo test -p nq-core -p nq-witness exit 0 (incl. 3 new wire tests + golden separability test); full cargo test --all --locked EXIT=0 (set -o pipefail + PIPESTATUS, exit code IS the verdict). Deserialize-compat held across e2e/pull.",
+  "standing_verdict": "PASS (operator-directed) — explicitly authorized this turn to honor the existing versioned-wire promise; bounded local blast radius (1 production file changed + 1 producer swap + tests + changelog); additive wire change; no new witness kind / no position field / no observed_at / no export-projection / no self-witness; no push.",
+  "fences_honored": "no witness-position field; no observed_at on substrate collectors; no new witness kinds; no export-projection work; no self-witness / NQ-on-NQ; no host/services parser backlog; no policy change beyond the explicit operator decision to honor the versioned-wire promise; no agent_gov edit; no AG/governor semantics change (loop bookkeeping only).",
+  "commit_state": "WORKING TREE — NOT committed. Operator instruction: stop at REVIEW for commit decision; no push.",
+  "loop_state": "REVIEW passed; awaiting operator commit decision.",
+  "push": "NOT pushed (operator owns the signal)"
+}

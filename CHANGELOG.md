@@ -6,6 +6,16 @@ All notable changes to NQ are tracked here in [keep-a-changelog](https://keepach
 
 _Add post-tag changes here; rename to a versioned section when the next tag is cut._
 
+### Fixed
+
+- **`GET /state` now carries its documented `nq.witness_packet.v1` schema field.**
+  The envelope was documented as a load-bearing versioned wire (COMPATIBILITY.md,
+  the 0.1.0 entry below), but the emitted `PublisherState` payload carried no
+  `schema` field at all. Producers now stamp it via `PublisherState::current`.
+  Additive and backward-compatible: the field is optional, and a payload that
+  arrives without it deserializes to `None` (an unversioned / pre-v1 payload) and
+  is never silently upgraded into `v1`.
+
 ## [0.1.0] - 2026-06-02
 
 The first tagged release. Three operator-owned production hosts and a live demo at `https://nq.neutral.zone` have been running on the pre-tag main branch.
