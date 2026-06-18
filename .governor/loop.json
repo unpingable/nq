@@ -1,11 +1,16 @@
 {
-  "phase": "AUDIT",
-  "current_slice": null,
-  "slice_spec": [],
-  "acceptance": null,
-  "lane": null,
+  "phase": "REVIEW",
+  "current_slice": "sql-contract-column-stability",
+  "slice_spec": [
+    "Extend SQL contract drift test from view-existence to public-view column-stability (Lane A completeness).",
+    "New test public_contract_view_columns_stable_after_migration + negative diff_columns coverage + PUBLIC_VIEW_COLUMNS inventory (12 views).",
+    "Sibling receipt schema nq.sql_contract.public_columns.v1 (NQ_EMIT_SQL_COLUMN_CONTRACT_RECEIPT); existing public_views.v1 test/receipt/consumer untouched.",
+    "Doc: sql-contract.md 'What is mechanically enforced' section."
+  ],
+  "acceptance": "PASS both verdicts. Evidence: cargo test -p nq-db --test sql_contract 3/3 exit 0; full cargo test --all --locked EXIT=0; receipt emits result=pass 12 views missing_total=0. Standing: Lane A completeness on already-admitted surface, additive-only diff, no fenced surface touched. Receipt 2026-06-18T1825Z.sql-contract-column-stability.json.",
+  "lane": "A",
   "authorization_mode": "Standing Conditional Authorization — operator approved classes (completeness repair / paper-built / probe promotion / doc-code reconciliation / local-governance-substrate); loop executes matches until policy/external/irreversibility/ambiguity, then refers",
-  "blocked_on": "operator direction (SCA batch closed; loop idle)",
+  "blocked_on": "operator commit authorization for verified-green slice sql-contract-column-stability (working tree, NOT committed; commit gated per repo convention + NO-PUSH window)",
   "sca_batch_done": [
     "doctrine 333da0d; provenance-persistence 1bd5c38 (+collision guard); blackbox harness nq-blackbox dcb8e66; series-identity REFERRED (scope packet); SILENCE_UNIFICATION classified Lane A, scope packet, first slice named",
     "Receipts: 2026-06-12T1730Z.sca-batch-close-audit.json"
@@ -36,7 +41,8 @@
   ],
   "last_verified_commit": "3b7c0da",
   "last_verified_note": "Cold entry 2026-06-15: HEAD 7436fe6 re-verified green BEFORE the slice (bare cargo test --workspace, exit 0 = the verdict). Slice 3b7c0da is docs-only (cargo unaffected). Prior stamp 5ed112c was stale (repo had advanced to 7436fe6).",
-  "last_updated": "2026-06-15T16:31:00Z",
+  "last_updated": "2026-06-18T18:25:00Z",
+  "review_pending_commit": "sql-contract-column-stability — verified green (both verdicts PASS), working tree NOT committed; on operator go: commit (code+doc+loop state+receipt), then move to completed_slices with hash + bump last_verified_commit, return to AUDIT idle.",
   "session_id": "ag-claude-drives-nq (operator-dispatched, impunity granted: nq-claude stood down)",
   "loop_master": "opus (controller); escalate to fable for doctrine only",
   "wip_limit": 1,

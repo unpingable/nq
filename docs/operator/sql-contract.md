@@ -143,3 +143,24 @@ Promoting a table to a view, or an evolving view to a stable view,
 requires a `FEATURE_HISTORY.md` entry stating the change and the date the
 new stability claim begins. Removing a view from the contract requires
 the same.
+
+---
+
+## What is mechanically enforced
+
+Two drift tests in `crates/nq-db/tests/sql_contract.rs` hold this document
+to the schema:
+
+- **View existence** — every public view above must exist in the migrated
+  schema (a missing public view fails CI; extra views are allowed).
+- **Column existence** — every column a public view is documented to expose
+  must be present (a removal or rename fails CI; additive columns are
+  allowed without notice, matching §1). The expected column inventory lives
+  in the test, baselined from the migrated schema.
+
+Each test can emit a JSON receipt (`nq.sql_contract.public_views.v1` and
+`nq.sql_contract.public_columns.v1`) when its `NQ_EMIT_*` env var is set.
+
+Still **not** mechanically checked (out of scope): column *type* stability,
+column ordering, semantic query compatibility, performance, migration-history
+correctness, and the stability of operator-visible storage tables.

@@ -1,0 +1,24 @@
+{
+  "receipt": "sql-contract-column-stability",
+  "timestamp": "2026-06-18T1825Z",
+  "session_id": "ag-claude-drives-nq (operator-dispatched; AG Classic frozen — actuator-only, no promotion)",
+  "class": "Lane A — Standing Conditional Authorization (completeness repair on an already-admitted surface)",
+  "slice": "Extend the SQL contract drift test from view-existence to public-view column-stability",
+  "base_commit": "3b7c0da",
+  "branch": "witnessed-derivation-calculus-capture",
+  "preceded_by": "AUDIT cold-start re-entry probes — HEAD re-verified green BEFORE the slice (set -o pipefail; cargo test -p nq-db -p nq-monitor --no-fail-fast, EXIT=0 = the verdict)",
+  "what_executed": {
+    "test_added": "crates/nq-db/tests/sql_contract.rs :: public_contract_view_columns_stable_after_migration — migrates a fresh DB, introspects each public view via pragma_table_info, fails on any missing promised column (removal/rename), allows extras (additive)",
+    "negative_coverage_added": "diff_columns_detects_missing_and_allows_extra — pins the drift logic independent of live schema (removal drifts, addition allowed, exact-match clean)",
+    "inventory": "PUBLIC_VIEW_COLUMNS const — expected columns for all 12 public views, baselined from the migrated end-state schema (not any single migration file)",
+    "receipt_added": "sibling artifact schema nq.sql_contract.public_columns.v1 under NQ_EMIT_SQL_COLUMN_CONTRACT_RECEIPT (per-view expected/observed/missing/unexpected + missing_total + negative scope), emitted on pass AND fail",
+    "doc": "docs/operator/sql-contract.md — new 'What is mechanically enforced' section (view existence + column existence checked; column type/order/semantics/perf/migration-history/operator-tables NOT checked)"
+  },
+  "preserved": "Existing view-existence test (public_contract_views_exist_after_migration) and its nq.sql_contract.public_views.v1 receipt UNTOUCHED. Diff is additive-only (332 insertions, 0 deletions across 2 files). NQ-on-NQ-002 consumer (nq-monitor/src/nq_sql_contract_state.rs) is keyed strictly on the public_views.v1 schema — the new sibling schema does not reach it.",
+  "evidence_verdict": "PASS — cargo test -p nq-db --test sql_contract: 3 passed, exit 0 (bare). Full workspace regression cargo test --all --locked: EXIT=0 (set -o pipefail + PIPESTATUS, exit code IS the verdict, not a tailed glance). Artifact emission verified: nq.sql_contract.public_columns.v1, result=pass, 12 views, missing_total=0.",
+  "standing_verdict": "PASS — target already admitted (SQL contract is a shipped open surface); standing class = completeness repair; no new policy choice (column-drift semantics already written in sql-contract.md §1); bounded local blast radius (one test crate + one operator doc); no external/public effect; no push/publish/migrate; precondition+evidence+stop-condition stated before editing.",
+  "fences_honored": "no witness-position export work; no nq_receipt_emission_state / nq_route_state (NQ-on-NQ self-witness-collapse fenced); no Prometheus exporter; no Nightshift edit; no policy change; no agent_gov edit; no AG loop/governor semantics change; existing public_views.v1 receipt + consumer not reshaped; no shape/admissibility conclusion beyond NQ-local rules.",
+  "commit_state": "WORKING TREE — NOT committed. Per approved plan + repo convention (commit only when operator asks; NO-PUSH during work hours), the slice is verified-green and staged-ready; commit + completed_slices/last_verified_commit finalization await operator go.",
+  "loop_state": "REVIEW passed; awaiting operator commit authorization, then returns to AUDIT idle",
+  "push": "NOT pushed (operator owns the signal)"
+}
