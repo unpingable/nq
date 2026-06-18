@@ -36,7 +36,7 @@ The one carve-out is NQ's own doctrine: **"Completeness governs already-opened s
 
 ### A1. `nq-blackbox` probes — cleanest throughput
 
-Eleven probe candidates in [`PROBE_CATALOG`](../../../../nq-blackbox/docs/PROBE_CATALOG.md), each with a **mechanical** 5-criterion promotion path (module success criteria → legible target name → smoke step → NQ ingests `probe_*` with provenance → testifies/inadmissible rows survive real output). Precondition (notquery `1ea2000`, scrape-target provenance) is **satisfied**. Each probe = one self-contained build_slice with its own acceptance criteria already written.
+Eleven probe candidates in [`PROBE_CATALOG`](../../../../nq-blackbox/docs/PROBE_CATALOG.md), each with a **mechanical** 5-criterion promotion path (module success criteria → legible target name → smoke step → NQ ingests `probe_*` with provenance → testifies/inadmissible rows survive real output). Precondition (nq `1ea2000`, scrape-target provenance) is **satisfied**. Each probe = one self-contained build_slice with its own acceptance criteria already written.
 
 - **Bucket 1 (overlap, 3):** `nq_aggregator_http_localhost`, `labelwatch_health_localhost`, `dns_neutralzone_localhost`. Lowest risk; validate the integration path.
 - **Bucket 2 (contradiction, 4):** `service_facade_http`, `dns_then_http_split`, `tls_handshake_app_body_split`, `process_listener_vs_http`. The operational payoff (internal-green / external-red).

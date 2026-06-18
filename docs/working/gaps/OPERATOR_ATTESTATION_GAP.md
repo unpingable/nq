@@ -28,7 +28,7 @@ The founding observation:
 
 > **NQ witnesses machine state, but machine state is not changed only by machines.**
 
-(Operator's distilled keeper, 2026-06-10. Pinned. Composes with [`feedback_knob_facing`](../../../../home/jbeck/.claude/projects/-home-jbeck-git-notquery/memory/feedback_knob_facing.md) and [`feedback_nq_register_witness_not_governance`](../../../../home/jbeck/.claude/projects/-home-jbeck-git-notquery/memory/feedback_nq_register_witness_not_governance.md): the operator is a witness, not an authority gate. NQ does not authorize consequence on the basis of attestation; it admits attestation as testimony.)
+(Operator's distilled keeper, 2026-06-10. Pinned. Composes with [`feedback_knob_facing`](../../../../home/jbeck/.claude/projects/-home-jbeck-git-nq/memory/feedback_knob_facing.md) and [`feedback_nq_register_witness_not_governance`](../../../../home/jbeck/.claude/projects/-home-jbeck-git-nq/memory/feedback_nq_register_witness_not_governance.md): the operator is a witness, not an authority gate. NQ does not authorize consequence on the basis of attestation; it admits attestation as testimony.)
 
 ## NQ-CLOSE-001 — pinned candidate vocabulary
 

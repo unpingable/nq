@@ -8,7 +8,7 @@
 
 **Last updated:** 2026-05-27
 
-**Path note (rebrand-2026-06-02):** `/opt/nq/…` paths in this doc describe target state. Until the deployment-host cutover lands (renaming `/opt/notquery/` → `/opt/nq/` on Linode and updating configs + systemd units), the live filesystem path on Linode is still `/opt/notquery/nq.db`. Both names resolve to the same substrate post-cutover via symlink during transition if needed.
+**Path note (rebrand-2026-06-02):** `/opt/nq/…` paths in this doc describe target state. The deployment-host cutover renames the legacy Linode deploy path to `/opt/nq/` and updates configs + systemd units; until it lands, the live filesystem path on Linode may still be the pre-rebrand location. Both resolve to the same substrate post-cutover via symlink during transition if needed.
 
 ## 0. The Tier 0 wager
 
