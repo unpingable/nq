@@ -345,6 +345,50 @@ fn diff_columns(expected: &[&str], actual: &[String]) -> (Vec<String>, Vec<Strin
     (missing, extra)
 }
 
+/// An append-only projection violation: the declared contract columns are not a
+/// stable, in-order prefix of the observed columns.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum OrderViolation {
+    /// At `position`, the contract expects `expected` but observed `found`.
+    /// A column inserted before/within the prefix, or two columns reordered,
+    /// manifests here.
+    Misplaced {
+        position: usize,
+        expected: String,
+        found: String,
+    },
+    /// The projection is shorter than the contract: nothing at `position`.
+    /// (Existence drift surfaces here too; `diff_columns` reports it as well.)
+    Truncated { position: usize, expected: String },
+}
+
+/// Append-only projection check: the declared contract columns must appear
+/// FIRST, in declared order. Extra columns are allowed only as a suffix
+/// (appended after the contract prefix). Returns the first violation, or
+/// `None` if the observed columns are prefix-stable.
+fn check_column_order(expected: &[&str], actual: &[String]) -> Option<OrderViolation> {
+    for (i, exp) in expected.iter().enumerate() {
+        match actual.get(i) {
+            Some(a) if a == exp => continue,
+            Some(a) => {
+                return Some(OrderViolation::Misplaced {
+                    position: i,
+                    expected: exp.to_string(),
+                    found: a.clone(),
+                })
+            }
+            None => {
+                return Some(OrderViolation::Truncated {
+                    position: i,
+                    expected: exp.to_string(),
+                })
+            }
+        }
+    }
+    None
+}
+
 #[derive(Serialize)]
 struct ColumnReceipt {
     schema: &'static str,
@@ -366,6 +410,8 @@ struct ViewColumnReport {
     observed_columns: Vec<String>,
     missing_columns: Vec<String>,
     unexpected_columns: Vec<String>,
+    order_stable: bool,
+    order_violation: Option<OrderViolation>,
 }
 
 #[test]
@@ -382,6 +428,7 @@ fn public_contract_view_columns_stable_after_migration() {
 
     let mut reports: Vec<ViewColumnReport> = Vec::new();
     let mut all_missing: Vec<(&str, Vec<String>)> = Vec::new();
+    let mut all_order_violations: Vec<(&str, OrderViolation)> = Vec::new();
 
     for (view, expected_cols) in PUBLIC_VIEW_COLUMNS {
         let mut stmt = rdb
@@ -399,17 +446,28 @@ fn public_contract_view_columns_stable_after_migration() {
             all_missing.push((view, missing.clone()));
         }
 
+        let order_violation = check_column_order(expected_cols, &actual);
+        if let Some(v) = &order_violation {
+            all_order_violations.push((view, v.clone()));
+        }
+
         reports.push(ViewColumnReport {
             view,
             expected_columns: expected_cols.iter().map(|s| s.to_string()).collect(),
             observed_columns: actual,
             missing_columns: missing,
             unexpected_columns: extra,
+            order_stable: order_violation.is_none(),
+            order_violation,
         });
     }
 
     let missing_total: usize = all_missing.iter().map(|(_, m)| m.len()).sum();
-    let result = if missing_total == 0 { "pass" } else { "fail" };
+    let result = if missing_total == 0 && all_order_violations.is_empty() {
+        "pass"
+    } else {
+        "fail"
+    };
 
     // Emit a sibling receipt before asserting, so a failed drift run still
     // produces the artifact. Distinct schema from the view-existence receipt
@@ -428,10 +486,12 @@ fn public_contract_view_columns_stable_after_migration() {
             missing_total,
             result,
             scope: Scope {
-                checks: vec!["public view column existence"],
+                checks: vec![
+                    "public view column existence",
+                    "public view column ordering (append-only prefix)",
+                ],
                 does_not_check: vec![
                     "column type stability",
-                    "column ordering",
                     "semantic query compatibility",
                     "performance",
                     "migration history correctness",
@@ -457,6 +517,17 @@ fn public_contract_view_columns_stable_after_migration() {
          PUBLIC_VIEW_COLUMNS AND docs/operator/sql-contract.md AND add a \
          FEATURE_HISTORY entry per the contract's \"Adding to the contract\" section.",
     );
+
+    assert!(
+        all_order_violations.is_empty(),
+        "SQL column contract drift: public view(s) violate append-only projection \
+         order: {all_order_violations:?}.\n\
+         Declared contract columns must appear first, in declared order; new \
+         columns may only be appended after them. A reorder or a column inserted \
+         before/within the contract prefix is breaking. Either restore the order \
+         (append new columns at the tail), or update PUBLIC_VIEW_COLUMNS AND \
+         docs/operator/sql-contract.md AND add a FEATURE_HISTORY entry.",
+    );
 }
 
 #[test]
@@ -480,4 +551,55 @@ fn diff_columns_detects_missing_and_allows_extra() {
     let (none_missing, none_extra) =
         diff_columns(&["a", "b"], &["a".to_string(), "b".to_string()]);
     assert!(none_missing.is_empty() && none_extra.is_empty());
+}
+
+#[test]
+fn check_column_order_detects_reordering_and_insertion() {
+    let expected = &["a", "b", "c"];
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+
+    // Exact prefix, no extras -> stable.
+    assert_eq!(check_column_order(expected, &s(&["a", "b", "c"])), None);
+
+    // Extra column appended at the tail -> allowed (append-only).
+    assert_eq!(check_column_order(expected, &s(&["a", "b", "c", "d"])), None);
+
+    // Column inserted BEFORE the contract prefix -> Misplaced at position 0.
+    assert_eq!(
+        check_column_order(expected, &s(&["z", "a", "b", "c"])),
+        Some(OrderViolation::Misplaced {
+            position: 0,
+            expected: "a".to_string(),
+            found: "z".to_string(),
+        }),
+    );
+
+    // Column inserted WITHIN the contract prefix -> Misplaced at the insert point.
+    assert_eq!(
+        check_column_order(expected, &s(&["a", "x", "b", "c"])),
+        Some(OrderViolation::Misplaced {
+            position: 1,
+            expected: "b".to_string(),
+            found: "x".to_string(),
+        }),
+    );
+
+    // Two contract columns reordered -> Misplaced at the first divergence.
+    assert_eq!(
+        check_column_order(expected, &s(&["a", "c", "b"])),
+        Some(OrderViolation::Misplaced {
+            position: 1,
+            expected: "b".to_string(),
+            found: "c".to_string(),
+        }),
+    );
+
+    // Projection shorter than the contract -> Truncated.
+    assert_eq!(
+        check_column_order(expected, &s(&["a", "b"])),
+        Some(OrderViolation::Truncated {
+            position: 2,
+            expected: "c".to_string(),
+        }),
+    );
 }

@@ -157,10 +157,16 @@ to the schema:
   must be present (a removal or rename fails CI; additive columns are
   allowed without notice, matching §1). The expected column inventory lives
   in the test, baselined from the migrated schema.
+- **Column ordering (append-only projection)** — the documented contract
+  columns must appear *first, in declared order*. New columns are allowed
+  only as a suffix appended after the contract prefix. A reorder, or a
+  column inserted before/within the contract prefix, fails CI. This protects
+  consumers that decode positionally (`SELECT *`) — additive growth stays
+  safe because it only ever happens at the tail.
 
 Each test can emit a JSON receipt (`nq.sql_contract.public_views.v1` and
 `nq.sql_contract.public_columns.v1`) when its `NQ_EMIT_*` env var is set.
 
 Still **not** mechanically checked (out of scope): column *type* stability,
-column ordering, semantic query compatibility, performance, migration-history
-correctness, and the stability of operator-visible storage tables.
+semantic query compatibility, performance, migration-history correctness, and
+the stability of operator-visible storage tables.
