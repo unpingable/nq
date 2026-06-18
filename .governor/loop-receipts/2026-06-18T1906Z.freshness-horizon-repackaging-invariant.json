@@ -1,0 +1,25 @@
+{
+  "receipt": "freshness-horizon-repackaging-invariant",
+  "timestamp": "2026-06-18T1906Z",
+  "session_id": "ag-claude-drives-nq (operator-dispatched; AG Classic frozen — actuator-only, no promotion)",
+  "class": "Lane A completeness — mechanizes an EXISTING, documented, implemented promise (freshness anchored to observed_at, never generated_at) that was only covered by implication",
+  "slice": "C2/M1 — freshness horizon invariant under generated_at repackaging (Regime A preflight/receipt only)",
+  "base_commit": "47cab5c (slice 2: column-ordering)",
+  "branch": "witnessed-derivation-calculus-capture",
+  "preceded_by": "read-only Lean survey (~/git/lean rc-1.3 + ~/git/playground) + read-only C1/C2 coverage audits; AUDIT cold-start: tree clean at 47cab5c (surveys/audits were read-only), HEAD = last-verified green state",
+  "what_executed": {
+    "test_added": "crates/nq-core/src/preflight.rs :: freshness_horizon_invariant_under_generated_at_repackaging — two PreflightResults with DIFFERENT generated_at (close vs far-future 2099) but SAME observed_at_max; horizons populated the evaluator way (freshness_horizon_from); asserts byte-identical horizon + horizon == observed_at + threshold. Names the laundering shape: fresh wrapper != fresh evidence.",
+    "no_artifact_receipt": "this is a pure unit test (no NQ_EMIT_* artifact); the chokepoint freshness_horizon_from takes observed_at_max + threshold only — generated_at is structurally not an input, so the test exercises the PreflightResult population path where generated_at IS a field, proving non-leakage."
+  },
+  "why_lane_a_not_strengthening": "Pre-existing promise: docs/operator/VERDICTS.md:46-50 ('Freshness is evaluated against observed_at, not generated_at or ingest time') + docs/working/gaps/CLAIM_KIND_DISK_STATE_GAP.md:188 (the explicit repackaging/freshness-laundering promise). Pre-existing implementation: freshness_horizon_from docstring 'never anchor on generated_at as a fallback' (preflight.rs:624-630). The behavior + promise both already shipped; this only converts 'safe by implication' (dns.rs:1374, receipt_replay.rs:1032) into 'safe by a test that names the laundering shape'. No new guarantee.",
+  "evidence_verdict": "PASS — cargo test -p nq-core freshness_horizon: 10 passed incl. the new test, exit 0 (bare). Full cargo test --all --locked: EXIT=0 (set -o pipefail + PIPESTATUS, exit code IS the verdict).",
+  "standing_verdict": "PASS (Lane A, standing-auto-eligible) — target already admitted (Regime A freshness); standing class = completeness repair; no new policy choice; bounded local blast radius (one test, one file, +63/-0); no external/public effect; no push/publish/migrate.",
+  "fences_honored": "Regime A only — NO Regime B (collected_at/dashboard view) clock change; NO collected_at->observed_at semantic change; NO received_at/inserted_at/receipt-time expansion; NO mtime laundering test; NO refusal-propagation CLI/dashboard slice (C1 #2 not started); NO multi-level propagation; NO liveness.json / cross-boundary receipt propagation; NO new public guarantee; NO policy change; NO Lean imports; NO agent_gov edit; NO AG/governor semantics change (loop bookkeeping only).",
+  "preserved_findings_for_later": {
+    "C1_multi_level_propagation": "deliberately deferred (TESTIMONY_DEPENDENCY_GAP V1 is one-level by design), NOT accidental under-test. Not actuator-buildable.",
+    "C2_regime_B_clock_divergence": "real design seam — legacy dashboard v_* is_stale uses collected_at + generation counters, a DIFFERENT clock than observed_at. Operator-directed, not actuator-safe. Smells like future doctrine: 'legacy dashboard staleness is observational convenience, not admissibility freshness.' Watch so UI-stale is never confused with authority-stale."
+  },
+  "commit_state": "WORKING TREE — NOT committed. Per operator instruction ('stop at review for commit decision; no push'), slice is verified-green and staged-ready; commit awaits operator go.",
+  "loop_state": "REVIEW passed; awaiting operator commit decision. C1 #2 (monitor-readout test) noted as reasonable lower-priority follow-up, NOT started.",
+  "push": "NOT pushed (operator owns the signal)"
+}

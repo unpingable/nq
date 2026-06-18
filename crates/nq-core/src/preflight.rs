@@ -1832,4 +1832,67 @@ mod tests {
         );
         assert!(r.freshness_horizon.is_none());
     }
+
+    #[test]
+    fn freshness_horizon_invariant_under_generated_at_repackaging() {
+        // Laundering shape (named): a stale observation must NOT become fresh
+        // just because it is re-emitted inside a freshly *generated* artifact.
+        // The freshness horizon is anchored to observation time
+        // (observed_at_max) only; generated_at (packet / repackage time) is
+        // not an input. Fresh wrapper != fresh evidence.
+        //
+        // Regime A (preflight/receipt) only. This says nothing about the legacy
+        // dashboard-view (collected_at-based) `is_stale`, which is a separate
+        // clock and a separate, operator-directed question.
+        let observed_at_max = "2026-05-15T14:00:00Z";
+        let threshold_seconds = 300;
+        let target = || PreflightTarget {
+            host: "h1".into(),
+            scope: "host".into(),
+            id: None,
+        };
+
+        // First emission: artifact generated close to the observation.
+        let mut original = PreflightResult::skeleton(
+            ClaimKind::DiskState,
+            target(),
+            "2026-05-15T14:01:00Z".into(),
+        );
+        original.observed_at_max = Some(observed_at_max.into());
+        original.freshness_horizon =
+            freshness_horizon_from(original.observed_at_max.as_deref(), threshold_seconds);
+
+        // Repackaging: the SAME observation re-emitted inside an artifact
+        // generated far in the future (a much later generated_at). Observation
+        // time is unchanged.
+        let mut repackaged = PreflightResult::skeleton(
+            ClaimKind::DiskState,
+            target(),
+            "2099-01-01T00:00:00Z".into(),
+        );
+        repackaged.observed_at_max = Some(observed_at_max.into());
+        repackaged.freshness_horizon =
+            freshness_horizon_from(repackaged.observed_at_max.as_deref(), threshold_seconds);
+
+        // Setup sanity: the generated_at values must actually differ, else the
+        // test is not exercising the laundering shape.
+        assert_ne!(
+            original.generated_at, repackaged.generated_at,
+            "test setup: generated_at must differ to exercise repackaging",
+        );
+
+        // The far-future generated_at must not move the horizon by one byte.
+        assert_eq!(
+            original.freshness_horizon, repackaged.freshness_horizon,
+            "repackaging into a freshly-generated artifact must not move the freshness horizon",
+        );
+        assert!(
+            original
+                .freshness_horizon
+                .as_deref()
+                .unwrap()
+                .starts_with("2026-05-15T14:05:00"),
+            "horizon stays observed_at + threshold regardless of generated_at",
+        );
+    }
 }
