@@ -10,16 +10,19 @@
 //! 2. Round-trips through serde — serialize to JSON, deserialize
 //!    back via `nq_core::wire::PublisherState`, identity holds at
 //!    the JSON level.
-//! 3. Carries the canonical `nq.witness_packet.v1` shape consumed
-//!    by `nq_witness_api::fetch_state` (and therefore by
-//!    `nq-monitor`'s pull path). Wire format is unchanged from the
-//!    pre-extraction baseline.
+//! 3. Carries the documented `nq.witness_packet.v1` envelope schema —
+//!    the `schema` field is stamped by `PublisherState::current` and
+//!    consumed by `nq_witness_api::fetch_state` (and therefore by
+//!    `nq-monitor`'s pull path). This honors the load-bearing versioned-
+//!    wire promise in `docs/architecture/COMPATIBILITY.md`. (The `schema`
+//!    field was added in the 2026-06-18 schema-reconciliation slice; it is
+//!    the one intentional addition over the pre-extraction baseline.)
 //!
 //! This test deliberately drives every collector against empty /
 //! missing substrate so the emit is deterministic across hosts —
 //! the assertions check structural shape, not substrate content.
 
-use nq_core::wire::PublisherState;
+use nq_core::wire::{PublisherState, PUBLISHER_STATE_SCHEMA};
 use nq_core::PublisherConfig;
 use nq_witness::collect::collect_state;
 use std::sync::Arc;
@@ -83,6 +86,41 @@ fn witness_emit_round_trips_through_serde() {
     assert_eq!(
         json, json2,
         "PublisherState JSON identity must hold across serialize→deserialize→serialize"
+    );
+}
+
+#[test]
+fn witness_emit_carries_versioned_envelope_schema() {
+    // The actual GET /state payload must carry the documented
+    // `nq.witness_packet.v1` envelope schema (COMPATIBILITY.md). Before the
+    // 2026-06-18 reconciliation slice the payload carried no schema at all,
+    // while the compat doc promised a load-bearing versioned wire.
+    let cfg = empty_publisher_config();
+    let state: PublisherState = collect_state(&cfg);
+
+    assert_eq!(
+        state.schema.as_deref(),
+        Some(PUBLISHER_STATE_SCHEMA),
+        "producer must stamp the envelope schema",
+    );
+    assert_eq!(PUBLISHER_STATE_SCHEMA, "nq.witness_packet.v1");
+
+    let json = serde_json::to_value(&state).expect("serializes");
+    let obj = json.as_object().expect("/state payload is a JSON object");
+
+    // Golden top-level wire shape: exactly these keys, schema first-class.
+    let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec!["collected_at", "collectors", "host", "schema"],
+        "GET /state top-level wire shape changed — update COMPATIBILITY.md \
+         and bump the envelope version if this is intentional",
+    );
+    assert_eq!(
+        obj.get("schema").and_then(serde_json::Value::as_str),
+        Some("nq.witness_packet.v1"),
+        "emitted /state must carry the documented versioned schema string",
     );
 }
 

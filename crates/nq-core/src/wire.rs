@@ -7,12 +7,46 @@ use crate::status::{CollectorStatus, ServiceStatus};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+/// Wire schema/version of the `GET /state` envelope.
+///
+/// The version suffix is load-bearing per `docs/architecture/COMPATIBILITY.md`:
+/// a future `v2` payload ships alongside `v1` during transition, never replacing
+/// it silently. Producers MUST stamp [`PublisherState::schema`] with this value.
+///
+/// Note the name: this is the `/state` *envelope* schema, distinct from
+/// [`crate::witness::WITNESS_SCHEMA`] (`nq.witness.v1`), which is the nq-core
+/// `WitnessPacket` projection — a different surface.
+pub const PUBLISHER_STATE_SCHEMA: &str = "nq.witness_packet.v1";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublisherState {
+    /// Wire schema/version of this `/state` envelope. Producers MUST set this to
+    /// `Some(PUBLISHER_STATE_SCHEMA)` (see [`PublisherState::current`]).
+    ///
+    /// Deserializes to `None` when the field is absent — a pre-versioning /
+    /// unversioned payload. Absence is **never** laundered into `v1`: a missing
+    /// schema is `None`, and the consumer decides how to treat an unversioned
+    /// payload. `None` re-serializes to an absent field (absence stays absence).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
     pub host: String,
     #[serde(with = "time::serde::rfc3339")]
     pub collected_at: OffsetDateTime,
     pub collectors: Collectors,
+}
+
+impl PublisherState {
+    /// Construct a current-wire `PublisherState`, stamping the envelope schema
+    /// to [`PUBLISHER_STATE_SCHEMA`]. The single honest way for a producer to
+    /// build the wire payload — keeps the load-bearing version in one place.
+    pub fn current(host: String, collected_at: OffsetDateTime, collectors: Collectors) -> Self {
+        PublisherState {
+            schema: Some(PUBLISHER_STATE_SCHEMA.to_string()),
+            host,
+            collected_at,
+            collectors,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -791,5 +825,69 @@ mod tests {
         let v = to_value(&original).expect("to_value");
         let back: ClaimRefusal = from_value(v).expect("from_value");
         assert_eq!(back, original);
+    }
+
+    // -----------------------------------------------------------------
+    // /state envelope schema/version (nq.witness_packet.v1). The version
+    // suffix is load-bearing (docs/architecture/COMPATIBILITY.md); these
+    // tests pin both that producers stamp it AND that absence is never
+    // laundered into a version.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn publisher_state_current_stamps_documented_envelope_schema() {
+        // The constructor is the single honest producer path; it must stamp the
+        // documented value, and that value must survive serialization.
+        assert_eq!(PUBLISHER_STATE_SCHEMA, "nq.witness_packet.v1");
+        let v = json!({
+            "schema": PUBLISHER_STATE_SCHEMA,
+            "host": "h1",
+            "collected_at": "2026-01-01T00:00:00Z",
+            "collectors": {}
+        });
+        let state: PublisherState = from_value(v).expect("deserialize versioned payload");
+        assert_eq!(state.schema.as_deref(), Some("nq.witness_packet.v1"));
+
+        let back = to_value(&state).expect("serialize");
+        assert_eq!(
+            back.get("schema").and_then(Value::as_str),
+            Some("nq.witness_packet.v1"),
+            "versioned envelope must round-trip carrying its schema",
+        );
+    }
+
+    #[test]
+    fn publisher_state_absent_schema_deserializes_to_none_not_v1() {
+        // Anti-laundering (operator caution): a payload with no schema field is
+        // unversioned. It MUST deserialize to None, never be silently upgraded
+        // into nq.witness_packet.v1. The consumer decides what to do with None.
+        let v = json!({
+            "host": "h1",
+            "collected_at": "2026-01-01T00:00:00Z",
+            "collectors": {}
+        });
+        let state: PublisherState = from_value(v).expect("deserialize schema-less payload");
+        assert_eq!(
+            state.schema, None,
+            "absent schema must be None, not laundered into a version",
+        );
+    }
+
+    #[test]
+    fn publisher_state_none_schema_serializes_to_absent_field() {
+        // Absence stays absence: a None schema re-serializes to an absent field
+        // (skip_serializing_if), not a null — so an unversioned payload is never
+        // dressed up as carrying a (null) schema slot.
+        let v = json!({
+            "host": "h1",
+            "collected_at": "2026-01-01T00:00:00Z",
+            "collectors": {}
+        });
+        let state: PublisherState = from_value(v).expect("deserialize");
+        let back = to_value(&state).expect("serialize");
+        assert!(
+            back.get("schema").is_none(),
+            "None schema must re-serialize to an absent field, not null",
+        );
     }
 }

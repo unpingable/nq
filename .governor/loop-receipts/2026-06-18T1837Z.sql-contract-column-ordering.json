@@ -1,0 +1,25 @@
+{
+  "receipt": "sql-contract-column-ordering",
+  "timestamp": "2026-06-18T1837Z",
+  "session_id": "ag-claude-drives-nq (operator-dispatched; AG Classic frozen — actuator-only, no promotion)",
+  "class": "Lane A completeness in spirit, BUT carries a contract-guarantee STRENGTHENING (column ordering promoted from does_not_check to enforced) — authorized as OPERATOR-DIRECTED, not standing-auto",
+  "slice": "Add append-only projection-order stability to the SQL public-view column contract",
+  "base_commit": "24ed6cb (slice 1: column-stability)",
+  "branch": "witnessed-derivation-calculus-capture",
+  "preceded_by": "slice 1 committed 24ed6cb (no push); working tree clean at slice-2 start; HEAD was the just-verified green state",
+  "what_executed": {
+    "helper_added": "check_column_order(expected, actual) -> Option<OrderViolation> — declared contract columns must be a stable in-order PREFIX of observed columns; extras allowed only as a suffix (append-only). OrderViolation::{Misplaced,Truncated} (Serialize).",
+    "test_strengthened": "public_contract_view_columns_stable_after_migration now asserts BOTH existence (preserved) AND append-only order across all 12 public views; result + receipt reflect the combined contract.",
+    "negative_coverage_added": "check_column_order_detects_reordering_and_insertion — proves insertion-before-prefix, insertion-within-prefix, reorder, and truncation are all detected; tail-append is allowed.",
+    "receipt_extended": "nq.sql_contract.public_columns.v1 (no consumer; additive) gains per-view order_stable + order_violation; scope.checks += 'public view column ordering (append-only prefix)'; scope.does_not_check -= 'column ordering'.",
+    "doc": "docs/operator/sql-contract.md 'What is mechanically enforced' — adds the append-only ordering guarantee (protects positional SELECT * consumers); type stability + semantic compatibility remain out of scope."
+  },
+  "why_operator_directed_not_standing_auto": "Promoting column ordering to an enforced guarantee ADDS a promise to the public SQL contract (the doc previously did not promise column order). A new contract guarantee is a policy choice — outside standing-auto. The operator specified the exact shape (append-only tail / order-prefix stability) in the dispatch instruction, which IS the authorization. Recorded honestly rather than laundered as routine completeness.",
+  "evidence_verdict": "PASS — cargo test -p nq-db --test sql_contract: 4 passed, exit 0 (bare). Full cargo test --all --locked: EXIT=0 (set -o pipefail + PIPESTATUS, exit code IS the verdict). Receipt re-emitted: result=pass, 12 views all order_stable=true, checks now lists ordering, does_not_check no longer lists it.",
+  "standing_verdict": "PASS (operator-directed) — target already admitted; the guarantee strengthening was explicitly authorized in-instruction with its shape specified; bounded local blast radius (one test crate + one operator doc); additive enforcement (existence check preserved); no external/public effect; no push/publish/migrate.",
+  "fences_honored": "no witness-position export; no nq_receipt_emission_state / nq_route_state; no Prometheus exporter; no Nightshift edit; no agent_gov edit; no AG loop/governor semantics change (loop bookkeeping only); existing public_views.v1 receipt + its consumer untouched; no type-stability / semantic-compatibility / migration-history work (explicitly out of scope).",
+  "commit_state": "committed this turn, no push (see loop.json HEAD); hash to be recorded into completed_slices on next AUDIT entry per NQ's after-the-fact pattern.",
+  "loop_state": "two green Lane A commits delivered; loop returns toward AUDIT idle. Operator asked to stop and inspect the stack after this slice — NOT starting a third.",
+  "next_candidates_noted_not_started": "remaining does_not_check: column TYPE stability (swampier — SQLite affinity), semantic query compatibility (swampiest), migration-history correctness, operator-visible storage tables. None authorized.",
+  "push": "NOT pushed (operator owns the signal; NO-PUSH window)"
+}

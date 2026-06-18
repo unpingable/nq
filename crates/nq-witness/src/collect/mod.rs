@@ -17,10 +17,10 @@ pub fn collect_state(config: &PublisherConfig) -> PublisherState {
     let hostname = gethostname();
     let now = OffsetDateTime::now_utc();
 
-    PublisherState {
-        host: hostname,
-        collected_at: now,
-        collectors: Collectors {
+    PublisherState::current(
+        hostname,
+        now,
+        Collectors {
             host: Some(host::collect()),
             services: Some(services::collect(config)),
             sqlite_health: Some(sqlite_health::collect(config)),
@@ -31,7 +31,7 @@ pub fn collect_state(config: &PublisherConfig) -> PublisherState {
             sqlite_wal_observations: Some(sqlite_wal_probe::collect(config)),
             nq_binary_observations: Some(nq_binary::collect(config)),
         },
-    }
+    )
 }
 
 fn gethostname() -> String {
