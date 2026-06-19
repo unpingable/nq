@@ -696,6 +696,48 @@ pub enum ProbeAction {
     /// never inferred — NQ does not guess what vantage it is running
     /// on.
     Dns(ProbeDnsCmd),
+
+    /// Probe one TLS surface and print its `nq.probe.tls_cert.v1` receipt
+    /// to stdout. Receipt-only — no DB write. The probe OBSERVES the
+    /// presented certificate chain (it does not independently validate
+    /// trust); the verdict rests on name + the probe clock. `--vantage`
+    /// is required and never inferred: a probe must declare where it
+    /// stood, and an external vantage is the admissible one.
+    TlsCert(ProbeTlsCertCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct ProbeTlsCertCmd {
+    /// Host to connect to (e.g. `nq.neutral.zone`).
+    #[arg(long)]
+    pub host: String,
+
+    /// TCP port.
+    #[arg(long, default_value_t = 443)]
+    pub port: u16,
+
+    /// SNI / server name for the TLS handshake. Defaults to `--host`.
+    #[arg(long)]
+    pub sni: Option<String>,
+
+    /// Name the leaf must cover (repeatable). Defaults to `--host`.
+    #[arg(long = "expected-name")]
+    pub expected_names: Vec<String>,
+
+    /// Days-remaining at or below which the verdict downgrades to the
+    /// warning horizon.
+    #[arg(long, default_value_t = 14)]
+    pub warning_days: i64,
+
+    /// Vantage identity to record on the receipt. Required; NQ does not
+    /// infer it. Must NOT be the target's own box for an admissible
+    /// external witness.
+    #[arg(long)]
+    pub vantage: String,
+
+    /// Connect + handshake response horizon, in seconds.
+    #[arg(long, default_value_t = 10)]
+    pub timeout_seconds: u64,
 }
 
 #[derive(Debug, Args)]
@@ -764,6 +806,7 @@ mod tests {
                     assert_eq!(d.resolver, "8.8.8.8");
                     assert_eq!(d.name, "nq.neutral.zone");
                 }
+                other => panic!("expected Probe(Dns(_)), got {other:?}"),
             },
             other => panic!("expected Probe(Dns(_)), got {other:?}"),
         }

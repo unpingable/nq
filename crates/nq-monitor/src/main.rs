@@ -7,6 +7,8 @@ mod nq_sql_contract_state;
 mod operator_surface;
 mod probe;
 mod pull;
+mod tls_cert_probe;
+mod tls_cert_transport;
 mod served_surface_registry;
 mod smoke;
 

@@ -10,10 +10,12 @@
 //! a one-line summary. Network and classification logic live in
 //! `nq::probe`; this module is the user-facing shim.
 
-use crate::cli::{ProbeAction, ProbeCmd, ProbeDnsCmd};
+use crate::cli::{ProbeAction, ProbeCmd, ProbeDnsCmd, ProbeTlsCertCmd};
 use crate::probe::{
     parse_qtype, parse_resolver, read_latest_generation_id, record_probe, UdpDnsClient,
 };
+use crate::tls_cert_probe::{ClockBasis, TlsCertPolicy, TlsCertTarget, ValidationPolicy};
+use crate::tls_cert_transport::probe_tls_cert;
 use anyhow::Context;
 use nq_db::open_rw;
 use std::time::Duration;
@@ -21,6 +23,7 @@ use std::time::Duration;
 pub fn run(cmd: ProbeCmd) -> anyhow::Result<()> {
     match cmd.action {
         ProbeAction::Dns(c) => run_dns(c),
+        ProbeAction::TlsCert(c) => run_tls_cert(c),
     }
 }
 
@@ -78,5 +81,51 @@ fn run_dns(cmd: ProbeDnsCmd) -> anyhow::Result<()> {
         detail,
     );
 
+    Ok(())
+}
+
+/// `nq-monitor probe tls-cert` — live TLS-cert active-witness probe.
+/// Receipt-only: prints the `nq.probe.tls_cert.v1` receipt to stdout, no
+/// DB write. Observes the presented chain (no independent trust
+/// validation — the receipt says so) and lets the clock-injected core
+/// decide name + expiry.
+fn run_tls_cert(cmd: ProbeTlsCertCmd) -> anyhow::Result<()> {
+    let sni = cmd.sni.clone().unwrap_or_else(|| cmd.host.clone());
+    let expected_names = if cmd.expected_names.is_empty() {
+        vec![cmd.host.clone()]
+    } else {
+        cmd.expected_names.clone()
+    };
+
+    let target = TlsCertTarget {
+        target: format!("{}:{}", cmd.host, cmd.port),
+        sni,
+        vantage: cmd.vantage.clone(),
+    };
+    let policy = TlsCertPolicy {
+        expected_names,
+        warning_threshold_days: cmd.warning_days,
+        validation_policy: ValidationPolicy::Webpki,
+    };
+    // The probe clock. NTP sync state is not observable from inside this
+    // CLI, so record it honestly as unknown rather than claiming sync.
+    let clock = ClockBasis {
+        source: "system_wall".to_string(),
+        ntp_status: "unknown".to_string(),
+    };
+    let now = ::time::OffsetDateTime::now_utc();
+
+    let receipt = probe_tls_cert(
+        &cmd.host,
+        cmd.port,
+        &target,
+        &policy,
+        Duration::from_secs(cmd.timeout_seconds),
+        &clock,
+        now,
+    );
+
+    // Receipt-only emit. No DB write (this is the active-witness lane).
+    println!("{}", serde_json::to_string_pretty(&receipt)?);
     Ok(())
 }

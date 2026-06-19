@@ -46,7 +46,13 @@ pub enum ValidationPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum ChainValidation {
+    // `Valid`/`Invalid` are the validated-trust outcomes the verdict core
+    // already consumes; transport v1 only produces `NotAttempted` (observe-
+    // only), so they are construction-dead until WebPKI validation lands as
+    // the documented follow-up. Kept as the declared receipt vocabulary.
+    #[allow(dead_code)]
     Valid,
+    #[allow(dead_code)]
     Invalid { reason: String },
     NotAttempted,
 }
@@ -134,6 +140,9 @@ pub struct TlsCertTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TlsCertVerdict {
+    /// Declared candidate state; transport v1 always attempts, so this is
+    /// construction-dead until a "skipped" path exists. Kept in the ladder.
+    #[allow(dead_code)]
     ProbeNotAttempted,
     DnsFailed,
     TcpFailed,

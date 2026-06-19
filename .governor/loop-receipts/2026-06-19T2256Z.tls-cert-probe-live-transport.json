@@ -1,0 +1,42 @@
+{
+  "receipt": "tls-cert-probe-live-transport",
+  "timestamp": "2026-06-19T2256Z",
+  "session_id": "operator-dispatched (nq build push); governor microslice+repair autonomy within Phase-2/TLS",
+  "class": "Microslice + repair autonomy (operator-granted) within the declared TLS active-witness goal. Operator explicitly authorized this slice to cross two STOP-IF boundaries: (1) add minimal TLS/X.509 deps; (2) perform live network probes as a manual/review step (not default test behavior).",
+  "slice": "Slice 2b — live TLS transport: connect the pure evaluate_tls_cert verdict core to reality. One TCP+TLS handshake from this vantage, OBSERVE the presented chain, parse it, emit the receipt. Observed != validated (transport observes; it does not independently webpki-validate trust).",
+  "base_commit": "e8d3f34",
+  "branch": "main",
+  "preceded_by": "Post-power-loss re-entry: working tree intact, cargo build -p nq-monitor EXIT=0 (clean, no warnings). HEAD e8d3f34 (the 2a verdict core) was already verified green.",
+  "dependencies_added": {
+    "rustls": "0.23 (workspace), default-features=false + [ring, std, tls12, logging] — pinned to the `ring` provider ALREADY in the lockfile via reqwest, so NO aws-lc-rs/cmake build is pulled (verified: cargo tree -i aws-lc-rs is empty).",
+    "x509-parser": "0.16 — uses the `time` crate (unifies on v0.3.47 with ours; asn1-rs agrees). The only genuinely new crate.",
+    "sha2": "already a workspace dep; added to nq-monitor for the DER fingerprint.",
+    "why_minimal": "rustls (full presented-chain via peer_certificates, sync over std TcpStream — NO async/tokio rewiring) + x509-parser (field extraction) + sha2 (fingerprint) is the smallest set that handshakes, observes the chain, and parses leaf notBefore/notAfter/SAN. native-tls was rejected (leaf-only, no full chain)."
+  },
+  "what_executed": {
+    "transport_module": "crates/nq-monitor/src/tls_cert_transport.rs (new) — probe_tls_cert(host,port,target,policy,timeout,clock,now): DNS resolve -> TCP connect_timeout -> rustls handshake with an accept-all ObserveOnlyVerifier (so an expired/untrusted/wrong-name chain is still OBSERVED, not aborted) -> peer_certificates() -> parse_presented_cert (x509-parser + sha256 colon-hex fingerprint) -> TlsCertFacts{validation: NotAttempted} -> evaluate_tls_cert. Delivery failures (dns/tcp/handshake) are encoded as facts -> the core's negative verdicts, never lost. Handshake IO capped at 16 rounds inside the response horizon.",
+    "observed_vs_validated": "validation = NotAttempted (observe-only). finish() appends two loud non-claims: (a) 'trust-chain (webpki) NOT independently validated by transport v1 — verdict rests on name + probe-clock, so an untrusted issuer would still read valid_at_probe_time'; (b) 'vantage basis is operator-provided/manual'. Keeps the liar-on-the-phone out by DISCLOSURE. WebPKI validation tied to the probe clock is the documented follow-up (doing it now risked the validation-ambiguity STOP-IF).",
+    "cli": "nq-monitor probe tls-cert --host --port --sni --expected-name --warning-days --vantage(required) --timeout-seconds. Receipt-only: prints nq.probe.tls_cert.v1 JSON to stdout, NO DB write (active-witness lane; unlike the DNS probe which writes dns_observations).",
+    "tests": "4 transport parsing unit tests (offline, embedded REAL nq.neutral.zone leaf PEM): parses subject/issuer/SAN, validity window (2026-05-31 -> 2026-08-29 matching step-0), colon-hex sha256 fingerprint, rejects garbage. Plus 1 IGNORED live integration test (tests/tls_cert_live.rs) exercising the handshake end-to-end — excluded from default cargo test, run via --ignored."
+  },
+  "live_probe_at_review": {
+    "command": "target/debug/nq-monitor probe tls-cert --host <h> --vantage operator-dev-box --warning-days 14",
+    "nq.neutral.zone": "verdict=valid_at_probe_time, days_remaining=70, 4-cert chain (leaf -> LE YE2 -> ISRG Root YE -> ISRG Root X2), leaf fp A2:66:...:CA, handshake 199ms.",
+    "labelwatch.neutral.zone": "verdict=valid_at_probe_time, days_remaining=36, 2-cert chain (leaf -> LE E8), leaf fp 7A:85:...:DF, handshake 75ms.",
+    "cross_validation": "Live receipts AGREE with the step-0 openssl receipts (ACTIVE_WITNESS_TLS_PROBE_STEP0.md): identical fingerprints, identical notBefore/notAfter, days_remaining 70/36 vs step-0's 71/37 (consistent, ~7h later). Independent confirmation the transport is honest. Both hosts share IP 192.46.223.21 (the co-located-targets fact from step-0, re-observed).",
+    "vantage_honesty": "This box is external to the target VPS (192.46.223.21) — an admissible external vantage — but the receipt's non-claim still discloses the vantage basis is operator-provided/manual (no independent external runner)."
+  },
+  "evidence_verdict": "PASS. Offline: cargo test -p nq-monitor --lib tls_cert = 17 passed, 0 failed (13 verdict core + 4 transport parsing), EXIT=0. Live integration: ignored by default (cargo test --test tls_cert_live: 0 passed, 1 ignored, EXIT=0); passes on demand (--ignored: 1 passed, EXIT=0). Full workspace regression cargo test --all --locked: ALL_EXIT=0, 1410 passed, every suite 0 failed, the live test confirmed IGNORED in the default run (exit code IS the verdict, set -o pipefail + PIPESTATUS).",
+  "standing_verdict": "PASS under operator-granted microslice+repair autonomy with explicit boundary-crossing authorization for deps + manual live network. Bounded: 1 new transport module + 1 new ignored test + CLI subcommand + deps; the pure core (tls_cert_probe.rs) gained only #[allow(dead_code)] on declared-but-not-yet-produced candidate states. No DB write; no projection/dashboard; no push/publish/migrate.",
+  "fences_honored": "Live network only as a manual/review step (ignored test + CLI), NEVER default cargo test. No DB writes. No dashboard/projection/OperationalStatus/RelaxationReceipt. No pfSense/Plex. No generic active-witness framework (concrete TlsCertProbeReceipt, not ProbeReceipt<T>). No final verdict ladder (candidate states only; ProbeNotAttempted + Valid/Invalid declared but unproduced by v1). No same-box-self-check sold as independent vantage (vantage basis disclosed as manual). No PassiveWitnessCollector trait (a43afa5 fence intact). aws-lc-rs/cmake NOT pulled. No async/tokio rewiring (sync rustls).",
+  "stop_if_checks": "None tripped beyond the two pre-authorized crossings. Dep choice did NOT force async rewiring (sync) or aws-lc-rs (ring reused). CLI was one subcommand variant, not larger command architecture. Validation policy NOT made ambiguous — observe-only + recorded basis, webpki-validation deferred. No credentials/secrets. Transport does NOT decide operational status (typed verdict only). Receipt schema unchanged from 2a (nq.probe.tls_cert.v1).",
+  "deferred_followups": [
+    "WebPKI trust validation at the probe clock -> populate ChainValidation::Valid/Invalid and the chain_invalid verdict, retiring the observe-only non-claim. (The validation-ambiguity STOP-IF reason it was split out.)",
+    "Independent external runner / vantage attestation so the manual-vantage non-claim can be replaced by a witnessed vantage basis.",
+    "Renewal-cycle collection (the candidate's first-experiment): watch labelwatch enter the warning band (~36d) while nq stays valid (~70d), across a renewal, to let real receipts fill the verdict ladder.",
+    "Phase 1 passive trait paired with an ActiveWitnessProbe sibling, now that the active receipt columns exist (still held per a43afa5)."
+  ],
+  "commit_state": "Committing this slice (operator standing 'commit is fine, no push' for the build push). Files: tls_cert_transport.rs (new), tests/tls_cert_live.rs (new), cli.rs, cmd/probe.rs, lib.rs, main.rs, tls_cert_probe.rs (allow(dead_code) only), Cargo.toml x2, Cargo.lock.",
+  "loop_state": "REVIEW passed (both verdicts PASS). Stopping at REVIEW for operator direction. WIP=1 respected.",
+  "push": "NOT pushed (operator owns the signal)."
+}

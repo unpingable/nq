@@ -26,6 +26,11 @@ rusqlite = { version = "0.31", features = ["bundled", "time", "hooks"] }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+# TLS-cert active-witness probe transport (slice 2b). rustls pinned to the
+# `ring` provider already in the lockfile (via reqwest) to avoid pulling the
+# heavier aws-lc-rs/cmake build. x509-parser uses the `time` crate, matching ours.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+x509-parser = "0.16"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
