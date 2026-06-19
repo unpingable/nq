@@ -127,5 +127,11 @@ fn run_tls_cert(cmd: ProbeTlsCertCmd) -> anyhow::Result<()> {
 
     // Receipt-only emit. No DB write (this is the active-witness lane).
     println!("{}", serde_json::to_string_pretty(&receipt)?);
+
+    // Optional manual append-only series sink. stdout above is unchanged.
+    if let Some(out_dir) = &cmd.out_dir {
+        let path = crate::tls_cert_series::persist_receipt(out_dir, &receipt)?;
+        eprintln!("appended receipt to series: {}", path.display());
+    }
     Ok(())
 }

@@ -1,0 +1,35 @@
+{
+  "receipt": "tls-cert-manual-receipt-series",
+  "timestamp": "2026-06-19T2356Z",
+  "session_id": "operator-dispatched (nq build push); governor microslice+repair autonomy within Phase-2/TLS",
+  "class": "Microslice + repair autonomy (operator-granted). Operator directed slice 2d-a (manual persisted receipt series) and explicitly DEFERRED scheduling/operationalization to a later slice (2d-b) — a larger authority step not taken here.",
+  "slice": "Slice 2d-a — smallest append-only receipt-series sink for TLS probe outputs. Give the witness a notebook, not an alarm clock: manual collection only, no scheduler, no DB.",
+  "base_commit": "f87ee68",
+  "branch": "main",
+  "preceded_by": "Continuation after 2c (f87ee68, webpki validation) verified green.",
+  "what_executed": {
+    "series_sink": "crates/nq-monitor/src/tls_cert_series.rs (new): persist_receipt(base, receipt) -> base/<YYYYMMDDTHHMMSSZ>/<host_slug>.json. Append-only: refuses to overwrite an existing file (no datapoint silently clobbered). Timestamped individual files (NOT JSONL) — easier to inspect, one malformed receipt does not poison the rest. run_stamp compresses RFC3339 to second granularity; host_slug makes host:port filename-safe.",
+    "cli": "probe tls-cert --out-dir <dir> (optional). stdout still prints the receipt unchanged; when --out-dir is set, the receipt is ALSO appended to the series and the path is echoed to stderr (stdout stays clean JSON).",
+    "gitignore": "/runs/ added to .gitignore — generated time-series receipts are NOT version-controlled (the repo is not a cert-aging scrapbook). A specimen receipt may be committed deliberately later; never the whole diary.",
+    "tests": "4 deterministic offline tests: run_stamp compression (with/without subsecond), host_slug filename-safety, persist writes the timestamped path with content, and append-only REFUSES overwrite. No network, no DB."
+  },
+  "manual_capture_at_review": {
+    "command": "nq-monitor probe tls-cert --host <h> --vantage operator-dev-box --out-dir runs/tls-cert-probe",
+    "captured": "runs/tls-cert-probe/20260619T235552Z/{nq.neutral.zone_443.json, labelwatch.neutral.zone_443.json} — both verdict=valid_at_probe_time, validation_result=valid, days_remaining 70 / 36. (Both landed in one run dir because probed within the same second.)",
+    "append_only_proof": "Re-probing nq.neutral.zone in the same second -> exit 1, stderr 'append-only' — the existing receipt was NOT overwritten.",
+    "gitignore_proof": "git check-ignore runs/tls-cert-probe -> IGNORED. The captured receipts are NOT in the commit.",
+    "note": "MANUAL collection. The operator ran the probe by hand. No cadence, no runner, no completeness claim."
+  },
+  "evidence_verdict": "PASS. Offline: cargo test -p nq-monitor --lib tls_cert_series = 4 passed, 0 failed, EXIT=0. Manual live capture succeeded (2 receipts persisted under runs/; append-only refusal demonstrated; runs/ confirmed gitignored). Full workspace regression cargo test --all --locked: ALL_EXIT=0, 1426 passed, every suite 0 failed, live test confirmed IGNORED in the default run (exit code IS the verdict, set -o pipefail + PIPESTATUS).",
+  "standing_verdict": "PASS under operator-granted microslice+repair autonomy. Bounded: +1 module + 1 CLI flag + 1 gitignore line; no edit to existing probe/verdict logic. No DB; no scheduler; no push.",
+  "fences_honored": "No scheduler/systemd/timer/cron. No DB writes (plain files under an IGNORED runs/ dir). No dashboard/projection. No alerts. Missing scheduled receipts are NOT a failure (no completeness claim — stated in module doc + CLI help + non-claims). Receipt records vantage basis as operator-manual (carried from the probe). Time-series receipts NOT under version control. stdout behavior preserved.",
+  "stop_if_checks": "None tripped. Persistence did NOT want a DB schema (plain timestamped JSON files). No scheduling/timer setup. Path naming (<timestamp>/<host>.json under ignored runs/) implies neither completeness nor authority — it is a manual notebook. No live-runner/vantage trust-domain design (deferred to 2d-b).",
+  "deferred_followups": [
+    "Slice 2d-b (NOT started): external runner / scheduled cadence — daily vs hourly, local vs external, repo file vs off-repo spool, systemd timer vs cron vs GitHub Actions, and crucially WHAT THE ABSENCE OF A RECEIPT MEANS (a missing-receipt-as-negative is its own authority step). The operator owns this decision.",
+    "A human reminder around 2026-07-12 (labelwatch's 14-day warning-band crossing) is a calendar nudge, deliberately NOT baked into NQ in this slice.",
+    "Phase 1 passive trait pairing (still held per a43afa5)."
+  ],
+  "commit_state": "Committing the slice (operator standing 'commit is fine, no push'). Files: tls_cert_series.rs (new), cli.rs, cmd/probe.rs, lib.rs, main.rs, .gitignore, this receipt. The runs/ receipts are GITIGNORED and NOT committed.",
+  "loop_state": "REVIEW (pending final regression exit code, then commit). WIP=1 respected.",
+  "push": "NOT pushed (operator owns the signal)."
+}

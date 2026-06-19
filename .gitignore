@@ -1,4 +1,10 @@
 /target
+
+# Generated probe receipt series (manual collection, slice 2d-a). Time-series
+# receipts are NOT version-controlled — the repo is not a cert-aging scrapbook.
+# Commit a specimen receipt deliberately if useful, never the whole diary.
+/runs/
+
 *.db
 *.db-wal
 *.db-shm

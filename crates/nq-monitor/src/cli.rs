@@ -738,6 +738,14 @@ pub struct ProbeTlsCertCmd {
     /// Connect + handshake response horizon, in seconds.
     #[arg(long, default_value_t = 10)]
     pub timeout_seconds: u64,
+
+    /// If set, also append the receipt to a manual append-only series under
+    /// this directory (e.g. `runs/tls-cert-probe`), as
+    /// `<dir>/<YYYYMMDDTHHMMSSZ>/<host>.json`. stdout still prints the
+    /// receipt. This is manual collection, NOT scheduled monitoring — a
+    /// missing receipt is not a negative.
+    #[arg(long)]
+    pub out_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
