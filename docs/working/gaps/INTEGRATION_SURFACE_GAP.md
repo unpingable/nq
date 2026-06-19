@@ -1,14 +1,66 @@
-# INTEGRATION_SURFACE — named candidate, design deferred (gap stub)
+# WITNESS_SURFACE — passive collectors vs active probes (candidate, direction chosen)
 
-**Status:** Gap stub / named candidate / **non-binding**. **No `nq-integrations/`, no
-plugin architecture, no provider interface authorized or designed here.** Routine
-register. Design deliberately **parked** — operator is chewing on the shape with
-external advisors; this note is only the retrofit-cost handle, not a proposal.
-**Filed:** 2026-06-19.
+**Status:** Candidate / **non-binding**. Direction **chosen** (operator + chatty +
+web-claude, 2026-06-19); no trait, sibling type, or directory **built** yet. Routine
+register — names the boundary and sequences its construction; admits no code.
+**Filed:** 2026-06-19 (as `INTEGRATION_SURFACE_GAP`; reframed same day).
 
-> "`no nq-integrations/`" is the right cut *now*. But at some point integration *does*
-> have to happen, in some way. This names the surface so it gets ratified deliberately,
-> not retrofitted under pressure.
+> You are not adding an integrations layer. You are discovering that **`nq-witness`
+> already *is* the integration layer for passive witness facts.** So the boundary is not
+> `core vs integrations` — it is **passive collectors vs active probes**, both
+> constrained to typed receipt emission, neither allowed to define a global verdict,
+> projection policy, or operational meaning.
+
+## Decided direction (the chew concluded)
+
+Not "build `nq-integrations/`." The move is: **promote the proven passive-collector
+convention to a type-enforced boundary, then add an active-probe sibling — in order.**
+
+```
+1. Promote the passive collector convention toward a type wall   (proven by 9 collectors)
+2. Keep the closed / static roster for now                       (no dynamic plugins)
+3. Add an ACTIVE probe receipt type SEPARATELY                   (sibling, not a god-object)
+4. Build TLS as the first active probe                           (active-witness machinery)
+5. Let pfSense / Plex pressure the active trait before generalizing
+```
+
+Hard constraints carried from the chew:
+
+- A collector/probe may **only**: collect external facts, emit typed receipts, declare
+  its own scope / vantage / perturbation / NON_CLAIMS. It may **not** decide global
+  verdicts, coerce to green/red, define projection policy, page, mutate the target by
+  default, or call telemetry witness-truth.
+- **Don't merge passive and active into one struct.** `CollectorPayload<T>` (passive,
+  "I observed X") and an `ActiveProbeReceipt<T>` (active, transition columns: stimulus,
+  vantage, delivery_basis, expected_invariant, response_horizon, observed_response,
+  perturbation_class, clock_basis, forgeability_ceiling, non_claims) are **different
+  acts**. Not `CollectorPayloadPlusPlusWithTransitionMaybe`.
+- Name by act, not by marketplace: `nq-collectors` (passive) / `nq-probes` (active),
+  not `nq-integrations` (the drawer every codebase fills with cursed spoons). A shared
+  `adapter` boundary only *later*, only if it earns it.
+
+## Engineering note (grounded — sharpens step 1)
+
+Step 1 is **smaller than it sounds**, because the passive type-wall largely already
+exists — at the *roster*, not via a trait:
+
+- `Collectors` (`nq-core/src/wire.rs:53`) already types every field
+  `Option<CollectorPayload<T>>`. A collector returning a bare `bool`/`Health` **cannot
+  be wired into `collect_state`** — the wire struct rejects it. web-claude's litmus
+  ("can a new adapter compile returning a bool?") is already caught at *assembly*.
+- The 9 payloads are **heterogeneous** (`HostData`, `Vec<ServiceData>`,
+  `ZfsWitnessReport`, …) assembled into a closed typed struct. A
+  `trait PassiveWitnessCollector { type Payload; … }` enforces a per-collector contract
+  but **cannot homogenize** them (distinct associated types → no `Vec<dyn …>`), so
+  `collect_state` still hand-assembles. The trait's value is therefore **contract-naming
+  + symmetry with the active sibling**, *not* a new guarantee or a registry mechanism.
+
+Implication for sequencing: the genuinely new type content is the **active
+`ProbeReceipt<T>` sibling** (step 3), and it should be extracted from the **first real
+TLS receipt** (step 4), then embarrassed by pfSense/Plex (step 5) — *not* from
+imagination. The passive trait (step 1) is low-urgency ceremony best done **paired with**
+the active sibling so the two are designed as a symmetric pair, rather than promoting
+passive in isolation now. (Open call for the operator — see "Next concrete step.")
 
 ## Why a record now (name early, ratify lazily)
 
@@ -78,29 +130,51 @@ Ratify a real integration/provider surface when **≥2 active-witness probes exi
 code and visibly duplicate** the same emission / vantage-identity / perturbation
 scaffolding. Until then the per-specimen "no integration dir" cut stands.
 
-## Explicitly NOT decided here (the chew)
+## Next concrete step (sequencing call)
 
-- plugin vs trait-object provider vs crate-per-provider vs in-tree module-per-source
-- where receipt-schema custody lives (shared `nq.probe.*` family vs per-provider)
-- passive-collector surface and active-probe surface: one seam or two
-- in-process vs out-of-process providers (cadence/perturbation may force a split, cf.
-  `OPERATOR_SURFACE_SPLIT_TRIPWIRE.md`)
+The decided order makes **TLS (step 4) the next real build** — it is the active-witness
+machinery that does not yet exist, and the `ProbeReceipt<T>` sibling (step 3) must be
+extracted *from its first receipt*, not from imagination. The passive trait (step 1) is
+contract-naming whose wall mostly already exists (see engineering note), so it is best
+done **paired with** the active sibling — promote `PassiveWitnessCollector` and
+introduce `ActiveWitnessProbe` together, as the symmetric pair, when TLS lands. Promoting
+passive in isolation now would be ceremony for its own sake.
+
+So: **do not build the passive trait as a standalone slice.** Hold step 1 until step 4
+gives the active half something real to be symmetric with.
+
+## Still open (extract from contact, not imagination)
+
+- the exact `ProbeReceipt<T>` columns — drafted in `ACTIVE_WITNESS_TLS_PROBE_CANDIDATE.md`,
+  ratified only by the first TLS receipt
+- crate/dir layout (`nq-collectors` + `nq-probes`? `crates/nq-adapter-*`? in-tree
+  modules?) — filesystem aesthetics, decided last and cheaply
+- receipt-schema custody: shared `nq.probe.*` family vs per-probe
+- in-process vs out-of-process probes (cadence/perturbation may force a split later, cf.
+  `OPERATOR_SURFACE_SPLIT_TRIPWIRE.md`) — not now
 
 ## NON_CLAIMS
 
-- Does not authorize building any integration surface, directory, or interface.
-- Does not pick an architecture — that's the deferred design conversation.
-- Names a candidate; ratification is gated on the litmus above.
+- Direction is chosen; **no trait, sibling type, crate, or directory is built** by this
+  record.
+- Does not authorize promoting the passive collector trait as a standalone slice (hold
+  for the active sibling).
+- The `ProbeReceipt` columns are a draft, not a ratified schema — the first TLS receipt
+  ratifies them.
 
 ## Relationship
 
-- **Active-witness specimens** (TLS / pfSense / Plex) — the providers-to-be whose shared
-  shape is the forcing-case evidence.
-- **`operator_surface/`** (shipped) — the analogous *internal* seam already cut on the
-  consumer side; the integration surface is its producer-side counterpart, and the same
-  "cut the seam before the spread, type-enforce the boundary" discipline applies.
+- **Active-witness specimens** (TLS / pfSense / Plex) — the probes-to-be whose shared
+  shape ratifies the active sibling; TLS is the next build.
+- **`nq-witness` collectors** — the proven passive precedent; the passive half of the
+  boundary already ships (see prior-art / engineering notes).
+- **`operator_surface/`** (shipped) — the analogous *internal* seam on the consumer side;
+  this is its producer-side counterpart. Same "cut the seam before the spread,
+  type-enforce the boundary" discipline — and the same finding that the wall was already
+  half-present and needed naming, not invention.
 
 ---
 
-*Gap stub. The shape is the operator's to design. This note only ensures the surface is
-named before the spread makes its retrofit expensive.*
+*Candidate, direction chosen, nothing built. Records the passive-vs-active boundary and
+its build order so it is constructed deliberately, paired, and from contact — not
+retrofitted under pressure.*
