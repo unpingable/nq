@@ -133,6 +133,12 @@ Once `decide()` is pure + total + clock-injected, freeze a **conformance corpus*
 run fails — the testimony-side analog of transition-kernel's `CONTRACT.md`. Name
 now; build after the constructor exists.
 
+## Related
+
+The clock `decide()` receives should be basis-tagged, not a bare `Timestamp` —
+see [`CLOCK_WITNESS_PRIMITIVE_CANDIDATE.md`](CLOCK_WITNESS_PRIMITIVE_CANDIDATE.md).
+Evaluators compute freshness via a licensed comparison, never raw subtraction.
+
 ---
 
 *Candidate. Name early, ratify lazily. No implementation authorized by this record.*
