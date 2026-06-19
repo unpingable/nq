@@ -59,6 +59,7 @@ vantage:           prober identity (NOT the target's box)
 probe_time:        ISO-8601
 clock_basis:       { source, ntp_status: recorded|unknown }   # the hidden witness
 delivery_basis:    { dns_answers, tcp_connected, tls_verified, http_status }
+response_horizon:  { timeout_ms, elapsed_ms }                 # the negative rides on this
 chain_subjects:    [leaf, intermediate, root]
 chain_fingerprints:[...]
 leaf_not_before:   ISO-8601
@@ -134,7 +135,11 @@ validation rules. It does **NOT** witness:
 0. **Verify** NQ / Labelwatch serve public HTTPS (the target must exist before the
    probe does).
 1. Build `nq-probe tls-cert` (inputs: host, port, sni, expected_names, warning_days,
-   trust_mode). Receipt out only.
+   trust_mode, timeout_ms). Receipt out only. The `timeout_ms` is not optional: it is
+   the **response horizon** from the envelope's admissible-negative tuple — a
+   `dns_failed` / `tcp_failed` / `tls_handshake_failed` negative is only admissible
+   relative to a declared interval the prober actually waited. Without it those states
+   are intervention-with-anecdotes, not witnessed absence.
 2. Run it from an **independent vantage** (home box / another VPS / CI runner — any
    one imperfect vantage that can't go down with the target).
 3. Collect receipts across **at least one renewal cycle**: normal-valid → warning band
