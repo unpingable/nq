@@ -31,6 +31,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # heavier aws-lc-rs/cmake build. x509-parser uses the `time` crate, matching ours.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 x509-parser = "0.16"
+# Bundled WebPKI trust anchors for chain validation (slice 2c). Bundled, not
+# the OS trust store — keeps validation portable/deterministic.
+webpki-roots = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 

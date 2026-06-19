@@ -22,6 +22,7 @@ rusqlite = { workspace = true }
 # TLS-cert probe transport (slice 2b)
 rustls = { workspace = true }
 x509-parser = "0.16"
+webpki-roots = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]

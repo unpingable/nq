@@ -1,0 +1,38 @@
+{
+  "receipt": "tls-cert-webpki-validation",
+  "timestamp": "2026-06-19T2331Z",
+  "session_id": "operator-dispatched (nq build push); governor microslice+repair autonomy within Phase-2/TLS",
+  "class": "Microslice + repair autonomy (operator-granted). Operator directed slice 2c (WebPKI validation follow-up) with explicit allowance to add minimal validation deps; live network stays manual-only.",
+  "slice": "Slice 2c — populate the TLS receipt with real WebPKI validation at the probe clock, WITHOUT collapsing observed-chain testimony into validated-chain testimony. Closes the validation_result=not_attempted gap before renewal-cycle collection.",
+  "base_commit": "0599b5a",
+  "branch": "main",
+  "preceded_by": "Continuation of the 2b session (post-power-loss). HEAD 0599b5a (2b live transport) verified green. cargo build -p nq-monitor EXIT=0 after the validation changes.",
+  "dependencies_added": {
+    "webpki-roots": "1 (1.0.6 already transitively in the lockfile) — BUNDLED trust anchors, NOT the OS trust store. Deliberately portable/deterministic, avoiding the platform-trust-store-non-portable STOP-IF. rustls-webpki (0.103) and the ring provider were already present; no new heavy build."
+  },
+  "what_executed": {
+    "validator": "tls_cert_transport::validate_observed_chain(chain, sni, now): builds a rustls WebPkiServerVerifier over webpki-roots and calls verify_server_cert(leaf, intermediates, server_name, &[], UnixTime(now)) — validation at the INJECTED PROBE CLOCK, not wall time. Ok -> ChainValidation::Valid; Err -> Invalid{reason}. A SEPARATE step over the chain the accept-all transport observed: observation and validation stay distinct acts.",
+    "receipt_field": "Added validation_result: ChainValidation to TlsCertProbeReceipt (ADDITIVE wire change on nq.probe.tls_cert.v1). The receipt now distinguishes: chain observed (delivery + presented_chain) / chain parsed (presented_chain fields) / chain validated under policy at probe clock (validation_result) / not_attempted|invalid|valid. A successful handshake is explicitly NOT a successful validation.",
+    "verdict_reorder": "compute_verdict now checks expired_under_probe_clock BEFORE chain_invalid. WebPKI also time-checks at the probe clock and reports expiry as a validation failure, but the verdict keeps the never-absolute doctrine: an expired leaf reads expired_under_probe_clock; chain_invalid is reserved for non-expiry trust failures (untrusted issuer, bad signature).",
+    "transport_wiring": "probe_tls_cert runs validate_observed_chain on the observed chain at the probe clock and sets facts.validation. finish() replaced the observe-only non-claim with a validation-basis disclosure ('trust-chain validated under WebPKI against bundled webpki-roots, at the probe clock; a successful handshake is NOT a successful validation'). Removed the now-stale #[allow(dead_code)] on ChainValidation::Valid/Invalid (now constructed).",
+    "tests": "4 new offline WebPKI fixtures over the REAL embedded full chain (leaf -> LE YE2 -> ISRG Root YE -> ISRG Root X2, anchored in webpki-roots): valid in-window; invalid incomplete (leaf-only, no path); clock-driven (in-window Valid vs post-expiry Invalid — same bytes, different injected clock); name-mismatch Invalid. Updated the ignored live test to assert validation_result==Valid + anchor disclosure."
+  },
+  "live_probe_at_review": {
+    "nq.neutral.zone": "validation_result=valid, verdict=valid_at_probe_time, days_remaining=70.",
+    "labelwatch.neutral.zone": "validation_result=valid, verdict=valid_at_probe_time, days_remaining=36.",
+    "negative_control": "probe with --sni wrong.example.com -> tls_handshake_failed, validation not_attempted: the server REFUSES the unknown SNI (no handshake, so nothing to validate) — an honest real result, distinct from a chain-validation failure (which the offline fixtures cover deterministically)."
+  },
+  "evidence_verdict": "PASS. Offline: cargo test -p nq-monitor --lib tls_cert = 21 passed, 0 failed (was 17; +4 webpki fixtures), EXIT=0. Live integration (ignored by default): cargo test --test tls_cert_live -- --ignored = 1 passed, EXIT=0 (really validated nq's chain against webpki-roots at the probe clock). Full workspace regression cargo test --all --locked: ALL_EXIT=0, 1418 passed, every suite 0 failed, live test confirmed IGNORED in the default run (exit code IS the verdict, set -o pipefail + PIPESTATUS).",
+  "standing_verdict": "PASS under operator-granted microslice+repair autonomy with explicit validation-dep allowance. Bounded: +1 dep (webpki-roots, bundled), +1 validator fn, +1 additive receipt field, verdict reorder, +4 offline tests. No DB write; no projection; no push/publish/migrate.",
+  "fences_honored": "observed_chain and validation_result remain DISTINCT (observation = accept-all transport; validation = separate webpki step). Live network manual-only (ignored test + CLI), never default cargo test. No DB writes. No dashboard/projection/OperationalStatus coercion (typed verdict + typed validation result only). No pfSense/Plex. No generic active-witness framework. No final verdict ladder (candidate states; ProbeNotAttempted still declared-only). No Phase 1 passive trait pairing. Portable trust anchor (webpki-roots), NOT OS store. No async rewiring.",
+  "stop_if_checks": "None tripped. Dep (webpki-roots) did not force rewiring (sync) or pull aws-lc-rs. Validation policy NOT ambiguous: webpki against bundled roots at the probe clock, well-defined; expiry-vs-trust separation handled by verdict precedence. Platform trust store NOT used (bundled roots = portable). CLI/schema change was ADDITIVE (validation_result field), not incompatible. No path coerces the TLS verdict into operational health.",
+  "deferred_followups": [
+    "Slice 2d: renewal-cycle collection (the candidate's first-experiment) — now meaningful, since receipts carry real validation. Watch labelwatch enter the warning band (~36d) while nq stays valid (~70d), across a renewal.",
+    "Distinguish WebPKI expiry-failure from trust-failure in the reason string if a consumer needs it (currently the verdict layer separates them; the validation_result.reason carries the raw webpki error).",
+    "Independent external runner / vantage attestation (retire the manual-vantage non-claim).",
+    "Phase 1 passive trait paired with an ActiveWitnessProbe sibling (still held per a43afa5)."
+  ],
+  "commit_state": "Committing this slice (operator standing 'commit is fine, no push'). Files: tls_cert_transport.rs (validator + 4 fixtures), tls_cert_probe.rs (validation_result field + verdict reorder + removed allows), tests/tls_cert_live.rs (validation assertion), Cargo.toml x2, Cargo.lock, .claude/settings.json (allowlist broadening, operator-requested).",
+  "loop_state": "REVIEW (pending final regression exit code, then commit). WIP=1 respected.",
+  "push": "NOT pushed (operator owns the signal)."
+}

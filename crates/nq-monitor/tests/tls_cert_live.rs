@@ -24,7 +24,9 @@
 
 use std::time::Duration;
 
-use nq_monitor::tls_cert_probe::{ClockBasis, TlsCertPolicy, TlsCertTarget, TlsCertVerdict, ValidationPolicy};
+use nq_monitor::tls_cert_probe::{
+    ChainValidation, ClockBasis, TlsCertPolicy, TlsCertTarget, TlsCertVerdict, ValidationPolicy,
+};
 use nq_monitor::tls_cert_transport::probe_tls_cert;
 use time::OffsetDateTime;
 
@@ -80,12 +82,19 @@ fn live_probe_nq_neutral_zone_observes_a_valid_chain() {
         receipt.verdict
     );
 
-    // Receipt-only honesty: observe-only, not trust-validated.
+    // A live, current LE cert must VALIDATE under WebPKI at the probe clock
+    // (slice 2c) — handshake success is not enough; the chain is validated.
+    assert_eq!(
+        receipt.validation_result,
+        ChainValidation::Valid,
+        "live LE chain must validate under webpki-roots at the probe clock: {receipt:?}"
+    );
+    // Receipt discloses the validation basis (anchor + probe-clock).
     assert!(
         receipt
             .non_claims
             .iter()
-            .any(|c| c.contains("validation=not_attempted")),
-        "receipt must disclose observe-only basis"
+            .any(|c| c.contains("webpki-roots")),
+        "receipt must disclose the trust-anchor basis"
     );
 }

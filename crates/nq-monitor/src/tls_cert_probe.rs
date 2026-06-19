@@ -46,14 +46,13 @@ pub enum ValidationPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum ChainValidation {
-    // `Valid`/`Invalid` are the validated-trust outcomes the verdict core
-    // already consumes; transport v1 only produces `NotAttempted` (observe-
-    // only), so they are construction-dead until WebPKI validation lands as
-    // the documented follow-up. Kept as the declared receipt vocabulary.
-    #[allow(dead_code)]
+    /// Chain built to a trusted anchor under the validation policy at the
+    /// probe clock.
     Valid,
-    #[allow(dead_code)]
+    /// Validation failed; `reason` carries the WebPKI error (incl. expiry,
+    /// which the verdict layer maps to `expired_under_probe_clock`).
     Invalid { reason: String },
+    /// No validation performed (no chain delivered).
     NotAttempted,
 }
 
@@ -182,6 +181,11 @@ pub struct TlsCertProbeReceipt {
     pub days_remaining: Option<i64>,
     pub warning_threshold_days: i64,
     pub validation_policy: ValidationPolicy,
+    /// The trust-chain validation OUTCOME (distinct from the observed
+    /// chain above and from `validation_policy`, the intended anchor). A
+    /// successful handshake is NOT a successful validation: this is the
+    /// separate evaluator step over the observed chain.
+    pub validation_result: ChainValidation,
     pub perturbation: Perturbation,
     pub verdict: TlsCertVerdict,
     pub non_claims: Vec<String>,
@@ -265,6 +269,7 @@ pub fn evaluate_tls_cert(
         days_remaining,
         warning_threshold_days: policy.warning_threshold_days,
         validation_policy: policy.validation_policy,
+        validation_result: facts.validation.clone(),
         perturbation: Perturbation::read_only_handshake(),
         verdict,
         non_claims: scope_ceiling_non_claims(policy.validation_policy),
@@ -295,19 +300,24 @@ fn compute_verdict(
         return TlsCertVerdict::NoCertificatePresented;
     };
 
-    // Chain validity (the transport's webpki/pinned outcome).
-    if let ChainValidation::Invalid { .. } = facts.validation {
-        return TlsCertVerdict::ChainInvalid;
-    }
-
     // Identity: the leaf must cover an expected name.
     if !name_matches(&leaf.sans, &policy.expected_names) {
         return TlsCertVerdict::NameMismatch;
     }
 
-    // Validity relative to the PROBE CLOCK — never absolute.
+    // Validity relative to the PROBE CLOCK — never absolute. Checked BEFORE
+    // chain_invalid so an expired cert reads `expired_under_probe_clock`,
+    // not `chain_invalid` — even though WebPKI validation (which also
+    // time-checks at the probe clock) reports expiry as a validation
+    // failure. Expiry is a clock fact; chain_invalid is reserved for
+    // non-expiry trust failures (untrusted issuer, bad signature).
     if now < leaf.not_before || now > leaf.not_after {
         return TlsCertVerdict::ExpiredUnderProbeClock;
+    }
+
+    // Trust-chain validity (the separate WebPKI validation step's outcome).
+    if let ChainValidation::Invalid { .. } = facts.validation {
+        return TlsCertVerdict::ChainInvalid;
     }
 
     let days_remaining = (leaf.not_after - now).whole_days();
