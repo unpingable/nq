@@ -6,6 +6,28 @@ All notable changes to NQ are tracked here in [keep-a-changelog](https://keepach
 
 _Add post-tag changes here; rename to a versioned section when the next tag is cut._
 
+### Added
+
+- **`evaluation_basis` on every preflight HTTP response (additive wire change).** The
+  `/api/preflight/*` endpoints and the embedded `disk_state_preflight` in
+  `/api/host/{name}` now carry an additive `evaluation_basis` object —
+  `{ kind: "request_time_unsealed", clock: "wall_utc", sealed: false }`. It is
+  *confession, not authority*: the operator surface re-derives these preflights at
+  request time against the request wall clock; they are **not** sealed,
+  generation-pinned receipts. Backward-compatible (purely additive); consumers that
+  ignore unknown fields are unaffected. See
+  `docs/working/decisions/OPERATOR_SURFACE_SPLIT_TRIPWIRE.md`.
+
+### Changed
+
+- **Preflight verdicts are no longer computed inline in the HTTP layer.** The nine
+  `evaluate_*_preflight` call sites in `http/routes.rs` now route through a single
+  `operator_surface::preflight` facade that injects one request-time clock and calls the
+  evaluators' clock-pinned `_at` forms. No operator-visible verdict change; the
+  time-sensitive `dns_state` / `ingest_state` staleness verdicts are now pinned to one
+  injected instant instead of an ad-hoc wall clock read mid-evaluation. Enforced by
+  `tests/operator_surface_seam.rs` (boundary + clock-injection/determinism).
+
 ### Fixed
 
 - **`GET /state` now carries its documented `nq.witness_packet.v1` schema field.**

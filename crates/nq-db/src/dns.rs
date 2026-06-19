@@ -187,14 +187,38 @@ pub fn evaluate_dns_state_preflight(
     evaluate_dns_state_preflight_from_conn(db.conn(), key)
 }
 
+/// Clock-injected variant. The `dns_state` verdict is time-sensitive
+/// (a row older than `DNS_STATE_STALE_THRESHOLD_SECONDS` is
+/// `StaleTestimony`), so `now` is the evaluation clock — not ambient
+/// wall time. The operator-surface facade passes a single request-time
+/// `now` here so the staleness verdict and `generated_at` are pinned to
+/// the same instant. Tests pin verdicts against fixture timestamps.
+pub fn evaluate_dns_state_preflight_at(
+    db: &ReadDb,
+    key: &DnsObservationTuple<'_>,
+    now: time::OffsetDateTime,
+) -> anyhow::Result<PreflightResult> {
+    evaluate_dns_state_preflight_from_conn_at(db.conn(), key, now)
+}
+
 /// Variant that accepts a raw `Connection`. Used by tests and by the
 /// HTTP route layer (later slice); the public API is the `ReadDb` form
-/// above.
+/// above. Supplies the ambient wall clock to the `_at` form.
 pub fn evaluate_dns_state_preflight_from_conn(
     conn: &Connection,
     key: &DnsObservationTuple<'_>,
 ) -> anyhow::Result<PreflightResult> {
-    let generated_at = time::OffsetDateTime::now_utc()
+    evaluate_dns_state_preflight_from_conn_at(conn, key, time::OffsetDateTime::now_utc())
+}
+
+/// Clock-injected `_from_conn` form. `now` is used for both the
+/// freshness/staleness verdict and the `generated_at` stamp.
+pub fn evaluate_dns_state_preflight_from_conn_at(
+    conn: &Connection,
+    key: &DnsObservationTuple<'_>,
+    now: time::OffsetDateTime,
+) -> anyhow::Result<PreflightResult> {
+    let generated_at = now
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| String::new());
 
@@ -234,7 +258,7 @@ pub fn evaluate_dns_state_preflight_from_conn(
     // time is real evidence — but the verdict is stale_testimony, not
     // the kind-specific verdict. Conflating the two would let a six-
     // hour-old success row pose as live resolution testimony.
-    let now = time::OffsetDateTime::now_utc();
+    // `now` is the injected evaluation clock (see `_at`), not ambient.
     let parsed = time::OffsetDateTime::parse(
         &obs.observed_at,
         &time::format_description::well_known::Rfc3339,

@@ -57,10 +57,25 @@ pub struct NqSqlContractStateTarget {
 /// classifies it against the four-verdict mapping above, and returns a
 /// `PreflightResult` carrying the kind-level constitutional refusals
 /// plus the per-receipt negative scope.
+// Ambient-clock convenience entry, kept for symmetry with the other
+// preflight kinds and exercised by this module's tests. The operator
+// surface calls the `_at` form directly, so this is unused in non-test
+// builds of the binary crate.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn evaluate_nq_sql_contract_state_preflight(
     target: &NqSqlContractStateTarget,
 ) -> PreflightResult {
-    let now = OffsetDateTime::now_utc();
+    evaluate_nq_sql_contract_state_preflight_at(target, OffsetDateTime::now_utc())
+}
+
+/// Clock-injected variant. The `nq_sql_contract_state` verdict is **not**
+/// time-sensitive (it classifies an on-disk artifact's column contract),
+/// so `now` pins only the `generated_at` stamp — kept for a uniform
+/// operator-surface facade and a deterministic stamp.
+pub fn evaluate_nq_sql_contract_state_preflight_at(
+    target: &NqSqlContractStateTarget,
+    now: OffsetDateTime,
+) -> PreflightResult {
     let generated_at = now.format(&Rfc3339).unwrap_or_default();
 
     let preflight_target = PreflightTarget {

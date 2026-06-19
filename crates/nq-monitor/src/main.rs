@@ -4,6 +4,7 @@ mod cmd;
 mod http;
 mod nq_evaluator_probe;
 mod nq_sql_contract_state;
+mod operator_surface;
 mod probe;
 mod pull;
 mod served_surface_registry;

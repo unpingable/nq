@@ -139,6 +139,17 @@ clock_basis:     { source, ntp_status }      # an expiring relaxation needs a wi
 - **PREFLIGHT** (`PREFLIGHT_CORE_CANDIDATE.md`) — `decide()` mints the verdict;
   `project_verdict()` is the *next* guarded constructor, one layer out.
 
+## See also (recognition, not premise)
+
+This note is the NQ/operator-surface instance of the broader cross-tool
+**projection-receipt family** — *stored ≠ true, signed ≠ witnessed* (cf. continuity's
+projection-receipt candidate, named in
+`agent_gov/.../active-witnessing-probe-is-transition-note.md`). The link is a pointer,
+not a dependency: the local finding (the dashboard's green/red runs on a stringly-typed
+`severity` decoupled from the admissibility verdict) and the proposed seam stand on
+their own on NQ code. Added as a recognition backlink *after* the note was grounded,
+per `agent_gov/.../recognition-links-after-grounding-note.md` (cite-don't-extract).
+
 ---
 
 *Candidate. Name early, ratify lazily. No projection layer, no `OperationalStatus`, and

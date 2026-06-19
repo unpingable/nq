@@ -88,12 +88,35 @@ pub fn evaluate_disk_state_preflight(
     evaluate_disk_state_preflight_from_conn(db.conn(), host, target)
 }
 
+/// Clock-injected variant. The `disk_state` verdict is **not**
+/// time-sensitive (it reads free bytes, not age), so `now` pins only the
+/// `generated_at` stamp — kept for a uniform facade and a deterministic
+/// stamp at the operator surface.
+pub fn evaluate_disk_state_preflight_at(
+    db: &ReadDb,
+    host: &str,
+    target: Option<&str>,
+    now: time::OffsetDateTime,
+) -> anyhow::Result<PreflightResult> {
+    evaluate_disk_state_preflight_from_conn_at(db.conn(), host, target, now)
+}
+
 /// Variant that accepts a raw `Connection`. Used by tests; the public API
-/// is the `ReadDb` form above.
+/// is the `ReadDb` form above. Supplies the ambient wall clock.
 pub fn evaluate_disk_state_preflight_from_conn(
     conn: &rusqlite::Connection,
     host: &str,
     target: Option<&str>,
+) -> anyhow::Result<PreflightResult> {
+    evaluate_disk_state_preflight_from_conn_at(conn, host, target, time::OffsetDateTime::now_utc())
+}
+
+/// Clock-injected `_from_conn` form. `now` pins `generated_at` only.
+pub fn evaluate_disk_state_preflight_from_conn_at(
+    conn: &rusqlite::Connection,
+    host: &str,
+    target: Option<&str>,
+    now: time::OffsetDateTime,
 ) -> anyhow::Result<PreflightResult> {
     let filter = ExportFilter {
         host: Some(host.to_string()),
@@ -104,7 +127,7 @@ pub fn evaluate_disk_state_preflight_from_conn(
     };
     let snapshots = export_findings_from_conn(conn, &filter)?;
 
-    let generated_at = time::OffsetDateTime::now_utc()
+    let generated_at = now
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| String::new());
 
@@ -487,12 +510,34 @@ pub fn evaluate_ingest_state_preflight(db: &ReadDb) -> anyhow::Result<PreflightR
     evaluate_ingest_state_preflight_from_conn(db.conn())
 }
 
+/// Clock-injected variant. The `ingest_state` verdict is time-sensitive
+/// (a latest generation older than `INGEST_STATE_STALE_THRESHOLD_SECONDS`
+/// is `StaleTestimony`), so `now` is the evaluation clock — not ambient
+/// wall time. The operator-surface facade passes a single request-time
+/// `now` so the staleness verdict and `generated_at` share one instant.
+pub fn evaluate_ingest_state_preflight_at(
+    db: &ReadDb,
+    now: time::OffsetDateTime,
+) -> anyhow::Result<PreflightResult> {
+    evaluate_ingest_state_preflight_from_conn_at(db.conn(), now)
+}
+
 /// Variant that accepts a raw `Connection`. Used by tests and by the
-/// HTTP route layer; the public API is the `ReadDb` form above.
+/// HTTP route layer; the public API is the `ReadDb` form above. Supplies
+/// the ambient wall clock to the `_at` form.
 pub fn evaluate_ingest_state_preflight_from_conn(
     conn: &rusqlite::Connection,
 ) -> anyhow::Result<PreflightResult> {
-    let generated_at = time::OffsetDateTime::now_utc()
+    evaluate_ingest_state_preflight_from_conn_at(conn, time::OffsetDateTime::now_utc())
+}
+
+/// Clock-injected `_from_conn` form. `now` is used for both the
+/// freshness/staleness verdict and the `generated_at` stamp.
+pub fn evaluate_ingest_state_preflight_from_conn_at(
+    conn: &rusqlite::Connection,
+    now: time::OffsetDateTime,
+) -> anyhow::Result<PreflightResult> {
+    let generated_at = now
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| String::new());
 
@@ -658,8 +703,7 @@ pub fn evaluate_ingest_state_preflight_from_conn(
         INGEST_STATE_STALE_THRESHOLD_SECONDS,
     );
 
-    // Verdict.
-    let now = time::OffsetDateTime::now_utc();
+    // Verdict. `now` is the injected evaluation clock (see `_at`), not ambient.
     let completed_parsed = time::OffsetDateTime::parse(
         &gen.completed_at,
         &time::format_description::well_known::Rfc3339,

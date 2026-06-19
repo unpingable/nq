@@ -74,11 +74,14 @@ pub use query::{query_read_only, QueryLimits, QueryResult};
 pub use retention::{prune, PruneStats};
 pub use snapshot::create_snapshot;
 pub use preflight::{
-    evaluate_disk_state_preflight, evaluate_disk_state_preflight_from_conn,
-    evaluate_ingest_state_preflight, evaluate_ingest_state_preflight_from_conn,
+    evaluate_disk_state_preflight, evaluate_disk_state_preflight_at,
+    evaluate_disk_state_preflight_from_conn, evaluate_disk_state_preflight_from_conn_at,
+    evaluate_ingest_state_preflight, evaluate_ingest_state_preflight_at,
+    evaluate_ingest_state_preflight_from_conn, evaluate_ingest_state_preflight_from_conn_at,
 };
 pub use dns::{
-    evaluate_dns_state_preflight, evaluate_dns_state_preflight_from_conn,
+    evaluate_dns_state_preflight, evaluate_dns_state_preflight_at,
+    evaluate_dns_state_preflight_from_conn, evaluate_dns_state_preflight_from_conn_at,
     insert_observation as insert_dns_observation,
     latest_observation_for_tuple as latest_dns_observation_for_tuple, DnsObservation,
     DnsObservationTuple, DNS_STATE_STALE_THRESHOLD_SECONDS,

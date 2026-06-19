@@ -5,20 +5,18 @@ use axum::{
     routing::{get, post, delete},
     Json, Router,
 };
-use nq_db::nq_binary_mtime_state::{
-    evaluate_nq_binary_mtime_state_preflight, NqBinaryMtimeStateTarget,
-};
-use nq_db::nq_evaluator_state::{
-    evaluate_nq_evaluator_state_preflight, NqEvaluatorStateTarget,
-};
-use nq_db::sqlite_wal_state::{evaluate_sqlite_wal_state_preflight, SqliteWalTarget};
+use nq_db::nq_binary_mtime_state::NqBinaryMtimeStateTarget;
+use nq_db::nq_evaluator_state::NqEvaluatorStateTarget;
+use nq_db::sqlite_wal_state::SqliteWalTarget;
 use crate::artifact_registry::RegistryResponse;
-use crate::nq_sql_contract_state::{
-    evaluate_nq_sql_contract_state_preflight, NqSqlContractStateTarget,
-};
+use crate::nq_sql_contract_state::NqSqlContractStateTarget;
+// The operator-surface seam: the ONLY path from a witness evaluator to
+// this HTTP surface. Route handlers call `preflight::*` here, never
+// `evaluate_*_preflight` directly. Enforced by
+// `tests/operator_surface_boundary.rs`.
+use crate::operator_surface::preflight;
 use crate::served_surface_registry::ServedSurfaceResponse;
-use nq_db::component_testimony::evaluate_observation_loop_alive_preflight;
-use nq_db::{overview, host_detail, query_read_only, evaluate_disk_state_preflight, evaluate_dns_state_preflight, evaluate_ingest_state_preflight, DnsObservationTuple, QueryLimits, ReadDb, WriteDb};
+use nq_db::{overview, host_detail, query_read_only, DnsObservationTuple, QueryLimits, ReadDb, WriteDb};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -204,15 +202,17 @@ async fn api_host(State(db): State<Db>, Path(name): Path<String>) -> Json<serde_
     let db = db.lock().await;
     match host_detail(&db, &name) {
         Ok(vm) => {
-            // Attach bounded disk_state preflight for this host. The
-            // typed PreflightResult is nested rather than flattened so
-            // its `schema` / `contract_version` envelope stays
+            // Attach bounded disk_state preflight for this host, via the
+            // operator-surface seam. The surfaced value is nested rather
+            // than flattened so its `schema` / `contract_version`
+            // envelope (and the additive `evaluation_basis`) stays
             // self-describing alongside any future fields here. On
-            // evaluator error the field is omitted; the rest of the
-            // host response is unaffected.
-            let disk_state_preflight = evaluate_disk_state_preflight(&db, &name, None)
+            // evaluator error the field is omitted; the rest of the host
+            // response is unaffected.
+            let now = time::OffsetDateTime::now_utc();
+            let disk_state_preflight = preflight::disk_state(&db, &name, None, now)
                 .ok()
-                .and_then(|r| serde_json::to_value(&r).ok());
+                .and_then(|s| serde_json::to_value(&s).ok());
             let mut body = serde_json::json!({
                 "host": vm.host,
                 "recent_runs": vm.recent_source_runs.len(),
@@ -827,8 +827,9 @@ async fn api_preflight_disk_state(
     Query(params): Query<PreflightDiskStateQuery>,
 ) -> Json<serde_json::Value> {
     let db = db.lock().await;
-    match evaluate_disk_state_preflight(&db, &host, params.target.as_deref()) {
-        Ok(result) => match serde_json::to_value(&result) {
+    let now = time::OffsetDateTime::now_utc();
+    match preflight::disk_state(&db, &host, params.target.as_deref(), now) {
+        Ok(surfaced) => match serde_json::to_value(&surfaced) {
             Ok(v) => Json(v),
             Err(e) => Json(serde_json::json!({"error": e.to_string()})),
         },
@@ -846,8 +847,9 @@ async fn api_preflight_disk_state(
 /// network state, or its own overall health.
 async fn api_preflight_ingest_state(State(db): State<Db>) -> Json<serde_json::Value> {
     let db = db.lock().await;
-    match evaluate_ingest_state_preflight(&db) {
-        Ok(result) => match serde_json::to_value(&result) {
+    let now = time::OffsetDateTime::now_utc();
+    match preflight::ingest_state(&db, now) {
+        Ok(surfaced) => match serde_json::to_value(&surfaced) {
             Ok(v) => Json(v),
             Err(e) => Json(serde_json::json!({"error": e.to_string()})),
         },
@@ -894,8 +896,9 @@ async fn api_preflight_dns_state(
         query_name: &params.name,
         query_type: &params.query_type,
     };
-    match evaluate_dns_state_preflight(&db, &tuple) {
-        Ok(result) => match serde_json::to_value(&result) {
+    let now = time::OffsetDateTime::now_utc();
+    match preflight::dns_state(&db, &tuple, now) {
+        Ok(surfaced) => match serde_json::to_value(&surfaced) {
             Ok(v) => Json(v),
             Err(e) => Json(serde_json::json!({"error": e.to_string()})),
         },
@@ -969,14 +972,9 @@ async fn api_preflight_component_testimony_observation_loop_alive(
     }
     let db = db.lock().await;
     let evaluation_engine_id = nq_db::evaluation_engine_id();
-    match evaluate_observation_loop_alive_preflight(
-        db.conn(),
-        component,
-        subject,
-        &time::OffsetDateTime::now_utc(),
-        &evaluation_engine_id,
-    ) {
-        Ok(result) => match serde_json::to_value(&result) {
+    let now = time::OffsetDateTime::now_utc();
+    match preflight::observation_loop_alive(&db, component, subject, &evaluation_engine_id, now) {
+        Ok(surfaced) => match serde_json::to_value(&surfaced) {
             Ok(v) => Ok(Json(v)),
             Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
         },
@@ -1024,8 +1022,9 @@ async fn api_preflight_nq_binary_mtime_state(
     }
     let db = db.lock().await;
     let target = NqBinaryMtimeStateTarget { host, binary_path };
-    match evaluate_nq_binary_mtime_state_preflight(&db, &target) {
-        Ok(result) => match serde_json::to_value(&result) {
+    let now = time::OffsetDateTime::now_utc();
+    match preflight::nq_binary_mtime_state(&db, &target, now) {
+        Ok(surfaced) => match serde_json::to_value(&surfaced) {
             Ok(v) => Ok(Json(v)),
             Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
         },
@@ -1073,8 +1072,9 @@ async fn api_preflight_nq_evaluator_state(
     }
     let db = db.lock().await;
     let target = NqEvaluatorStateTarget { host, claim_kind };
-    match evaluate_nq_evaluator_state_preflight(&db, &target) {
-        Ok(result) => match serde_json::to_value(&result) {
+    let now = time::OffsetDateTime::now_utc();
+    match preflight::nq_evaluator_state(&db, &target, now) {
+        Ok(surfaced) => match serde_json::to_value(&surfaced) {
             Ok(v) => Ok(Json(v)),
             Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
         },
@@ -1172,8 +1172,9 @@ async fn api_preflight_nq_sql_contract_state(
         host,
         artifact_path: std::path::PathBuf::from(artifact),
     };
-    let result = evaluate_nq_sql_contract_state_preflight(&target);
-    match serde_json::to_value(&result) {
+    let now = time::OffsetDateTime::now_utc();
+    let surfaced = preflight::nq_sql_contract_state(&target, now);
+    match serde_json::to_value(&surfaced) {
         Ok(v) => Ok(Json(v)),
         Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
     }
@@ -1206,8 +1207,9 @@ async fn api_preflight_sqlite_wal_state(
         host,
         db_file_path,
     };
-    match evaluate_sqlite_wal_state_preflight(&db, &target) {
-        Ok(result) => match serde_json::to_value(&result) {
+    let now = time::OffsetDateTime::now_utc();
+    match preflight::sqlite_wal_state(&db, &target, now) {
+        Ok(surfaced) => match serde_json::to_value(&surfaced) {
             Ok(v) => Ok(Json(v)),
             Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
         },
