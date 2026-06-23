@@ -1522,12 +1522,48 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
                 String::new()
             };
 
+            // Scan-surface claim boundary. The over-read the adversarial
+            // reads exposed (severity + age → "P1 neglected for 58 days")
+            // happens here, on the table operators scan — not on the detail
+            // page, where gloss/contradiction already render. Keep it terse:
+            // one muted line naming what this domain's witness cannot
+            // testify to, keyed on the failure domain. Render-only.
+            let domain_boundary = match domain {
+                "Δo" => "absence observed at the collector; the covered subject's own state cannot testify from this alone",
+                "Δs" => "signal trustworthiness is in question; the underlying reality cannot testify from this alone",
+                "Δg" => "a substrate condition is witnessed; service impact and incident priority cannot testify from this alone",
+                "Δh" => "a worsening trend is witnessed; a present failure cannot testify from this alone",
+                _ => "incident priority, root cause, and operator neglect cannot testify from this alone",
+            };
+            // Persistence vs neglect: an acknowledged finding carries an
+            // operator receipt (attended, not unhandled); an unacknowledged
+            // one is witnessed persistence about which neglect cannot be
+            // testified. This is canon NQ already holds (the `acknowledged`
+            // column) carried to the scan surface — not a new type.
+            let persistence_clause = if w.acknowledged {
+                " · persistence acknowledged by an operator"
+            } else {
+                " · persistence witnessed; neglect cannot testify"
+            };
+            let boundary = format!(
+                "<span class=\"boundary\">{domain_boundary}{persistence_clause}</span>"
+            );
+            // Local canon receipt, surfaced terse so a scary-but-known
+            // condition reads as known, not as a fresh incident. Only canon
+            // already present in the overview view is rendered here
+            // (acknowledged); maintenance/stability render as badges above.
+            let canon = if w.acknowledged {
+                " <span class=\"canon-chip\" title=\"an operator has acknowledged this finding — it is attended, not unhandled\">acknowledged</span>"
+            } else {
+                ""
+            };
+
             format!(
                 "<tr class=\"{sev_class}\" data-domain=\"{domain}\">
                     <td class=\"sev-dot\"></td>
                     <td><a href=\"{detail_url}\">{label}</a>{suppressed_badge}{diag_badges}{stability_badge}{maintenance_badge}<br><span class=\"kind-sub\">{kind} · {domain}</span></td>
                     <td>{host}</td>
-                    <td>{message}</td>
+                    <td>{message}{canon}{boundary}</td>
                     <td class=\"gens\"{gens_title_attr}>{gens_cell}</td>
                 </tr>{substrate_detail_row}",
                 detail_url = escape_html(&detail_url),
@@ -1536,6 +1572,8 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
                 domain = escape_html(domain),
                 host = escape_html(&w.host),
                 message = escape_html(&w.message),
+                canon = canon,
+                boundary = boundary,
                 gens_cell = escape_html(&gens_cell),
                 gens_title_attr = gens_title_attr,
                 substrate_detail_row = substrate_detail_row,
@@ -1682,6 +1720,15 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 .sql-box button {{ background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; padding: 6px 16px; cursor: pointer; font-family: inherit; font-size: 13px; margin-top: 6px; }}
 .sql-box button:hover {{ background: #30363d; }}
 #sql-result {{ margin-top: 12px; white-space: pre-wrap; font-size: 12px; color: #8b949e; max-height: 400px; overflow: auto; }}
+
+/* Projection boundary chrome — keeps the witness surface from being read
+   as an incident dashboard or a proof checker. Per the render-boundary
+   completeness pass (Lane A) and MONITORING_PROJECTION_SEAM_CANDIDATE.md. */
+.witness-frame {{ font-size: 12px; color: #8b949e; background: #0d1117; border: 1px solid #21262d; border-left: 2px solid #30363d; border-radius: 6px; padding: 8px 12px; margin-bottom: 16px; line-height: 1.5; }}
+.witness-frame-title {{ display: block; color: #8b949e; font-weight: 600; margin-bottom: 2px; }}
+.witness-footer {{ font-size: 11px; color: #484f58; border-top: 1px solid #21262d; margin-top: 28px; padding-top: 12px; line-height: 1.6; max-width: 70ch; }}
+.boundary {{ display: block; color: #484f58; font-size: 11px; font-style: italic; margin-top: 3px; }}
+.canon-chip {{ display: inline-block; background: #12261a; border: 1px solid #238636; color: #3fb950; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }}
 </style>
 </head>
 <body>
@@ -1724,6 +1771,11 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 </div>
 
 <div class="main">
+
+<div class="witness-frame">
+    <span class="witness-frame-title">NQ witness report — not an incident commander, not a proof checker.</span>
+    Findings below are observed contradictions, gaps, and drift, ranked by attention bias (a suggested response shape, not a severity or a priority). Each finding states what it can and cannot testify to; severity ranks the witnessed condition, not its urgency or its blast radius.
+</div>
 
 <h2>Open Findings ({signal_count})</h2>
 <table id="findings-table">
@@ -1769,6 +1821,10 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 </div>
 </form>
 <div id="sql-result"></div>
+</div>
+
+<div class="witness-footer">
+    This page reports what was observed, the basis it was observed on, and the claims that basis supports. It does not assign incident priority, ownership, SLA impact, or response obligation, and it does not identify a root cause or prove correctness — unless an external policy or proof receipt is present and linked. Formal and admissibility artifacts describe structure; a rendered finding is not a theorem unless it links to a checked proof artifact. A persistent finding is a witnessed persistence, not evidence of neglect; a quiet source is an absence at the collector, not a dead service; a degraded scheduler or valve is a witnessed state, not a loss.
 </div>
 
 </div>
@@ -1903,8 +1959,14 @@ async function loadLogs() {{
     var html = '<table><tr><th>Source</th><th>Status</th><th>Lines</th><th>Errors</th><th>Err%</th><th>Last Log</th></tr>';
     for (var i = 0; i < data.rows.length; i++) {{
       var r = data.rows[i];
-      var statusColor = r[1] === "ok" ? "rgb(63,185,80)" : r[1] === "source_quiet" ? "rgb(210,153,34)" : "rgb(218,54,51)";
-      html += "<tr><td>" + r[0] + "</td><td style='color:" + statusColor + ";'>" + r[1] + "</td><td>" + r[2] + "</td><td>" + r[3] + "</td><td>" + r[4] + "%</td><td style='color:#484f58;'>" + (r[5] || "-") + "</td></tr>";
+      var statusRaw = r[1];
+      var statusColor = statusRaw === "ok" ? "rgb(63,185,80)" : statusRaw === "source_quiet" ? "rgb(210,153,34)" : "rgb(218,54,51)";
+      // source_quiet is collector-scoped absence. Render it as such so the
+      // row reads as "no lines reached this collector", not as a claim that
+      // the service itself went silent.
+      var statusText = statusRaw === "source_quiet" ? "no lines at collector" : statusRaw;
+      var statusTitle = statusRaw === "source_quiet" ? "No log lines observed at this collector for this source this generation. May be source silence, collector failure, a routing change, or a coverage gap — the service state cannot testify from this alone." : "";
+      html += "<tr><td>" + r[0] + "</td><td style='color:" + statusColor + ";' title='" + statusTitle + "'>" + statusText + "</td><td>" + r[2] + "</td><td>" + r[3] + "</td><td>" + r[4] + "%</td><td style='color:#484f58;'>" + (r[5] || "-") + "</td></tr>";
     }}
     html += '</table>';
     el.innerHTML = html;

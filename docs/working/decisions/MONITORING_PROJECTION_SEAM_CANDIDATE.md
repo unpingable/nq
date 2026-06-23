@@ -150,6 +150,48 @@ not a dependency: the local finding (the dashboard's green/red runs on a stringl
 their own on NQ code. Added as a recognition backlink *after* the note was grounded,
 per `agent_gov/.../recognition-links-after-grounding-note.md` (cite-don't-extract).
 
+## Evidence breadcrumb — render-surface leak confirmed (2026-06-23)
+
+Three cold adversarial reads of the live dashboard / repo (DeepSeek and Gemini, run as
+"J. Random SRE" and as a doctrine reader) triangulated the render surface:
+
+- **DeepSeek on the dashboard** imported *incident* authority: severity → P1, age →
+  neglected, `source_quiet` → dead service, action_bias → obligation.
+- **Gemini on the doctrine** imported *proof* authority: dashboard → live Lean checker,
+  finding → discharged proof obligation, NQ → root-cause locator.
+- **DeepSeek on the README** read NQ correctly as an anti-lying witness layer.
+
+The third read is the tell: the README carries the interpretive frame; the live
+dashboard did not, so cold readers laundered NQ output into authority it never claimed.
+A fourth data point sharpened it — labelwatch's own operator read the *same* substrate
+(freelist 29.6 GB, retention `degraded`, old findings) as **healthy / no-action**,
+because it held local canon (accepted cleanup debt, pressure-aware scheduler by design,
+133-day runway, `drop_frac` 0) the scan surface never carried. The leak is missing
+**context carriage**, not only wording.
+
+This is **evidence for the render-boundary completeness pass (Lane A)** — *not* a forcing
+case for the type wall in this record. The observed failure is reader projection at the
+render seam, not an internal verdict→attention coercion. Lane A shipped as render / copy
+/ canon-carriage only:
+
+- page-level witness-report frame refusing both incident- and proof-authority readings
+  (`crates/nq-monitor/src/http/routes.rs`, `.witness-frame` / `.witness-footer`);
+- `source_quiet` rendered as collector-scoped absence, not service silence;
+- per-finding scan-surface claim boundary keyed on failure domain (`cannot testify`
+  lines), with age rendered as witnessed persistence, not neglect;
+- local canon (`acknowledged`) surfaced as a receipt chip on the row;
+- README **"What NQ is not"** boundary section;
+- pinned by `crates/nq-monitor/tests/render_claim_boundaries.rs` (forbidden/allowed
+  vocabulary for both adversaries).
+
+**Lane B stays non-binding.** No `OperationalStatus`, no `RelaxationReceipt`, no
+projection-receipt ladder was built or authorized by this evidence. Known render-only
+follow-up (named, not built): the richer free-text canon labelwatch holds
+(`work_state` = accepted_debt / parked, `note`, owner, runway) lives in `warning_state`
+but is not yet carried into the overview view — surfacing it on the scan row is a small
+coverage step that touches the overview query + `WarningVm`, gated by the same
+render-only discipline.
+
 ---
 
 *Candidate. Name early, ratify lazily. No projection layer, no `OperationalStatus`, and

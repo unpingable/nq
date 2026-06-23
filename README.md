@@ -32,6 +32,16 @@ Every finding is a four-part proof, not a threshold alert:
 
 The finding card in the UI walks you through this ladder. You can stop at the metric if you're scanning. If you need to understand the classification, it justifies itself inline — no separate documentation required.
 
+## What NQ is not
+
+NQ is a witness layer. It records what was observed, the basis it was observed on, the claim that basis supports, and the claims it explicitly *cannot* support. Two confident misreadings follow from familiar dashboard and formal-methods vocabulary, and NQ refuses both:
+
+- **NQ is not an incident commander.** A finding's severity ranks the *witnessed condition*, not its urgency; action bias is a *suggested response shape*, not an obligation. NQ does not assign incident priority, ownership, SLA impact, or response obligation. A persistent finding is witnessed persistence, not proof that anyone neglected it. A quiet source is an absence at the collector, not a dead service. None of those become an "incident" without an external policy receipt that says so.
+
+- **NQ is not a proof checker.** Findings are admissible observations, not theorems. NQ does not prove correctness and does not identify a root cause from telemetry. Its failure taxonomy and admissibility vocabulary describe the *structure* of an observation's standing; a rendered finding is not a verified proof unless it links to a checked proof artifact. NQ can say "this observation weakens claim C"; it cannot say "this assumption caused the outage" without a causal witness.
+
+The short version: **NQ is witnessed operational testimony with explicit refusal boundaries** — neither monitoring with better words nor formal verification with a dashboard. The live dashboard carries a compact version of this contract inline so a cold reader does not import authority NQ never claimed.
+
 ## Install
 
 > **Pre-1.0.** NQ is at `v0.x` — surfaces evolve as the instrument learns against real evidence. See [`docs/architecture/COMPATIBILITY.md`](docs/architecture/COMPATIBILITY.md) for what you can and cannot pin behavior against.
