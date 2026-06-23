@@ -1,0 +1,31 @@
+{
+  "receipt": "pfsense-reachable-drift-phase1",
+  "timestamp": "2026-06-23T1820Z",
+  "session_id": "operator-dispatched (gov-loop); Packet 3 started, reframed to inventory-first",
+  "class": "Operator-directed research specimen. Phase 1 = read-only inventory + source typing (doc) + the first specimen's PURE verdict core (offline). No access enabled, no network, no SSH, no mutation, no scheduler, no Lane B.",
+  "slice": "Packet 3 / Phase 1 — pfSense reachable-drift: inventory + source typing, and the lease-vs-presence pure verdict core (nq.probe.lease_presence.v1).",
+  "base_commit": "289d77f",
+  "branch": "main",
+  "preceded_by": "Packets 1-2 committed + loop reconciled (289d77f). Operator said start pfSense, then reframed: use pfSense hard, source-type everything, inventory before probes.",
+  "what_executed": {
+    "inventory_doc": "docs/working/decisions/PFSENSE_REACHABLE_DRIFT_STEP0_INVENTORY.md (new): trees out pfSense 2.8.1 read surfaces (interfaces/gateways/routes/firewall rules/NAT/aliases/DHCP leases/ARP/NDP/DNS/VPN/logs/services/packages/host resources) x read method x testimony type (pfSenseDeclaration / pfSenseRuntimeReport / pfSenseHistoricalReport / ObservedReachability / CannotTestify). Grounds in the operator-pasted dashboard (pfsense.example.internal 10.0.0.1, 2.8.1-RELEASE) typed as a RuntimeReport, not independently witnessed. Sketches the declared reachability graph and names 3 candidate drift checks.",
+    "lease_presence_core": "crates/nq-monitor/src/lease_presence_probe.rs (new): pure clock-injected verdict core comparing a pfSense DHCP lease report against presence observations (ARP residue = pfSenseRuntimeReport; ICMP/TCP probe from a named vantage = ObservedReachability). Non-lift ladder: lease_corroborated_by_presence / lease_uncorroborated / cannot_testify_no_presence_basis / lease_expired_or_absent. Receipt-only, typed verdict, no is_ok/healthy/green coercion. Perturbation distinguishes passive ARP read from active probe. The refusals (lease != presence; uncorroborated != host-down/host-gone/lease-wrong) are the product, carried in non_claims.",
+    "lib": "crates/nq-monitor/src/lib.rs: +1 mod (lease_presence_probe)."
+  },
+  "operator_decisions_captured": {
+    "read_path": "SSH + pfctl first (key-only, LAN/VPN-only source restriction, no WAN mgmt, read-only commands: pfctl -sr/-sn/-ss, netstat -rn, arp -an, lease/log reads). SNMP queued as a later RuntimeReport channel; REST (unofficial) deprioritized.",
+    "first_check": "lease-vs-presence, explicitly as a cheap NON-LIFT specimen. Output must say what it can/cannot testify; forbids host-absent/host-down unless a declared probe regime supports the narrower claim."
+  },
+  "evidence_verdict": "PASS (offline). cargo test -p nq-monitor --lib lease_presence = 11 passed, 0 failed, LP_EXIT=0 (corroborated via ARP / via probe; uncorroborated; cannot-testify-no-basis; expired; static; mixed; probe_time=clock; passive-vs-active perturbation; refusals + no-coercion; testimony-type travels). lib compiles.",
+  "standing_verdict": "PASS. Bounded: 1 new doc + 1 new module + 1 lib line + loop bookkeeping + this receipt. No network, no SSH, no mutation, no CLI wired, no scheduler, no Lane B, no authority promotion.",
+  "fences_honored": "pfSense access NOT enabled and NOT required for this phase. No nq-monitor on pfSense. No config mutation/rule edits/service restarts. No REST dependency. pfSense reports typed as reports, never reachability truth; NQ probes typed as vantage-local, never global truth. The verdict core refuses host-down from lease+silence.",
+  "gated_next_slice": {
+    "name": "lease-presence LIVE read (Phase 2)",
+    "gate": "operator enables read-only SSH on pfsense.example.internal (10.0.0.1) key-only + LAN/VPN-only, and names a probe vantage host.",
+    "scope": "detect ISC dhcpd.leases vs Kea lease store (pfSense 2.8.x may use Kea); read leases + arp -an over SSH from an independent box; optional ICMP/TCP presence probe from the named vantage; fill lease_presence_probe inputs and emit receipts. Read-only; perturbation accounted.",
+    "not_in_scope": "no mutation; no scheduler; no dashboard authority; no enforcement probe (that is check #1, the gold finding, a separate packet needing a guest-VLAN vantage)."
+  },
+  "commit_state": "Working tree, NOT committed (operator owns the commit/push signal). Files: PFSENSE_REACHABLE_DRIFT_STEP0_INVENTORY.md (new), lease_presence_probe.rs (new), lib.rs (+1), .governor/loop.json, this receipt.",
+  "loop_state": "REVIEW — verified green offline, awaiting operator commit decision + access enablement for the live slice.",
+  "push": "NOT pushed (operator owns the signal)."
+}
