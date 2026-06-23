@@ -1,4 +1,5 @@
 {
+  "stale_note": "STALE as of 2026-06-23 — left stale, NOT reconciled. last_updated below is 2026-06-18T19:33Z and predates (a) the commit of state-schema-reconciliation (e8b3c94 — it IS committed; current_slice/blocked_on/review_pending_commit below are obsolete) and (b) the four active-witness TLS slices 2a-2d-a (e8d3f34 -> 0599b5a -> f87ee68 -> b5d35ec, 2026-06-19). Governor lifecycle reconciliation is out of scope for the docs-only Packet 2 (TLS specimen freeze). See docs/specimens/first_complete_active_witness_tls.md.",
   "phase": "REVIEW",
   "current_slice": "state-schema-reconciliation",
   "slice_spec": [

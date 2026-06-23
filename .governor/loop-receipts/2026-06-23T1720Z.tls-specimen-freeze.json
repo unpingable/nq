@@ -1,0 +1,34 @@
+{
+  "receipt": "tls-specimen-freeze",
+  "timestamp": "2026-06-23T1720Z",
+  "session_id": "operator-dispatched (gov-loop, three bounded packets sequential); Packet 2 of 3",
+  "class": "Documentation + receipt sanity only. No new capability, no scheduler, no lifecycle machinery, no policy/authority layer. Museum-card custody text for an already-built specimen.",
+  "slice": "Packet 2 — TLS active-witness specimen freeze. Write docs/specimens/first_complete_active_witness_tls.md as the custody record for the first complete active witness (slices 2a-2d-a), and run the commit/receipt sanity check.",
+  "base_commit": "2418ae3",
+  "branch": "main",
+  "preceded_by": "Packet 1 (NQ canon carriage) shipped + green; operator said go Packet 2, bound to specimen freeze only.",
+  "what_executed": {
+    "specimen_doc": "docs/specimens/first_complete_active_witness_tls.md (new) — museum card: what the specimen is, the four slices with commits + governor receipts, the load-bearing distinctions (observation != validation, handshake != validation, expiry clock-relative, missing receipt != negative, append-only, no scheduler), the NON_CLAIMS scope ceiling, the July 12 manual transition boundary, why this is the first complete active-witness specimen, and the sanity check.",
+    "loop_json_stale_note": ".governor/loop.json gained an additive stale_note field (NOT a lifecycle reconciliation): records that the file predates both the commit of state-schema-reconciliation (e8b3c94) and the four TLS slices, and points to the specimen doc. JSON re-validated as well-formed.",
+    "no_code_change": "No source files touched in this packet. Specimen describes shipped code; it authorizes nothing new."
+  },
+  "sanity_check": {
+    "commit_order": "PASS. Chronological + correct: e8d3f34 (2a verdict core, 17:38) -> 0599b5a (2b live transport, 18:57) -> f87ee68 (2c WebPKI at probe clock, 19:35) -> b5d35ec (2d-a append-only series, 19:59), all 2026-06-19 -0400.",
+    "governor_receipts_persisted": "PASS. All four under .governor/loop-receipts/: 2026-06-19T2132Z.tls-cert-probe-verdict-core.json, ...2256Z.tls-cert-probe-live-transport.json, ...2331Z.tls-cert-webpki-validation.json, ...2356Z.tls-cert-manual-receipt-series.json.",
+    "manual_capture_path": "PASS. runs/tls-cert-probe/20260619T235552Z/{nq.neutral.zone_443.json, labelwatch.neutral.zone_443.json} present; /runs/ is gitignored (not in version control).",
+    "stdout_preserved": "PASS. cmd/probe.rs run_tls_cert always println!s the receipt to stdout; --out-dir append is additive and echoes the path to stderr (stdout stays clean JSON).",
+    "validation_uses_probe_clock": "PASS. tls_cert_transport::validate_observed_chain(chain, sni, now) converts the INJECTED now to UnixTime and passes it to verify_server_cert; it never reads wall time inside the validator. Pinned by webpki_clock_drives_validation (same bytes, in-window Valid vs post-expiry Invalid).",
+    "loop_json": "STALE, EXPLICITLY NOTED (not reconciled). Decision: governor lifecycle reconciliation is out of scope for a docs-only packet; an additive stale_note marks the obsolescence and points to the specimen. Operator owns any reconciliation of current_slice/completed_slices."
+  },
+  "evidence_verdict": "PASS. Offline specimen tests live-true: cargo test -p nq-monitor --lib tls_cert = 25 passed, 0 failed, LIB_EXIT=0 (incl. webpki_clock_drives_validation and append_only_refuses_to_overwrite). loop.json re-validated as parseable JSON after the stale_note edit.",
+  "standing_verdict": "PASS. Bounded to documentation + one additive governance-honesty note + this receipt. No source change, no scheduler, no DB, no authority layer.",
+  "fences_honored": "No new capability. No scheduler/timer/cron. No lifecycle machinery (loop.json left stale-with-note, not reconciled). No policy/authority layer. No push. Specimen authorizes nothing; it freezes what exists.",
+  "deferred_followups": [
+    "Slice 2d-b (operationalization: cadence / external runner / what an absent receipt means) — operator owns.",
+    "July 12 ~ labelwatch 14-day warning-band crossing: a MANUAL re-probe boundary, not automated.",
+    "Packet 3 (pfSense reachable-drift) — queued, NOT started. Operator said stop after Packet 2."
+  ],
+  "commit_state": "Working tree (no push). Files: docs/specimens/first_complete_active_witness_tls.md (new), .governor/loop.json (stale_note), this receipt. Commit on operator decision.",
+  "loop_state": "Packet 2 complete. STOP after Packet 2 (operator directive); do not start pfSense.",
+  "push": "NOT pushed (operator owns the signal)."
+}
