@@ -2,6 +2,8 @@ mod artifact_registry;
 mod cli;
 mod cmd;
 mod http;
+mod lease_presence_probe;
+mod lease_presence_transport;
 mod nq_evaluator_probe;
 mod nq_sql_contract_state;
 mod operator_surface;

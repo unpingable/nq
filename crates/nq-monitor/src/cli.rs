@@ -704,6 +704,15 @@ pub enum ProbeAction {
     /// is required and never inferred: a probe must declare where it
     /// stood, and an external vantage is the admissible one.
     TlsCert(ProbeTlsCertCmd),
+
+    /// Read a pfSense DHCP lease over SSH and compare it against presence
+    /// (the box's ARP residue, plus an optional probe from `--vantage`),
+    /// printing an `nq.probe.lease_presence.v1` receipt. Read-only:
+    /// detect-backend + `cat` the lease file + `arp -an`, nothing else. The
+    /// specimen is a NON-LIFT — an active lease does not establish presence,
+    /// and an uncorroborated lease is not "host down." `--vantage` is
+    /// required and never inferred.
+    LeasePresence(ProbeLeasePresenceCmd),
 }
 
 #[derive(Debug, Args)]
@@ -744,6 +753,51 @@ pub struct ProbeTlsCertCmd {
     /// `<dir>/<YYYYMMDDTHHMMSSZ>/<host>.json`. stdout still prints the
     /// receipt. This is manual collection, NOT scheduled monitoring — a
     /// missing receipt is not a negative.
+    #[arg(long)]
+    pub out_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct ProbeLeasePresenceCmd {
+    /// pfSense host to SSH to (the management address or hostname).
+    #[arg(long)]
+    pub host: String,
+
+    /// SSH port.
+    #[arg(long, default_value_t = 22)]
+    pub port: u16,
+
+    /// SSH user (e.g. `admin`).
+    #[arg(long)]
+    pub user: String,
+
+    /// Path to the SSH private key.
+    #[arg(long)]
+    pub key: PathBuf,
+
+    /// Vantage identity to record for the OPTIONAL presence probe — the
+    /// independent host NQ probes from. Required; NQ does not infer it.
+    #[arg(long)]
+    pub vantage: String,
+
+    /// The leased IP whose presence to assess against its lease.
+    #[arg(long)]
+    pub subject: String,
+
+    /// Also run an ICMP-echo presence probe from this host (the vantage).
+    #[arg(long, default_value_t = false)]
+    pub probe: bool,
+
+    /// Instead of ICMP, probe presence with a TCP connect to this port.
+    #[arg(long)]
+    pub probe_tcp: Option<u16>,
+
+    /// SSH connect + probe timeout, seconds.
+    #[arg(long, default_value_t = 10)]
+    pub timeout_seconds: u64,
+
+    /// If set, also append the receipt to a manual append-only series under
+    /// this directory (e.g. `runs/lease-presence`). stdout still prints it.
     #[arg(long)]
     pub out_dir: Option<PathBuf>,
 }

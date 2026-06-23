@@ -1,0 +1,35 @@
+{
+  "receipt": "pfsense-lease-presence-live-read",
+  "timestamp": "2026-06-23T1925Z",
+  "session_id": "operator-dispatched (gov-loop); Packet 3 Phase 2",
+  "class": "Operator-directed research specimen, live read. Read-only over SSH + optional presence probe from a named vantage. No mutation, no rule edits, no service restarts, no config writes, no scheduler, no Lane B.",
+  "slice": "Packet 3 / Phase 2 — live lease-vs-presence read against the real pfSense (operator's LAN gateway), feeding nq.probe.lease_presence.v1.",
+  "base_commit": "3599c85",
+  "branch": "main",
+  "preceded_by": "Phase 1 committed (3599c85). Operator enabled read-only SSH (dedicated key, user admin) and named the LAN vantage (the admin host on the pfSense LAN); said resume Phase 2, stop after the live lease-presence specimen.",
+  "what_executed": {
+    "ssh_gather": "One read-only SSH login: detect DHCP backend, cat /var/dhcpd/var/db/dhcpd.leases, arp -an. Backend = ISC dhcpd (Kea dir empty). Allowed read commands only.",
+    "transport": "crates/nq-monitor/src/lease_presence_transport.rs (new): pure parsers (parse_isc_leases last-block-wins; parse_arp incl. (incomplete); isc_lease_state clock-aware), SSH runner (ssh -i key, BatchMode, read-only script), optional presence probe from this vantage (ICMP via system ping; TCP connect, where a refusal still proves the host answered), orchestrator live_lease_presence, append-only persist (refuses overwrite).",
+    "cli": "nq-monitor probe lease-presence --host --user --key --vantage --subject [--probe|--probe-tcp PORT] [--out-dir]. Receipt-only to stdout; --out-dir appends to a gitignored series.",
+    "wiring": "lib.rs + main.rs +1 mod each; cli.rs +ProbeLeasePresenceCmd; cmd/probe.rs +run_lease_presence.",
+    "doc": "STEP0 inventory doc gained a Phase-2 landing note (no real host data)."
+  },
+  "live_result": {
+    "subject_corroborated": "active lease + present in pfSense ARP + ICMP answered from the LAN vantage -> lease_corroborated_by_presence (present from this vantage at this time; nothing stronger claimed).",
+    "subject_uncorroborated": "active lease + ABSENT from ARP + ICMP silent -> lease_uncorroborated. The specimen's point: a leased-but-not-observed host. Verdict refuses host-down / host-gone / lease-wrong.",
+    "receipts": "Persisted append-only under runs/lease-presence/<stamp>/<ip>.json (gitignored). Real IPs/MACs/hostnames NOT committed; parser fixtures are anonymized.",
+    "source_typing": "Each observation carries its type: ARP = pfsense_runtime_report, ICMP/TCP from vantage = observed_reachability. A lease report never graduates to presence; a pfSense report never graduates to reachability truth."
+  },
+  "evidence_verdict": "PASS. Offline: cargo test -p nq-monitor --no-fail-fast EXIT=0 (lease_presence probe + transport: parsers, ISC state mapping, ARP incl. incomplete, append-only refusal, end-to-end fixture). Live: two real subjects produced corroborated + uncorroborated receipts; runs/ confirmed gitignored. Build clean (no warnings).",
+  "standing_verdict": "PASS. Bounded to the live lease-presence specimen. Read-only; one SSH login per subject; one ICMP per subject from the vantage.",
+  "fences_honored": "No mutation; no pfctl -d/-f; no service restart; no config write; no SNMP; no scheduler; no dashboard authority; no Lane B. Did NOT start the declared-deny enforcement probe (check #1, the gold finding). pfSense reports typed as reports; vantage probe typed as vantage-local reachability; uncorroborated != host-down.",
+  "perturbation": "SSH login (auth-log line) + ICMP echo from the LAN vantage. Read-only; changes no firewall state. Enforcement probes (which traverse the firewall and may trip IDS/IPS) were NOT run.",
+  "gated_next": {
+    "check_3_gateway_report_vs_path": "cheap; exposes dpinger as a report, not truth.",
+    "check_1_declared_deny_enforcement": "the gold finding; needs a guest-VLAN vantage + perturbation budget + allowlist; its own packet.",
+    "kea_lease_parsing": "this box is ISC; add Kea parsing only when a box uses it."
+  },
+  "commit_state": "Working tree, NOT committed (operator owns commit/push). Phase-2 files: lease_presence_transport.rs (new), cli.rs, cmd/probe.rs, lib.rs, main.rs, STEP0 inventory doc, .governor/loop.json, this receipt. runs/ receipts gitignored, not committed.",
+  "loop_state": "REVIEW — verified green, awaiting operator commit decision. STOPPED after the live lease-presence specimen.",
+  "push": "NOT pushed (operator owns the signal)."
+}

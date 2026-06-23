@@ -10,7 +10,7 @@
 //! a one-line summary. Network and classification logic live in
 //! `nq::probe`; this module is the user-facing shim.
 
-use crate::cli::{ProbeAction, ProbeCmd, ProbeDnsCmd, ProbeTlsCertCmd};
+use crate::cli::{ProbeAction, ProbeCmd, ProbeDnsCmd, ProbeLeasePresenceCmd, ProbeTlsCertCmd};
 use crate::probe::{
     parse_qtype, parse_resolver, read_latest_generation_id, record_probe, UdpDnsClient,
 };
@@ -24,6 +24,7 @@ pub fn run(cmd: ProbeCmd) -> anyhow::Result<()> {
     match cmd.action {
         ProbeAction::Dns(c) => run_dns(c),
         ProbeAction::TlsCert(c) => run_tls_cert(c),
+        ProbeAction::LeasePresence(c) => run_lease_presence(c),
     }
 }
 
@@ -131,6 +132,48 @@ fn run_tls_cert(cmd: ProbeTlsCertCmd) -> anyhow::Result<()> {
     // Optional manual append-only series sink. stdout above is unchanged.
     if let Some(out_dir) = &cmd.out_dir {
         let path = crate::tls_cert_series::persist_receipt(out_dir, &receipt)?;
+        eprintln!("appended receipt to series: {}", path.display());
+    }
+    Ok(())
+}
+
+/// `nq-monitor probe lease-presence` — live lease-vs-presence read.
+/// Read-only over SSH (detect backend + cat the lease file + `arp -an`),
+/// plus an optional presence probe from the named vantage. Receipt-only;
+/// no DB write. The verdict is a non-lift: an active lease is not presence,
+/// and an uncorroborated lease is not a down host.
+fn run_lease_presence(cmd: ProbeLeasePresenceCmd) -> anyhow::Result<()> {
+    use crate::lease_presence_probe::ClockBasis;
+    use crate::lease_presence_transport::{live_lease_presence, persist_receipt, ProbeSpec, SshTarget};
+
+    let target = SshTarget {
+        host: cmd.host.clone(),
+        port: cmd.port,
+        user: cmd.user.clone(),
+        key_path: cmd.key.clone(),
+        timeout_seconds: cmd.timeout_seconds,
+    };
+    // TCP probe wins if both are given; otherwise ICMP iff --probe; else no
+    // independent probe (ARP-only — comparing two pfSense self-reports).
+    let probe = match (cmd.probe_tcp, cmd.probe) {
+        (Some(port), _) => Some(ProbeSpec::Tcp(port)),
+        (None, true) => Some(ProbeSpec::Icmp),
+        (None, false) => None,
+    };
+    // NTP sync state is not observable from here; record it honestly.
+    let clock = ClockBasis {
+        source: "system_wall".to_string(),
+        ntp_status: "unknown".to_string(),
+    };
+    let now = ::time::OffsetDateTime::now_utc();
+
+    let receipt = live_lease_presence(&target, &cmd.vantage, &cmd.subject, probe, &clock, now)?;
+
+    // Receipt-only emit. No DB write (active-witness lane).
+    println!("{}", serde_json::to_string_pretty(&receipt)?);
+
+    if let Some(out_dir) = &cmd.out_dir {
+        let path = persist_receipt(out_dir, &receipt)?;
         eprintln!("appended receipt to series: {}", path.display());
     }
     Ok(())

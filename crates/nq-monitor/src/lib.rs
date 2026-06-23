@@ -1,6 +1,7 @@
 pub mod artifact_registry;
 pub mod http;
 pub mod lease_presence_probe;
+pub mod lease_presence_transport;
 pub mod nq_evaluator_probe;
 pub mod nq_sql_contract_state;
 pub mod operator_surface;

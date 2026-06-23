@@ -55,6 +55,9 @@ pub enum LeaseState {
     Active,
     Expired,
     Released,
+    /// Static mapping (claims an occupant by config). Not produced by the
+    /// ISC dynamic-lease reader yet — a config-read slice would mint it.
+    #[allow(dead_code)]
     Static,
     /// The reader could not classify the lease state.
     Unknown,
@@ -82,7 +85,7 @@ pub struct LeaseReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mac: Option<String>,
     pub state: LeaseState,
-    /// Where this lease report came from (e.g. `ssh:pfsense.example.internal kea-lease`).
+    /// Where this lease report came from (e.g. `ssh:<pfsense-host> isc-dhcpd`).
     pub source: String,
 }
 
@@ -92,7 +95,8 @@ pub struct LeaseReport {
 pub enum PresenceMethod {
     /// pfSense's own ARP table (a `pfSenseRuntimeReport` of L2 residue).
     PfsenseArp,
-    /// pfSense's own NDP table.
+    /// pfSense's own NDP table (IPv6). Not produced by the v1 ARP reader yet.
+    #[allow(dead_code)]
     PfsenseNdp,
     /// An NQ probe from an independent vantage (`ObservedReachability`).
     IcmpEcho,
@@ -320,7 +324,7 @@ mod tests {
         LeaseReport {
             hostname: Some("nas-01".to_string()),
             ip: "10.0.0.50".to_string(),
-            mac: Some("aa:bb:cc:dd:ee:ff".to_string()),
+            mac: Some("02:00:00:00:00:50".to_string()),
             state: LeaseState::Active,
             source: "synthetic:fixture".to_string(),
         }

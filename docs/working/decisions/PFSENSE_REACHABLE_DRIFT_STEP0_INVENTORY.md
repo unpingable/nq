@@ -170,7 +170,33 @@ independent vantage** (NQ does not run on pfSense). Options, read-only:
 - **Vantage host(s) for `ObservedReachability`:** one box on a segment whose policy we
   want to test (e.g. guest VLAN) — required for check #1, independent of the box.
 
+## Phase 2 — live read landed (2026-06-23)
+
+Read path enabled (operator): read-only SSH (key-only) to the box; NQ runs from an
+independent LAN vantage. Backend detected = **ISC `dhcpd`** (`/var/dhcpd/var/db/dhcpd.leases`
+on `igc1`); the Kea dir is empty. The live read is one read-only SSH login (detect +
+`cat` lease file + `arp -an`) feeding `nq.probe.lease_presence.v1`, with an optional ICMP
+probe from the vantage.
+
+Both faces of the specimen were observed against the real box (receipts under gitignored
+`runs/`, real host data not committed):
+
+- a subject with an active lease, present in the box's ARP, answering ICMP →
+  `lease_corroborated_by_presence` (present from this vantage at this time — nothing
+  stronger);
+- a subject with an active lease but **absent from ARP and silent to ICMP** →
+  `lease_uncorroborated`. This is the specimen's point: an active lease whose occupant is
+  not currently observed. The verdict refuses "host down / gone / lease wrong."
+
+Code: `crates/nq-monitor/src/lease_presence_transport.rs` (pure parsers + SSH read +
+optional probe + append-only sink), CLI `nq-monitor probe lease-presence`. Parsers are
+pinned by anonymized fixtures (real MACs/hostnames never committed).
+
+Stopped here per scope: no declared-deny enforcement probe (check #1, the gold finding),
+no SNMP, no scheduler, no dashboard authority.
+
 ---
 
-*Phase-1 grounding artifact. Name early, ratify lazily. No access, no probe, and no
-verdict taxonomy authorized by this record — source typing only.*
+*Phase-1 grounding artifact (with the Phase-2 landing recorded above). Name early,
+ratify lazily. Source typing first; the gold enforcement finding remains a later,
+surgical packet.*
