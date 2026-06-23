@@ -15,10 +15,10 @@
 //! anti-lying witness layer. The lesson: the README carries the
 //! interpretive frame; the live dashboard did not. This suite pins the
 //! render-boundary completeness pass (Lane A) that carries enough frame
-//! onto the page that neither over-read survives a scan.
+//! and local canon onto the page that neither over-read survives a scan.
 //!
-//! Scope guard: this is render/copy only. It does NOT pin
-//! OperationalStatus, RelaxationReceipt, or any projection-receipt
+//! Scope guard: this is render/copy/canon-carriage only. It does NOT
+//! pin OperationalStatus, RelaxationReceipt, or any projection-receipt
 //! ladder — those remain non-binding in
 //! docs/working/decisions/MONITORING_PROJECTION_SEAM_CANDIDATE.md.
 
@@ -66,7 +66,19 @@ fn warning(
         stability: Some("stable".into()),
         maintenance_state: "none".into(),
         maintenance_id: None,
+        work_state: "new".into(),
+        owner: None,
+        note: None,
+        external_ref: None,
     }
+}
+
+/// Attach recorded local canon (work_state + note) to a finding — the
+/// canon NQ already holds, as an operator would have recorded it.
+fn with_canon(mut w: WarningVm, work_state: &str, note: &str) -> WarningVm {
+    w.work_state = work_state.into();
+    w.note = Some(note.into());
+    w
 }
 
 /// A scenario carrying the three over-read triggers at once: a critical
@@ -84,9 +96,31 @@ fn vm() -> OverviewVm {
         services: vec![],
         sqlite_dbs: vec![],
         warnings: vec![
+            // Unacknowledged persistent critical — the P1/neglect bait.
             warning("freelist_bloat", "Δg", "critical", false),
+            // Acknowledged but no recorded reason — bare receipt chip.
             warning("disk_pressure", "Δg", "warning", true),
+            // Collector-scoped absence.
             warning("log_silence", "Δo", "warning", false),
+            // Accepted debt: scary-but-known, distinct from unacknowledged
+            // persistence — carries the recorded reason it is no-action.
+            with_canon(
+                warning("wal_bloat", "Δg", "warning", true),
+                "accepted",
+                "accepted cleanup debt · runway 133d · no drops",
+            ),
+            // Parked work: distinct from stale/ignored.
+            with_canon(
+                warning("stale_service", "Δo", "warning", false),
+                "parked",
+                "ENABLE_FACTS_EXPORT=false",
+            ),
+            // By-design degradation: distinct from loss.
+            with_canon(
+                warning("resource_drift", "Δh", "warning", false),
+                "accepted",
+                "design behavior · protects writer · no data loss witnessed",
+            ),
         ],
         history_generations: 10,
     }
@@ -170,15 +204,90 @@ fn age_renders_as_persistence_not_neglect() {
     );
 }
 
-/// Canon carriage: local canon NQ already holds (the acknowledged
-/// receipt) must reach the scan surface so a scary-but-known condition
-/// reads as attended, not as a fresh incident.
+/// Canon carriage (bare receipt): a finding acknowledged without a
+/// recorded reason still surfaces a receipt chip, so it reads as
+/// attended rather than as a fresh incident.
 #[test]
 fn local_canon_receipt_reaches_the_scan_surface() {
     let html = render_overview(&vm(), &[]);
     assert!(
         html.contains("canon-chip"),
-        "acknowledged findings must surface a local-canon receipt chip on the row"
+        "an acknowledged finding with no recorded canon must surface a receipt chip"
+    );
+}
+
+/// Packet 1 — canon carriage: recorded work_state + note (the canon NQ
+/// already holds) reaches the scan surface verbatim, so a scary-but-known
+/// condition reads as known. Accepted debt must be distinguishable from
+/// unacknowledged persistence on the same scan.
+#[test]
+fn accepted_debt_is_distinct_from_unacknowledged_persistence() {
+    let html = render_overview(&vm(), &[]);
+    // The recorded reason renders, verbatim, on the row.
+    assert!(
+        html.contains("Canon: accepted"),
+        "an accepted finding must render its recorded work_state on the scan surface"
+    );
+    assert!(
+        html.contains("accepted cleanup debt · runway 133d · no drops"),
+        "the recorded note (the reason it is no-action) must render verbatim"
+    );
+    // ...while the unacknowledged persistent finding still reads as
+    // persistence about which neglect cannot be testified. Both shapes
+    // present on one page ⇒ the reader can tell them apart.
+    assert!(
+        html.contains("persistence witnessed; neglect cannot testify"),
+        "unacknowledged persistence must remain distinguishable from accepted debt"
+    );
+}
+
+/// Parked work must be distinguishable from stale/ignored work.
+#[test]
+fn parked_work_is_distinct_from_stale() {
+    let html = render_overview(&vm(), &[]);
+    assert!(
+        html.contains("Canon: parked"),
+        "a parked finding must render its parked work_state"
+    );
+    assert!(
+        html.contains("ENABLE_FACTS_EXPORT=false"),
+        "the recorded note explaining the park must render verbatim"
+    );
+}
+
+/// By-design degradation must be distinguishable from data loss.
+#[test]
+fn design_behavior_is_distinct_from_loss() {
+    let html = render_overview(&vm(), &[]);
+    assert!(
+        html.contains("design behavior · protects writer · no data loss witnessed"),
+        "a by-design degraded state must carry its recorded canon, not read as loss"
+    );
+}
+
+/// Canon is render-only: a default-lifecycle finding (`work_state = new`,
+/// no note) must NOT manufacture a canon line. NQ surfaces recorded
+/// canon; it invents none.
+#[test]
+fn no_canon_line_without_recorded_canon() {
+    // A single finding at the default lifecycle state.
+    let mut bare = OverviewVm {
+        generation_id: Some(1),
+        generated_at: Some("2026-06-23T00:00:00Z".into()),
+        generation_status: Some("complete".into()),
+        generation_age_s: Some(10),
+        hosts: vec![host()],
+        services: vec![],
+        sqlite_dbs: vec![],
+        warnings: vec![warning("freelist_bloat", "Δg", "critical", false)],
+        history_generations: 10,
+    };
+    bare.warnings[0].work_state = "new".into();
+    bare.warnings[0].note = None;
+    let html = render_overview(&bare, &[]);
+    assert!(
+        !html.contains("Canon:"),
+        "no canon line may render for a finding with no recorded canon"
     );
 }
 

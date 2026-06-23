@@ -77,6 +77,19 @@ pub struct WarningVm {
     /// Pointer to the matching declaration when `maintenance_state` is
     /// `"covered"` or `"overrun"`; `None` when state is `"none"`.
     pub maintenance_id: Option<String>,
+    /// Lifecycle / local-canon lane carried to the scan surface
+    /// (FINDING_LIFECYCLE). `work_state` defaults to `"new"` (no canon);
+    /// operator-set values (`accepted`, `parked`, …) together with `note`
+    /// / `owner` / `external_ref` record *why a finding is known /
+    /// safe / no-action*. Render/copy only — surfaced verbatim, never
+    /// synthesized. This is the canon labelwatch's operator already holds
+    /// (accepted cleanup debt, parked work, by-design degradation) carried
+    /// to the table a cold reader scans. Per MONITORING_PROJECTION_SEAM
+    /// Packet 1; no projection-receipt ladder, no authority promotion.
+    pub work_state: String,
+    pub owner: Option<String>,
+    pub note: Option<String>,
+    pub external_ref: Option<String>,
 }
 
 /// Per-host operational summary from dominance projection.
@@ -223,7 +236,7 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
         let mut warn_stmt = db.conn.prepare(
             "SELECT severity, kind, host, subject, message, domain, first_seen_at, consecutive_gens, acknowledged, finding_class, visibility_state, suppression_reason,
                     failure_class, service_impact, action_bias, synopsis, stability,
-                    maintenance_state, maintenance_id
+                    maintenance_state, maintenance_id, work_state, owner, note, external_ref
              FROM v_warnings ORDER BY severity DESC, kind, host",
         )?;
         let rows = warn_stmt
@@ -248,6 +261,10 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
                     stability: row.get(16).ok(),
                     maintenance_state: row.get::<_, String>(17).unwrap_or_else(|_| "none".to_string()),
                     maintenance_id: row.get(18).ok(),
+                    work_state: row.get::<_, String>(19).unwrap_or_else(|_| "new".to_string()),
+                    owner: row.get(20).ok(),
+                    note: row.get(21).ok(),
+                    external_ref: row.get(22).ok(),
                 })
             })?
             .collect::<Result<_, _>>()?;

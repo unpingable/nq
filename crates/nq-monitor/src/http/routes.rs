@@ -1548,11 +1548,36 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
             let boundary = format!(
                 "<span class=\"boundary\">{domain_boundary}{persistence_clause}</span>"
             );
-            // Local canon receipt, surfaced terse so a scary-but-known
-            // condition reads as known, not as a fresh incident. Only canon
-            // already present in the overview view is rendered here
-            // (acknowledged); maintenance/stability render as badges above.
-            let canon = if w.acknowledged {
+            // Local canon, surfaced terse so a scary-but-known condition
+            // reads as known, not as a fresh incident. NQ renders only the
+            // canon it already holds — work_state / note / owner / ext_ref,
+            // plus the acknowledged receipt — verbatim; it synthesizes
+            // nothing. The canon line distinguishes accepted debt from
+            // unacknowledged persistence, parked work from stale work, and
+            // by-design degradation from loss; the bare receipt chip covers
+            // the acked-without-recorded-reason case. Packet 1 / render-only.
+            let mut canon_parts: Vec<String> = Vec::new();
+            let work_state = w.work_state.as_str();
+            if !work_state.is_empty() && work_state != "new" {
+                canon_parts.push(escape_html(&work_state.replace('_', " ")));
+            }
+            if let Some(n) = w.note.as_deref().filter(|s| !s.is_empty()) {
+                canon_parts.push(escape_html(n));
+            }
+            if let Some(o) = w.owner.as_deref().filter(|s| !s.is_empty()) {
+                canon_parts.push(format!("owner {}", escape_html(o)));
+            }
+            if let Some(r) = w.external_ref.as_deref().filter(|s| !s.is_empty()) {
+                canon_parts.push(format!("ref {}", escape_html(r)));
+            }
+            let canon_line = if canon_parts.is_empty() {
+                String::new()
+            } else {
+                format!("<span class=\"canon\">Canon: {}</span>", canon_parts.join(" · "))
+            };
+            // Bare acknowledged receipt only when no richer canon was
+            // recorded — otherwise the canon line already carries the reason.
+            let ack_chip = if w.acknowledged && canon_parts.is_empty() {
                 " <span class=\"canon-chip\" title=\"an operator has acknowledged this finding — it is attended, not unhandled\">acknowledged</span>"
             } else {
                 ""
@@ -1563,7 +1588,7 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
                     <td class=\"sev-dot\"></td>
                     <td><a href=\"{detail_url}\">{label}</a>{suppressed_badge}{diag_badges}{stability_badge}{maintenance_badge}<br><span class=\"kind-sub\">{kind} · {domain}</span></td>
                     <td>{host}</td>
-                    <td>{message}{canon}{boundary}</td>
+                    <td>{message}{ack_chip}{canon_line}{boundary}</td>
                     <td class=\"gens\"{gens_title_attr}>{gens_cell}</td>
                 </tr>{substrate_detail_row}",
                 detail_url = escape_html(&detail_url),
@@ -1572,7 +1597,8 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
                 domain = escape_html(domain),
                 host = escape_html(&w.host),
                 message = escape_html(&w.message),
-                canon = canon,
+                ack_chip = ack_chip,
+                canon_line = canon_line,
                 boundary = boundary,
                 gens_cell = escape_html(&gens_cell),
                 gens_title_attr = gens_title_attr,
@@ -1728,6 +1754,7 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 .witness-frame-title {{ display: block; color: #8b949e; font-weight: 600; margin-bottom: 2px; }}
 .witness-footer {{ font-size: 11px; color: #484f58; border-top: 1px solid #21262d; margin-top: 28px; padding-top: 12px; line-height: 1.6; max-width: 70ch; }}
 .boundary {{ display: block; color: #484f58; font-size: 11px; font-style: italic; margin-top: 3px; }}
+.canon {{ display: block; color: #6e9b78; font-size: 11px; margin-top: 3px; }}
 .canon-chip {{ display: inline-block; background: #12261a; border: 1px solid #238636; color: #3fb950; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }}
 </style>
 </head>

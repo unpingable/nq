@@ -47,6 +47,10 @@ fn vm_with_one_critical_business_hours() -> OverviewVm {
             stability: Some("stable".into()),
             maintenance_state: "none".into(),
             maintenance_id: None,
+            work_state: "new".into(),
+            owner: None,
+            note: None,
+            external_ref: None,
         }],
         history_generations: 10,
     }

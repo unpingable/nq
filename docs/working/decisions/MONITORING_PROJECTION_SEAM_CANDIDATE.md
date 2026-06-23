@@ -185,12 +185,21 @@ render seam, not an internal verdict→attention coercion. Lane A shipped as ren
   vocabulary for both adversaries).
 
 **Lane B stays non-binding.** No `OperationalStatus`, no `RelaxationReceipt`, no
-projection-receipt ladder was built or authorized by this evidence. Known render-only
-follow-up (named, not built): the richer free-text canon labelwatch holds
-(`work_state` = accepted_debt / parked, `note`, owner, runway) lives in `warning_state`
-but is not yet carried into the overview view — surfacing it on the scan row is a small
-coverage step that touches the overview query + `WarningVm`, gated by the same
-render-only discipline.
+projection-receipt ladder was built or authorized by this evidence.
+
+**Packet 1 (canon carriage) shipped — render-only, 2026-06-23.** The richer canon
+labelwatch's operator already holds (`work_state` = accepted / parked, `note`, `owner`,
+`external_ref`) is now carried from `v_warnings` into the overview `WarningVm`
+(`crates/nq-db/src/views.rs`) and rendered as a terse `Canon:` line on the scan row
+(`crates/nq-monitor/src/http/routes.rs`), verbatim and HTML-escaped — NQ surfaces
+recorded canon and synthesizes none (default `work_state = new` renders no line). This
+distinguishes accepted debt from unacknowledged persistence, parked work from
+stale/ignored, and by-design degradation from loss, on the table a cold reader scans —
+closing the context-carriage gap the labelwatch read exposed. Pinned by the canon cases
+in `crates/nq-monitor/tests/render_claim_boundaries.rs`. Still no authority promotion:
+`acknowledged`/`work_state` never render as `healthy`, and no projection ladder was
+added. Packets 2 (TLS specimen freeze) and 3 (pfSense reachable-drift) remain queued,
+sequential, not bundled.
 
 ---
 

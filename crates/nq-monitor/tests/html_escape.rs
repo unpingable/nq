@@ -70,6 +70,10 @@ fn hostile_strings_are_escaped_in_overview_html() {
             stability: None,
             maintenance_state: "none".into(),
             maintenance_id: None,
+            work_state: "accepted".into(),
+            owner: Some("<u>me</u>".into()),
+            note: Some("<i>cleanup debt</i>".into()),
+            external_ref: None,
         }],
         history_generations: 10,
     };
@@ -96,6 +100,14 @@ fn hostile_strings_are_escaped_in_overview_html() {
     assert!(
         html.contains("&lt;em&gt;complete&lt;/em&gt;"),
         "generation status must be escaped: got:\n{html}"
+    );
+    assert!(
+        html.contains("&lt;i&gt;cleanup debt&lt;/i&gt;"),
+        "canon note must be escaped: got:\n{html}"
+    );
+    assert!(
+        html.contains("&lt;u&gt;me&lt;/u&gt;"),
+        "canon owner must be escaped: got:\n{html}"
     );
 
     // --- Raw dangerous strings from user data MUST NOT appear ---
