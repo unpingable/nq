@@ -195,6 +195,43 @@ pinned by anonymized fixtures (real MACs/hostnames never committed).
 Stopped here per scope: no declared-deny enforcement probe (check #1, the gold finding),
 no SNMP, no scheduler, no dashboard authority.
 
+## Check #3 — gateway-report-vs-path (Phase 1: pure verdict core landed, 2026-06-24)
+
+Same cheap non-lift family as lease-presence, the *other* direction: the box's
+**dpinger gateway report** (a `pfSenseRuntimeReport`; dpinger is itself an active probe,
+so its `up` is a *report*, never internet-reachability truth) vs. an independent **NQ path
+probe** from a named vantage (`ObservedReachability`). A mismatch is **path ambiguity**,
+not `WAN down` / `ISP outage` / `internet down` / `user impact`.
+
+Landed offline-only: `crates/nq-monitor/src/gateway_path_probe.rs` —
+`nq.probe.gateway_path.v1`, clock-injected pure verdict core (no SSH, no network), split
+from the live read the way the TLS and lease-presence cores split verdict from transport.
+10 offline fixtures, `cargo test -p nq-monitor` EXIT=0 (167 lib tests, 0 warnings).
+
+Verdict ladder (mirrors lease-presence; the strongest positive is point-in-time and the
+interesting negative refuses the lift):
+
+- `gateway_not_reported_up` — dpinger says down/unknown; no up-claim to corroborate. The
+  receipt records the box's report; it does **not** independently witness an outage.
+- `cannot_testify_no_path_basis` — gateway up, but no path probe attempted.
+- `gateway_uncorroborated_path_fails` — **the specimen**: dpinger says up, an external path
+  probe was attempted and did not reach. Path ambiguity from one vantage to one target at
+  one time — *not* WAN-down/ISP-outage/internet-down/user-impact.
+- `gateway_corroborated_by_path` — gateway up AND a path probe reached its target (reached
+  from that vantage to that target at that time; nothing stronger).
+
+`Degraded` (dpinger packetloss/high-latency warning) still claims a path is up, so an
+unreached path is the uncorroborated specimen, not a pass. RTT/loss ride on the report for
+context, never as a service-quality verdict — which is why `GatewayReport`/the receipt drop
+`Eq` (they carry `f64`).
+
+**GATED — Phase 2 not started (live read):** read dpinger gateway status over the existing
+read-only SSH path (`dpinger` socket / gateway status), and run an ICMP/TCP/HTTP path probe
+from a named independent vantage. The interesting vantage for the real drift is *external*
+(off-LAN) so "path fails" isn't just a LAN-egress quirk; the perturbation ledger applies
+(an external probe can be classified as a scan upstream). Not wired into the bin/CLI yet —
+the pure core lives in `lib.rs` only, as the TLS core did at slice 2a.
+
 ---
 
 *Phase-1 grounding artifact (with the Phase-2 landing recorded above). Name early,
