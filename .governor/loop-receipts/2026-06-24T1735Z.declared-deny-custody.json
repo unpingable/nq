@@ -1,0 +1,44 @@
+{
+  "receipt": "pfsense-declared-deny-custody (check #1, the gold finding)",
+  "timestamp": "2026-06-24T1735Z",
+  "session_id": "operator-dispatched ('it IS daylight... Do check #1: declared-deny'): pfSense check #1, gold finding",
+  "lane": "operator-directed (active-witness research specimen; declaration-vs-observation custody)",
+  "schema": "nq.probe.declared_deny.v1",
+  "commit": "c65bc98 (core + transport + CLI + doc)",
+  "class": "Declaration-vs-observation CUSTODY test, NOT a firewall-correctness test. Read declared policy + control egress only; subject probe deliberately UNBOUND (operator-directed).",
+  "framing": {
+    "theorem": "A declared policy refusal must remain a refusal under observation, and a successful path probe must not silently erase that declaration. The declared denial and an observed reachability cannot both be quietly promoted into one coherent policy claim.",
+    "source_typing": "loaded block rule = pfSenseDeclaration; rule counters = pfSenseRuntimeReport (self-report, never an independent path observation); NQ probe = ObservedReachability.",
+    "asymmetry": "Only a SUBJECT got-through (real handshake) is the unambiguous contradiction. A blocked/refused/timeout subject is admissible as declared_deny_observed_blocked ONLY with a passing CONTROL (proves egress). A block-return RST is not a got-through. Absence of a declared rule = cannot_testify_declared_policy_absent, never 'allowed'."
+  },
+  "read_only_discovery": {
+    "method": "read-only SSH (pfctl -sr -vv; ifconfig; pkg/ rc.d checks). NO -f/-d, no rule edit, no service control, no config write.",
+    "topology": "WAN igc0 (CGNAT) + LAN igc1 (192.168.68.1) only; no guest/DMZ VLAN -> sushi-k-lan is the only available source vantage.",
+    "ids_ips": "NONE installed (no Suricata/Snort/pfBlocker daemon) -> the prober is not classified as an attacker; low perturbation hazard.",
+    "declared_deny_found": "USER_RULE: pfB_PRI1_v4 -- block return in log quick on igc1 inet from any to <pfB_PRI1_v4> (ridentifier 1770008176). Table populated: 17007 entries. Counters: ~3.19M evaluations, 8 blocked, 0 states (nothing has ever established to a table member)."
+  },
+  "verdict_ladder": [
+    "unknown_custody_policy_surface (policy unreadable)",
+    "cannot_testify_declared_policy_absent (no matching declared deny; NOT 'allowed')",
+    "cannot_testify_probe_target_unbound (declared deny present, subject not probed)",
+    "cannot_testify_vantage_unbound (subject blocked but control failed -> egress unproven)",
+    "declared_deny_probe_inconclusive (subject blocked, no control)",
+    "declared_deny_observed_reachable (subject got through -- the contradiction)",
+    "declared_deny_observed_blocked (subject blocked + control passes -- corroborated)"
+  ],
+  "live_read_landed": {
+    "scope": "blocked-only: declared policy read + table population + rule counters + control TCP probe to 1.1.1.1:443. Subject DELIBERATELY UNBOUND.",
+    "result": "rule custody=present; control 1.1.1.1:443 = reached (egress proven); subject = (unbound), not_attempted; verdict = cannot_testify_probe_target_unbound; perturbation = control_probe_only / no_subject_path_touched.",
+    "receipt_path": "runs/declared-deny/20260624T173459Z/pfB_PRI1_v4.json (gitignored)"
+  },
+  "operator_decision_recorded": "Do NOT send a subject SYN to a pfB_PRI1_v4 (malware-blocklist) member to make the specimen spicy -- a tiny packet, but an intentional outbound touch to a named bad host, the wrong kind of 'live'. The product is declaration custody + refusal discipline, fully delivered by the blocked-only read. The active subject probe (declared_deny_observed_* faces) is PARKED for a scratch/lab firewall with a controlled deny rule + benign target (e.g. 8.8.8.8) + captured teardown -- its own daylight perturbation packet. Also a cleaner future public specimen (no 'why is your epistemology paper SYNing a bad IP' reviewer question).",
+  "verification": "set -o pipefail; cargo test -p nq-monitor -> EXIT=0 (bare), 0 warnings. Core 11 fixtures + transport parser/sink fixtures (rule line, counter line, table/ridentifier selection, absent vs unknown-surface, hostport split, append-only). Build clean after removing unused ProbeMethod::IcmpEcho (YAGNI; declared-deny is TCP-only for got-through/RST discrimination).",
+  "privacy": "Receipt carries only the rule DECLARATION (label, table NAME pfB_PRI1_v4, counters, interface igc1, source_spec any) -- NEVER table member IPs. runs/ gitignored. Tracked source/doc fixtures use TEST-NET (198.51.100/24, 203.0.113/24) + public 1.1.1.1. Paranoia scan of tracked source+docs for 192.168.68.*/100.6.75.* = clean.",
+  "fences_honored": "No push (c65bc98 + this governor commit local-only). Read-only (pfctl -sr -vv); no rule edit/-f/-d/service control/config write. No subject probe to any real denied target. No DB write (active-witness lane, receipt-only). No scheduler, no dashboard authority, no Lane B.",
+  "parked_next": [
+    "ACTIVE declared-deny subject probe on a scratch/lab firewall: controlled deny rule + table + benign stable target (e.g. 8.8.8.8) + control-allowed path + bounded TCP/ICMP probe + captured teardown/rollback. Produces the declared_deny_observed_blocked / _reachable faces without touching malware infrastructure.",
+    "pfSense PHP classification comparator (return_gateways_status / rule status) -- the deferred second-order witness",
+    "external/off-LAN vantage; Kea lease parsing; check #2/#3 follow-ups"
+  ],
+  "push": "No push."
+}
