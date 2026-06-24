@@ -1,0 +1,59 @@
+{
+  "receipt": "three-host-deploy",
+  "timestamp": "2026-06-23T2211Z",
+  "session_id": "operator-dispatched; bounded deployment packet (bake overnight)",
+  "class": "Deployment only. No feature work, no schema invention, no gateway-report-vs-path, no declared-deny enforcement, no SNMP, no scheduler. Build per-host (glibc differs); same commit everywhere; fail-closed; VM last.",
+  "commit": "6a8c443 (HEAD == origin/main at deploy time)",
+  "order_executed": "sushi-k (canary) -> lil-nas-x (NAS) -> Linode VM (public, last). Operator-chosen VM-last (blast radius); overrides old memory's Linode-first note.",
+  "not_build_once": "glibc forces per-host build: sushi-k/NAS are 2.39 (shared binary 67a807a); VM is 2.35 (built on-host, 812dc40). Same source commit, different binaries by necessity.",
+  "targets": [
+    {
+      "target": "sushi-k (local desktop, glibc 2.39)",
+      "mechanism": "user systemd (systemctl --user) — NO sudo. nq-publish.service + nq-serve.service.",
+      "before": "nq-monitor 9d8d8cf / nq-witness 14a110c (Jun-19 build)",
+      "after": "nq-monitor 67a807a / nq-witness f1d25f2 (commit 6a8c443)",
+      "binary_path": "/home/jbeck/git/nq-root/nq/target/release/{nq-monitor,nq-witness} (units ExecStart point here)",
+      "db_path": "/home/jbeck/nq/nq.db",
+      "db_backup": "/home/jbeck/nq/nq.db.bak-20260623T213944Z (sqlite .backup, schema 58)",
+      "binary_rollback": "/home/jbeck/nq/rollback/{nq-monitor,nq-witness}.20260623T213944Z",
+      "restart": "systemctl --user restart nq-publish nq-serve  (~2026-06-23T21:54Z)",
+      "health": "HTTP 200 on 127.0.0.1:9848; witness frame + proof-checker disclaimer + posture note present; cannot-testify boundaries x4; leak language 0; schema 58.",
+      "notes": "Pre-existing unrelated WARN: smart-witness helper path stale (~/git/nq-witness/examples/nq-smart-witness missing after notquery->nq-root repo move). Not a deploy regression."
+    },
+    {
+      "target": "lil-nas-x (NAS, 192.168.69.10, glibc 2.39)",
+      "mechanism": "user systemd (systemctl --user). Memory was STALE (said setsid daemons + no units).",
+      "before": "OLD SINGLE BINARY nq (May-28, f873b58) via ExecStart 'nq serve' / 'nq publish' — a month stale; the Jun-4 split binaries were on disk but units never switched to them.",
+      "after": "nq-monitor 67a807a / nq-witness f1d25f2 (commit 6a8c443); UNITS MODERNIZED: ExecStart -> 'nq-monitor serve' / 'nq-witness'.",
+      "binary_path": "/home/claude/nq/{nq-monitor,nq-witness} (scp'd from sushi-k; glibc matches)",
+      "db_path": "/home/claude/nq/nq.db",
+      "db_backup": "/home/claude/nq/nq.db.pre-6a8c443.bak (pre 56->58 migration)",
+      "binary_rollback": "old `nq` binary retained at /home/claude/nq/nq (untouched); unit backups *.pre-6a8c443.bak",
+      "restart": "systemctl --user daemon-reload + restart nq-publish nq-serve (~2026-06-23T22:02Z)",
+      "health": "HTTP 200 on 127.0.0.1:9848; witness frame present; leak 0; listeners now nq-monitor/nq-witness; schema 58.",
+      "notes": "First swap attempt failed (port-in-use) because the documented pkill pattern didn't match the real (user-systemd) processes; no damage (old kept serving). Diagnosed -> forward-modernized units with auto-rollback armed."
+    },
+    {
+      "target": "Linode VM (labelwatch.neutral.zone -> public nq.neutral.zone, glibc 2.35)",
+      "mechanism": "system systemd (root). nq-publish.service + nq-serve.service; Caddy reverse-proxies :9848.",
+      "before": "nq-monitor 5489ba3 (Jun-4 on-host build), schema 56. Units already on split binaries (no unit change needed).",
+      "after": "nq-monitor 812dc40 (built ON-HOST, glibc 2.35) + nq-witness, commit 6a8c443; schema 56->58.",
+      "binary_path": "/opt/notquery/{nq-monitor,nq-witness}; source at /opt/notquery/src (rsync target, not git)",
+      "db_path": "/opt/notquery/nq.db (135MB)",
+      "db_backup": "/opt/notquery/nq.db.pre-6a8c443.bak (pre 56->58)",
+      "binary_rollback": "/opt/notquery/{nq-monitor,nq-witness}.pre-6a8c443; old single nq (May-28) also present",
+      "restart": "systemctl stop/start nq-publish nq-serve (~2026-06-23T22:10Z)",
+      "health": "local 127.0.0.1:9848 HTTP 200; PUBLIC https://nq.neutral.zone HTTP 200; witness frame + proof-checker disclaimer present; leak language 0 (incl. no 192.168.68/dmz.spooky); migration 57+58 applied clean.",
+      "notes": "rsync excluded runs/ (.claude, .governor, target, .git) -> real lease receipts NOT shipped to public box; confirmed absent + no real topology in /opt/notquery/src. Build-on-host required (glibc 2.35 != sushi-k 2.39)."
+    }
+  ],
+  "evidence_verdict": "PASS. All three hosts on commit 6a8c443, dashboards 200, witness/canon render boundaries live, zero leak language, schema 58, clean startup. Public nq.neutral.zone verified.",
+  "rollback_summary": "Per-host: previous binaries + pre-migration DB backups retained; sushi-k rollback dir; NAS unit + old-nq backups; VM .pre-6a8c443 binary + DB backups. NAS and VM deploys had auto-rollback guards (fail-closed) that did not fire.",
+  "fences_honored": "Deployment only. No feature/schema/dashboard-semantic changes. No next research packet started. No push beyond the already-pushed 6a8c443. runs/ (real lease data) kept off the public VM.",
+  "follow_ups": [
+    "Deployment is NOT standardized across hosts (3 different shapes); operator named standardization as a future packet. The stale deploy memory has been refreshed in this project's memory.",
+    "sushi-k smart-witness helper path is stale (notquery->nq-root move) — separate fix.",
+    "NQ_BUILD_COMMIT appears unconsumed by the build (binary hash unchanged with/without it) — verify FLEET_INDEX commit-truth source later."
+  ],
+  "push": "No new push (6a8c443 already on origin/main)."
+}
