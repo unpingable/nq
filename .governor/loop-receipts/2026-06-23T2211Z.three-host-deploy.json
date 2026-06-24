@@ -48,6 +48,14 @@
     }
   ],
   "evidence_verdict": "PASS. All three hosts on commit 6a8c443, dashboards 200, witness/canon render boundaries live, zero leak language, schema 58, clean startup. Public nq.neutral.zone verified.",
+  "bake_verified": {
+    "checked_at": "2026-06-24 (~morning, next-day)",
+    "verdict": "PASS — bake held across all three hosts.",
+    "sushi-k": "active x2, NRestarts=0 since 2026-06-23T21:54Z (= 17:54 EDT deploy restart), HTTP 200 on 127.0.0.1:9848.",
+    "lil-nas-x": "active x2 (user systemd), NRestarts=0 since 2026-06-23T22:02:27Z, HTTP 200 on 127.0.0.1:9848.",
+    "linode-vm": "active x2 (system systemd), NRestarts=0 since 2026-06-23T22:10:53Z, local HTTP 200; journalctl -p warning --since '12 hours ago' -> No entries; public https://nq.neutral.zone HTTP 200 ~144ms, leak-language scan (192.168.*/dmz.spooky/10.*) = 0 hits.",
+    "note": "~14h bake, zero crash-restarts everywhere, no overnight journal warnings on the public box. Read-only checks (systemctl is-active/show NRestarts, curl 127.0.0.1:9848, journalctl -p warning); no host mutation."
+  },
   "rollback_summary": "Per-host: previous binaries + pre-migration DB backups retained; sushi-k rollback dir; NAS unit + old-nq backups; VM .pre-6a8c443 binary + DB backups. NAS and VM deploys had auto-rollback guards (fail-closed) that did not fire.",
   "fences_honored": "Deployment only. No feature/schema/dashboard-semantic changes. No next research packet started. No push beyond the already-pushed 6a8c443. runs/ (real lease data) kept off the public VM.",
   "follow_ups": [

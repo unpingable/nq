@@ -1,0 +1,35 @@
+{
+  "receipt": "bake-verify + pfsense-gateway-path-phase1",
+  "timestamp": "2026-06-24T1300Z",
+  "session_id": "operator-dispatched (post-overnight-bake): 'we've baked overnight, what's next' -> verify bake, then 'do both' -> record bake + open pfSense check #3",
+  "lane": "operator-directed (deployment completeness + active-witness research specimen, pure verdict core)",
+  "class": "Two bounded items. (a) Deployment completeness: verify the overnight bake of the three-host deploy. (b) New active-witness slice: pfSense reachable-drift check #3 gateway-report-vs-path, Phase 1 pure verdict core only (offline, no live read).",
+  "part_a_bake_verify": {
+    "commit_under_bake": "6a8c443 (deployed 2026-06-23, receipt 2026-06-23T2211Z.three-host-deploy.json)",
+    "verdict": "PASS — bake held across all three hosts (~14h, zero crash-restarts).",
+    "sushi-k": "user systemd nq-publish+nq-serve active, NRestarts=0 since 2026-06-23T21:54Z, HTTP 200 on 127.0.0.1:9848.",
+    "lil-nas-x": "user systemd active, NRestarts=0 since 2026-06-23T22:02:27Z, HTTP 200 on 127.0.0.1:9848.",
+    "linode-vm": "system systemd active, NRestarts=0 since 2026-06-23T22:10:53Z, local HTTP 200; journalctl -p warning --since '12 hours ago' = No entries; public https://nq.neutral.zone HTTP 200 ~144ms, leak-language scan (192.168.*/dmz.spooky/10.*) = 0 hits.",
+    "method": "read-only: systemctl is-active / show NRestarts ActiveState ExecMainStartTimestamp, curl 127.0.0.1:9848, journalctl -p warning; external curl + grep for the public box. No host mutation. SSH reads (NAS plex key, VM linode key) ran under explicit operator approval ('go for it').",
+    "recorded_in": "2026-06-23T2211Z.three-host-deploy.json -> bake_verified field."
+  },
+  "part_b_gateway_path_phase1": {
+    "schema": "nq.probe.gateway_path.v1",
+    "commit": "6fe3438",
+    "scope": "Phase 1 pure verdict core ONLY — clock-injected, offline, fixture-tested. No SSH, no network, no scheduler, no bin/CLI wiring (lib.rs only, as the TLS core at slice 2a). Mirrors the lease-presence core structure.",
+    "non_lift": "dpinger gateway report = pfSenseRuntimeReport (dpinger is itself an active probe); NQ path probe from a named vantage = ObservedReachability; a mismatch is path ambiguity, NEVER WAN-down / ISP-outage / internet-down / user-impact.",
+    "verdict_ladder": [
+      "gateway_not_reported_up (down/unknown: no up-claim to corroborate; records the box report, does not witness an outage)",
+      "cannot_testify_no_path_basis (up but no path probe attempted)",
+      "gateway_uncorroborated_path_fails (THE specimen: up + path attempted + not reached = path ambiguity)",
+      "gateway_corroborated_by_path (up + path reached this target from this vantage at this time; nothing stronger)"
+    ],
+    "design_notes": "Degraded (dpinger packetloss/high-latency warning) still claims a path is up -> unreached path is the uncorroborated specimen, not a pass. RTT/loss carried on GatewayReport for context only, never a service-quality verdict; GatewayReport/receipt drop Eq because they carry f64. Receipt-only; no is_ok()/healthy/green coercion; scope_ceiling_non_claims carries the refusals.",
+    "tests": "10 offline fixtures (corroborated via ICMP reach; the uncorroborated-path-fails specimen; cannot-testify on no-basis and declared-not-run; not-up has no up-claim even with a failing path; degraded still claims up; mixed-reach wins; injected-clock probe_time; passive-vs-active perturbation; refusals-and-no-coercion; testimony-type travels).",
+    "verification": "set -o pipefail; cargo test -p nq-monitor -> EXIT=0, 167 lib tests, 0 failed, 0 compiler warnings. (exit code is the verdict, not eyeballed.)",
+    "doc": "docs/working/decisions/PFSENSE_REACHABLE_DRIFT_STEP0_INVENTORY.md -> 'Check #3 — gateway-report-vs-path (Phase 1 ...)' section.",
+    "gated_next": "Phase 2 live read (NOT started, operator go required): read dpinger gateway status over the existing read-only SSH path + run an external-vantage ICMP/TCP/HTTP path probe wired to the core. Interesting vantage is EXTERNAL (off-LAN) so 'path fails' isn't a LAN-egress quirk; perturbation ledger applies (external probe may be flagged as a scan upstream)."
+  },
+  "fences_honored": "No push (6a8c443 already on origin; 6fe3438 local-only per loop discipline). No live pfSense read in part (b). No scheduler, no dashboard authority, no Lane B. No bin/CLI wiring of the new probe yet. No check #1 (declared-deny gold finding). No SNMP, no Kea.",
+  "push": "No push. 6fe3438 (feat core) + this governor commit stay local."
+}
