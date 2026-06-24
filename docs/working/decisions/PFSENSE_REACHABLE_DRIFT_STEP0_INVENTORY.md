@@ -195,45 +195,78 @@ pinned by anonymized fixtures (real MACs/hostnames never committed).
 Stopped here per scope: no declared-deny enforcement probe (check #1, the gold finding),
 no SNMP, no scheduler, no dashboard authority.
 
-## Check #3 — gateway-report-vs-path (Phase 1: pure verdict core landed, 2026-06-24)
+## Check #3 — gateway-report-vs-path (Phase 1+2 landed, 2026-06-24)
 
 Same cheap non-lift family as lease-presence, the *other* direction: the box's
-**dpinger gateway report** (a `pfSenseRuntimeReport`; dpinger is itself an active probe,
-so its `up` is a *report*, never internet-reachability truth) vs. an independent **NQ path
-probe** from a named vantage (`ObservedReachability`). A mismatch is **path ambiguity**,
-not `WAN down` / `ISP outage` / `internet down` / `user impact`.
+**`dpinger` gateway-monitor report** vs. independent **NQ path probes** from a named
+vantage (`ObservedReachability`). A disagreement is **path ambiguity**, not `WAN down` /
+`ISP outage` / `internet down` / `user impact`.
 
-Landed offline-only: `crates/nq-monitor/src/gateway_path_probe.rs` —
-`nq.probe.gateway_path.v1`, clock-injected pure verdict core (no SSH, no network), split
-from the live read the way the TLS and lease-presence cores split verdict from transport.
-10 offline fixtures, `cargo test -p nq-monitor` EXIT=0 (167 lib tests, 0 warnings).
+### Witness-custody revision (operator-directed, before the live read)
 
-Verdict ladder (mirrors lease-presence; the strongest positive is point-in-time and the
-interesting negative refuses the lift):
+Phase 1 first modeled the witness as pfSense's *classified* gateway status
+(online/down/loss/delay). The operator corrected the layer: **the raw `dpinger` socket is
+the first-class witness, not pfSense's UI classification.** That classification
+(`return_gateways_status()` / PHP) is a second-order projection over the same daemon/config
+state — admissible only *later* as a separate "pfSense *reports* status X" comparator
+receipt, never the base specimen. So the core was rewritten to a **dpinger-metrics-first
+custody model**: we read the daemon socket directly and the only thing we derive from the
+raw metrics is whether the daemon is currently getting replies from its monitor
+(`loss < 100`) — the minimal signal, not a health grade.
 
-- `gateway_not_reported_up` — dpinger says down/unknown; no up-claim to corroborate. The
-  receipt records the box's report; it does **not** independently witness an outage.
-- `cannot_testify_no_path_basis` — gateway up, but no path probe attempted.
-- `gateway_uncorroborated_path_fails` — **the specimen**: dpinger says up, an external path
-  probe was attempted and did not reach. Path ambiguity from one vantage to one target at
-  one time — *not* WAN-down/ISP-outage/internet-down/user-impact.
-- `gateway_corroborated_by_path` — gateway up AND a path probe reached its target (reached
-  from that vantage to that target at that time; nothing stronger).
+**Lost custody is first-class.** A mute or absent daemon must never collapse into
+"gateway down."
 
-`Degraded` (dpinger packetloss/high-latency warning) still claims a path is up, so an
-unreached path is the uncorroborated specimen, not a pass. RTT/loss ride on the report for
-context, never as a service-quality verdict — which is why `GatewayReport`/the receipt drop
-`Eq` (they carry `f64`).
+### What landed
 
-**GATED — Phase 2 not started (live read):** read dpinger gateway status over the existing
-read-only SSH path (`dpinger` socket / gateway status), and run an ICMP/TCP/HTTP path probe
-from a named independent vantage. The interesting vantage for the real drift is *external*
-(off-LAN) so "path fails" isn't just a LAN-egress quirk; the perturbation ledger applies
-(an external probe can be classified as a scan upstream). Not wired into the bin/CLI yet —
-the pure core lives in `lib.rs` only, as the TLS core did at slice 2a.
+- Core `crates/nq-monitor/src/gateway_path_probe.rs` (`nq.probe.gateway_path.v1`):
+  clock-injected pure verdict, 15 offline fixtures.
+- Transport `crates/nq-monitor/src/gateway_path_transport.rs`: pure parsers for the socket
+  **filename** (`dpinger_<name>~<src-ip>~<monitor-ip>.sock` → gateway identity) and the
+  status line (`<name> <rtt_us> <stddev_us> <loss_pct>`), reconciled into a `DpingerReport`
+  with explicit custody; one read-only SSH gather (`ls` + `nc -U` the status socket);
+  ICMP-first path probes (TCP only as a fallback when ICMP cannot execute); append-only
+  receipt sink.
+- CLI `nq-monitor probe gateway-path` (read-only, receipt-only, no DB write).
+
+**Verdict ladder** (custody refusals first — a daemon we couldn't read is never an outage;
+then a coarse non-lift comparison, with the per-role observations recording *which* path
+diverged):
+
+- `cannot_testify_dpinger_socket_absent` / `_unreadable` / `unknown_custody` — lost witness
+  custody (no socket / mute socket / unparseable or name-mismatched line). **Not** down.
+- `cannot_testify_no_path_basis` — dpinger testifies, but no independent probe attempted.
+- `corroborated_by_path` — dpinger reaches its monitor **and** every attempted probe
+  reached (the monitored path is corroborated from this vantage at this time).
+- `path_ambiguous` — **the specimen**: any disagreement among {dpinger monitor-reach, each
+  probe}. Path ambiguity from this vantage, *not* WAN-down/ISP-outage/internet-down.
+- `egress_trouble_not_wan_down` — dpinger *not* reaching its monitor **and** every probe
+  failed: stronger evidence of egress trouble, still explicitly **not** proof of WAN-down.
+
+The two probes (dpinger's **monitor IP** and a fixed **egress anchor**, default `1.1.1.1`)
+stay separate witnesses on the receipt (operator: "more observations, stricter claim
+boundaries"), never blended into one "WAN health" blob.
+
+### Phase 2 — live read landed (2026-06-24)
+
+Read-only SSH to the box (existing dedicated probe key, user `admin`); NQ probes from the
+LAN vantage `sushi-k-lan`. Real box (pfSense 2.8.1, one `WAN_DHCP` gateway over CGNAT)
+observed:
+
+- **`corroborated_by_path`** — dpinger reaching its monitor (loss 0%, ~2.7 ms) **and** both
+  independent ICMP probes (monitor IP + `1.1.1.1`) reached.
+- **`cannot_testify_dpinger_socket_absent`** — asking for a non-existent gateway yields the
+  custody refusal *even though* the egress anchor was reachable: a reachable `1.1.1.1` does
+  **not** lift a gateway whose socket we cannot find. The refusal is the product.
+
+Receipts persisted append-only under gitignored `runs/gateway-path/`; real WAN/monitor IPs
+are **not** committed (fixtures use TEST-NET `198.51.100/24`; paranoia scan clean). Full
+`cargo test -p nq-monitor` EXIT=0, 0 warnings.
+
+Stopped here per scope: no PHP comparator receipt (the deferred second-order witness), no
+external/off-LAN vantage, no scheduler, no dashboard authority, no check #1 (declared-deny).
 
 ---
 
-*Phase-1 grounding artifact (with the Phase-2 landing recorded above). Name early,
-ratify lazily. Source typing first; the gold enforcement finding remains a later,
-surgical packet.*
+*Phase-1+2 grounding artifact. Name early, ratify lazily. The pfSense-classification
+comparator and the gold declared-deny enforcement finding remain later, surgical packets.*

@@ -713,6 +713,16 @@ pub enum ProbeAction {
     /// and an uncorroborated lease is not "host down." `--vantage` is
     /// required and never inferred.
     LeasePresence(ProbeLeasePresenceCmd),
+
+    /// Read pfSense's `dpinger` gateway-monitor socket over SSH and compare
+    /// its raw metrics against independent path probes from `--vantage` (to
+    /// the dpinger monitor IP and a fixed public anchor), printing an
+    /// `nq.probe.gateway_path.v1` receipt. Read-only: `ls` + read the status
+    /// socket(s), nothing else (NO pfSense PHP classification). The specimen
+    /// is a NON-LIFT — a disagreement is path ambiguity, never "WAN down,"
+    /// and a missing/mute socket is `cannot_testify`, not gateway-down.
+    /// `--vantage` is required and never inferred.
+    GatewayPath(ProbeGatewayPathCmd),
 }
 
 #[derive(Debug, Args)]
@@ -798,6 +808,54 @@ pub struct ProbeLeasePresenceCmd {
 
     /// If set, also append the receipt to a manual append-only series under
     /// this directory (e.g. `runs/lease-presence`). stdout still prints it.
+    #[arg(long)]
+    pub out_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct ProbeGatewayPathCmd {
+    /// pfSense host to SSH to (the management address or hostname).
+    #[arg(long)]
+    pub host: String,
+
+    /// SSH port.
+    #[arg(long, default_value_t = 22)]
+    pub port: u16,
+
+    /// SSH user (e.g. `admin`).
+    #[arg(long)]
+    pub user: String,
+
+    /// Path to the SSH private key.
+    #[arg(long)]
+    pub key: PathBuf,
+
+    /// Vantage identity to record for the independent path probes — the host
+    /// NQ probes from. Required; NQ does not infer it.
+    #[arg(long)]
+    pub vantage: String,
+
+    /// Which dpinger gateway to read (e.g. `WAN_DHCP`). Optional: if exactly
+    /// one dpinger socket is present, it is used; required when several exist.
+    #[arg(long)]
+    pub gateway: Option<String>,
+
+    /// Fixed public egress anchor for the general-reachability observation.
+    #[arg(long, default_value = "1.1.1.1")]
+    pub anchor: String,
+
+    /// TCP port used ONLY as the fallback path probe when ICMP cannot testify
+    /// (could not execute). A completed or refused connect proves the path
+    /// reached the host.
+    #[arg(long, default_value_t = 443)]
+    pub tcp_fallback_port: u16,
+
+    /// SSH connect + probe timeout, seconds.
+    #[arg(long, default_value_t = 10)]
+    pub timeout_seconds: u64,
+
+    /// If set, also append the receipt to a manual append-only series under
+    /// this directory (e.g. `runs/gateway-path`). stdout still prints it.
     #[arg(long)]
     pub out_dir: Option<PathBuf>,
 }

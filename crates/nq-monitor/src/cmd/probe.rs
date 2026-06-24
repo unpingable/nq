@@ -10,7 +10,9 @@
 //! a one-line summary. Network and classification logic live in
 //! `nq::probe`; this module is the user-facing shim.
 
-use crate::cli::{ProbeAction, ProbeCmd, ProbeDnsCmd, ProbeLeasePresenceCmd, ProbeTlsCertCmd};
+use crate::cli::{
+    ProbeAction, ProbeCmd, ProbeDnsCmd, ProbeGatewayPathCmd, ProbeLeasePresenceCmd, ProbeTlsCertCmd,
+};
 use crate::probe::{
     parse_qtype, parse_resolver, read_latest_generation_id, record_probe, UdpDnsClient,
 };
@@ -25,6 +27,7 @@ pub fn run(cmd: ProbeCmd) -> anyhow::Result<()> {
         ProbeAction::Dns(c) => run_dns(c),
         ProbeAction::TlsCert(c) => run_tls_cert(c),
         ProbeAction::LeasePresence(c) => run_lease_presence(c),
+        ProbeAction::GatewayPath(c) => run_gateway_path(c),
     }
 }
 
@@ -168,6 +171,50 @@ fn run_lease_presence(cmd: ProbeLeasePresenceCmd) -> anyhow::Result<()> {
     let now = ::time::OffsetDateTime::now_utc();
 
     let receipt = live_lease_presence(&target, &cmd.vantage, &cmd.subject, probe, &clock, now)?;
+
+    // Receipt-only emit. No DB write (active-witness lane).
+    println!("{}", serde_json::to_string_pretty(&receipt)?);
+
+    if let Some(out_dir) = &cmd.out_dir {
+        let path = persist_receipt(out_dir, &receipt)?;
+        eprintln!("appended receipt to series: {}", path.display());
+    }
+    Ok(())
+}
+
+/// `nq-monitor probe gateway-path` — live gateway-report-vs-path read.
+/// Read-only over SSH (`ls` + read the `dpinger` status socket(s)), plus
+/// independent path probes from the named vantage to the dpinger monitor IP
+/// and a fixed public anchor. Receipt-only; no DB write. The verdict is a
+/// non-lift: a disagreement is path ambiguity, never a down WAN, and a
+/// missing/mute socket is `cannot_testify`, not gateway-down.
+fn run_gateway_path(cmd: ProbeGatewayPathCmd) -> anyhow::Result<()> {
+    use crate::gateway_path_probe::ClockBasis;
+    use crate::gateway_path_transport::{live_gateway_path, persist_receipt, SshTarget};
+
+    let target = SshTarget {
+        host: cmd.host.clone(),
+        port: cmd.port,
+        user: cmd.user.clone(),
+        key_path: cmd.key.clone(),
+        timeout_seconds: cmd.timeout_seconds,
+    };
+    // NTP sync state is not observable from here; record it honestly.
+    let clock = ClockBasis {
+        source: "system_wall".to_string(),
+        ntp_status: "unknown".to_string(),
+    };
+    let now = ::time::OffsetDateTime::now_utc();
+
+    let receipt = live_gateway_path(
+        &target,
+        &cmd.vantage,
+        cmd.gateway.as_deref(),
+        &cmd.anchor,
+        cmd.tcp_fallback_port,
+        &clock,
+        now,
+    )?;
 
     // Receipt-only emit. No DB write (active-witness lane).
     println!("{}", serde_json::to_string_pretty(&receipt)?);

@@ -1,5 +1,6 @@
 pub mod artifact_registry;
 pub mod gateway_path_probe;
+pub mod gateway_path_transport;
 pub mod http;
 pub mod lease_presence_probe;
 pub mod lease_presence_transport;

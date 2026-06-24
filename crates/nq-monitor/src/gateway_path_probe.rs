@@ -2,31 +2,42 @@
 //! (`nq.probe.gateway_path.v1`).
 //!
 //! Third reachable-drift specimen (`PFSENSE_REACHABLE_DRIFT_STEP0_INVENTORY.md`
-//! candidate check #3). Like the lease-presence core, it is deliberately a
-//! *cheap non-lift*: it exists to make a refusal legible, not to manufacture
-//! an outage verdict.
+//! check #3). Like the lease-presence core, it is deliberately a *cheap
+//! non-lift*: it exists to make a refusal legible, not to manufacture an
+//! outage verdict.
 //!
-//!   A pfSense gateway report (dpinger says WAN = up, RTT r, loss l) is the
-//!   box's OWN active-probe self-report from a single vantage — never
-//!   internet-reachability truth. dpinger pinging its monitor IP and an
-//!   NQ probe traversing the path to some destination are different
-//!   witnesses; a mismatch is PATH AMBIGUITY, not "WAN down" / "ISP outage"
-//!   / "the internet is down" / "users are impacted."
+//!   pfSense's gateway-monitoring daemon (`dpinger`) pings a configured
+//!   monitor IP and exposes raw metrics (`<name> <rtt_us> <stddev_us>
+//!   <loss_pct>`) on a unix socket. That is a `pfSenseRuntimeReport` from ONE
+//!   vantage about ONE monitored path — never internet-reachability truth.
+//!   dpinger reaching its monitor and an NQ probe reaching some destination
+//!   are different witnesses; a disagreement is PATH AMBIGUITY, not "WAN
+//!   down" / "ISP outage" / "internet down" / "user impact."
+//!
+//! Witness-custody discipline (operator-directed, 2026-06-24): the dpinger
+//! socket is the FIRST-CLASS witness — raw daemon metrics, read directly. We
+//! do NOT reimplement pfSense's UI classification (`online`/`loss`/`delay`/
+//! `highloss`/...) and treat it as authority; that report is a second-order
+//! projection over this same daemon/config state, admissible only later as a
+//! separate "pfSense *reports* status X" comparator receipt, never the base
+//! specimen. The only thing we read from the raw metrics is whether the
+//! daemon is currently receiving replies from its monitor (`loss < 100`) —
+//! the minimal signal, not a health grade.
+//!
+//! Lost custody is first-class: socket-absent, socket-unreadable, and
+//! unknown-custody are distinct `cannot_testify` verdicts — "we could not
+//! read the daemon" must never collapse into "the gateway is down."
 //!
 //! This module is the **pure verdict core**, split from the live read the
 //! same way the TLS and lease-presence probes split verdict from transport.
-//! It turns (a pfSense gateway report, zero or more external path
-//! observations, the probe clock) into a typed receipt — fully
-//! fixture-testable, no SSH, no network. The live slice (read dpinger
-//! gateway status over read-only SSH; run an ICMP/TCP/HTTP path probe from a
-//! named independent vantage) fills these inputs.
+//! It turns (a dpinger report, zero or more independent path observations,
+//! the probe clock) into a typed receipt — fully fixture-testable, no SSH, no
+//! network. The live slice fills these inputs.
 //!
 //! Source typing (per the Step-0 inventory):
-//!   - the dpinger gateway status is a `pfSenseRuntimeReport` (dpinger is
-//!     itself an active probe with the classic active-probe ambiguity)
+//!   - the dpinger socket metrics are a `pfSenseRuntimeReport`
 //!   - an NQ path probe from a named vantage is `ObservedReachability`
-//!   - a mismatch is at most `gateway_uncorroborated_path_fails` — never
-//!     `wan_down` / `internet_down`.
+//!   - a disagreement is at most `path_ambiguous` — never `wan_down`.
 //!
 //! Lane separation (non-negotiable): active-witness lane, receipt only. No
 //! write to the passive collector's evidence tables, no coercion to an
@@ -55,75 +66,100 @@ pub struct ClockBasis {
     pub ntp_status: String,
 }
 
-/// Gateway status as pfSense (dpinger) reports it. dpinger pings a monitor IP
-/// and classifies the gateway; `Up`/`Degraded` both *claim a working path*
-/// (Degraded = up-but-lossy/high-latency warning), `Down`/`Unknown` do not.
+/// Custody of the dpinger gateway-monitor witness. Keeps "we couldn't read
+/// the daemon" strictly distinct from "the gateway is down." Lost custody is
+/// a refusal, never an outage verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GatewayStatus {
-    /// dpinger reports the gateway online (no loss/latency alarm).
-    Up,
-    /// dpinger reports the gateway online but in a packetloss/high-latency
-    /// warning state — still a claim that a path exists.
-    Degraded,
-    /// dpinger reports the gateway down.
-    Down,
-    /// The reader could not classify the dpinger status.
-    Unknown,
+pub enum DpingerCustody {
+    /// A parseable status line was read from the daemon socket.
+    MetricsPresent,
+    /// No dpinger socket for this gateway (daemon not running / no such
+    /// gateway). The witness is absent — not down.
+    SocketAbsent,
+    /// Socket present but unreadable (timeout / empty / refused). The witness
+    /// is present but mute — not down.
+    SocketUnreadable,
+    /// Socket present and readable, but the content/identity did not reconcile
+    /// (unparseable line, or the line's gateway name disagreed with the socket
+    /// filename). Custody is in doubt — not down.
+    UnknownCustody,
 }
 
-impl GatewayStatus {
-    /// Whether the box is *claiming* a working path. `Up`/`Degraded` claim one
-    /// (a claim to corroborate); `Down`/`Unknown` are not a claim of up.
-    fn claims_path_up(self) -> bool {
-        matches!(self, GatewayStatus::Up | GatewayStatus::Degraded)
+/// What pfSense's `dpinger` daemon reports for one gateway — a
+/// `pfSenseRuntimeReport`. RAW metrics only; NOT pfSense's UI classification.
+/// The daemon pinging its monitor IP is a scoped claim about THAT path, never
+/// "the internet works." The live reader fills this from the dpinger socket.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DpingerReport {
+    /// Gateway name as pfSense/dpinger knows it (e.g. `WAN_DHCP`).
+    pub gateway_name: String,
+    /// The monitor IP dpinger pings to derive its metrics (from the socket
+    /// filename). This is what dpinger reaches — NOT what an NQ probe targets,
+    /// unless a path observation is deliberately aimed at it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub monitor_ip: Option<String>,
+    /// The source/bind address dpinger pings from (the WAN-side address, from
+    /// the socket filename). Recorded for custody, not used in the verdict.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_ip: Option<String>,
+    pub custody: DpingerCustody,
+    /// dpinger's reported round-trip time in microseconds, if metrics present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rtt_us: Option<u64>,
+    /// dpinger's reported RTT standard deviation in microseconds, if present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stddev_us: Option<u64>,
+    /// dpinger's reported loss percentage, if metrics present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loss_pct: Option<f64>,
+    /// Where this report came from (e.g. `ssh:<pfsense-host> dpinger:<sock>`).
+    pub source: String,
+}
+
+impl DpingerReport {
+    /// Whether the daemon is currently receiving replies from its monitor —
+    /// the minimal raw read (`loss < 100`), NOT pfSense's up/down threshold
+    /// classification. `None` when custody can't testify, or when metrics are
+    /// present but the loss figure is missing (we refuse to guess).
+    fn reaches_monitor(&self) -> Option<bool> {
+        match self.custody {
+            DpingerCustody::MetricsPresent => self.loss_pct.map(|l| l < 100.0),
+            _ => None,
+        }
     }
 }
 
-/// A pfSense gateway report as dpinger reports it — a `pfSenseRuntimeReport`.
-/// The live reader fills this from `dpinger` status / the gateway status API
-/// over read-only SSH. RTT/loss are dpinger's measurements to ITS monitor IP,
-/// recorded for context, never a service-quality verdict.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct GatewayReport {
-    /// Gateway name as pfSense knows it (e.g. `WAN_DHCP`).
-    pub name: String,
-    /// The monitor IP dpinger pings to derive the status (e.g. `1.1.1.1`).
-    /// This is what dpinger reaches — NOT what an NQ path probe targets.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub monitor_ip: Option<String>,
-    pub status: GatewayStatus,
-    /// dpinger's reported round-trip time in milliseconds, if read.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rtt_ms: Option<f64>,
-    /// dpinger's reported loss percentage, if read.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub loss_pct: Option<f64>,
-    /// Where this gateway report came from (e.g. `ssh:<pfsense-host> dpinger`).
-    pub source: String,
+/// Which path this observation tests, so the receipt keeps the two probes as
+/// separate witnesses (operator-directed: "more observations, stricter claim
+/// boundaries"), never blended into one "WAN health" blob.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PathRole {
+    /// Probing the same monitor IP dpinger watches — the direct comparator.
+    MonitorTarget,
+    /// Probing a fixed public anchor (e.g. `1.1.1.1`) — general WAN egress.
+    EgressAnchor,
 }
 
 /// How a path observation was attempted, from a named independent vantage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PathMethod {
-    /// ICMP echo to a target across the path.
+    /// ICMP echo to a target across the path (preferred — lowest perturbation).
     IcmpEcho,
-    /// TCP connect to a target:port across the path.
+    /// TCP connect to a target:port across the path (fallback when ICMP cannot
+    /// testify).
     TcpConnect,
-    /// HTTP(S) GET to a target across the path.
-    HttpGet,
 }
 
 impl PathMethod {
     /// Every path method here is an NQ probe from an independent vantage —
     /// `observed_reachability`. (The dpinger report is the box's own report,
-    /// carried separately on `GatewayReport`, not as a `PathObservation`.)
+    /// carried separately on `DpingerReport`, not as a `PathObservation`.)
     fn testimony_type(self) -> &'static str {
         match self {
-            PathMethod::IcmpEcho | PathMethod::TcpConnect | PathMethod::HttpGet => {
-                "observed_reachability"
-            }
+            PathMethod::IcmpEcho | PathMethod::TcpConnect => "observed_reachability",
         }
     }
 }
@@ -142,17 +178,18 @@ pub enum PathOutcome {
     NotAttempted,
 }
 
-/// One path observation from a named, independent vantage, with the target it
-/// probed and the time it was made.
+/// One path observation from a named, independent vantage, with the role,
+/// target, and time of the attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PathObservation {
     pub method: PathMethod,
-    /// Where the observation was made (e.g. `nq-vantage-lan`,
-    /// `nq-vantage-external`). MUST be independent of the pfSense box.
+    pub role: PathRole,
+    /// Where the observation was made (e.g. `sushi-k-lan`). MUST be
+    /// independent of the pfSense box.
     pub vantage: String,
-    /// The destination probed across the path (e.g. `1.1.1.1`,
-    /// `https://example.org`). Recorded so "reached" can't be read as "the
-    /// internet is up" — it is reachability to THIS target only.
+    /// The destination probed across the path (e.g. `198.51.100.1`, `1.1.1.1`).
+    /// Recorded so "reached" can't be read as "the internet is up" — it is
+    /// reachability to THIS target only.
     pub target: String,
     pub outcome: PathOutcome,
     pub observed_at: String,
@@ -164,6 +201,7 @@ pub struct PathObservation {
 impl PathObservation {
     pub fn new(
         method: PathMethod,
+        role: PathRole,
         vantage: impl Into<String>,
         target: impl Into<String>,
         outcome: PathOutcome,
@@ -171,6 +209,7 @@ impl PathObservation {
     ) -> Self {
         PathObservation {
             method,
+            role,
             vantage: vantage.into(),
             target: target.into(),
             outcome,
@@ -181,41 +220,48 @@ impl PathObservation {
 }
 
 /// Perturbation accounting — even reads are transitions. Reading the dpinger
-/// status over SSH is passive; an external ICMP/TCP/HTTP path probe leaves a
-/// trace (and, across an upstream that runs IDS/IPS, may be classified as a
-/// scan). The live slice fills `observed_secondary_effects`; the core
-/// declares the expectation.
+/// socket over SSH is passive; an independent ICMP/TCP/HTTP path probe leaves
+/// a trace (and, across an upstream that runs IDS/IPS, may be classified as a
+/// scan). The live slice fills `observed_secondary_effects`; the core declares
+/// the expectation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Perturbation {
     pub class: &'static str,
     pub expected_side_effects: Vec<&'static str>,
 }
 
-/// Candidate verdict ladder — reality-derived, NOT a final taxonomy. Every
-/// state is deliberately a *non-lift*: the strongest positive is "path
-/// reached from this vantage to this target at this time," and the
-/// interesting negative is "gateway up-report not corroborated by the path,"
-/// never "WAN down" / "internet down."
+/// Candidate verdict ladder — reality-derived, NOT a final taxonomy. Custody
+/// refusals come first (a mute/absent daemon is never an outage). Every
+/// non-refusal state is a *non-lift*: the strongest positive is "the monitored
+/// path is corroborated from this vantage at this time," and the interesting
+/// negatives are "path ambiguity" / "egress trouble (still not WAN-down)."
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GatewayPathVerdict {
-    /// dpinger does NOT report the gateway up (down/unknown). The box itself
-    /// isn't claiming a working path; there is no up-report to corroborate.
-    /// This records the box's report — it does NOT independently witness an
-    /// outage.
-    GatewayNotReportedUp,
-    /// Gateway reports up, but NO path observation was attempted — no basis to
-    /// corroborate or refute the up-report.
+    /// No dpinger socket — the gateway-monitor witness is absent. NOT down.
+    CannotTestifyDpingerSocketAbsent,
+    /// dpinger socket present but unreadable (timeout/empty). NOT down.
+    CannotTestifyDpingerSocketUnreadable,
+    /// dpinger readable but identity/format did not reconcile. NOT down.
+    CannotTestifyUnknownCustody,
+    /// dpinger testifies, but NO independent path observation was attempted —
+    /// no basis to corroborate or contradict the monitored path.
     CannotTestifyNoPathBasis,
-    /// Gateway reports up; a path observation was attempted and the path was
-    /// NOT reached. The specimen's point: dpinger's up-report uncorroborated
-    /// by an external path observation. NOT wan-down, NOT isp-outage, NOT
-    /// internet-down, NOT user-impact — path ambiguity from one vantage.
-    GatewayUncorroboratedPathFails,
-    /// Gateway reports up AND a path observation reached its target — path
-    /// reached from that vantage to that target at that time (nothing
-    /// stronger is claimed).
-    GatewayCorroboratedByPath,
+    /// dpinger reaches its monitor AND every attempted independent probe
+    /// reached its target — the monitored path is corroborated from this
+    /// vantage at this time (nothing stronger is claimed).
+    CorroboratedByPath,
+    /// dpinger and the independent probe(s) DISAGREE (any mismatch among the
+    /// attempted observations and the daemon's monitor-reach). The specimen's
+    /// point: path ambiguity from this vantage — NOT wan-down, NOT isp-outage,
+    /// NOT internet-down, NOT user-impact. The per-role observations record
+    /// WHICH path diverged.
+    PathAmbiguous,
+    /// dpinger is NOT reaching its monitor AND every attempted probe failed —
+    /// stronger evidence of egress trouble, but STILL not proof of WAN-down
+    /// (could be the box, the modem, the carrier/CGNAT, every target, or this
+    /// vantage's own egress).
+    EgressTroubleNotWanDown,
 }
 
 /// `nq.probe.gateway_path.v1`. Receipt-only; typed verdict, no coercion.
@@ -223,7 +269,7 @@ pub enum GatewayPathVerdict {
 pub struct GatewayPathReceipt {
     pub schema: &'static str,
     pub probe_kind: &'static str,
-    pub gateway: GatewayReport,
+    pub dpinger: DpingerReport,
     pub observations: Vec<PathObservation>,
     pub probe_time: String,
     pub clock_basis: ClockBasis,
@@ -240,33 +286,34 @@ fn rfc3339(t: OffsetDateTime) -> String {
 /// is the load-bearing part of the specimen — the refusals are the product.
 fn scope_ceiling_non_claims() -> Vec<String> {
     vec![
-        "a pfSense gateway report (dpinger) is the box's own active-probe self-report from one vantage, not internet-reachability truth".to_string(),
-        "a gateway reported up does not establish end-to-end reachability to any destination".to_string(),
+        "a dpinger gateway report is pfSense's own monitoring daemon pinging its configured monitor IP from one vantage — a scoped claim about THAT path, not internet-reachability truth".to_string(),
+        "dpinger rtt/stddev/loss are raw daemon metrics, not pfSense's up/down classification and not a service-quality verdict".to_string(),
+        "dpinger reaching its monitor does not establish end-to-end reachability to any other destination".to_string(),
         "cannot testify the WAN is down".to_string(),
         "cannot testify the ISP is down or the internet is down".to_string(),
         "cannot testify users or services are impacted".to_string(),
-        "cannot testify which hop fails (the box, the modem, the ISP, the target, or the prober's own egress)".to_string(),
-        "a path probe that does not reach is failure from one vantage to one target at one time, not a down WAN".to_string(),
-        "dpinger RTT/loss are measurements to its own monitor IP, not a service-quality verdict".to_string(),
-        "wan_down / internet_down would require a declared multi-vantage probe regime (vantages + targets + schedule + scope) absent from this specimen".to_string(),
-        "can testify only: whether the gateway's up-report is corroborated by an external path observation from the named vantage(s) to the named target(s)".to_string(),
+        "cannot testify which hop fails (the box, the modem, the carrier/CGNAT, the target, or the prober's own egress)".to_string(),
+        "an independent path probe that does not reach is failure from one vantage to one target at one time, not a down WAN".to_string(),
+        "a disagreement between dpinger and an independent probe is path ambiguity, never proof of an outage".to_string(),
+        "a dpinger socket that is absent or unreadable is cannot_testify (lost witness custody), not gateway-down".to_string(),
+        "can testify only: whether dpinger's monitor view is corroborated by independent path observations from the named vantage(s) to the named target(s)".to_string(),
     ]
 }
 
 /// Pure, clock-injected verdict. `now` is recorded as `probe_time`; it does
 /// not change the verdict (reachability is point-in-time from the
-/// observations), but it pins when the corroboration was assessed. No
-/// network, no SSH — the live reader supplies `gateway` and `observations`.
+/// observations), but it pins when the comparison was assessed. No network, no
+/// SSH — the live reader supplies `dpinger` and `observations`.
 pub fn evaluate_gateway_path(
-    gateway: &GatewayReport,
+    dpinger: &DpingerReport,
     observations: &[PathObservation],
     clock: &ClockBasis,
     now: OffsetDateTime,
 ) -> GatewayPathReceipt {
-    let verdict = compute_verdict(gateway, observations);
+    let verdict = compute_verdict(dpinger, observations);
 
     // Perturbation expectation depends on whether any path probe was actually
-    // run; reading the dpinger status alone is passive.
+    // run; reading the dpinger socket alone is passive.
     let used_path_probe = observations
         .iter()
         .any(|o| o.outcome != PathOutcome::NotAttempted);
@@ -281,14 +328,14 @@ pub fn evaluate_gateway_path(
     } else {
         Perturbation {
             class: "passive_report_read",
-            expected_side_effects: vec!["read_only_dpinger_gateway_status"],
+            expected_side_effects: vec!["read_only_dpinger_socket"],
         }
     };
 
     GatewayPathReceipt {
         schema: GATEWAY_PATH_PROBE_SCHEMA,
         probe_kind: "gateway_path",
-        gateway: gateway.clone(),
+        dpinger: dpinger.clone(),
         observations: observations.to_vec(),
         probe_time: rfc3339(now),
         clock_basis: clock.clone(),
@@ -298,33 +345,52 @@ pub fn evaluate_gateway_path(
     }
 }
 
-/// Verdict logic. The gateway must report up (claim a path) for a path
-/// observation to corroborate anything; then the strongest *attempted*
-/// observation decides corroboration. A reach on any observation corroborates;
-/// an all-attempted-none-reached set is the uncorroborated specimen; no
-/// attempt at all cannot testify. A not-up report has no up-claim to test.
+/// Verdict logic. Custody refusals first — a daemon we could not read is never
+/// an outage. With metrics present, compare dpinger's monitor-reach against
+/// the *attempted* independent probes: full agreement positive corroborates;
+/// full agreement negative is egress trouble (still not WAN-down); ANY
+/// disagreement is path ambiguity. The per-role observations carry which path
+/// diverged — the verdict deliberately stays a coarse non-lift.
 fn compute_verdict(
-    gateway: &GatewayReport,
+    dpinger: &DpingerReport,
     observations: &[PathObservation],
 ) -> GatewayPathVerdict {
-    if !gateway.status.claims_path_up() {
-        return GatewayPathVerdict::GatewayNotReportedUp;
+    let reaches = match dpinger.custody {
+        DpingerCustody::SocketAbsent => {
+            return GatewayPathVerdict::CannotTestifyDpingerSocketAbsent
+        }
+        DpingerCustody::SocketUnreadable => {
+            return GatewayPathVerdict::CannotTestifyDpingerSocketUnreadable
+        }
+        DpingerCustody::UnknownCustody => {
+            return GatewayPathVerdict::CannotTestifyUnknownCustody
+        }
+        // Metrics present, but a missing loss figure is itself unreconciled
+        // custody — refuse rather than guess "reaches".
+        DpingerCustody::MetricsPresent => match dpinger.reaches_monitor() {
+            Some(r) => r,
+            None => return GatewayPathVerdict::CannotTestifyUnknownCustody,
+        },
+    };
+
+    let attempted: Vec<PathOutcome> = observations
+        .iter()
+        .map(|o| o.outcome)
+        .filter(|o| *o != PathOutcome::NotAttempted)
+        .collect();
+    if attempted.is_empty() {
+        return GatewayPathVerdict::CannotTestifyNoPathBasis;
     }
 
-    let any_reached = observations
-        .iter()
-        .any(|o| o.outcome == PathOutcome::Reached);
-    if any_reached {
-        return GatewayPathVerdict::GatewayCorroboratedByPath;
-    }
+    let all_reached = attempted.iter().all(|o| *o == PathOutcome::Reached);
+    let none_reached = attempted.iter().all(|o| *o == PathOutcome::NotReached);
 
-    let any_attempted = observations
-        .iter()
-        .any(|o| o.outcome != PathOutcome::NotAttempted);
-    if any_attempted {
-        GatewayPathVerdict::GatewayUncorroboratedPathFails
+    if reaches && all_reached {
+        GatewayPathVerdict::CorroboratedByPath
+    } else if !reaches && none_reached {
+        GatewayPathVerdict::EgressTroubleNotWanDown
     } else {
-        GatewayPathVerdict::CannotTestifyNoPathBasis
+        GatewayPathVerdict::PathAmbiguous
     }
 }
 
@@ -343,162 +409,194 @@ mod tests {
         }
     }
 
-    // NOTE: fixtures are synthetic-but-realistic. No pfSense was read to build
-    // them — the live SSH read slice (gated on access) grounds these in real
-    // dpinger status + real path-probe data, the way the lease-presence core
-    // was grounded in the real box's lease/ARP.
-    fn gateway_up() -> GatewayReport {
-        GatewayReport {
-            name: "WAN_DHCP".to_string(),
-            monitor_ip: Some("1.1.1.1".to_string()),
-            status: GatewayStatus::Up,
-            rtt_ms: Some(12.4),
+    // NOTE: fixtures are synthetic-but-realistic, anonymized. They mirror the
+    // real captured socket shape (`<name> <rtt_us> <stddev_us> <loss_pct>`)
+    // without committing the real WAN/monitor addresses — the live read
+    // (gitignored runs/) grounds these in the real box.
+    fn dpinger_reaching() -> DpingerReport {
+        DpingerReport {
+            gateway_name: "WAN_DHCP".to_string(),
+            monitor_ip: Some("198.51.100.1".to_string()),
+            source_ip: Some("198.51.100.129".to_string()),
+            custody: DpingerCustody::MetricsPresent,
+            rtt_us: Some(3049),
+            stddev_us: Some(1866),
             loss_pct: Some(0.0),
             source: "synthetic:fixture".to_string(),
         }
     }
 
-    #[test]
-    fn corroborated_when_path_probe_reaches_a_target() {
-        let obs = vec![PathObservation::new(
-            PathMethod::IcmpEcho,
-            "nq-vantage-external",
-            "1.1.1.1",
-            PathOutcome::Reached,
-            at("2026-06-24T12:00:00Z"),
-        )];
-        let r = evaluate_gateway_path(&gateway_up(), &obs, &clock(), at("2026-06-24T12:00:01Z"));
-        assert_eq!(r.verdict, GatewayPathVerdict::GatewayCorroboratedByPath);
+    fn dpinger_not_reaching() -> DpingerReport {
+        DpingerReport {
+            loss_pct: Some(100.0),
+            ..dpinger_reaching()
+        }
     }
 
-    /// The specimen's reason to exist: dpinger says up, external path probe
-    /// attempted and does not reach -> uncorroborated path fails, NOT WAN-down.
+    fn monitor_probe(target: &str, outcome: PathOutcome) -> PathObservation {
+        PathObservation::new(
+            PathMethod::IcmpEcho,
+            PathRole::MonitorTarget,
+            "sushi-k-lan",
+            target,
+            outcome,
+            at("2026-06-24T12:00:00Z"),
+        )
+    }
+
+    fn anchor_probe(outcome: PathOutcome) -> PathObservation {
+        PathObservation::new(
+            PathMethod::IcmpEcho,
+            PathRole::EgressAnchor,
+            "sushi-k-lan",
+            "1.1.1.1",
+            outcome,
+            at("2026-06-24T12:00:00Z"),
+        )
+    }
+
+    fn eval(d: &DpingerReport, obs: &[PathObservation]) -> GatewayPathReceipt {
+        evaluate_gateway_path(d, obs, &clock(), at("2026-06-24T12:00:01Z"))
+    }
+
     #[test]
-    fn uncorroborated_when_path_attempted_but_not_reached() {
-        let obs = vec![
-            PathObservation::new(
-                PathMethod::IcmpEcho,
-                "nq-vantage-external",
-                "1.1.1.1",
-                PathOutcome::NotReached,
-                at("2026-06-24T12:00:00Z"),
-            ),
-            PathObservation::new(
-                PathMethod::HttpGet,
-                "nq-vantage-external",
-                "https://example.org",
-                PathOutcome::NotReached,
-                at("2026-06-24T12:00:00Z"),
-            ),
-        ];
-        let r = evaluate_gateway_path(&gateway_up(), &obs, &clock(), at("2026-06-24T12:00:01Z"));
-        assert_eq!(r.verdict, GatewayPathVerdict::GatewayUncorroboratedPathFails);
+    fn socket_absent_cannot_testify_not_down() {
+        let mut d = dpinger_reaching();
+        d.custody = DpingerCustody::SocketAbsent;
+        let r = eval(&d, &[anchor_probe(PathOutcome::NotReached)]);
+        assert_eq!(r.verdict, GatewayPathVerdict::CannotTestifyDpingerSocketAbsent);
+    }
+
+    #[test]
+    fn socket_unreadable_cannot_testify() {
+        let mut d = dpinger_reaching();
+        d.custody = DpingerCustody::SocketUnreadable;
+        let r = eval(&d, &[anchor_probe(PathOutcome::Reached)]);
+        assert_eq!(
+            r.verdict,
+            GatewayPathVerdict::CannotTestifyDpingerSocketUnreadable
+        );
+    }
+
+    #[test]
+    fn unknown_custody_cannot_testify() {
+        let mut d = dpinger_reaching();
+        d.custody = DpingerCustody::UnknownCustody;
+        let r = eval(&d, &[anchor_probe(PathOutcome::Reached)]);
+        assert_eq!(r.verdict, GatewayPathVerdict::CannotTestifyUnknownCustody);
+    }
+
+    /// Metrics present but no loss figure -> we refuse to guess "reaches".
+    #[test]
+    fn metrics_present_but_no_loss_is_unknown_custody() {
+        let mut d = dpinger_reaching();
+        d.loss_pct = None;
+        let r = eval(&d, &[anchor_probe(PathOutcome::Reached)]);
+        assert_eq!(r.verdict, GatewayPathVerdict::CannotTestifyUnknownCustody);
     }
 
     #[test]
     fn cannot_testify_when_no_path_attempted() {
-        let r = evaluate_gateway_path(&gateway_up(), &[], &clock(), at("2026-06-24T12:00:01Z"));
+        let r = eval(&dpinger_reaching(), &[]);
         assert_eq!(r.verdict, GatewayPathVerdict::CannotTestifyNoPathBasis);
-        // A declared-but-not-run method is still no basis.
-        let obs = vec![PathObservation::new(
-            PathMethod::TcpConnect,
-            "nq-vantage-external",
-            "1.1.1.1:443",
-            PathOutcome::NotAttempted,
-            at("2026-06-24T12:00:00Z"),
-        )];
-        let r2 = evaluate_gateway_path(&gateway_up(), &obs, &clock(), at("2026-06-24T12:00:01Z"));
+        // A declared-but-not-run probe is still no basis.
+        let r2 = eval(
+            &dpinger_reaching(),
+            &[anchor_probe(PathOutcome::NotAttempted)],
+        );
         assert_eq!(r2.verdict, GatewayPathVerdict::CannotTestifyNoPathBasis);
     }
 
-    /// A down/unknown gateway report has no up-claim to corroborate, and the
-    /// verdict refuses to lift the box's report into a witnessed outage.
+    /// dpinger reaches its monitor AND both independent probes reach -> the
+    /// monitored path is corroborated from this vantage. The real captured
+    /// box (loss 0) lands here.
     #[test]
-    fn gateway_not_up_has_no_up_claim_to_test() {
-        for status in [GatewayStatus::Down, GatewayStatus::Unknown] {
-            let mut gw = gateway_up();
-            gw.status = status;
-            // Even an external path that *fails* must not turn the box's own
-            // report into a witnessed WAN-down verdict.
-            let obs = vec![PathObservation::new(
-                PathMethod::IcmpEcho,
-                "nq-vantage-external",
-                "1.1.1.1",
-                PathOutcome::NotReached,
-                at("2026-06-24T12:00:00Z"),
-            )];
-            let r = evaluate_gateway_path(&gw, &obs, &clock(), at("2026-06-24T12:00:01Z"));
-            assert_eq!(r.verdict, GatewayPathVerdict::GatewayNotReportedUp);
-        }
-    }
-
-    /// Degraded (packetloss/high-latency warning) still claims a path is up,
-    /// so an unreached path is the uncorroborated specimen, not a pass.
-    #[test]
-    fn degraded_gateway_still_claims_a_path() {
-        let mut gw = gateway_up();
-        gw.status = GatewayStatus::Degraded;
-        let obs = vec![PathObservation::new(
-            PathMethod::IcmpEcho,
-            "nq-vantage-external",
-            "1.1.1.1",
-            PathOutcome::NotReached,
-            at("2026-06-24T12:00:00Z"),
-        )];
-        let r = evaluate_gateway_path(&gw, &obs, &clock(), at("2026-06-24T12:00:01Z"));
-        assert_eq!(r.verdict, GatewayPathVerdict::GatewayUncorroboratedPathFails);
-    }
-
-    /// Reached wins over a not-reached sibling — one positive corroborates.
-    #[test]
-    fn mixed_observations_corroborate_on_any_reach() {
+    fn corroborated_when_dpinger_reaches_and_all_probes_reach() {
         let obs = vec![
-            PathObservation::new(
-                PathMethod::IcmpEcho,
-                "nq-vantage-external",
-                "1.1.1.1",
-                PathOutcome::NotReached,
-                at("2026-06-24T12:00:00Z"),
-            ),
-            PathObservation::new(
-                PathMethod::TcpConnect,
-                "nq-vantage-external",
-                "1.1.1.1:443",
-                PathOutcome::Reached,
-                at("2026-06-24T12:00:00Z"),
-            ),
+            monitor_probe("198.51.100.1", PathOutcome::Reached),
+            anchor_probe(PathOutcome::Reached),
         ];
-        let r = evaluate_gateway_path(&gateway_up(), &obs, &clock(), at("2026-06-24T12:00:01Z"));
-        assert_eq!(r.verdict, GatewayPathVerdict::GatewayCorroboratedByPath);
+        let r = eval(&dpinger_reaching(), &obs);
+        assert_eq!(r.verdict, GatewayPathVerdict::CorroboratedByPath);
+    }
+
+    /// dpinger reaches, monitor probe reaches, but the egress anchor fails ->
+    /// anchor/path-specific ambiguity (the monitored path agrees, general
+    /// egress diverges). NOT WAN-down.
+    #[test]
+    fn ambiguous_when_anchor_diverges_from_monitor() {
+        let obs = vec![
+            monitor_probe("198.51.100.1", PathOutcome::Reached),
+            anchor_probe(PathOutcome::NotReached),
+        ];
+        let r = eval(&dpinger_reaching(), &obs);
+        assert_eq!(r.verdict, GatewayPathVerdict::PathAmbiguous);
+    }
+
+    /// dpinger reaches its monitor, but our independent probe to that same
+    /// monitor fails -> monitor-path ambiguity (firewall reaches it, this
+    /// vantage doesn't). NOT WAN-down.
+    #[test]
+    fn ambiguous_when_dpinger_reaches_but_probe_to_monitor_fails() {
+        let obs = vec![monitor_probe("198.51.100.1", PathOutcome::NotReached)];
+        let r = eval(&dpinger_reaching(), &obs);
+        assert_eq!(r.verdict, GatewayPathVerdict::PathAmbiguous);
+    }
+
+    /// dpinger is NOT reaching its monitor (loss 100) yet both probes reach ->
+    /// firewall-monitor/custody ambiguity. NOT WAN-down.
+    #[test]
+    fn ambiguous_when_dpinger_silent_but_probes_reach() {
+        let obs = vec![
+            monitor_probe("198.51.100.1", PathOutcome::Reached),
+            anchor_probe(PathOutcome::Reached),
+        ];
+        let r = eval(&dpinger_not_reaching(), &obs);
+        assert_eq!(r.verdict, GatewayPathVerdict::PathAmbiguous);
+    }
+
+    /// dpinger NOT reaching its monitor AND every probe fails -> stronger
+    /// evidence of egress trouble, but still explicitly NOT WAN-down.
+    #[test]
+    fn egress_trouble_when_dpinger_silent_and_all_probes_fail() {
+        let obs = vec![
+            monitor_probe("198.51.100.1", PathOutcome::NotReached),
+            anchor_probe(PathOutcome::NotReached),
+        ];
+        let r = eval(&dpinger_not_reaching(), &obs);
+        assert_eq!(r.verdict, GatewayPathVerdict::EgressTroubleNotWanDown);
+    }
+
+    /// `reaches_monitor` is the minimal raw read (loss < 100), not a health
+    /// grade: 99.9% loss still counts as "receiving some replies".
+    #[test]
+    fn reaches_monitor_is_loss_below_one_hundred() {
+        let mut d = dpinger_reaching();
+        d.loss_pct = Some(99.9);
+        assert_eq!(d.reaches_monitor(), Some(true));
+        d.loss_pct = Some(100.0);
+        assert_eq!(d.reaches_monitor(), Some(false));
     }
 
     #[test]
     fn probe_time_reflects_the_injected_clock() {
-        let r = evaluate_gateway_path(&gateway_up(), &[], &clock(), at("2026-06-24T12:00:01Z"));
+        let r = eval(&dpinger_reaching(), &[]);
         assert_eq!(r.probe_time, "2026-06-24T12:00:01Z");
     }
 
     #[test]
-    fn report_read_is_passive_path_probe_is_active() {
-        let r = evaluate_gateway_path(&gateway_up(), &[], &clock(), at("2026-06-24T12:00:01Z"));
+    fn socket_read_is_passive_path_probe_is_active() {
+        let r = eval(&dpinger_reaching(), &[]);
         assert_eq!(r.perturbation.class, "passive_report_read");
-
-        let probe = vec![PathObservation::new(
-            PathMethod::IcmpEcho,
-            "nq-vantage-external",
-            "1.1.1.1",
-            PathOutcome::Reached,
-            at("2026-06-24T12:00:00Z"),
-        )];
-        let r2 = evaluate_gateway_path(&gateway_up(), &probe, &clock(), at("2026-06-24T12:00:01Z"));
+        let r2 = eval(&dpinger_reaching(), &[anchor_probe(PathOutcome::Reached)]);
         assert_eq!(r2.perturbation.class, "active_path_probe");
     }
 
     /// The refusals are the product: the receipt must carry the non-lift
-    /// non-claims, and must NOT coerce to a green/ok status.
+    /// non-claims, and must NOT coerce to a green/ok/wan-down status.
     #[test]
     fn receipt_carries_refusals_and_no_coercion() {
-        let r = evaluate_gateway_path(&gateway_up(), &[], &clock(), at("2026-06-24T12:00:01Z"));
+        let r = eval(&dpinger_reaching(), &[]);
         assert!(r
             .non_claims
             .iter()
@@ -507,24 +605,31 @@ mod tests {
             .non_claims
             .iter()
             .any(|c| c.contains("cannot testify the WAN is down")));
+        assert!(r
+            .non_claims
+            .iter()
+            .any(|c| c.contains("lost witness custody")));
 
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["verdict"], "cannot_testify_no_path_basis"); // typed enum, not a bool
         let s = serde_json::to_string(&r).unwrap();
-        assert!(!s.contains("\"is_ok\"") && !s.contains("\"healthy\"") && !s.contains("\"green\""));
+        assert!(
+            !s.contains("\"is_ok\"")
+                && !s.contains("\"healthy\"")
+                && !s.contains("\"green\"")
+                && !s.contains("wan_down")
+        );
     }
 
-    /// Source typing travels on each observation so a pfSense report cannot
-    /// silently graduate to observed reachability.
+    /// Source typing + role travel on each observation, so a report cannot
+    /// silently graduate to observed reachability and the two probes stay
+    /// separate witnesses.
     #[test]
-    fn observations_carry_testimony_type() {
-        let obs = vec![PathObservation::new(
-            PathMethod::HttpGet,
-            "nq-vantage-external",
-            "https://example.org",
-            PathOutcome::Reached,
-            at("2026-06-24T12:00:00Z"),
-        )];
-        assert_eq!(obs[0].testimony_type, "observed_reachability");
+    fn observations_carry_role_and_testimony_type() {
+        let m = monitor_probe("198.51.100.1", PathOutcome::Reached);
+        let a = anchor_probe(PathOutcome::Reached);
+        assert_eq!(m.role, PathRole::MonitorTarget);
+        assert_eq!(a.role, PathRole::EgressAnchor);
+        assert_eq!(m.testimony_type, "observed_reachability");
     }
 }

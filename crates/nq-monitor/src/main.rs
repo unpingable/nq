@@ -1,6 +1,8 @@
 mod artifact_registry;
 mod cli;
 mod cmd;
+mod gateway_path_probe;
+mod gateway_path_transport;
 mod http;
 mod lease_presence_probe;
 mod lease_presence_transport;
