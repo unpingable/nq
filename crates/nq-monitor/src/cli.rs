@@ -723,6 +723,17 @@ pub enum ProbeAction {
     /// and a missing/mute socket is `cannot_testify`, not gateway-down.
     /// `--vantage` is required and never inferred.
     GatewayPath(ProbeGatewayPathCmd),
+
+    /// Read a declared `block` rule from pfSense's loaded ruleset over SSH and
+    /// reconcile it against observation: a CONTROL probe (proving the vantage
+    /// has egress) and — only if an explicit benign target is bound — a
+    /// SUBJECT probe of the declared-denied path. Read-only (`pfctl -sr -vv`),
+    /// receipt-only. This is a declaration-vs-observation CUSTODY test, not a
+    /// firewall-correctness test: a got-through is `declared_deny_observed_
+    /// reachable`, an unbound subject is `cannot_testify_probe_target_unbound`,
+    /// and a missing rule is `cannot_testify_declared_policy_absent` (never
+    /// "allowed"). The subject path is NOT probed unless `--subject` is given.
+    DeclaredDeny(ProbeDeclaredDenyCmd),
 }
 
 #[derive(Debug, Args)]
@@ -856,6 +867,62 @@ pub struct ProbeGatewayPathCmd {
 
     /// If set, also append the receipt to a manual append-only series under
     /// this directory (e.g. `runs/gateway-path`). stdout still prints it.
+    #[arg(long)]
+    pub out_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct ProbeDeclaredDenyCmd {
+    /// pfSense host to SSH to (the management address or hostname).
+    #[arg(long)]
+    pub host: String,
+
+    /// SSH port.
+    #[arg(long, default_value_t = 22)]
+    pub port: u16,
+
+    /// SSH user (e.g. `admin`).
+    #[arg(long)]
+    pub user: String,
+
+    /// Path to the SSH private key.
+    #[arg(long)]
+    pub key: PathBuf,
+
+    /// Vantage identity to record for the probes — the host NQ probes from.
+    /// Required; NQ does not infer it.
+    #[arg(long)]
+    pub vantage: String,
+
+    /// Select the declared-deny rule by destination TABLE name (e.g.
+    /// `pfB_PRI1_v4`). Exactly one of --table / --ridentifier is required.
+    #[arg(long)]
+    pub table: Option<String>,
+
+    /// Select the declared-deny rule by `ridentifier`.
+    #[arg(long)]
+    pub ridentifier: Option<String>,
+
+    /// Control target `host[:port]` — a KNOWN-ALLOWED destination that proves
+    /// the vantage has ordinary egress. Without a passing control, a blocked
+    /// subject is uninterpretable.
+    #[arg(long, default_value = "1.1.1.1:443")]
+    pub control: String,
+
+    /// OPTIONAL subject target `host[:port]` — the declared-denied path to
+    /// probe. OMITTED BY DEFAULT: the live home firewall must not SYN a
+    /// malware-blocklist member. Supply only a benign / operator-owned target
+    /// (e.g. on a scratch/lab firewall). When omitted, the subject is left
+    /// unbound and the verdict is `cannot_testify_probe_target_unbound`.
+    #[arg(long)]
+    pub subject: Option<String>,
+
+    /// SSH connect + probe timeout, seconds.
+    #[arg(long, default_value_t = 10)]
+    pub timeout_seconds: u64,
+
+    /// If set, also append the receipt to a manual append-only series under
+    /// this directory (e.g. `runs/declared-deny`). stdout still prints it.
     #[arg(long)]
     pub out_dir: Option<PathBuf>,
 }

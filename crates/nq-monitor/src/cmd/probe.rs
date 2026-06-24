@@ -11,7 +11,8 @@
 //! `nq::probe`; this module is the user-facing shim.
 
 use crate::cli::{
-    ProbeAction, ProbeCmd, ProbeDnsCmd, ProbeGatewayPathCmd, ProbeLeasePresenceCmd, ProbeTlsCertCmd,
+    ProbeAction, ProbeCmd, ProbeDeclaredDenyCmd, ProbeDnsCmd, ProbeGatewayPathCmd,
+    ProbeLeasePresenceCmd, ProbeTlsCertCmd,
 };
 use crate::probe::{
     parse_qtype, parse_resolver, read_latest_generation_id, record_probe, UdpDnsClient,
@@ -28,6 +29,7 @@ pub fn run(cmd: ProbeCmd) -> anyhow::Result<()> {
         ProbeAction::TlsCert(c) => run_tls_cert(c),
         ProbeAction::LeasePresence(c) => run_lease_presence(c),
         ProbeAction::GatewayPath(c) => run_gateway_path(c),
+        ProbeAction::DeclaredDeny(c) => run_declared_deny(c),
     }
 }
 
@@ -171,6 +173,59 @@ fn run_lease_presence(cmd: ProbeLeasePresenceCmd) -> anyhow::Result<()> {
     let now = ::time::OffsetDateTime::now_utc();
 
     let receipt = live_lease_presence(&target, &cmd.vantage, &cmd.subject, probe, &clock, now)?;
+
+    // Receipt-only emit. No DB write (active-witness lane).
+    println!("{}", serde_json::to_string_pretty(&receipt)?);
+
+    if let Some(out_dir) = &cmd.out_dir {
+        let path = persist_receipt(out_dir, &receipt)?;
+        eprintln!("appended receipt to series: {}", path.display());
+    }
+    Ok(())
+}
+
+/// `nq-monitor probe declared-deny` — live declared-deny custody read.
+/// Read-only over SSH (`pfctl -sr -vv`), plus a control probe (proving egress)
+/// and — only if `--subject` is bound — a subject probe of the declared-denied
+/// path. Receipt-only; no DB write. The verdict is declaration-vs-observation
+/// custody: a got-through is the contradiction, an unbound subject is
+/// cannot_testify, a missing rule is cannot_testify (never "allowed").
+fn run_declared_deny(cmd: ProbeDeclaredDenyCmd) -> anyhow::Result<()> {
+    use crate::declared_deny_probe::ClockBasis;
+    use crate::declared_deny_transport::{live_declared_deny, persist_receipt, RuleSelector, SshTarget};
+
+    let selector = match (cmd.table.as_deref(), cmd.ridentifier.as_deref()) {
+        (Some(t), None) => RuleSelector::Table(t.to_string()),
+        (None, Some(r)) => RuleSelector::Ridentifier(r.to_string()),
+        (Some(_), Some(_)) => {
+            anyhow::bail!("pass exactly one of --table / --ridentifier, not both")
+        }
+        (None, None) => anyhow::bail!("a rule selector is required: --table <name> or --ridentifier <id>"),
+    };
+
+    let target = SshTarget {
+        host: cmd.host.clone(),
+        port: cmd.port,
+        user: cmd.user.clone(),
+        key_path: cmd.key.clone(),
+        timeout_seconds: cmd.timeout_seconds,
+    };
+    // NTP sync state is not observable from here; record it honestly.
+    let clock = ClockBasis {
+        source: "system_wall".to_string(),
+        ntp_status: "unknown".to_string(),
+    };
+    let now = ::time::OffsetDateTime::now_utc();
+
+    let receipt = live_declared_deny(
+        &target,
+        &cmd.vantage,
+        &selector,
+        &cmd.control,
+        cmd.subject.as_deref(),
+        &clock,
+        now,
+    )?;
 
     // Receipt-only emit. No DB write (active-witness lane).
     println!("{}", serde_json::to_string_pretty(&receipt)?);

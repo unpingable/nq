@@ -268,5 +268,69 @@ external/off-LAN vantage, no scheduler, no dashboard authority, no check #1 (dec
 
 ---
 
-*Phase-1+2 grounding artifact. Name early, ratify lazily. The pfSense-classification
-comparator and the gold declared-deny enforcement finding remain later, surgical packets.*
+## Check #1 — declared-deny custody (the gold finding, 2026-06-24)
+
+The strongest specimen, and deliberately **not** a firewall-correctness test. It is a
+**declaration-vs-observation custody** test:
+
+> A declared policy refusal must remain a refusal under observation, and a successful
+> path probe must not silently erase that declaration. The declared denial and an
+> observed reachability cannot both be quietly promoted into one coherent policy claim.
+
+Source typing: the loaded `block` rule is a **`pfSenseDeclaration`**; its evaluation/
+packet/state counters are a **`pfSenseRuntimeReport`** (the box's own self-report, never an
+independent observation of the path); an NQ probe from a named vantage is
+**`ObservedReachability`**.
+
+**Asymmetry discipline (load-bearing).** Only a SUBJECT probe that **gets through** (a real
+handshake to the declared-denied target) is an unambiguous contradiction
+(`declared_deny_observed_reachable`). A blocked/refused/timeout subject is admissible as
+`declared_deny_observed_blocked` ONLY with a passing CONTROL probe (a known-allowed target
+proving the vantage has ordinary egress); without it, "blocked" cannot be told apart from
+"no egress" or "target down" → `cannot_testify_*`. A `block return` RST looks identical to a
+target refusal at the socket, so a refusal is **never** silently promoted to "denied as
+declared."
+
+### What landed (read + control only; subject probe parked — operator-directed)
+
+- Core `crates/nq-monitor/src/declared_deny_probe.rs` (`nq.probe.declared_deny.v1`):
+  clock-injected pure verdict, 11 offline fixtures.
+- Transport `crates/nq-monitor/src/declared_deny_transport.rs`: tested parsers for a
+  `pfctl -sr -vv` rule line (action/quick/iface/dir/source/dest + `<table:count>` +
+  ridentifier + label) and the counter line (`Evaluations/Packets/States`); one read-only
+  SSH read (`pfctl -sr -vv`); a control TCP probe (any answer = egress); a subject TCP probe
+  (only a completed handshake = got-through) **left unbound by default**; append-only sink.
+- CLI `nq-monitor probe declared-deny` (read-only, receipt-only). `--subject` is omitted by
+  default and must be a benign/operator-owned target.
+
+**Verdict ladder:** `unknown_custody_policy_surface` · `cannot_testify_declared_policy_absent`
+(never "allowed") · `cannot_testify_probe_target_unbound` · `cannot_testify_vantage_unbound`
+· `declared_deny_probe_inconclusive` · `declared_deny_observed_reachable` (the contradiction)
+· `declared_deny_observed_blocked` (corroborated, control-gated). The verdict never says
+"firewall correct" or "firewall broken."
+
+### Live read landed (2026-06-24) — blocked-only, subject deliberately unbound
+
+Read-only SSH (`pfctl -sr -vv`) from vantage `sushi-k-lan`. Real box: a populated declared
+denial — `USER_RULE: pfB_PRI1_v4`, `block return in quick on igc1 from any to
+<pfB_PRI1_v4>` (table 17,007 entries), counters 3.19M evaluations / 8 blocked / **0 states**
+(nothing has ever established to a table member). Control `1.1.1.1:443` reached (egress
+proven). Subject left **unbound** → verdict `cannot_testify_probe_target_unbound`.
+
+**Operator decision (recorded):** do **not** SYN a malware-blocklist (pfB_PRI1_v4) member to
+make the specimen spicy — an intentional outbound touch to a named bad host is the wrong kind
+of "live." The product here is **declaration custody + refusal discipline**, which the
+blocked-only read fully delivers. The active subject probe (the `declared_deny_observed_*`
+faces) is **parked** for a scratch/lab firewall with a controlled deny rule + a benign target
+(e.g. `8.8.8.8`) + captured teardown — its own daylight perturbation packet.
+
+Receipts gitignored under `runs/declared-deny/`; the receipt carries only the rule
+declaration (label/table NAME/counters), never table member IPs; fixtures use TEST-NET.
+`cargo test -p nq-monitor` EXIT=0, 0 warnings.
+
+---
+
+*Step-0 grounding artifact with checks #2 (lease-presence), #3 (gateway-path), and #1
+(declared-deny custody) landed. Name early, ratify lazily. Parked for later, surgical
+packets: the active declared-deny subject probe (scratch/lab + benign target); the
+pfSense-classification PHP comparator; an external/off-LAN vantage; Kea lease parsing.*

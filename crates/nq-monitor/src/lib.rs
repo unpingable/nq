@@ -1,4 +1,6 @@
 pub mod artifact_registry;
+pub mod declared_deny_probe;
+pub mod declared_deny_transport;
 pub mod gateway_path_probe;
 pub mod gateway_path_transport;
 pub mod http;

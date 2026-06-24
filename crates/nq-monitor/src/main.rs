@@ -1,6 +1,8 @@
 mod artifact_registry;
 mod cli;
 mod cmd;
+mod declared_deny_probe;
+mod declared_deny_transport;
 mod gateway_path_probe;
 mod gateway_path_transport;
 mod http;
