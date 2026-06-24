@@ -1,0 +1,45 @@
+{
+  "receipt": "pfsense-gateway-path-live-read",
+  "timestamp": "2026-06-24T1640Z",
+  "session_id": "operator-dispatched ('let's do the live read'): pfSense check #3 gateway-report-vs-path Phase 2",
+  "lane": "operator-directed (active-witness research specimen, live read)",
+  "schema": "nq.probe.gateway_path.v1",
+  "commits": {
+    "phase1_core": "6fe3438 (initial pure core, classified-gateway model)",
+    "phase2_live_read": "80295fb (custody revision + transport + CLI + live read)"
+  },
+  "preceded_by": "Phase 1 core committed (6fe3438). Operator named the target explicitly and directed the witness-custody model before the read.",
+  "operator_directed_revision": {
+    "what": "Witness-custody layer correction. Phase 1 first modeled the witness as pfSense's CLASSIFIED gateway status (online/down/loss/delay via return_gateways_status/PHP). The operator corrected the layer: the RAW dpinger socket is the first-class witness; pfSense's classification is a second-order projection over the same daemon/config state, admissible only LATER as a separate 'pfSense reports status X' comparator receipt, never the base specimen.",
+    "effect": "Core rewritten to a dpinger-metrics-first custody model. socket_absent / socket_unreadable / unknown_custody are first-class cannot_testify refusals (a mute/absent daemon is never 'gateway down'). The ONLY thing derived from raw metrics is loss<100 (the daemon is getting replies) — the minimal signal, not a health grade. No reimplementation of pfSense UI thresholds as authority."
+  },
+  "target_authorization": "Operator-named: host 192.168.68.1, user admin, key ~/.ssh/nq_pfsense_probe (dedicated read-only probe key), vantage sushi-k-lan. The dedicated key/target was recovered from prior lease-presence runs/ then explicitly confirmed by the operator.",
+  "read_scope": "Read-only. One SSH login: `ls /var/run/dpinger_*.sock` + `nc -U` each status socket (the same surface pfSense's own status page reads). NO PHP, NO pfctl, NO service control, NO gateway reload/refresh, NO config write. A raw-capture discovery read preceded parser-building (operator-mandated: build the parser against the observed packet, not a guessed shape).",
+  "captured_shape": {
+    "socket": "/var/run/dpinger_<name>~<src-ip>~<monitor-ip>.sock (filename encodes gateway identity)",
+    "status_line": "<name> <rtt_us> <stddev_us> <loss_pct>",
+    "box": "pfSense 2.8.1-RELEASE, one WAN_DHCP gateway, WAN over CGNAT (100.64.0.0/10)"
+  },
+  "verdict_ladder": [
+    "cannot_testify_dpinger_socket_absent / _unreadable / unknown_custody (lost witness custody — not down)",
+    "cannot_testify_no_path_basis (dpinger testifies, no independent probe attempted)",
+    "corroborated_by_path (dpinger reaches monitor AND every attempted probe reached)",
+    "path_ambiguous (the specimen: ANY disagreement among dpinger-reach and the probes; never WAN-down)",
+    "egress_trouble_not_wan_down (dpinger not reaching monitor AND all probes failed; stronger evidence, still not WAN-down)"
+  ],
+  "probes": "Two SEPARATE observations (operator: more observations, stricter claim boundaries): dpinger monitor IP (role monitor_target) + fixed egress anchor 1.1.1.1 (role egress_anchor). ICMP-first; TCP fallback ONLY when ICMP cannot execute. The monitor probe runs only when the report yields a monitor IP (no invented target).",
+  "live_observations": {
+    "corroborated_by_path": "Real WAN_DHCP: dpinger reaching its monitor (loss 0%, rtt ~2.7ms) AND both ICMP probes (monitor IP + 1.1.1.1) reached from sushi-k-lan.",
+    "cannot_testify_dpinger_socket_absent": "Asking for a non-existent gateway (--gateway WAN2_NONEXISTENT) yielded the custody refusal EVEN THOUGH the egress anchor 1.1.1.1 was reachable. A reachable anchor does not lift a gateway whose socket we cannot find — the refusal is the product."
+  },
+  "verification": "set -o pipefail; cargo test -p nq-monitor -> EXIT=0 (bare run, exit code is the verdict), 0 compiler warnings. Core 15 fixtures + transport parser/sink fixtures. Build clean after removing unused HttpGet variant + DEFAULT_EGRESS_ANCHOR const (YAGNI).",
+  "privacy": "Receipts persisted append-only under gitignored runs/gateway-path/<stamp>/WAN_DHCP.json. Real WAN/monitor IPs (CGNAT) NOT committed; source/doc fixtures use TEST-NET 198.51.100/24. Paranoia scan: scrubbed two real CGNAT IPs from new-file comments before commit; re-scan of tracked source+docs for 100.6.75.*/192.168.68.* = clean.",
+  "fences_honored": "No push (6fe3438 + 80295fb + this governor commit local-only). No PHP comparator (deferred second-order witness). No external/off-LAN vantage. No scheduler, no dashboard authority, no Lane B, no DB write (active-witness lane, receipt-only). No check #1 (declared-deny gold finding). No SNMP, no Kea.",
+  "parked_next": [
+    "pfSense PHP comparator receipt ('pfSense reports gateway status X' via return_gateways_status) — the deferred second-order witness, kept separate from the raw-dpinger base specimen",
+    "external/off-LAN vantage for gateway-path (so 'path fails' isn't a LAN-egress quirk)",
+    "check #1 declared-deny enforcement (gold finding; guest-VLAN vantage + perturbation budget + allowlist; own packet)",
+    "Kea lease parsing; TLS 2d-b operationalization; deploy standardization across the 3 hosts"
+  ],
+  "push": "No push."
+}
