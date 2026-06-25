@@ -93,10 +93,13 @@ All three: read-only reads, receipt-only (no DB write), append-only receipts und
   controlled deny rule/table + benign stable target (e.g. `8.8.8.8`) + positive control +
   bounded subject probe + rollback/teardown receipt. Produces the
   `declared_deny_observed_blocked`/`_reachable` faces without touching malware infrastructure.
-  **Reproducible recipe written (2026-06-25):** `declared_deny_lab_subject_probe_plan.md`
-  (pfSense CE VM shape, controlled rule, exact `--subject` commands, all faces, teardown).
-  Live run is Phase 2, **gated on a non-production pfSense substrate** — no probe code needed
-  (the CLI `--subject` already exists).
+  **EXECUTED 2026-06-25:** `declared_deny_lab_subject_probe.md` — a self-built pfSense CE
+  2.7.2 lab on sushi-k (vantage behind pfSense). All six live faces observed:
+  `declared_deny_observed_blocked` (primary), `_observed_reachable` (contradiction, via a
+  deliberately shadowed rule), plus the four `cannot_testify_*`/`inconclusive` refusals.
+  Teardown captured (rule gone → absent; subject reaches again). Receipts under gitignored
+  `runs/declared-deny/lab-2026-06-25/`. No probe code changed. Recipe:
+  `declared_deny_lab_subject_probe_plan.md`.
 - pfSense PHP classification comparator (`return_gateways_status`) — the deferred second-order
   witness, kept separate from the raw-dpinger base specimen.
 - External/off-LAN vantage for gateway-path; Kea lease parsing.

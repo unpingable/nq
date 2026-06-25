@@ -1,8 +1,9 @@
 # Declared-deny active subject probe — lab specimen plan (Phase 2 gate)
 
-**Status:** plan only (2026-06-25). The live run is **GATED on a non-production pfSense
-substrate existing.** No live work is authorized by this doc; it is the reproducible
-recipe so the run is mechanical when a lab exists.
+**Status:** EXECUTED 2026-06-25 — see `declared_deny_lab_subject_probe.md` for the run
+(a self-built pfSense CE 2.7.2 lab on sushi-k; all six faces observed, teardown captured).
+This document remains the reproducible recipe; the executed companion records what actually
+happened (including the manual-install detour the headless auto-installer forced).
 
 **Parent:** `docs/specimens/pfsense_reachable_drift.md` (Step-0 rollup, doctrine) ·
 `docs/working/decisions/PFSENSE_REACHABLE_DRIFT_STEP0_INVENTORY.md` (check #1).
