@@ -8,6 +8,13 @@ subject, a passing control, and a captured teardown. No production firewall was 
 > **A pfSense deny rule testifies to declared policy; only a subject probe testifies to
 > observed reachability from a named vantage at a named time.**
 
+**Scope ceiling (read before citing this as "Phase 2 complete"):** the lab does **not**
+promote the production blocked-only observation into a tested production deny. It supplies a
+reproducible controlled specimen showing that the frozen probe can exercise the declared-deny
+witness path against real pfSense substrate. The win is *semantic shape survived contact with
+a real firewall under controlled substrate, production untouched* — not "we proved the
+production firewall blocks X."
+
 ## What this converts
 
 Step-0 check #1 landed *blocked-only* against the production firewall: the subject was
