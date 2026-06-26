@@ -48,6 +48,18 @@ docs/                   Quickstart, failure domains, SQL cookbook, integrations,
 | Log collector | `crates/nq/src/collect/logs.rs` |
 | Migrations | `crates/nq-db/migrations/` |
 
+## Formal specs and the Lean kernel
+
+NQ's testimony shape is grounded in an upstream formal corpus (`~/git/lean/LeanProofs/`). The authoritative memo on what that corpus does and does **not** require of NQ is [`docs/theory/ROADMAP_EXPECTATIONS_FROM_LEAN_KERNEL.md`](docs/theory/ROADMAP_EXPECTATIONS_FROM_LEAN_KERNEL.md). **Read it before letting any Lean module steer an implementation decision** — a fresh agent that skips it will mistake reconnaissance for a spec.
+
+The load-bearing rule (the memo's "anti-slop valve" — module tier discipline):
+
+- **`[1.0]`** — public surface (8 modules, named in `CalculusOne.lean`). May pin wire fields / doc concepts against them; retrofit cost to align NQ vocabulary is justified.
+- **`[annex]`** — compiled, sorry-free, load-bearing. Cite as *evidence*; do **not** pin a wire field or doc concept against an annex name (it may rename in a 1.x refactor).
+- **`[scratch]`** — in `LeanProofs/Scratch/`, *not* imported by `LeanProofs.lean`. Reconnaissance. **Do not let a scratch module steer NQ implementation** until it graduates to `[annex]` or `[1.0]`.
+
+Headline: the kernel makes NQ's testimony more *exact*, never more *powerful*. Any entry that grows NQ capability rather than precision is suspect.
+
 ## Known test flakes
 
 ### ETXTBSY on ZFS / SMART witness collector tests
