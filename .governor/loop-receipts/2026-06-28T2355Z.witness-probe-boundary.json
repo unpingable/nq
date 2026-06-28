@@ -1,0 +1,27 @@
+{
+  "slice": "Packet #6 — build-graph-enforced witness/probe boundary",
+  "date": "2026-06-28",
+  "lane": "operator-directed (chatty-scoped); opened only after CI went fully green on main (run 28338450984 all jobs success)",
+  "doctrine": "A witness component should not be able to name the surface that would let it coerce the state it claims to observe. A witness that could write nq-db could manufacture the findings it is meant to be raw testimony for.",
+  "inventory": {
+    "crate_graph": "nq-core (leaf); nq-db->nq-core; nq-witness-api->nq-core; nq-witness->{nq-core,nq-witness-api}; nq-monitor->{nq-core,nq-db,nq-witness,nq-witness-api}",
+    "key_finding": "nq-witness + nq-witness-api closures already EXCLUDE nq-db (structurally walled from NQ's persistence/findings surface). Active probes live in nq-monitor which DOES depend on nq-db -> intra-crate, not crate-separable without a refactor."
+  },
+  "built": [
+    "scripts/check-witness-boundaries.sh — reads resolved cargo dep graph (cargo tree -e normal); forbidden: nq-witness/nq-witness-api MUST NOT have nq-db; control: nq-monitor MUST have nq-db (graph-reader tripwire); self-test: synthetic nq-witness->nq-db MUST be flagged. All fail-closed, true exit codes.",
+    "CI job witness-boundaries (.github/workflows/ci.yml).",
+    "docs/working/decisions/WITNESS_PROBE_BOUNDARY.md (doctrine, allowed exceptions, named intra-crate gap) + FEATURE_HISTORY entry."
+  ],
+  "allowed_exceptions_classified": [
+    "Read-only system observation: `systemctl show --property=ActiveState/MainPID` (collect/services.rs), ls/cat/arp/nc -U/ICMP — observation, not coercion.",
+    "Witness writes to its OWN throwaway scratch: sqlite_health WAL probe creates a temp DB + inserts to measure checkpoint behavior — scratch instrumentation, never the observed subject's state, never nq-db."
+  ],
+  "verify": {
+    "gate_pass": "nq-witness ⊥ nq-db, nq-witness-api ⊥ nq-db, control nq-monitor->nq-db present, self-test flags synthetic violation",
+    "end_to_end_proof": "injected real nq-db dep into nq-witness/Cargo.toml -> gate exit 1; git checkout revert -> gate exit 0, tree clean",
+    "self_test_isolated": "exit 0"
+  },
+  "deferred_named_not_closed": "Active-witness probes (crates/nq-monitor/src/*_probe.rs) are intra-nq-monitor (which depends on nq-db); build graph cannot wall intra-crate modules. Structural fix = extract an nq-probe crate excluding nq-db (architecture refactor, OUT of #6 scope, forcing-case-gated). Today held by probes' read-only/receipt-only design + review (testimony-typed), not structural.",
+  "scope_guard": "Did NOT refactor crate architecture, rename doctrine surfaces, change runtime behavior, or turn this into a lint/style pass. Enforced the cleanly-enforceable crate boundary; named the intra-crate gap honestly.",
+  "acceptance": "Packet #6 core DONE (passive-witness/publisher crate boundary structurally enforced + CI-wired + proven fail-closed). Active-probe intra-crate boundary named as deferred structural gap. Loop returns to AUDIT/idle. Sequence remainder: #7 external/off-LAN gateway-path vantage, #8 pfSense PHP comparator, #9 Kea, #10 TLS 2d-b."
+}
