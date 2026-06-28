@@ -1,0 +1,35 @@
+{
+  "slice": "Packet 4b — public reverse-proxy supervision (finding B)",
+  "date": "2026-06-28",
+  "lane": "operator-directed (chatty-scoped, narrow); operator cleared cross-project ownership ('it's all my infra')",
+  "guardrail": "This packet supervises transport plumbing. It does not certify the observations served through it.",
+  "premise_correction": "Finding B assumed an unmanaged nq-specific caddy that would not survive reboot. Inspection corrected both: (1) it is a SHARED jbeck-owned caddy:2 container reverse-proxying ~8 domains (juche.social/atproto PDS, sp00ky.net, labelwatch, driftwatch, instantinternet.news, stechometer, nq.neutral.zone); real config /home/jbeck/atproto/Caddyfile (the /root/Caddyfile read earlier was a stale decoy); (2) it was ALREADY reboot-survivable (restart=unless-stopped + docker.service enabled). The real gap was named/explicit/declared management.",
+  "did": [
+    "Wrote /etc/systemd/system/caddy-proxy.service managing the EXISTING container in place (docker start -a caddy) — never recreates, preserves /data LE certs for all 8 domains.",
+    "Set container restart policy no -> systemd single supervisor (no docker/systemd double-start).",
+    "Enabled on boot (multi-user.target symlink) + After=docker.service ordering.",
+    "Handoff: docker stop + systemctl start (brief blip); then systemctl restart to prove ExecStop+ExecStart cycle.",
+    "Committed reference copy deploy/examples/caddy-proxy.service with declared image/config/cert paths + rollback in header.",
+    "Updated DEPLOY_CONTRACT.md finding B -> RESOLVED."
+  ],
+  "verify": {
+    "unit": "active + enabled",
+    "restart_clean": "PASS (container StartedAt advanced 19:50->20:21; recovered)",
+    "container": "managed in place, restart=no, volumes/certs preserved",
+    "nq_local_9848": 200,
+    "nq_public": 200,
+    "nq_leak_scan": "0 (192.168.68 / dmz.spooky / proven correct)",
+    "tenant_no_regress": "nq/juche/labelwatch/instantinternet/stechometer 200, driftwatch 404 (== baseline)",
+    "reboot_survival": "asserted via is-enabled + After=docker.service ordering; live reboot of public box NOT performed (unsafe unprompted). Was already docker-reboot-survivable, so this is strictly an improvement."
+  },
+  "declared": {
+    "image": "caddy:2 (sha256:14300de7e087...)",
+    "config": "/home/jbeck/atproto/Caddyfile -> /etc/caddy/Caddyfile",
+    "certs": "/home/jbeck/atproto/pds/caddy/data -> /data (Let's Encrypt on-demand)",
+    "network": "host",
+    "nq_route": "nq.neutral.zone -> 172.17.0.1:9848 (+ 405 holding move on unauthenticated mutation)"
+  },
+  "rollback": "systemctl disable --now caddy-proxy; docker update --restart=unless-stopped caddy; docker start caddy; rm unit + daemon-reload.",
+  "scope_guard": "Did NOT start #5 receipt gate, touch TLS 2d-b, change NQ app semantics, clean up VM root/UMask, add backup retention, or broaden into VM hardening.",
+  "acceptance": "Finding B RESOLVED. Loop returns to AUDIT/idle. NEXT: #5 fail-closed receipt re-attestation gate."
+}
