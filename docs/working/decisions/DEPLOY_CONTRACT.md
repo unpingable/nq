@@ -78,7 +78,7 @@ Each host is a self-contained island: its own publisher + aggregator + `nq.db`, 
 
 ## Acceptance criteria status
 
-- [x] Same version/commit identity → **PASS 2026-06-27**: all three report `build_commit=2077dd2e1e2e`, schema 58; origin == HEAD == deployed (finding A resolved).
+- [x] Same version/commit identity → **PASS 2026-06-27**: all three report `build_commit=2077dd2e1e2e`, schema 58. `2077dd2` was `HEAD == origin` at deploy time; the post-deploy completion commits (this contract update + receipt + loop state — docs/governor, **no code**) then advanced origin to `b0c2a66`. So the deployed stamp intentionally lags origin by docs-only commits — the same benign docs-lag the contract already tolerates (cf. the prior `6a8c443` vs HEAD note). Cross-host equality (the actual criterion) holds; no code differs between origin and deployed. (finding A resolved.)
 - [x] Expected binaries present at declared paths — yes (table above).
 - [x] Service/timer names standardized — `nq-publish`/`nq-serve` uniform; no nq timers on any host (documented).
 - [x] Config locations declared (not folklore) — this doc.
