@@ -1,0 +1,33 @@
+{
+  "slice": "deploy-standardization Packet #4 — Phase 2 coordinated redeploy (operator-authorized)",
+  "date": "2026-06-27",
+  "lane": "operator-directed; public blast radius; fail-closed sushi-k->NAS->VM",
+  "doctrine": "Deployment standardization is not authority over observations. It only removes deployment drift as an alternative explanation for future witness drift.",
+  "canonical_commit": "2077dd2e1e2e",
+  "before": {"sushi-k": "6a8c443 (on-disk newer/undeployed)", "NAS": "6a8c443", "VM": "build_commit=None, src divergent 4ed7c6f"},
+  "after": {"sushi-k": "2077dd2e1e2e", "NAS": "2077dd2e1e2e", "VM": "2077dd2e1e2e"},
+  "all_schema": 58,
+  "origin_equals_deployed": true,
+  "method": [
+    "Pushed HEAD so origin==deployed (origin/main=2077dd2e1e2e).",
+    "sushi-k (canary): backup binaries->~/nq/rollback + sqlite .backup DB; cargo build --release (baked HEAD via build.rs); systemctl --user restart; verified.",
+    "NAS: staged new binaries via scp (.new); stop services; backup old binaries + DB (consistent, stopped); swap; start; verified. Binaries byte-from-sushi-k (glibc 2.39 match).",
+    "VM (public, last): rsync src to HEAD INCLUDING .git (replaced divergent 4ed7c6f fossil) EXCLUDING runs/target/.claude/.governor; confirmed runs/ NOT shipped; on-host cargo build --release (git safe.directory fix from Phase 1 let build.rs bake the commit); backup binaries+DB; stop/swap/start; verified local + public."
+  ],
+  "verify_each": {
+    "gate": "liveness build_commit == canonical; dashboard HTTP 200; render boundaries present (incident commander / proof checker / cannot testify); leak language zero (P1/neglected/proven correct/192.168.68/dmz.spooky); schema current",
+    "sushi-k": "PASS (200, boundaries 1/2/4, leaks 0)",
+    "NAS": "PASS (200, boundaries 1/2/5, leaks 0)",
+    "VM": "PASS local (200, boundaries 1/2/5, leaks 0) + PUBLIC https://nq.neutral.zone 200, public leaks 0"
+  },
+  "build_commit_None_fix": "Confirmed end-to-end: VM build_commit None->2077dd2e1e2e. Root cause was git dubious-ownership on /opt/notquery/src (jbeck-owned, root build); Phase-1 safe.directory exception + .git re-sync to a non-fossil HEAD let build.rs bake the real commit.",
+  "rollback_artifacts": "Each host retains pre-swap binaries (*.pre-2077dd2e1e2e-<stamp>) + pre-swap DB backup. No rollback needed (all green first pass).",
+  "still_open_findings": [
+    "B (MED): public reverse proxy is unmanaged docker caddy:2 (no systemd unit) — reboot-survival unverified. NOT addressed this packet.",
+    "D (LOW): VM runs as root, UMask 0022 vs 0002 — standard undecided. NOT addressed.",
+    "E (LOW): backup clutter (now +1 pre-swap set per host) — retention rule undecided.",
+    "C (MED): VERIFIED BENIGN — 9848 firewalled off-box, no cleartext exposure."
+  ],
+  "scope_guard": "Did NOT start #5 receipt-gate. Did NOT touch caddy / run-as-user / UMask / backup pruning (named, deferred). Only the authorized redeploy executed.",
+  "acceptance": "Acceptance criterion #1 (same version/commit identity) CLOSED. Packet #4 core DONE. Findings B/D/E remain as named lower-priority follow-ups."
+}
