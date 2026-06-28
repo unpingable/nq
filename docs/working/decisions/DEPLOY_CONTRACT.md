@@ -53,13 +53,13 @@ Each host is a self-contained island: its own publisher + aggregator + `nq.db`, 
 - VM running binary reports `build_commit=None`; its `/opt/notquery/src` tree is at **`4ed7c6f`, a *diverged* commit** (not an ancestor of `6a8c443`). A rebuild as-is would bake the wrong lineage.
 - `6a8c443..b26c809` carries real code (gateway-path + declared-deny probes, +2523 lines) — so "running `6a8c443`" is code-stale vs HEAD, not merely docs-stale.
 - **Root cause of the `None`:** `/opt/notquery/src` is owned by `jbeck`, the build runs as `root`, no git `safe.directory` exception → `build.rs`'s `git rev-parse` hit `dubious ownership` and silently unset `NQ_BUILD_COMMIT`. **FIXED 2026-06-27 (zero blast radius):** added `safe.directory /opt/notquery/src` to root's global git config; `git rev-parse` now reads `4ed7c6f`. **Effect is staged** — the running service still reports `None` until the next rebuild.
-- **Resolution (gated, NOT done):** pick a canonical commit and do a coordinated build-per-host redeploy, fail-closed sushi-k→NAS→VM. Recommended canonical = **`b26c809` (HEAD)**: clean superset of all code, already on origin. The VM's `src` must first be re-synced to the canonical commit (it is on a divergent tree); **do not rebuild the VM as-is.**
+- **RESOLVED 2026-06-27 (operator-authorized coordinated redeploy).** Canonical commit = **`2077dd2e1e2e`** (HEAD at deploy time; pushed, so origin == deployed). Fail-closed sushi-k→NAS→VM: sushi-k rebuilt + restarted (verified `2077dd2`); NAS got sushi-k's binaries via staged scp swap (verified `2077dd2`); VM src re-synced to HEAD **including `.git`** (replacing the divergent `4ed7c6f` fossil; `runs/` hard-excluded), on-host rebuilt, swapped, restarted (verified `2077dd2` — `build_commit` went `None`→`2077dd2`). All three now report `build_commit=2077dd2e1e2e`, schema 58. Each host backed up old binaries (`*.pre-<commit>-<stamp>`) + DB before swap. Receipt: `.governor/loop-receipts/2026-06-28T0335Z.deploy-redeploy.json`.
 
 ### B. Public reverse proxy is an unmanaged docker container (MEDIUM — public resilience)
 - caddy fronts 443/80 → 9848 as a **docker container** (`caddy:2`, config `/root/Caddyfile`). There is **no `caddy` systemd unit** (`is-active caddy` → inactive, yet public is 200). Reboot-survival depends on the container restart policy + `docker.service` enablement — unverified. The `project_deployment` memory's "Caddy reverse-proxies" omits that it is a container with a `/root/Caddyfile`. Name it in the contract; verify restart policy before trusting reboot survival.
 
 ### C. `0.0.0.0:9848` may be reachable off-box, bypassing TLS (MEDIUM — verify)
-- VM `nq-monitor` binds all interfaces. If the linode firewall does not block 9848, the dashboard is reachable as cleartext HTTP directly, bypassing caddy's TLS. **Verify** (firewall / security group) — read-only, not yet checked.
+- VM `nq-monitor` binds all interfaces. **VERIFIED BENIGN 2026-06-27:** `curl http://labelwatch.neutral.zone:9848/` from off-box → connection refused/filtered (rc=7); the port is firewalled, only local caddy reaches 9848 and fronts TLS. No cleartext exposure. (Bind is `0.0.0.0` but the firewall is the actual boundary — keep the firewall rule in the contract.)
 
 ### D. Run-as user / UMask not standardized (LOW)
 - VM runs as root with UMask 0022; private hosts run as the login user with 0002. A dedicated unprivileged `nq` user on the VM is the safer shape (candidate, higher-risk — own packet). UMask: decide one standard (0022 is arguably correct for a system service; 0002 is the private-host status quo). Defer; do not flip under a running public service without a fail-closed window.
@@ -78,7 +78,7 @@ Each host is a self-contained island: its own publisher + aggregator + `nq.db`, 
 
 ## Acceptance criteria status
 
-- [~] Same version/commit identity → **FAILS today** (6a8c443 / 6a8c443 / None+divergent-src). Resolution = gated coordinated redeploy (finding A).
+- [x] Same version/commit identity → **PASS 2026-06-27**: all three report `build_commit=2077dd2e1e2e`, schema 58; origin == HEAD == deployed (finding A resolved).
 - [x] Expected binaries present at declared paths — yes (table above).
 - [x] Service/timer names standardized — `nq-publish`/`nq-serve` uniform; no nq timers on any host (documented).
 - [x] Config locations declared (not folklore) — this doc.
