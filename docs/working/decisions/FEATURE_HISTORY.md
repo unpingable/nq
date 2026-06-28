@@ -20,6 +20,20 @@ The chronological order below is newest-first.
 
 ---
 
+## RECEIPT_REATTESTATION_GATE (Packet #5)
+
+**Status:** `shipped` 2026-06-28.
+
+**Shipped commits:** the Packet #5 commits adding `specimens/receipts/` (bounded population), `scripts/check-nq-receipts.sh` (fail-closed driver), and the `receipt-reattestation` CI job.
+
+**What landed:** a fail-closed gate that re-attests a bounded, committed population of `nq.receipt.v1` documents on every CI run, using the existing `nq_core::receipt_check` engine via `nq-monitor receipt check`. Two positive specimens (`repo_clean` from a `git_status` witness; `tests_passed` from a `pytest` witness) must stay admissible (`--strict` exit 0: content-hash integrity + witness anchoring + supported schema). Four negative fixtures must be refused (non-zero), so detection cannot silently regress: `digest_drift` (BROKEN_CONTENT_HASH/2), `unsupported_schema` (UNSUPPORTED_RECEIPT_VERSION/1), `missing_witness_anchoring` (WITNESS_NOT_ANCHORED/1), `freshness_unprovable` (`--strict --fresh` on a no-horizon receipt/1). The gate re-attests admissibility under the receipt's own claims; it does **not** replay the evaluator, re-ratify the claim, or treat receipt survival as truth.
+
+**Evidence:** `scripts/check-nq-receipts.sh` PASS over `specimens/receipts/MANIFEST` (6/6, true exit codes — no pipe masking). Proven fail-closed both directions: tampering a positive → gate exit 1; un-breaking a negative (refusal no longer witnessed) → gate exit 1. CI job `receipt-reattestation` builds `nq-monitor` then runs the gate. Design record + named coverage boundary: [`RECEIPT_REATTESTATION_GATE_CANDIDATE.md`](../gaps/RECEIPT_REATTESTATION_GATE_CANDIDATE.md).
+
+**Coverage boundary (named, not faked):** true past-horizon STALE is not a committed fixture — the `claim_registry`/`verify` path emits no `freshness_horizon`, and hand-editing one in would break `content_hash` (reads as BROKEN, not STALE); minting a valid-hash stale receipt would require re-running nq's canonical hasher, the exact laundering the gate prevents. Stale-when-horizon-present is covered by `nq_core::receipt_check` unit tests; the gate's freshness lane is the `freshness_unprovable` refusal. Governor loop-receipts are deliberately NOT bridged (separate decision).
+
+---
+
 ## SILENCE_UNIFICATION V1 (witness pair)
 
 **Status:** `partial` 2026-06-12. The two witness-silence detectors carry the shared silence contract; the four non-witness silence detectors are deferred (OQ3/OQ4).

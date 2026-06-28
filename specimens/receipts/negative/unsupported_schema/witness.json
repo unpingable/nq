@@ -1,0 +1,26 @@
+{
+  "schema": "nq.witness.v1",
+  "witness_type": "git_status",
+  "subject": "repo:.",
+  "access_path": "local_command",
+  "observed_at": "2026-06-28T22:27:48.264912464Z",
+  "generated_at": "2026-06-28T22:27:48.264912464Z",
+  "observations": [
+    {
+      "branch": "main",
+      "command": "git status --porcelain",
+      "cwd": ".",
+      "head_sha": "21bacf3e5162a827f5c7c414fdc89704b74b4f23",
+      "porcelain": "",
+      "type": "git_status_porcelain"
+    }
+  ],
+  "coverage_limits": [
+    "Does not observe whether uncommitted changes are intentional",
+    "Does not observe diff content or scope",
+    "Does not observe upstream branch state or merge-base",
+    "Does not observe maintainer intent"
+  ],
+  "dependencies": [],
+  "position": "platform"
+}

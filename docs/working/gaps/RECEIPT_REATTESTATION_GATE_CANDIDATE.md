@@ -1,6 +1,6 @@
 # Candidate: fail-closed governed receipt re-attestation gate
 
-**Status:** candidate — filed 2026-06-27. Bounded candidate with teeth, NOT authorization to build. Parked behind custody-repo / lab-teardown / deploy-standardization in the loop sequence.
+**Status:** landed 2026-06-28 (Packet #5) — see [`FEATURE_HISTORY.md`](../decisions/FEATURE_HISTORY.md) § RECEIPT_REATTESTATION_GATE. Shipped against true `nq.receipt.v1` specimens (`specimens/receipts/`) + fail-closed driver (`scripts/check-nq-receipts.sh`) + CI job `receipt-reattestation`. Governor loop-receipt bridge deliberately NOT taken (still the open decision below). This doc is now the design record; the ledger entry is authoritative for shipped state.
 **Related:** `LATER_AUDIT_RECEIPTS_GAP.md`, `AGGREGATOR_SELF_INTEGRITY_GAP.md`
 **Provenance:** surfaced 2026-06-27 while cross-reading the Lean repo's v1.4.0 promotion (Witnessed Derivation Calculus). Maps to Lean **Gate 5** (`scripts/check-witnessed-footprint.sh` — fail-closed re-attestation of 10 ratified receipts against documented footprints). NQ already has a *stronger* per-receipt engine than Lean's; what it lacks is the driver.
 

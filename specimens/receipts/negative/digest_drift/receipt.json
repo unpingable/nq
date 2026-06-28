@@ -1,0 +1,31 @@
+{
+  "schema": "nq.receipt.v1",
+  "claim": "repo_clean",
+  "subject": "repo:TAMPERED-do-not-trust",
+  "status": "verified",
+  "status_reasons": [
+    "all_requirements_verified"
+  ],
+  "verified": [
+    "repo_clean"
+  ],
+  "not_verified": [],
+  "suggested_weaker_claims": [],
+  "supported_status": "git working tree has no uncommitted changes",
+  "cannot_testify": [],
+  "witnesses": [
+    {
+      "witness_type": "git_status",
+      "digest": "sha256:8a37c48db97532d7bd42f43bce9d5a194d9bf7e32cb8e9dce1cb60880b6d957f",
+      "observed_at": "2026-06-28T22:27:48.264912464Z"
+    }
+  ],
+  "observed_at_min": "2026-06-28T22:27:48.264912464Z",
+  "observed_at_max": "2026-06-28T22:27:48.264912464Z",
+  "generated_at": "2026-06-28T22:27:48.273130171Z",
+  "evaluator": {
+    "evaluator": "claim_registry",
+    "version": 1
+  },
+  "content_hash": "sha256:806b1fd5320d30b331dde7f9814dc1fb7aa5e640535e8d69898c23c23779b9af"
+}

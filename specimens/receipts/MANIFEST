@@ -1,0 +1,13 @@
+# Bounded nq.receipt.v1 re-attestation population. Driver: scripts/check-nq-receipts.sh
+# Columns:  mode | name | receipt(relpath) | witness(relpath, comma-sep, may be empty) | flags | condition
+# mode=positive => `receipt check` MUST exit 0 (still admissible under its own claims).
+# mode=negative => `receipt check` MUST exit non-zero (refusal must be WITNESSED, not assumed).
+# Paths are relative to specimens/receipts/. The gate fails closed if a positive is
+# inadmissible, a negative is NOT caught, an artifact is missing, or the binary is absent.
+#
+positive|repo_clean|positive/repo_clean/receipt.json|positive/repo_clean/witness.json|--strict|integrity+anchoring+schema
+positive|tests_passed|positive/tests_passed/receipt.json|positive/tests_passed/witness.json|--strict|integrity+anchoring+schema
+negative|digest_drift|negative/digest_drift/receipt.json|negative/digest_drift/witness.json|--strict|broken_content_hash
+negative|unsupported_schema|negative/unsupported_schema/receipt.json|negative/unsupported_schema/witness.json|--strict|unsupported_receipt_version
+negative|missing_witness_anchoring|positive/repo_clean/receipt.json||--strict|witness_not_anchored
+negative|freshness_unprovable|positive/repo_clean/receipt.json|positive/repo_clean/witness.json|--strict --fresh|freshness_horizon_absent

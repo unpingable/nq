@@ -1,0 +1,25 @@
+{
+  "schema": "nq.witness.v1",
+  "witness_type": "pytest",
+  "subject": "repo:.",
+  "access_path": "local_command",
+  "observed_at": "2026-06-28T22:27:48.300712821Z",
+  "generated_at": "2026-06-28T22:27:48.301241788Z",
+  "observations": [
+    {
+      "command": "true",
+      "cwd": ".",
+      "exit_code": 0,
+      "type": "pytest_run"
+    }
+  ],
+  "coverage_limits": [
+    "Only covers tests executed by this command in this checkout",
+    "Does not observe production behavior",
+    "Does not observe semantic safety",
+    "Does not observe maintainer intent",
+    "Does not observe behavioral change between commits"
+  ],
+  "dependencies": [],
+  "position": "application_internal"
+}
