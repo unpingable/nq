@@ -1,0 +1,12 @@
+[Unit]
+Description=Low-rate cadence for the NQ egress-liveness beacon (Packet #7b)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+AccuracySec=15s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

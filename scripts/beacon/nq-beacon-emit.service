@@ -1,0 +1,8 @@
+[Unit]
+Description=NQ egress-liveness beacon emitter (single-shot; cadence owned by the timer)
+Documentation=https://github.com/unpingable/nq/blob/main/scripts/beacon/README.md
+
+[Service]
+Type=oneshot
+# Adjust the path if the repo lives elsewhere on the LAN host.
+ExecStart=%h/git/nq-root/nq/scripts/beacon/beacon-emit.sh

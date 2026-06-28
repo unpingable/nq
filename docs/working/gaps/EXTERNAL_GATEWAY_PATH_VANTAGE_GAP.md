@@ -1,6 +1,6 @@
 # Gap (scoping): external/off-LAN gateway-path vantage — witness-position declaration
 
-**Status:** `proposed` — scoping/positioning slice 2026-06-28 (Packet #7). Declares *where the witness stands* before any external probe is built. Does NOT authorize a long-running agent, a new probe, or any change to gateway-path verdict semantics. Implementation is the separate **#7b**.
+**Status:** `partial` — scoping slice (#7) 2026-06-28 + minimal implementation slice (#7b) shipped 2026-06-28. Shipped-state ledger: [`FEATURE_HISTORY.md`](../decisions/FEATURE_HISTORY.md) § EXTERNAL_GATEWAY_PATH_VANTAGE #7b. The egress-liveness beacon (`scripts/beacon/`) is live in manual mode; supervised cadence + gateway-path verdict integration remain deferred. This doc is the design record.
 
 ## Doctrine
 
@@ -81,3 +81,9 @@ witnesses arrival/absence), using this vantage + budget + custody. **Gateway-pat
 unchanged** — this adds a position that corroborates or refuses the same WAN-path-alive claim, it
 does not introduce a new verdict authority. Out of scope until separately opened: pfSense PHP
 comparator (#8), Kea (#9), TLS 2d-b (#10).
+
+## Outcome — #7b minimal slice (shipped 2026-06-28)
+
+Shipped in `scripts/beacon/` (see `scripts/beacon/README.md` + FEATURE_HISTORY § EXTERNAL_GATEWAY_PATH_VANTAGE #7b). The LAN beacon → VM-receiver shape works end-to-end: `arrival_witnessed` after an emit, `absence_at_vantage` when stale (carrying the explicit "NOT wan_down by itself" note), `cannot_classify_no_arrivals_basis` with no log. Custody held: the VM arrival log (`/root/beacon/arrivals.jsonl`) carries only vantage-clock time + nonce + the declared `nq-lan-egress` label; no LAN secret/topology left the LAN; public NQ surface unaffected (200).
+
+Still deferred (named): supervised low-rate cadence (units `nq-beacon-emit.{service,timer}` committed but **not enabled** — perpetual beaconing is an explicit operator decision); folding `absence_at_vantage` into the gateway-path witness as a corroborating position; a dedicated clean external vantage if shared-substrate contamination becomes a confound.

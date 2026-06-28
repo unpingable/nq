@@ -20,6 +20,22 @@ The chronological order below is newest-first.
 
 ---
 
+## EXTERNAL_GATEWAY_PATH_VANTAGE #7b (egress-liveness witness, minimal slice)
+
+**Status:** `partial` 2026-06-28. Minimal vertical slice shipped (manual mode); supervised low-rate cadence + any nq-monitor verdict integration are deferred.
+
+**Shipped commits:** the Packet #7b commits adding `scripts/beacon/` (receiver, emitter, status classifier, README, reference systemd units).
+
+**What landed:** a CGNAT-compatible external witness for the gateway-path family. Because the home WAN is behind CGNAT (no inbound reachability), a LAN host beacons *out* over the existing SSH channel and the external vantage (public VM) witnesses **arrival or absence** at its own clock. `scripts/beacon/beacon-receive.sh` (on the VM) records one arrival (vantage-clock UTC + nonce + sanitized declared label only); `beacon-emit.sh` (on sushi-k) emits a single-shot beacon, non-zero on non-arrival; `beacon-status.sh` (on the VM) classifies `arrival_witnessed` / `absence_at_vantage` / `cannot_classify_no_arrivals_basis`. Narrow verdicts — no "WAN down" oracle. Existing gateway-path verdict semantics unchanged.
+
+**Doctrine (the whole packet):** a received beacon witnesses external *arrival* of a LAN-originated signal; a missing beacon witnesses *absence-at-vantage*, not the cause (emitter/SSH/VM-load/route/WAN — the witness reports position, never cause).
+
+**Evidence:** live end-to-end — VM status before any beacon → `cannot_classify_no_arrivals_basis`; emit from sushi-k → VM recorded arrival; VM status → `arrival_witnessed` (age 1s); threshold-0 → `absence_at_vantage` with the explicit "NOT wan_down by itself" note. Custody verified: the VM log (`/root/beacon/arrivals.jsonl`) holds only `{vantage-time, nonce, "nq-lan-egress"}` — no LAN IP/MAC/hostname/path; the SSH key never left the LAN; public NQ surface stayed 200. Design record: [`EXTERNAL_GATEWAY_PATH_VANTAGE_GAP.md`](../gaps/EXTERNAL_GATEWAY_PATH_VANTAGE_GAP.md).
+
+**Deferred (named):** supervised low-rate cadence (units committed as `nq-beacon-emit.{service,timer}` but not enabled — perpetual beaconing is an explicit operator decision); folding the `absence_at_vantage` verdict into the gateway-path witness as a corroborating position; a dedicated clean external vantage if shared-substrate contamination becomes a confound.
+
+---
+
 ## WITNESS_PROBE_BOUNDARY (Packet #6)
 
 **Status:** `shipped` 2026-06-28 (passive-witness/publisher crate boundary). The active-probe intra-crate boundary is named as a deferred structural gap, not closed.
