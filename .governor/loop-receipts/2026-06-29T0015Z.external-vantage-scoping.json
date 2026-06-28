@@ -1,0 +1,18 @@
+{
+  "slice": "Packet #7 — external/off-LAN gateway-path vantage (SCOPING slice, not implementation)",
+  "date": "2026-06-28",
+  "lane": "operator-directed (chatty-scoped as positioning slice, not probe-expansion)",
+  "doctrine": "External vantage is not higher authority. It is position diversity: a different place from which the same path claim can be witnessed or refused.",
+  "vantage_selected": "public NQ VM (labelwatch / Linode), declared SHARED SUBSTRATE (v0). Rejected: Mac mini (on-LAN, control not external witness). Deferred upgrade: dedicated clean Linode (YAGNI for a scoping slice).",
+  "decisive_finding": "Home WAN is behind CGNAT -> NO inbound reachability -> an external vantage CANNOT directly probe the home WAN gateway. Direct VM->home-WAN witnessing is structurally impossible. Viable channel is egress-liveness: home beacons OUT to the VM, VM witnesses arrival/absence. This reshapes #7b before any build.",
+  "declarations": {
+    "witness_position": "Linode, public internet outside home NAT/CGNAT; addrs 192.46.223.21 / 2600:3c04::f03c:93ff:fec9:780a (already public via DNS); trust limit = shared root-run substrate, a position not an authority.",
+    "perturbation_budget": "receive-only on VM; low-rate egress beacon from a LAN host; short timeout; back off on failure; stop on shared-VM load / secret pressure / ambiguity.",
+    "custody_boundary": "VM may hold its own receive-side beacon arrival/absence timestamps (benign). MUST stay LAN-local: pfSense probe key ~/.ssh/nq_pfsense_probe, dpinger reads, runs/ data, home WAN addr, LAN MACs/hostnames."
+  },
+  "smoke_test": "read-only, done: VM external vantage live (control 1.1.1.1 reachable), egress channel works (sushi-k -> nq.neutral.zone 200). No probing of home from outside. No LAN data left the LAN.",
+  "artifact": "docs/working/gaps/EXTERNAL_GATEWAY_PATH_VANTAGE_GAP.md (Status: proposed).",
+  "scope_guard": "Did NOT deploy a long-running agent, build a probe, alter gateway-path verdict semantics, probe LAN-only targets from public hosts, copy LAN secrets to the VM, or start #8/#9/#10. Scoping only.",
+  "handoff_7b": "Implement external gateway-path witness as egress-liveness (LAN beacon -> VM witnesses arrival/absence) using declared vantage+budget+custody. Verdict semantics unchanged (corroborates/refuses same WAN-path-alive claim, not a new authority).",
+  "acceptance": "One vantage selected (public VM, shared-substrate) + one explicitly rejected (Mac mini); witness-position declaration, perturbation budget, custody boundary all exist; smoke test read-only + documented; no LAN secrets left LAN. Packet #7 scoping DONE. Loop returns to AUDIT/idle. #7b (implementation) gated on operator direction."
+}
