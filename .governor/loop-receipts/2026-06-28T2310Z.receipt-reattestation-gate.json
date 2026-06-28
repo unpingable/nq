@@ -1,0 +1,23 @@
+{
+  "slice": "Packet #5 — fail-closed receipt re-attestation gate",
+  "date": "2026-06-28",
+  "lane": "operator-directed (chatty-scoped, serial after 4b; #6 pre-authorized only after this lands clean)",
+  "doctrine": "A receipt is not trusted because it exists. It is admissible only while its own claims can still be re-attested. The gate does not certify the underlying claim is true — only that the receipt remains admissible under its own documented claims.",
+  "built": [
+    "specimens/receipts/ — bounded committed nq.receipt.v1 population (2 positive specimens produced by the real engine: repo_clean from git_status witness, tests_passed from pytest witness; each with its anchoring nq.witness.v1 packet).",
+    "4 negative fixtures: digest_drift (tampered body), unsupported_schema (v2), missing_witness_anchoring (witness withheld), freshness_unprovable (--strict --fresh on no-horizon receipt).",
+    "scripts/check-nq-receipts.sh — fail-closed driver over specimens/receipts/MANIFEST; true exit codes (no pipe masking). Positives must exit 0; negatives must exit non-zero (refusal witnessed).",
+    "CI job receipt-reattestation (.github/workflows/ci.yml): build nq-monitor --release then run the gate.",
+    "FEATURE_HISTORY.md entry + candidate gap doc flipped to landed."
+  ],
+  "engine_reused": "nq_core::receipt_check via `nq-monitor receipt check` — no new receipt semantics, no re-ratification, no evaluator replay.",
+  "verify": {
+    "gate_green": "6/6 (2 positive admissible exit 0; 4 negative refused: digest_drift exit 2, unsupported_schema/missing_witness/freshness_unprovable exit 1)",
+    "fail_closed_meta_proven": "tampering a positive -> gate exit 1; un-breaking a negative (refusal no longer witnessed) -> gate exit 1. Both directions.",
+    "build": "cargo build --release -p nq-monitor --locked exit 0"
+  },
+  "coverage_boundary_named_not_faked": "True past-horizon STALE is not a committed fixture: claim_registry/verify emits no freshness_horizon; hand-editing one breaks content_hash (reads BROKEN not STALE); minting a valid-hash stale receipt would require re-running nq's canonical hasher = the exact laundering the gate prevents. Stale-when-horizon-present is covered by nq_core::receipt_check unit tests; the gate's freshness lane is the freshness_unprovable refusal.",
+  "scope_guard": "Targeted true nq.receipt.v1 specimens only. Did NOT bridge .governor/loop-receipts (separate decision). Did NOT start #6 build-graph boundary work. No new receipt semantics, no re-ratification.",
+  "discovered_pre_existing": "gap-status-discipline CI job is RED on origin/main since 2026-06-09 (commit b1baafd): docs/working/gaps/WITNESS_CLAIM_SCOPE_GAP.md has Status `partial` but no FEATURE_HISTORY pointer (the partial migration 212332c/69b4d2d/contract-bump-1->2 did ship). UNRELATED to #5; surfaced, not fixed here (another gap's shipped-state judgment).",
+  "acceptance": "Packet #5 DONE. Receipt gate green + fail-closed proven + CI-wired. Loop returns to AUDIT/idle. #6 (build-graph-enforced witness/probe boundaries) now pre-authorized to open."
+}
