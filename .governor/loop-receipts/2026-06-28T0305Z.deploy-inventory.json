@@ -1,0 +1,28 @@
+{
+  "slice": "deploy-standardization Packet #4 — inventory + contract (Phase 1)",
+  "date": "2026-06-27",
+  "lane": "operator-directed (chatty-sequenced); inventory-first, low-risk-convergence-only scope",
+  "doctrine": "Deployment standardization is not authority over observations. It only removes deployment drift as an alternative explanation for future witness drift.",
+  "scope_guard": "Did NOT start receipt-gate work (#5). Did NOT widen into live-adapter/TLS/Kea/pfSense comparator. Did NOT redeploy any host (fleet redeploy is gated, public blast radius).",
+  "method": "read-only inventory across all three hosts (local systemctl --user on sushi-k; ssh read-only to NAS + VM). One zero-blast-radius convergence applied (VM git safe.directory).",
+  "hosts_inventoried": {
+    "sushi-k": {"glibc": "2.39", "scope": "user-systemd", "install": "~/git/nq-root/nq/target/release", "config": "~/nq", "bind": "127.0.0.1:9848", "http": 200, "build_commit": "6a8c443", "note": "on-disk nq-monitor rebuilt 2026-06-25 (newer, UNDEPLOYED); running process != on-disk binary"},
+    "NAS": {"glibc": "2.39", "scope": "user-systemd", "install": "/home/claude/nq", "config": "/home/claude/nq", "bind": "127.0.0.1:9848", "http": 200, "build_commit": "6a8c443", "note": "nq-witness byte-identical to sushi-k 6a8c443 build (scp provenance confirmed); ~30 stale nq.pre-* backups"},
+    "VM": {"glibc": "2.35", "scope": "system-systemd", "install": "/opt/notquery", "config": "/opt/notquery", "runs_as": "root", "umask": "0022", "bind": "0.0.0.0:9848", "http": 200, "public": "nq.neutral.zone 200", "build_commit": "None", "src_head": "4ed7c6f (DIVERGED from 6a8c443)", "proxy": "docker caddy:2, /root/Caddyfile, NO systemd unit"}
+  },
+  "key_findings": [
+    "A (HIGH): fleet version identity incoherent — 6a8c443 / 6a8c443 / None+divergent-src(4ed7c6f). 6a8c443..b26c809 carries real code (gateway-path + declared-deny, +2523 lines), so running is code-stale vs HEAD. Acceptance criterion #1 FAILS.",
+    "A root cause: VM build_commit=None because /opt/notquery/src owned by jbeck, build runs as root, no git safe.directory -> build.rs git rev-parse hit dubious-ownership and unset NQ_BUILD_COMMIT.",
+    "B (MED): public reverse proxy is an UNMANAGED docker container (caddy:2), no systemd unit — reboot survival unverified.",
+    "C (MED): VM nq-monitor binds 0.0.0.0:9848 — may be reachable off-box bypassing caddy TLS; firewall UNVERIFIED.",
+    "D (LOW): VM runs as root, UMask 0022 vs private-host 0002 — standard undecided.",
+    "E (LOW): backup clutter on NAS+VM (~25-30 stale nq.pre-* + db backups)."
+  ],
+  "applied": [
+    "VM: git config --global --add safe.directory /opt/notquery/src (as root). BEFORE: dubious-ownership error / commit unreadable. AFTER: git rev-parse -> 4ed7c6f. Zero blast radius (no service touched). Reversible: git config --global --unset. EFFECT STAGED: running service still reports None until next rebuild."
+  ],
+  "gated_next_step": "Coordinated build-per-host redeploy to a single canonical commit, fail-closed sushi-k->NAS->VM. Recommended canonical = b26c809 (HEAD): clean superset, on origin. VM src MUST be re-synced to canonical first (currently divergent 4ed7c6f); DO NOT rebuild VM as-is. Requires explicit operator go (public blast radius).",
+  "artifacts": ["docs/working/decisions/DEPLOY_CONTRACT.md"],
+  "verification": "read-only inventory; all three dashboards HTTP 200 + public 200 observed live. No host service mutated. The one applied change verified before/after.",
+  "acceptance": "Phase 1 (inventory + contract) COMPLETE. Acceptance criterion #1 (same identity) deferred to the gated redeploy."
+}
