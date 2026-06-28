@@ -1,0 +1,26 @@
+{
+  "slice": "Packet #7b — egress-liveness external witness (minimal vertical slice)",
+  "date": "2026-06-28",
+  "lane": "operator-directed (chatty-scoped minimal slice; CGNAT finding from #7 made the shape crisp)",
+  "doctrine": "A received beacon witnesses external arrival of a LAN-originated signal. A missing beacon witnesses absence-at-vantage, not the cause of absence.",
+  "shape": "Home WAN behind CGNAT -> no inbound. LAN host (sushi-k) beacons OUT over the existing SSH channel; the external vantage (public VM) witnesses arrival at ITS own clock. No new inbound port (firewall blocks them anyway), no caddy/nq-app change.",
+  "built": [
+    "scripts/beacon/beacon-receive.sh (on VM): records one arrival = vantage-clock UTC + nonce + sanitized declared label only.",
+    "scripts/beacon/beacon-emit.sh (on sushi-k): single-shot SSH beacon, nonce + benign label, non-zero on non-arrival; SSH key stays on LAN.",
+    "scripts/beacon/beacon-status.sh (on VM): narrow verdicts arrival_witnessed / absence_at_vantage / cannot_classify_no_arrivals_basis.",
+    "README + reference systemd units nq-beacon-emit.{service,timer} (NOT enabled).",
+    "FEATURE_HISTORY entry; gap doc -> partial."
+  ],
+  "verify_live": {
+    "no_basis": "cannot_classify_no_arrivals_basis (before any beacon)",
+    "arrival_witnessed": "emit from sushi-k -> VM recorded arrival -> status arrival_witnessed (age 1s)",
+    "controlled_absence": "threshold-0 -> absence_at_vantage with 'NOT wan_down by itself' note",
+    "custody": "VM /root/beacon/arrivals.jsonl holds ONLY {vantage-time, nonce, 'nq-lan-egress'} — no LAN IP/MAC/hostname/path; SSH key never left LAN",
+    "public_surface": "nq.neutral.zone 200 (unaffected)",
+    "ci": "no CI change (beacon scripts are operational tooling, not a gate); gap-status gate green local"
+  },
+  "absence_semantics": "absence_at_vantage is NOT a WAN-down oracle: can be emitter down, SSH/key change, VM load, route change, or WAN egress loss. The witness reports position, not cause. This is the whole packet.",
+  "scope_guard": "No general agent framework; no auth beyond the existing SSH custody; no inbound home-WAN probing; no LAN topology exposed; no LAN artifacts on VM; existing gateway-path verdicts unchanged; did NOT start #8/#9/#10.",
+  "deferred_named": "Supervised low-rate cadence (timer committed, not enabled — perpetual beacon = explicit operator decision); fold absence_at_vantage into the gateway-path witness as a corroborating position; dedicated clean external vantage if shared-substrate contamination becomes a confound.",
+  "acceptance": "Receiver+emitter deployed (manual mode, documented); one arrival witnessed from VM; controlled absence path documented; VM artifact has no LAN-sensitive data; custody boundary updated; public NQ surface unaffected; CI green; loop returns to AUDIT/idle. Packet #7b DONE. Next: reassess before #8 (pfSense PHP comparator = appliance self-description, different epistemic class)."
+}
