@@ -31,3 +31,12 @@ jobs:
         run: cargo build --release -p nq-monitor --locked
       - name: Re-attest committed nq.receipt.v1 specimens (fail-closed)
         run: ./scripts/check-nq-receipts.sh
+
+  witness-boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain (per rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Enforce witness/probe build-graph boundary (fail-closed)
+        run: ./scripts/check-witness-boundaries.sh

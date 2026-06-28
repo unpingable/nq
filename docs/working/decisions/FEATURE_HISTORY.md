@@ -20,6 +20,22 @@ The chronological order below is newest-first.
 
 ---
 
+## WITNESS_PROBE_BOUNDARY (Packet #6)
+
+**Status:** `shipped` 2026-06-28 (passive-witness/publisher crate boundary). The active-probe intra-crate boundary is named as a deferred structural gap, not closed.
+
+**Shipped commits:** the Packet #6 commits adding `scripts/check-witness-boundaries.sh` (build-graph gate), the `witness-boundaries` CI job, and `docs/working/decisions/WITNESS_PROBE_BOUNDARY.md`.
+
+**What landed:** structural (build-graph) enforcement that witness crates cannot name NQ's persistence/coercion surface. `scripts/check-witness-boundaries.sh` reads the resolved cargo dependency graph (`cargo tree -e normal`) and fails closed if `nq-witness` or `nq-witness-api` ever gains `nq-db` in its closure — a witness that could write `nq-db` could manufacture the findings it is meant to be raw testimony for. Three fail-closed layers: forbidden checks, a control tripwire (`nq-monitor` MUST contain `nq-db`, so a broken graph reader fails closed not vacuously), and a self-test (synthetic `nq-witness→nq-db` MUST be flagged). No crate architecture change, no runtime change.
+
+**Evidence:** gate PASS (`nq-witness` ⊥ `nq-db`, `nq-witness-api` ⊥ `nq-db`, control present, self-test flags synthetic violation). Proven end-to-end: injecting a real `nq-db` dependency into `nq-witness/Cargo.toml` → gate exit 1; revert → PASS. CI job `witness-boundaries`. Doctrine + allowed exceptions (read-only `systemctl show` observation; witness writes only to its own scratch SQLite WAL-probe substrate): `WITNESS_PROBE_BOUNDARY.md`.
+
+**Deferred (named, not closed):** the active-witness probes (`crates/nq-monitor/src/*_probe.rs`) live inside `nq-monitor`, which depends on `nq-db`; intra-crate modules are not separable by the build graph. The structural fix (extract an `nq-probe` crate excluding `nq-db`) is an architecture refactor, out of Packet #6 scope and forcing-case-gated. Today that boundary is held by the probes' read-only/receipt-only design + review (testimony-typed discipline), not a structural guarantee.
+
+**Unblocks:** nothing externally; pins an already-true crate boundary against regression and makes the witness→coercion laundering path build-time-impossible for the publisher/collector surface.
+
+---
+
 ## RECEIPT_REATTESTATION_GATE (Packet #5)
 
 **Status:** `shipped` 2026-06-28.
