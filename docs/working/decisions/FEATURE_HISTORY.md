@@ -67,6 +67,26 @@ The chronological order below is newest-first.
 
 ---
 
+## WITNESS_CLAIM_SCOPE (typed refusals on the evaluator-claim surface)
+
+**Status:** `partial` 2026-06-09. The evaluator-claim refusal surface migrated; two adjacent surfaces (witness-coverage, standing) are explicitly not migrated — see below.
+
+**Shipped commits:** `212332c` (types-only — introduce `ClaimRefusal` / `RefusalKind`), `69b4d2d` (migration + `PREFLIGHT_CONTRACT_VERSION` bump 1→2).
+
+**What landed:** the refusal row on the evaluator-claim surface migrated from `Vec<String>` (prose) to `Vec<ClaimRefusal>` (typed `refusal_kind` + prose statement) — so consumers can bind on refusal *identity* rather than parse prose. Covers `PreflightResult.cannot_testify` (`crates/nq-core/src/preflight.rs`) and `Receipt.cannot_testify` (`crates/nq-core/src/receipt.rs`), and all 8 constitutional `*_cannot_testify()` functions (`disk_state`, `ingest_state`, `dns_state`, `sqlite_wal_state`, `component_testimony_observation_loop_alive`, `nq_binary_mtime_state`, `nq_evaluator_state`, `nq_sql_contract_state`). `PREFLIGHT_CONTRACT_VERSION` 1→2. Authorized by **completeness** (typing an already-emitted refusal), not a new consumer — no new witness authority.
+
+**Evidence:** `ClaimRefusal` / `RefusalKind` types in `crates/nq-core/src/preflight.rs` + `receipt.rs`; the contract bump to 2; the per-claim constitutional functions carrying typed refusals. Design record (incl. the cousins-not-siblings analysis): [`WITNESS_CLAIM_SCOPE_GAP.md`](../gaps/WITNESS_CLAIM_SCOPE_GAP.md).
+
+**What remains (deferred, named):**
+- **Witness-observation coverage** (`SmartWitnessCoverage`/`ZfsWitnessCoverage`/`SmartDeviceCoverage.cannot_testify` in `wire.rs`) — stays `Vec<String>`. Cousins, not siblings: these are machine-ish shape identifiers (`smart_drive_health`, …), and `RefusalKind` would collapse to `OutOfJurisdiction`/`KindSpecific` — ceremony, not observability.
+- **Standing surface** (`WitnessStanding.inadmissible_for`) — deferred; the three-way `authoritative_for`/`advisory_for`/`inadmissible_for` split migrates all-or-none. Named as the most promising next forcing case for `ClaimRefusal`.
+
+**Unblocks:** nothing externally (the prose vocabulary was small/stable); reduces retrofit cost for future claim kinds and consumers that bind on refusal identity.
+
+**Field notes:** ledger entry written 2026-06-28 (Packet #5 follow-on) as **ledger repair for already-shipped work** — the migration landed 2026-06-09 but the gap doc's `partial` Status never pointed at this file, which the `gap-status-discipline` CI gate (`scripts/check_gap_status.sh`) had been failing on since. No runtime behavior changed by this repair.
+
+---
+
 ## ANTI_LAUNDERING_DOCTRINE_MAP + CUSTODIAN_BINDING_ACCOUNTABILITY_CANDIDATE (paired recognition-only filings)
 
 **Status:** `candidate` filings 2026-06-04 (evening) — recognition records, NOT shipped features. Logged here so future archaeology asking "when did the anti-laundering family crystallize as a map?" and "when did NQ start refusing instrumentation-to-accountability laundering?" find the answer.

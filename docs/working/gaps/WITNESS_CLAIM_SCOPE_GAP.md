@@ -1,6 +1,6 @@
 # Gap: Refusals are emitted as prose strings on the preflight-receipt surface
 
-**Status:** `partial` — preflight + receipt surface migrated 2026-06-09 (commits `212332c` types-only, `69b4d2d` migration + contract bump 1→2). Witness-coverage surface explicitly **not migrated** — see "Why witness coverage is not a sibling" below. Standing-surface migration deferred per constraint 5 and likely the next forcing case for typed refusals when its receipt/preflight contract conditions hold.
+**Status:** `partial` — preflight + receipt surface migrated 2026-06-09 (commits `212332c` types-only, `69b4d2d` migration + contract bump 1→2). Shipped-state ledger: [`FEATURE_HISTORY.md`](../decisions/FEATURE_HISTORY.md) § WITNESS_CLAIM_SCOPE. Witness-coverage surface explicitly **not migrated** — see "Why witness coverage is not a sibling" below. Standing-surface migration deferred per constraint 5 and likely the next forcing case for typed refusals when its receipt/preflight contract conditions hold.
 
 History: drafted 2026-06-08 as `calibration record only` with six "ratified-implementation-must-pin" decisions. Recast 2026-06-09 under the completeness driver after the operator named the framing as overfitted (courthouse vocabulary on a witness-discipline question). The original draft also listed three "parallel surfaces" as if they shared the same shape; the witness-coverage one turned out to be cousins-not-siblings on inspection and stayed `Vec<String>`.
 
