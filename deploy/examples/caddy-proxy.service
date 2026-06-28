@@ -1,0 +1,42 @@
+# caddy-proxy.service — public reverse-proxy supervision (Packet 4b, 2026-06-28)
+#
+# REFERENCE COPY. The live unit is /etc/systemd/system/caddy-proxy.service on the
+# public VM (labelwatch / 192.46.223.21). This is SHARED, jbeck-owned infra: a single
+# docker "caddy" container reverse-proxies several projects' domains. nq.neutral.zone
+# is ONE tenant (proxied to 172.17.0.1:9848, with a defensive 405 holding move on
+# unauthenticated mutation). The Caddyfile lives at /home/jbeck/atproto/Caddyfile.
+#
+# Image: caddy:2 (sha256:14300de7e087...). Config: /home/jbeck/atproto/Caddyfile ->
+# /etc/caddy/Caddyfile. TLS/certs: /home/jbeck/atproto/pds/caddy/data -> /data
+# (Let's Encrypt, on-demand). Network: host.
+#
+# This unit MANAGES THE EXISTING CONTAINER IN PLACE (docker start -a) — it never
+# recreates it, so volumes/certs/config are preserved. The container restart policy
+# is set to `no` so systemd is the single supervisor (no docker/systemd double-start).
+#
+# Rollback to the prior (docker-supervised, unmanaged) state:
+#   systemctl disable --now caddy-proxy
+#   docker update --restart=unless-stopped caddy
+#   docker start caddy
+#   rm /etc/systemd/system/caddy-proxy.service && systemctl daemon-reload
+#
+# Guardrail: this supervises transport plumbing. It does not certify the observations
+# served through it.
+
+[Unit]
+Description=Caddy reverse proxy (shared docker container "caddy"): nq.neutral.zone, juche.social, labelwatch, driftwatch, sp00ky.net, instantinternet.news, stechometer
+Documentation=https://github.com/unpingable/nq/blob/main/docs/working/decisions/DEPLOY_CONTRACT.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+# Manages the pre-existing named container in place (preserves volumes/certs/config).
+ExecStart=/usr/bin/docker start -a caddy
+ExecStop=/usr/bin/docker stop caddy
+
+[Install]
+WantedBy=multi-user.target
