@@ -1,7 +1,7 @@
 {
   "slice": "Packet #7c — gateway-path external-arrival corroboration (fold #7b into gateway-path)",
   "date": "2026-06-28",
-  "lane": "operator-directed (chatty-scoped; cash the #7b witness position before #8)",
+  "lane": "operator-directed (ChatGPT-scoped; cash the #7b witness position before #8)",
   "doctrine": "Position diversity can corroborate or create divergence. It cannot launder absence into cause.",
   "design": "ADDITIVE. Existing LAN-side GatewayPathVerdict + evaluate_gateway_path UNCHANGED. New combiner reads the verdict + an optional ExternalArrivalBasis (parsed from nq.beacon_status.v0) -> nq.probe.gateway_path_combined.v1.",
   "verdict_matrix": {

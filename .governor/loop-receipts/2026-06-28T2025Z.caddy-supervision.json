@@ -1,7 +1,7 @@
 {
   "slice": "Packet 4b — public reverse-proxy supervision (finding B)",
   "date": "2026-06-28",
-  "lane": "operator-directed (chatty-scoped, narrow); operator cleared cross-project ownership ('it's all my infra')",
+  "lane": "operator-directed (ChatGPT-scoped, narrow); operator cleared cross-project ownership ('it's all my infra')",
   "guardrail": "This packet supervises transport plumbing. It does not certify the observations served through it.",
   "premise_correction": "Finding B assumed an unmanaged nq-specific caddy that would not survive reboot. Inspection corrected both: (1) it is a SHARED jbeck-owned caddy:2 container reverse-proxying ~8 domains (juche.social/atproto PDS, sp00ky.net, labelwatch, driftwatch, instantinternet.news, stechometer, nq.neutral.zone); real config /home/jbeck/atproto/Caddyfile (the /root/Caddyfile read earlier was a stale decoy); (2) it was ALREADY reboot-survivable (restart=unless-stopped + docker.service enabled). The real gap was named/explicit/declared management.",
   "did": [

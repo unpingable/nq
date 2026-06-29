@@ -1,7 +1,7 @@
 {
   "slice": "TLS cert verdict-ladder lab validation (rollout P0 #2 — TLS first)",
   "date": "2026-06-29",
-  "lane": "operator-directed (TLS first, then time_basis). Chatty order: spec refusals first -> fixtures.",
+  "lane": "operator-directed (TLS first, then time_basis). ChatGPT order: spec refusals first -> fixtures.",
   "doctrine": "Lab-backed compatibility, not live testimony. TLS says 'this endpoint presented this identity material'; it never says secure/owned/healthy.",
   "finding": "nq.probe.tls_cert.v1 is the MOST-built of the three: verdict core + live rustls transport + WebPKI validation + receipt series + CLI + refusals (scope_ceiling_non_claims), all shipped (frozen specimen 2026-06-19). parse_presented_cert already had a real single-SAN leaf test (nq.neutral.zone). The gap: the VERDICT LADDER (evaluate_tls_cert) had only ever met SYNTHETIC PresentedCert facts.",
   "method": "Generated a controlled multi-SAN self-signed cert with OpenSSL 3.0 (SAN tls-lab.test + www.tls-lab.test, validity 2026-06-29..2027-06-29). parse_presented_cert parses it; evaluate_tls_cert is driven through the ladder via the probe's INJECTED CLOCK (no real time dependence).",

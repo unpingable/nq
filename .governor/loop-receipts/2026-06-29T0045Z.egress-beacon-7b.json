@@ -1,7 +1,7 @@
 {
   "slice": "Packet #7b — egress-liveness external witness (minimal vertical slice)",
   "date": "2026-06-28",
-  "lane": "operator-directed (chatty-scoped minimal slice; CGNAT finding from #7 made the shape crisp)",
+  "lane": "operator-directed (ChatGPT-scoped minimal slice; CGNAT finding from #7 made the shape crisp)",
   "doctrine": "A received beacon witnesses external arrival of a LAN-originated signal. A missing beacon witnesses absence-at-vantage, not the cause of absence.",
   "shape": "Home WAN behind CGNAT -> no inbound. LAN host (sushi-k) beacons OUT over the existing SSH channel; the external vantage (public VM) witnesses arrival at ITS own clock. No new inbound port (firewall blocks them anyway), no caddy/nq-app change.",
   "built": [

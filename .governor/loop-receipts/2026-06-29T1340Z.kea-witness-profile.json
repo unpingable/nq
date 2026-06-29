@@ -1,7 +1,7 @@
 {
   "slice": "Kea full witness profile (Decision B) — nq.witness.kea_dhcp.v0",
   "date": "2026-06-29",
-  "lane": "operator-directed (Decision B = full witness profile now; chatty: 'full profile, minimal V0 backend, composite later')",
+  "lane": "operator-directed (Decision B = full witness profile now; ChatGPT: 'full profile, minimal V0 backend, composite later')",
   "doctrine": "A backend integration supplies observations; only a conforming witness supplies testimony. A lease is an assignment record, not a fact about the world. Keep DHCP from laundering DNS, and DNS from laundering identity.",
   "repos_touched": {
     "nq-witness (LOCAL, held)": "profiles/kea_dhcp.md (new) + SPEC.md profiles index += kea_dhcp",

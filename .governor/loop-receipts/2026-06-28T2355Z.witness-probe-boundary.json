@@ -1,7 +1,7 @@
 {
   "slice": "Packet #6 — build-graph-enforced witness/probe boundary",
   "date": "2026-06-28",
-  "lane": "operator-directed (chatty-scoped); opened only after CI went fully green on main (run 28338450984 all jobs success)",
+  "lane": "operator-directed (ChatGPT-scoped); opened only after CI went fully green on main (run 28338450984 all jobs success)",
   "doctrine": "A witness component should not be able to name the surface that would let it coerce the state it claims to observe. A witness that could write nq-db could manufacture the findings it is meant to be raw testimony for.",
   "inventory": {
     "crate_graph": "nq-core (leaf); nq-db->nq-core; nq-witness-api->nq-core; nq-witness->{nq-core,nq-witness-api}; nq-monitor->{nq-core,nq-db,nq-witness,nq-witness-api}",

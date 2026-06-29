@@ -1,7 +1,7 @@
 {
   "slice": "Packet #7 — external/off-LAN gateway-path vantage (SCOPING slice, not implementation)",
   "date": "2026-06-28",
-  "lane": "operator-directed (chatty-scoped as positioning slice, not probe-expansion)",
+  "lane": "operator-directed (ChatGPT-scoped as positioning slice, not probe-expansion)",
   "doctrine": "External vantage is not higher authority. It is position diversity: a different place from which the same path claim can be witnessed or refused.",
   "vantage_selected": "public NQ VM (labelwatch / Linode), declared SHARED SUBSTRATE (v0). Rejected: Mac mini (on-LAN, control not external witness). Deferred upgrade: dedicated clean Linode (YAGNI for a scoping slice).",
   "decisive_finding": "Home WAN is behind CGNAT -> NO inbound reachability -> an external vantage CANNOT directly probe the home WAN gateway. Direct VM->home-WAN witnessing is structurally impossible. Viable channel is egress-liveness: home beacons OUT to the VM, VM witnesses arrival/absence. This reshapes #7b before any build.",

@@ -1,7 +1,7 @@
 {
   "slice": "Packet #5 — fail-closed receipt re-attestation gate",
   "date": "2026-06-28",
-  "lane": "operator-directed (chatty-scoped, serial after 4b; #6 pre-authorized only after this lands clean)",
+  "lane": "operator-directed (ChatGPT-scoped, serial after 4b; #6 pre-authorized only after this lands clean)",
   "doctrine": "A receipt is not trusted because it exists. It is admissible only while its own claims can still be re-attested. The gate does not certify the underlying claim is true — only that the receipt remains admissible under its own documented claims.",
   "built": [
     "specimens/receipts/ — bounded committed nq.receipt.v1 population (2 positive specimens produced by the real engine: repo_clean from git_status witness, tests_passed from pytest witness; each with its anchoring nq.witness.v1 packet).",

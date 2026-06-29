@@ -1,6 +1,6 @@
 # NQ Three-Host Deploy Contract
 
-**Status:** v0 — inventory + contract, 2026-06-27. Packet #4 (deploy standardization). Inventory-first per operator+chatty scope: name the standard, name justified variance, name fixable drift; apply only zero-blast-radius convergence inline; defer fleet redeploy to an explicit fail-closed run.
+**Status:** v0 — inventory + contract, 2026-06-27. Packet #4 (deploy standardization). Inventory-first per operator+ChatGPT scope: name the standard, name justified variance, name fixable drift; apply only zero-blast-radius convergence inline; defer fleet redeploy to an explicit fail-closed run.
 **Supersedes folklore:** the `project_deployment` memory (2026-06-23) is the prior record; this is the in-repo authority.
 
 ## Doctrine (the line that keeps this honest)

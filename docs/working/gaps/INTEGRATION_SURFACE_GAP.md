@@ -1,6 +1,6 @@
 # WITNESS_SURFACE — passive collectors vs active probes (candidate, direction chosen)
 
-**Status:** Candidate / **non-binding**. Direction **chosen** (operator + chatty +
+**Status:** Candidate / **non-binding**. Direction **chosen** (operator + ChatGPT +
 web-claude, 2026-06-19); no trait, sibling type, or directory **built** yet. Routine
 register — names the boundary and sequences its construction; admits no code.
 **Filed:** 2026-06-19 (as `INTEGRATION_SURFACE_GAP`; reframed same day).
