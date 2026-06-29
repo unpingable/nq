@@ -1558,4 +1558,45 @@ mod tests {
             other => panic!("expected TransportError on id mismatch, got {other:?}"),
         }
     }
+
+    // DNS closeout: complete the RCODE matrix (servfail real) + qtype answer
+    // decoding (PTR/TXT) + the transport_error defensive paths.
+
+    const REAL_SERVFAIL_A: &str = include_str!("../tests/fixtures/dns/servfail_a.hex");
+    const REAL_PTR: &str = include_str!("../tests/fixtures/dns/ptr.hex");
+    const REAL_TXT: &str = include_str!("../tests/fixtures/dns/txt.hex");
+
+    #[test]
+    fn parse_response_real_bind_servfail() {
+        // RCODE 2 from a real BIND forward-to-dead-upstream. Completes the
+        // RCODE matrix; servfail is its own negative, never refused.
+        assert_eq!(
+            parse_response(&from_hex(REAL_SERVFAIL_A), 0x7890, 1),
+            WireOutcome::Negative {
+                kind: NegativeKind::Servfail,
+                rcode: 2
+            }
+        );
+    }
+
+    #[test]
+    fn parse_response_real_bind_ptr_is_separate_success_testimony() {
+        // PTR is its OWN testimony, not an inferred reverse mapping. A real PTR
+        // answer decodes as success (Answer), never nodata.
+        match parse_response(&from_hex(REAL_PTR), 0x5678, 12) {
+            WireOutcome::Answer { rcode, .. } => assert_eq!(rcode, 0),
+            other => panic!("expected Answer for PTR, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_real_bind_txt_answer() {
+        match parse_response(&from_hex(REAL_TXT), 0x6789, 16) {
+            WireOutcome::Answer { rcode, .. } => assert_eq!(rcode, 0),
+            other => panic!("expected Answer for TXT, got {other:?}"),
+        }
+    }
+    // (transport_error / truncation / QR / TC / all-16-RCODE defensive paths are
+    // already covered by the synthetic parse_response suite above; these
+    // real-bytes tests add the lab-validated half.)
 }

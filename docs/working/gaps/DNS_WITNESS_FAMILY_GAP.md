@@ -12,6 +12,18 @@
 
 > **Lab validation 2026-06-29:** the V0 hand-rolled UDP wire decoder (`probe.rs::parse_response`) is now validated against **real BIND 9.18 response bytes** (Docker lab) — success / nodata / nxdomain / refused, including the load-bearing success-vs-nodata split. Fixtures + tests under `crates/nq-monitor/tests/fixtures/dns/`; see FEATURE_HISTORY § DNS_WIRE_DECODER_LAB_VALIDATION. Lab-backed compatibility evidence, not live testimony. The broader V0 witness-family expansion below remains `proposed`.
 
+## V0 closeout (2026-06-29)
+
+The DNS V0 wire surface is closed for the current rollout (no new family). What this slice settled:
+
+- **`response_kind` matrix — all five RCODE-bearing kinds real-resolver-validated:** success, nodata, nxdomain, **servfail** (BIND forward-to-dead-upstream, RCODE 2), refused. `timeout` / `transport_error` are socket-layer outcomes (covered by the synthetic `outcome_from_wire` + `parse_response` defensive suites — truncation, all 16 RCODEs, compression pointers, fuzzing); `validation_failure` is reserved for a future DNSSEC-validating probe.
+- **qtypes:** `A / AAAA / NS / CNAME / SOA / PTR / MX / TXT / SRV` accepted; A/AAAA/PTR/TXT answer decoding now validated against real bytes. **PTR is its own testimony** — a separate forward-vs-reverse witness, never an inferred reverse mapping.
+- **Refusal boundary held:** no endpoint reachability, no resolver/service health, no global DNS truth, no authoritative correctness, **no DNSSEC validation in V0**, no recursive-vs-authoritative adjudication (NQ records what the resolver returned, refuses what it cannot witness), no consequence/page. **No TCP fallback / EDNS** unless explicitly opened (out of V0 scope).
+
+### Decision A — `dns_state` shape: both (native now, witness-JSON near-term)
+
+`dns_state` stays native-probe-backed for the immediate rollout (`nq-monitor probe dns` → `dns_observations` → `dns_state`). It is **not** blocked on witness-JSON ingestion. The near-term target is to keep the observation shape cleanly normalizable into a canonical `nq.witness.dns_state.v0` report carrying witness/vantage/subject identity + `coverage.{can,cannot}_testify` + `standing.*` + `response_kind`/rcode/answer/timing/freshness — so the native shape is **profile-compatible now** rather than exhumed later. See `BASELINE_SERVICE_ROLLOUT.md` § dns_state.
+
 ## Decision: Option B — third bespoke evaluator
 
 Per the parked candidate framing (`project_dns_witness_candidate.md`, reframed 2026-05-19 evening), the first artifact for DNS must decide the registry question explicitly. Three options were named:
