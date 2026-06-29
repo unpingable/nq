@@ -1,0 +1,26 @@
+{
+  "slice": "Packet #7c — gateway-path external-arrival corroboration (fold #7b into gateway-path)",
+  "date": "2026-06-28",
+  "lane": "operator-directed (chatty-scoped; cash the #7b witness position before #8)",
+  "doctrine": "Position diversity can corroborate or create divergence. It cannot launder absence into cause.",
+  "design": "ADDITIVE. Existing LAN-side GatewayPathVerdict + evaluate_gateway_path UNCHANGED. New combiner reads the verdict + an optional ExternalArrivalBasis (parsed from nq.beacon_status.v0) -> nq.probe.gateway_path_combined.v1.",
+  "verdict_matrix": {
+    "lan_alive + arrival_witnessed": "corroborated",
+    "lan_not_alive + absence_at_vantage": "corroborated (negative concordance)",
+    "lan_alive + absence_at_vantage": "divergent",
+    "lan_not_alive + arrival_witnessed": "divergent",
+    "lan_unknown (any cannot_testify/path_ambiguity) + any external": "cannot_classify (external NEVER overrides LAN-unknown)",
+    "any lan + no external / no_basis": "cannot_classify"
+  },
+  "cause_semantics": "cause_not_inferred=true always; non_claims explicitly refuse: absence is position not cause (not WAN-down/ISP/hop); divergence is ambiguity to investigate; external does not outrank LAN; corroboration (incl. trouble-concordant) = agreement of two positions, not a verified WAN state.",
+  "wiring": "nq-monitor probe gateway-path --external-beacon-status <path> reads the beacon status, parses to ExternalArrivalBasis (None if unparseable/unknown -> honest absence -> cannot_classify), emits the combined report alongside the LAN-side receipt. No DB write (active-witness lane).",
+  "verify": {
+    "combiner_unit_tests": "7 new tests in gateway_path_probe.rs (full matrix incl. external-never-overrides-LAN-unknown across all 5 unknown verdicts, no-external/no-basis, beacon-status parser 3 verdicts + unparseable->None) -> 22 lib tests pass",
+    "build": "cargo build -p nq-monitor: 0 warnings (combiner used by CLI, no dead_code)",
+    "full_suite": "cargo test --all --locked (background) — see loop-receipt update / CI test job",
+    "existing_verdicts_unchanged": "LAN-side GatewayPathVerdict + its tests untouched"
+  },
+  "scope_guard": "Did NOT enable perpetual beacon cadence; did NOT make absence mean WAN-down; did NOT privilege external over LAN; did NOT start pfSense PHP comparator / Kea / TLS. Additive only.",
+  "deferred_named": "Automated piping of a live beacon-status into the probe on a cadence (still manual/operator-fed); supervised beacon timer still not enabled.",
+  "acceptance": "External-arrival witness folded into gateway-path as corroborating/refusing position; cause never inferred; divergence fixtures added; existing verdicts preserved; docs+receipt updated. Packet #7c DONE. Loop returns to AUDIT/idle. Reassess before #8 (pfSense PHP comparator = appliance self-description, clearly lower-rank now)."
+}
