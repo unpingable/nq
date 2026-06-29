@@ -20,6 +20,20 @@ The chronological order below is newest-first.
 
 ---
 
+## KEA_CONTROL_SOCKET_BACKEND (second Kea lease backend)
+
+**Status:** `shipped` 2026-06-29. Backend + fake-socket tests; live SSH wiring + real-Kea test gated.
+
+**Shipped commits:** the Kea control-socket commits adding `crates/nq-monitor/src/kea_control.rs` + the `lease4_get_all.json` fixture.
+
+**What landed:** a second backend for the `kea_dhcp` family — `kea_control::fetch_leases_via_control_socket` reaches the **same `KeaLease` shape** as the memfile reader, via the Kea control socket's `lease4-get-all` command instead of `kea-leases4.csv`. No new abstraction (same struct, second source). Pure parser `parse_lease4_get_all` (separable from socket I/O) maps the captured API shape — `ip-address` / `hw-address` / `hostname` / `state` / `cltt` / `valid-lft`, with `expire = cltt + valid-lft` — and maps Kea result codes to typed errors (2 → `UnsupportedCommand`, other non-zero → `KeaResult`, 3 → empty). Typed error per boundary: `SocketMissing` / `ConnectionRefused` / `Timeout` / `Io` / `MalformedResponse` / `UnsupportedCommand` / `KeaResult`.
+
+**Evidence:** 11 tests in `kea_control::tests` — parser vs the real captured response + cross-backend consistency (`control_socket_and_memfile_agree_for_same_leases`: API and memfile produce identical `KeaLease`), unsupported/error/empty/malformed result handling, and **fake in-process unix-socket** tests (happy path, missing socket, malformed-over-socket, timeout, connection-refused). Real Kea is behind `#[ignore]` + `NQ_KEA_CTRL_SOCKET`. `cargo build -p nq-monitor` 0 warnings. Captured surface (lab-backed compatibility, not live testimony): `tests/fixtures/kea/lease4_get_all.json` + README.
+
+**Deferred (named):** wiring the control-socket backend into `live_lease_presence` (the live read currently SSH-cats the memfile; the control-socket path is the gated "real Kea integration" step, reachable via `nc -U` over SSH like the dpinger read); subnet filtering; the `dhcp_dns_identity_consistency` composite.
+
+---
+
 ## TIME_BASIS_SANITY_V0 (internal receiver-side sanity — annotation-only)
 
 **Status:** `partial` 2026-06-29. Two of the gap's six internal checks; both annotation-only; check 2 inert pending ingest wiring. Claim-layer consumption + external `clock_skew` witness deferred.

@@ -4,6 +4,7 @@ pub mod declared_deny_transport;
 pub mod gateway_path_probe;
 pub mod gateway_path_transport;
 pub mod http;
+pub mod kea_control;
 pub mod lease_presence_probe;
 pub mod lease_presence_transport;
 pub mod nq_evaluator_probe;

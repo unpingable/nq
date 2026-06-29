@@ -1,0 +1,11 @@
+{
+  "arguments": {
+    "leases": [
+      { "cltt": 1782746554, "fqdn-fwd": false, "fqdn-rev": false, "hostname": "lab-host-active", "hw-address": "08:00:27:aa:bb:01", "ip-address": "10.99.0.100", "state": 0, "subnet-id": 1, "valid-lft": 3600 },
+      { "cltt": 1782735754, "fqdn-fwd": false, "fqdn-rev": false, "hostname": "lab-host-expired", "hw-address": "08:00:27:aa:bb:02", "ip-address": "10.99.0.101", "state": 0, "subnet-id": 1, "valid-lft": 3600 },
+      { "cltt": 1782746554, "fqdn-fwd": false, "fqdn-rev": false, "hostname": "lab-host-declined", "hw-address": "08:00:27:aa:bb:03", "ip-address": "10.99.0.102", "state": 1, "subnet-id": 1, "valid-lft": 3600 }
+    ]
+  },
+  "result": 0,
+  "text": "3 IPv4 lease(s) found."
+}

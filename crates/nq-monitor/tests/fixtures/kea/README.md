@@ -28,3 +28,13 @@ docker run --rm -i debian:bookworm-slim bash -s   # then, inside:
 Columns (Kea 2.2.0 memfile4): `address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context`.
 `expire` is an absolute unix timestamp; `state` is the lease-machine state (0=default, 1=declined,
 2=expired-reclaimed) and is independent of whether `expire` has lapsed.
+
+## `lease4_get_all.json` — control-socket backend fixture
+
+Real `lease4-get-all` response captured from the same lab instance (control socket + `lease_cmds`
+hook). It is the surface `crates/nq-monitor/src/kea_control.rs::parse_lease4_get_all` is written
+against, and the second backend for the same `KeaLease` shape (the first is the memfile reader).
+The API gives `cltt` + `valid-lft` rather than an absolute `expire`, so the backend computes
+`expire = cltt + valid-lft` — which equals the memfile `expire` for the same lease (asserted by
+`kea_control::tests::control_socket_and_memfile_agree_for_same_leases`). Same caveat: lab-backed
+compatibility evidence, not live testimony.
