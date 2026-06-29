@@ -1,0 +1,29 @@
+{
+  "slice": "DNS wire-decoder lab validation — adapter coverage (lab-backed compatibility)",
+  "date": "2026-06-29",
+  "lane": "operator-directed — 'build the zoo' (YAGNI gates live authority, not adapter coverage)",
+  "doctrine": "Adapter coverage validated against synthetic lab substrate before live use. Synthetic compatibility != live testimony.",
+  "finding": "DNS V0 (dns_state) was already largely shipped: ResponseKind taxonomy, evaluator (nq-db/dns.rs), DB table, UdpDnsClient, `nq-monitor probe dns` CLI. The RISKY uncovered part was the hand-rolled UDP wire decoder probe.rs::parse_response — previously only unit-tested via SYNTHETIC WireOutcomes through outcome_from_wire; it had never met a real resolver.",
+  "method": "Spun up REAL BIND 9.18.49 in docker (debian bookworm; authoritative zone lab.test, recursion off), captured raw DNS response datagrams for each RCODE-distinguished kind by querying with a python UDP client INSIDE the container (docker filesystem sharing — mounts AND build context — is broken in this rootless/namespaced daemon; only stdin + container network work, so config+capture done in-container). Container --rm; no residue.",
+  "captured_real_bytes": {
+    "success_a": "RCODE 0 + 1 A answer (10.1.2.3, ttl 60) -> WireOutcome::Answer",
+    "nodata_aaaa": "RCODE 0, 0 answers, SOA in authority -> Negative{Nodata} (the load-bearing success-vs-nodata split)",
+    "nxdomain_a": "RCODE 3 -> Negative{Nxdomain}",
+    "refused_a": "RCODE 5 (out-of-zone, recursion off) -> Negative{Refused}"
+  },
+  "built": [
+    "crates/nq-monitor/tests/fixtures/dns/{success_a,nodata_aaaa,nxdomain_a,refused_a}.hex (real BIND bytes) + README (provenance + compatibility-not-live labeling + reproduce).",
+    "5 tests in probe::tests feeding the real bytes to parse_response: success decodes A+ttl; nodata is NOT success; nxdomain; refused; id-mismatch on real bytes -> TransportError."
+  ],
+  "verify": {
+    "dns_byte_tests": "5/5 pass — hand-rolled decoder correct against real BIND datagrams (no bug surfaced; now KNOWN-correct vs real wire, not just synthetic)",
+    "probe_module": "129 in-module tests green",
+    "build": "cargo build -p nq-monitor 0 warnings",
+    "floor_gates": "witness-boundaries / receipt-gate / gap-status exit 0",
+    "full_suite": "cargo test --all --locked (background)"
+  },
+  "labeling_is_the_guard": "Fixtures + README marked lab-backed COMPATIBILITY evidence: 'the decoder correctly classifies real resolver responses under declared lab conditions', never live testimony about any network's DNS state.",
+  "scope_guard": "Did NOT change probe semantics / ResponseKind taxonomy / evaluator / CLI; did NOT add TCP fallback / EDNS / DNSSEC (V0-out-of-scope); did NOT claim live DNS estate testimony. Validation + fixtures only.",
+  "deferred_named": "servfail (RCODE 2 — shares negative decode path with refused) real capture; DNSSEC validation_failure (future validating probe); TCP-fallback/EDNS; broader DNS_WITNESS_FAMILY V0 expansion (still proposed).",
+  "acceptance": "DNS wire decoder lab-validated against real resolver bytes; fixtures committed + labeled compatibility-not-live; existing probe unchanged. FEATURE_HISTORY § DNS_WIRE_DECODER_LAB_VALIDATION; DNS gap doc lab-validation note. Loop returns to AUDIT/idle. NOT PUSHED (workweek no-push); committed locally."
+}
