@@ -37,12 +37,12 @@ Each entry: **family · current conformance · claim kind · may say (weaker) ·
 - **Must refuse:** service health, endpoint reachability, global DNS truth, authoritative correctness, DNSSEC validity (no V0 validation), failover/page decisions.
 - **Next slice (DNS closeout):** complete the `response_kind` fixture matrix (servfail/timeout/transport_error still synthetic-only); doc examples for A/AAAA/PTR/SRV/TXT; PTR is *separate* testimony, never an inferred reverse mapping; document recursive-vs-authoritative refusal + no-DNSSEC; **no** TCP fallback / EDNS unless explicitly opened.
 
-### kea_dhcp_state — EXISTING lab-backed memfile reader (harden)
-- **Conformance:** native parser (compatibility, lab-backed 2026-06-29). **Should become a witness-profile candidate**, not a Prom scrape — lease evidence is identity-heavy.
+### kea_dhcp_state — witness PROFILE landed (Decision B), native memfile reader = first backend
+- **Conformance:** **full witness profile shipped** — `nq-witness/profiles/kea_dhcp.md` (`nq.witness.kea_dhcp.v0`), grounded in real `kea-dhcp4` 2.2.0 lab data. The native memfile reader (`parse_kea_leases`, lab-backed) is the **first backend adapter** (partial coverage: lease identity/lifecycle; everything else honestly demoted to `cannot_testify`).
 - **Claim (candidate):** `kea_dhcp_state`.
-- **May say:** Kea control/API responded at T0; DHCPv4/v6 daemon status observed; subnet/pool utilization observed; lease for client/address/hostname observed; reservation observed; DDNS handoff attempt observed (if exposed).
-- **Must refuse:** client connectivity, client identity/ownership, DNS correctness, address reachability, host authorization, renewal will succeed, "network healthy."
-- **Next slice:** control-socket API reader (`lease4-get` / `stat-lease4-get`, JSON already captured in lab); draft `nq-witness/profiles/kea_dhcp.md`. Later composite: `dhcp_dns_identity_consistency` (lease L for H/A + DNS H→A + PTR A→H) — a *composite* claim, never DHCP laundering DNS into existence.
+- **May say:** daemon reachable at T0; lease identity (address ↔ identifier ↔ hostname ↔ subnet) + lifecycle (`default`/`declined`/`expired-reclaimed`, expiry) observed; subnet/pool scope + utilization observed; reservation observed; DDNS *intent* flags observed (if exposed).
+- **Must refuse:** client connectivity, client identity ownership, address reachability, DNS correctness, **reverse-DNS correctness**, host authorization, renewal will succeed, network health, remediation/failover/page. (DDNS `fqdn_fwd`/`fqdn_rev` are *intent*, never a DNS-content claim.)
+- **Next slice:** control-socket backend (`lease4-get-all` / `stat-lease4-get` — JSON already captured in lab) extending the native reader's coverage; map the native shape into the canonical witness JSON. Deferred composite (named, not built): `dhcp_dns_identity_consistency` — composes Kea + DNS testimony, never DHCP laundering DNS into existence.
 
 ### tls_certificate_state — partially built (next real protocol witness)
 - **Conformance:** native probe code exists (`tls_cert_probe.rs` / `tls_cert_transport.rs` / series, frozen specimen). 2d-b = operationalize into a claim kind.
@@ -118,7 +118,7 @@ Parked — pfSense PHP self-description comparator (position-diversity terrarium
 ## Open decisions (unresolved)
 
 - **A. dns_state shape:** native probe only (A) / nq-witness profile (B) / both with native normalized into witness JSON later (C). **Lean: A short-term, C near-term.**
-- **B. Kea:** promote to a full witness profile now, or keep the native compatibility reader until a consumer forces the profile? (DHCP↔DNS consistency is the likely forcing consumer.)
+- **B. Kea:** RESOLVED — full witness profile now (`nq-witness/profiles/kea_dhcp.md`), native memfile reader kept as the first backend adapter; `dhcp_dns_identity_consistency` composite recorded but not built.
 - **C. time_basis first-code timing:** internal sanity annotation immediately after DNS, or hold until a freshness-consuming claim needs it?
 - **D. Prom curation surface:** `docs/operator/baseline-prom-exporters.md` (curated examples + history policy) vs folding into `integrations.md`.
 

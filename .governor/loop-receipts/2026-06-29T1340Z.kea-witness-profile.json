@@ -1,0 +1,24 @@
+{
+  "slice": "Kea full witness profile (Decision B) — nq.witness.kea_dhcp.v0",
+  "date": "2026-06-29",
+  "lane": "operator-directed (Decision B = full witness profile now; chatty: 'full profile, minimal V0 backend, composite later')",
+  "doctrine": "A backend integration supplies observations; only a conforming witness supplies testimony. A lease is an assignment record, not a fact about the world. Keep DHCP from laundering DNS, and DNS from laundering identity.",
+  "repos_touched": {
+    "nq-witness (LOCAL, held)": "profiles/kea_dhcp.md (new) + SPEC.md profiles index += kea_dhcp",
+    "nq (LOCAL, held)": "BASELINE_SERVICE_ROLLOUT kea bucket + Decision B resolved; FEATURE_HISTORY KEA follow-on note; loop + this receipt"
+  },
+  "profile": {
+    "version": "nq.witness.kea_dhcp.v0",
+    "grounded_in": "real kea-dhcp4 2.2.0 lab data captured earlier (memfile cols + lease4-get-all API + lease_cmds hook + state 0/1/2 semantics)",
+    "required_coverage": ["daemon_state", "lease_identity", "lease_lifecycle", "subnet_pool_identity"],
+    "optional_coverage": ["reservation_identity", "pool_utilization", "ddns_intent", "d2_state", "ha_peer_state"],
+    "observation_kinds": ["kea_daemon", "kea_lease", "kea_subnet", "kea_reservation"],
+    "key_semantics": "lease_state (default/declined/expired-reclaimed) is INDEPENDENT of expire_at (a default lease can be lapsed); fqdn_fwd/fqdn_rev are DDNS INTENT, never a DNS-content claim",
+    "standing_inadmissible_for": ["client_connectivity", "client_identity_ownership", "host_authorization", "address_reachability", "dns_correctness", "reverse_dns_correctness", "renewal_prediction", "network_health", "remediation", "failover_or_page"],
+    "native_reader_role": "parse_kea_leases (memfile, lab-backed) = first backend adapter with HONEST partial coverage (lease identity/lifecycle only; daemon/subnet/reservation/DDNS demoted to cannot_testify). Control-socket backend extends coverage, does not change the contract.",
+    "future_composite_named_not_built": "dhcp_dns_identity_consistency — composes Kea + DNS testimony; refuses host identity, reachability, global DNS correctness, authorization"
+  },
+  "scope_guard": "Full PROFILE now, not full adapter maximalism. Did NOT build the control-socket backend, the kea_dhcp_state claim kind, or the composite — recorded as next/deferred. Did NOT push (workweek). 'Full profile, minimal V0 backend, composite later.'",
+  "verify": "Profile matches nq-witness SPEC report shape + the zfs/smart/fs_inode profile conventions; two example reports (control-socket full coverage + memfile-only honest partial demotion); SPEC profiles index updated. nq gap-status gate green (no gaps touched).",
+  "acceptance": "Kea promoted to a first-class conforming witness profile; native memfile reader mapped as first backend with honest coverage; refusal boundary complete. Decision B resolved. Loop AUDIT/idle. HELD (workweek no-push) — nq 6-ahead, nq-witness 1-ahead. NEXT per rollout: TLS certificate-state spec, or time_basis sanity (Decision C)."
+}

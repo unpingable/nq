@@ -48,7 +48,9 @@ The chronological order below is newest-first.
 
 **Evidence:** 9 unit tests in `lease_presence_transport.rs` against the real fixture (`tests/fixtures/kea/kea-leases4.csv`) + synthetic negatives — three-lease parse, active/expired(state-0-but-lapsed)/declined state mapping, empty/header-only → none, malformed row skipped, LFC-repeated header skipped, unknown/unparseable state → Unknown, missing expire not lapsed, last-row-wins, and an active-lease-corroborated-by-presence e2e through the core. Fixture provenance + reproduce steps: `tests/fixtures/kea/README.md`. Full workspace suite green.
 
-**Deferred (named):** the Kea **control-socket API** surface (`lease4-get-all` JSON, captured in the lab) as a second reader; live read against an actual Kea-backed box (would be live testimony, ratified only from real deployment). Other filed witness-family adapters (DNS, storage backends, instance) remain candidates for the same lab-backed treatment.
+**Follow-on (2026-06-29):** the `nq.witness.kea_dhcp.v0` **witness profile** landed in the `nq-witness` repo (`profiles/kea_dhcp.md`, Decision B = full profile now) — declares coverage/standing/observations/refusals (lease/daemon/subnet/reservation/DDNS-intent); this native memfile reader is recorded there as the first backend adapter with honest partial coverage.
+
+**Deferred (named):** the Kea **control-socket API** backend (`lease4-get-all` / `stat-lease4-get` JSON, captured in the lab) extending coverage; live read against an actual Kea-backed box (live testimony, ratified only from real deployment); the `dhcp_dns_identity_consistency` composite (named in the profile, not built). Other filed witness-family adapters (DNS, storage backends, instance) remain candidates for the same lab-backed treatment.
 
 ---
 
