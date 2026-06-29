@@ -94,6 +94,12 @@ for the orientation framing, and
 [`DURABLE_ARTIFACT_SUBSTRATE_GAP`](../working/gaps/DURABLE_ARTIFACT_SUBSTRATE_GAP.md)
 §Upstream theory note for the theory pointer.
 
+For **which** exporter may be relied on for **what** — the source-conformance
+tiers (observation source vs conforming witness) and the per-exporter matrix —
+see [`BASELINE_SOURCE_CONFORMANCE`](../working/decisions/BASELINE_SOURCE_CONFORMANCE.md).
+Short version: these exporters are Tier-2 observation sources — fine for generic
+detectors, but they confer no domain standing until wrapped into a witness.
+
 ### Querying Prometheus metrics in NQ
 
 ```sql

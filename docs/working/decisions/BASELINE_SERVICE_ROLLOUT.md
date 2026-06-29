@@ -81,7 +81,7 @@ Each entry: **family · current conformance · claim kind · may say (weaker) ·
 
 ## Sources lane (visibility, not standing)
 
-`node_exporter`, `cadvisor`, `postgres_exporter`, `redis_exporter`, `mysqld_exporter`, `nginx-prometheus-exporter`, `blackbox_exporter`, `process-exporter`, telegraf-as-prom. **Observation sources** → generic detectors only (metric vanished/NaN, threshold, series-count change, resource pressure, coarse reachability). They do **not** confer domain standing until wrapped into canonical witness JSON. `nq-witness` profiles `zfs` / `smart` / `fs_inode` are the conforming-witness exemplars (per-vdev / per-device coverage that exporters flatten).
+`node_exporter`, `cadvisor`, `postgres_exporter`, `redis_exporter`, `mysqld_exporter`, `nginx-prometheus-exporter`, `blackbox_exporter`, `process-exporter`, telegraf-as-prom. **Observation sources** → generic detectors only (metric vanished/NaN, threshold, series-count change, resource pressure, coarse reachability). They do **not** confer domain standing until wrapped into canonical witness JSON. `nq-witness` profiles `zfs` / `smart` / `fs_inode` / `kea_dhcp` are the conforming-witness exemplars (per-vdev / per-device / per-lease coverage that exporters flatten). The tier rule + per-exporter matrix live in [`BASELINE_SOURCE_CONFORMANCE.md`](BASELINE_SOURCE_CONFORMANCE.md) (Decision D).
 
 ## Rollout order
 
@@ -121,7 +121,7 @@ Parked — pfSense PHP self-description comparator (position-diversity terrarium
 - **A. dns_state shape:** native probe only (A) / nq-witness profile (B) / both with native normalized into witness JSON later (C). **Lean: A short-term, C near-term.**
 - **B. Kea:** RESOLVED — full witness profile now (`nq-witness/profiles/kea_dhcp.md`), native memfile reader kept as the first backend adapter; `dhcp_dns_identity_consistency` composite recorded but not built.
 - **C. time_basis first-code timing:** RESOLVED — internal sanity annotation now (2026-06-29). Check 1 already wired; check 2 (`observed_at_regression`) added inert/annotation-only. Consumption + external witness deferred.
-- **D. Prom curation surface:** `docs/operator/baseline-prom-exporters.md` (curated examples + history policy) vs folding into `integrations.md`.
+- **D. Prom curation surface:** RESOLVED — new doctrine doc [`BASELINE_SOURCE_CONFORMANCE.md`](BASELINE_SOURCE_CONFORMANCE.md) (tiers + per-exporter matrix) + a pointer from `integrations.md`; `integrations.md` stays setup-oriented. Split out an operator-facing `BASELINE_PROM_EXPORTERS.md` only when the curation section outgrows a screen.
 
 ## Recommended next slice
 
