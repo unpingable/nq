@@ -1,0 +1,16 @@
+{
+  "slice": "Decision D — baseline source-conformance doctrine doc",
+  "date": "2026-06-29",
+  "lane": "operator-directed (Decision D resolution); doc-only, no code",
+  "doctrine": "A backend integration may supply observations; only a conforming witness may supply testimony. Exporters provide visibility; witnesses declare standing. 'We can scrape it' != 'it can testify'.",
+  "built": [
+    "docs/working/decisions/BASELINE_SOURCE_CONFORMANCE.md (candidate/non-authorizing): conformance tiers (Tier 1 conforming witness / Tier 2 observation source / Tier 3 generic metrics / Prom-projection-of-witness), promotion rule, native-adapter forcing-case rule, shared-source contamination warning, and a per-exporter matrix (node/postgres/redis/mysql/nginx/blackbox/cadvisor/process/telegraf) with what each cannot carry + promotion path.",
+    "Pointer added from docs/operator/integrations.md to the new doc (integrations.md stays setup-oriented).",
+    "BASELINE_SERVICE_ROLLOUT: Decision D resolved + Sources lane points to the conformance doc; kea_dhcp added to the Tier-1 exemplar list."
+  ],
+  "grounding": "Tier language verified vs nq-witness/SPEC.md (observation vs conforming witness) + RELATIONSHIP_TO_PROMETHEUS.md (visibility vs condition; shared-source contamination != corroboration). Exporter list + ports taken from the existing integrations.md.",
+  "resolves": "Decision D (new doctrine doc + integrations.md pointer; integrations.md stays setup). Split out an operator-facing BASELINE_PROM_EXPORTERS.md only when curation outgrows a screen.",
+  "scope_guard": "Doc-only. Non-authorizing — records what a source may be relied on for; authorizes no wrapper/adapter/claim. No code touched.",
+  "verify": "gap-status gate green (no gaps touched); decisions/ docs not CI-gated.",
+  "acceptance": "Decision D resolved. ALL FOUR rollout decisions (A dns / B kea / C time_basis / D prom-conformance) now closed. Loop AUDIT/idle. PUSH: held (workweek). The baseline-rollout ontology is fully front-loaded."
+}
