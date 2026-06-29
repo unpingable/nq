@@ -27,6 +27,4 @@ backend|dns_wire_decoder|lab_backed|crates/nq-monitor/tests/fixtures/dns|
 backend|kea_memfile|lab_backed|crates/nq-monitor/tests/fixtures/kea/kea-leases4.csv|
 backend|kea_control_socket|lab_backed|crates/nq-monitor/tests/fixtures/kea/lease4_get_all.json|
 backend|tls_cert_verdict|lab_backed|crates/nq-monitor/tests/fixtures/tls/lab_leaf.pem|
-#
-# --- deferred / not-expected (declared absence, with rationale) ---
-claim_kind|service_state|deferred|docs/working/decisions/preflights/SERVICE_STATE.md|not P0; witness shape candidate (breadcrumb). Layering+refusal pinned, storage columns candidate. No ClaimKind/table/evaluator yet.
+claim_kind|service_state|implemented|crates/nq-core/src/preflight.rs|

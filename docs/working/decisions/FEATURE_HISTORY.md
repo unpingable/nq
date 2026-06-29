@@ -20,6 +20,25 @@ The chronological order below is newest-first.
 
 ---
 
+## SERVICE_STATE_V0 (native service-state witness family — core landed)
+
+**Status:** `partial` 2026-06-29. The data + evaluation core landed; witness projection + live collector wiring deferred (named).
+
+**Shipped commits:** the service_state slice — migration 059, the `ClaimKind`/refusal additions in nq-core, the `nq-db::service_state` module, the `nq_evaluator_probe` dispatch arm, and the coverage-manifest flip.
+
+**What landed:** the `service_state` witness family opened (its breadcrumb `preflights/SERVICE_STATE.md` converted the undecided swamp into a schema slice with a refusal boundary, then the slice was opened). The three-layer shape held — per-kind observation table → (projection deferred) → receipt:
+- **migration 059** `service_observations` (host, service_manager ∈ systemd/docker/process/unknown, service_name, native `active_state`, nullable `sub_state`/`load_state`/`unit_file_state`, observed_at) + a UNIQUE identity index. Deliberately **no** recovered/healthy/safe/coverage/desired_state columns. `CURRENT_SCHEMA_VERSION` 58→59.
+- **`ServiceState` ClaimKind** + `PREFLIGHT_SERVICE_STATE_SCHEMA` + `service_state_cannot_testify` (refuses recovery/health/dependency/coverage/future-liveness/safety/causal-repair; *active does not imply healthy; inactive does not imply broken*).
+- **writer** `insert_service_observation` — idempotent on the same native state under one identity key, **explicit conflict** (never silent overwrite) on differing state; **reader** `latest_service_observation_for_tuple`; **evaluator** `evaluate_service_state_preflight*` (missing → `insufficient_coverage` = "no witness", not false; fresh → `admissible_with_scope` at witness scope; stale → `stale_testimony`).
+
+**Doctrine:** the witness records the manager's native state; the evaluator interprets it into a witness-scope verdict and refuses everything stronger. Absence is "no witness", not "false". WLP stays out (it's the adjacent courier layer).
+
+**Evidence:** 6 `service_state` module tests (roundtrip, idempotent-same, conflict-explicit, missing→insufficient_coverage, admissible-with-scope **with** the refusals present, stale) + 2 migration schema tests (manager CHECK, UNIQUE identity); full workspace suite green (the new ClaimKind variant rippled cleanly through every exhaustive match).
+
+**Deferred (named):** witness projection `service_state_witness_projection` → `nq.witness.v1` (`PreflightSupport.witness_packet` is `None` until then); live collector wiring (capturing native systemd/docker states into `service_observations` during a real cycle — the collector today produces coarse `ServiceStatus` findings, not the native-state witness write); `served_surface_registry` entry; docker/process manager variants.
+
+---
+
 ## EXPECTED_COVERAGE_MANIFEST (P0 #2 — declared absence, machine-checked)
 
 **Status:** `shipped` 2026-06-29.

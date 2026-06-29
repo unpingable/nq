@@ -24,6 +24,7 @@ pub mod retention;
 pub mod nq_binary_mtime_state;
 pub mod nq_evaluator_state;
 pub mod snapshot;
+pub mod service_state;
 pub mod sqlite_wal_state;
 pub mod sqlite_wal_state_witness_projection;
 pub mod views;
@@ -85,5 +86,11 @@ pub use dns::{
     insert_observation as insert_dns_observation,
     latest_observation_for_tuple as latest_dns_observation_for_tuple, DnsObservation,
     DnsObservationTuple, DNS_STATE_STALE_THRESHOLD_SECONDS,
+};
+pub use service_state::{
+    evaluate_service_state_preflight, evaluate_service_state_preflight_at,
+    evaluate_service_state_preflight_from_conn, evaluate_service_state_preflight_from_conn_at,
+    insert_service_observation, latest_service_observation_for_tuple, ServiceObservation,
+    ServiceObservationTuple, SERVICE_STATE_STALE_THRESHOLD_SECONDS,
 };
 pub use views::{host_detail, host_states, overview, HostDetailVm, HostStateVm, OverviewVm};

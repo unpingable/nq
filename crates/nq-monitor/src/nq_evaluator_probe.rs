@@ -361,6 +361,17 @@ pub fn invoke_for_fixture<'conn>(
                 )
             }))
         }
+        ClaimKind::ServiceState => {
+            let host = probe_host.to_string();
+            Ok(Box::new(move || {
+                let tuple = nq_db::ServiceObservationTuple {
+                    host: &host,
+                    service_manager: "systemd",
+                    service_name: "nq.fixture.service",
+                };
+                nq_db::evaluate_service_state_preflight_from_conn_at(conn, &tuple, now)
+            }))
+        }
         ClaimKind::NqBinaryMtimeState => {
             let host = probe_host.to_string();
             Ok(Box::new(move || {

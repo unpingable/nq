@@ -39,31 +39,25 @@ const PREVIOUS_SCHEMA_VERSION: u32 = CURRENT_SCHEMA_VERSION - 1;
 /// of NQ_EVALUATOR_STATE. The rollback fixture drops it to represent
 /// a real v(N-1) DB that never had it.
 ///
-/// Migration 058 (SCRAPE_TARGET_PROVENANCE) does NOT add a new table;
-/// it adds three `series` columns (scrape_target_name / _url /
-/// _collision) and recreates the `v_metrics` view. The rollback fixture
-/// handles this via `COLUMNS_ADDED_IN_LATEST_MIGRATION` + view drop.
+/// Migration 059 (SERVICE_OBSERVATIONS) adds a new table
+/// `service_observations` (+ its indexes, dropped automatically with the
+/// table). It adds no columns to existing tables and recreates no views.
 /// (Per-migration maintenance: these constants track the LATEST
-/// migration's pre-existing-table changes; update them each migration.)
-const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &[];
+/// migration's changes; update them each migration.)
+const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["service_observations"];
 
 /// Columns added by the most recent migration, as (table, column)
 /// pairs. The rollback fixture drops these so the upgrade test
 /// represents a real v(N-1) DB that never had the column. SQLite's
 /// `ALTER TABLE DROP COLUMN` (3.35+) handles this directly. Views that
 /// reference these columns are dropped first (below) so DROP COLUMN
-/// succeeds.
-const COLUMNS_ADDED_IN_LATEST_MIGRATION: &[(&str, &str)] = &[
-    ("series", "scrape_target_name"),
-    ("series", "scrape_target_url"),
-    ("series", "scrape_target_collision"),
-];
+/// succeeds. (Migration 059 adds no columns to existing tables.)
+const COLUMNS_ADDED_IN_LATEST_MIGRATION: &[(&str, &str)] = &[];
 
 /// Views recreated by the most recent migration. The rollback fixture
-/// drops them so re-migration recreates them cleanly. Migration 058
-/// recreates `v_metrics` (it references the new `series` columns, so it
-/// must be dropped before the columns are dropped).
-const VIEWS_RECREATED_IN_LATEST_MIGRATION: &[&str] = &["v_metrics"];
+/// drops them so re-migration recreates them cleanly. (Migration 059
+/// recreates no views.)
+const VIEWS_RECREATED_IN_LATEST_MIGRATION: &[&str] = &[];
 
 #[test]
 fn upgrade_from_previous_version_preserves_data() {

@@ -1,6 +1,6 @@
 # service_state — candidate / DEFERRED breadcrumb
 
-**Status:** `candidate` / **deferred** — NOT implementation-ratified. The **layering and the refusal boundary are pinned**; the **storage columns remain candidate**. This is a handle for review, not a spec to build from verbatim. Filed 2026-06-29 when `service_state` was confirmed *not* P0-implementation-ready (`CLAIM_CATALOG`: witness shape undecided; no `ServiceState` `ClaimKind`, no observation table, no evaluator, no registry wiring).
+**Status:** `partial` — V0 core landed 2026-06-29 (operator-opened the schema slice). The storage columns are now **ratified** at the V0 minimal shape below; the layering and refusal boundary held. Filed 2026-06-29 as a deferred breadcrumb; opened the same day. What landed vs deferred is in *Current status* below. See FEATURE_HISTORY § SERVICE_STATE_V0.
 
 ## Why deferred
 
@@ -47,14 +47,19 @@ per-kind observation table   →   witness projection: nq.witness.v1   →   rec
 
 (A liveness-only witness is not permitted to testify recovery — `CLAIM_CATALOG`. `service_recovered` needs a recovery witness that does not exist.)
 
-## Current status (nothing built)
+## Current status — V0 core LANDED 2026-06-29
 
-- no `ServiceState` `ClaimKind`
-- no `service_observations` migration
-- no evaluator
-- no registry wiring
-- **not** part of current P0 implementation
-- `expected_coverage` (P0 #2) must mark `service_state` explicitly **deferred / not-expected**, pointing here — declared absence, not laundered absence.
+Landed (this slice):
+- `service_observations` migration (059) with the native-state columns + the UNIQUE identity index.
+- `ServiceState` `ClaimKind` + `PREFLIGHT_SERVICE_STATE_SCHEMA` + `service_state_cannot_testify` (the refusal boundary above, verbatim).
+- writer `insert_service_observation` (idempotent on same native state; **explicit conflict** on differing state under one identity key — never silent overwrite).
+- reader `latest_service_observation_for_tuple`; evaluator `evaluate_service_state_preflight*` (missing → `insufficient_coverage`; fresh → `admissible_with_scope` at witness scope only; stale → `stale_testimony`).
+- `nq_evaluator_probe` dispatch arm; `expected_coverage` flipped `service_state` → implemented.
+
+Still deferred (named):
+- **witness projection** `service_state_witness_projection` → `nq.witness.v1` (Layer 2 — `PreflightSupport.witness_packet` is `None` until it lands).
+- **live collector wiring**: a real collection cycle capturing native systemd/docker states into `service_observations` (today the collector path produces coarse `ServiceStatus` findings; the native-state witness write is unwired).
+- `served_surface_registry` entry; docker/process manager variants beyond systemd.
 
 ## Adjacent, NOT this
 

@@ -38,6 +38,14 @@ pub const PREFLIGHT_DNS_STATE_SCHEMA: &str = "nq.preflight.dns_state.v1";
 /// constitutional, see `sqlite_wal_state_cannot_testify`.
 pub const PREFLIGHT_SQLITE_WAL_STATE_SCHEMA: &str = "nq.preflight.sqlite_wal_state.v1";
 
+/// Wire schema identifier for `service_state` preflight results. One envelope
+/// per `(host, service_manager, service_name)` target. NQ testifies only that a
+/// service manager reported a service in a native state at an observation time.
+/// It does **not** testify to recovery, health, safety, coverage, dependency
+/// satisfaction, future liveness, or any consequence — those refusals are
+/// constitutional, see `service_state_cannot_testify`.
+pub const PREFLIGHT_SERVICE_STATE_SCHEMA: &str = "nq.preflight.service_state.v1";
+
 /// Wire schema identifier for `component_testimony_observation_loop_alive`
 /// preflight results. One envelope per `(component_id, subject_id)` target.
 /// First component-testimony kind in the namespace; emitted by a component
@@ -167,6 +175,12 @@ pub enum ClaimKind {
     /// `docs/operator/sql-contract.md` for the contract and
     /// `crates/nq-db/tests/sql_contract.rs` for the receipt producer.
     NqSqlContractState,
+    /// Native service-state witness family (systemd / docker / process). One
+    /// envelope per `(host, service_manager, service_name)`. Testifies only to
+    /// the manager's native state at T0; recovery / health / safety / coverage
+    /// are refused at the claim layer. See
+    /// `docs/working/decisions/preflights/SERVICE_STATE.md`.
+    ServiceState,
 }
 
 impl ClaimKind {
@@ -185,6 +199,7 @@ impl ClaimKind {
             Self::NqBinaryMtimeState => "nq_binary_mtime_state",
             Self::NqEvaluatorState => "nq_evaluator_state",
             Self::NqSqlContractState => "nq_sql_contract_state",
+            Self::ServiceState => "service_state",
         }
     }
 }
@@ -532,6 +547,10 @@ impl PreflightResult {
             ClaimKind::NqSqlContractState => (
                 PREFLIGHT_NQ_SQL_CONTRACT_STATE_SCHEMA.to_string(),
                 nq_sql_contract_state_cannot_testify(),
+            ),
+            ClaimKind::ServiceState => (
+                PREFLIGHT_SERVICE_STATE_SCHEMA.to_string(),
+                service_state_cannot_testify(),
             ),
         };
         Self {
@@ -999,6 +1018,47 @@ pub fn nq_sql_contract_state_cannot_testify() -> Vec<ClaimRefusal> {
         ClaimRefusal::new(
             RefusalKind::ConsequenceClaim,
             "Whether to take any action (consequence claim; receipts attest, they do not authorize mutation)",
+        ),
+    ]
+}
+
+/// Constitutional refusal surface for `service_state`. A native service-state
+/// observation testifies only that a manager reported a service in a native
+/// state at T0; every stronger reading is refused. See
+/// `docs/working/decisions/preflights/SERVICE_STATE.md`.
+pub fn service_state_cannot_testify() -> Vec<ClaimRefusal> {
+    vec![
+        ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "Recovery — that a prior failure was resolved (no recovered/recovered_at is observed; 'active now' is not 'was fixed')",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Service health — 'active' is a manager liveness state, not application health (active does not imply healthy)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::AboveSubstrate,
+            "Dependency-graph satisfaction — that this service's dependencies are themselves up",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::OutOfJurisdiction,
+            "Coverage — that all of the host's services are observed (one named service is not the host)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::FutureStateClaim,
+            "Future liveness — active at T0 is not active-tomorrow",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::KindSpecific,
+            "That 'inactive'/'failed' means broken — a stopped service may be intentionally stopped; inactive does not imply fault",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::ConsequenceClaim,
+            "Safety of any action — restart / failover / ignore (consequence claim; observation does not authorize action)",
+        ),
+        ClaimRefusal::new(
+            RefusalKind::ConsequenceClaim,
+            "Causal repair — that any action fixed anything (the witness records state, not cause)",
         ),
     ]
 }
