@@ -1,0 +1,15 @@
+{
+  "event": "three-host deploy — service_state witness family to all running instances",
+  "date": "2026-06-29",
+  "authorization": "Operator explicit go (after-5pm gate met, ~6pm). Deploy followed the project_deployment playbook: per-host build (glibc), fail-closed, VM last (public blast radius).",
+  "deployed_commit": "72cb055 (origin/main HEAD); schema 58 -> 59 (migration 059 service_observations applied cleanly on every host)",
+  "hosts": {
+    "sushi-k": "canary. local build (glibc 2.39). old binaries preserved from /proc -> ~/nq/rollback/pre-servicestate-*; DB pre-migration backup. GREEN: active, dash 200, schema 59, boundaries 1/1/3, leak 0.",
+    "lil-nas-x": "192.168.69.10. scp sushi-k binaries (glibc match, no build). scp hit ETXTBSY on running binary -> fixed via scp-to-.new + mv. binaries+DB backed up .pre-servicestate-*. GREEN: active, dash 200, schema 59, boundaries 1/1/5, leak 0.",
+    "linode-vm": "labelwatch -> nq.neutral.zone. ON-HOST build (glibc 2.35, 1m07s). rsync --exclude runs (real LAN receipts kept off public box; verified runs/ absent on VM). stop->backup(.pre-servicestate-*)->swap->start. GREEN: active, local dash 200, schema 59, boundaries 1/1/4, leak 0; PUBLIC https://nq.neutral.zone 200, boundaries present, leak 0 (both LAN subnets, dmz.spooky, proven-correct, neglected, P1 all 0)."
+  },
+  "verify_each": "dashboard HTTP 200; render boundaries present (not an incident commander / not a proof checker / cannot testify); leak language 0; PRAGMA user_version 59; clean migration logs (applying version=59 -> complete version=59).",
+  "rollback_available": "per host: pre-servicestate binaries (sushi-k from /proc; NAS+VM on-host cp) + nq.db.pre-servicestate-*.bak (pre-migration). Not needed — all GREEN.",
+  "state": "all three running instances now on schema 59 / commit 72cb055. service_state observes real systemd services in production. origin == HEAD. Loop AUDIT/idle.",
+  "note": "service_state live collector now active on all three: each host's systemd services write native state into service_observations every cycle."
+}
