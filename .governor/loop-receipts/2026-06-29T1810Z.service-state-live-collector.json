@@ -1,0 +1,17 @@
+{
+  "slice": "service_state live collector wiring (systemd) + witness projection proof",
+  "date": "2026-06-29",
+  "lane": "operator-directed — make service_state testify from LIVE observations (a court with witnesses, not just a court). Scoped: systemd first, no docker/Kea/P1.",
+  "doctrine": "The witness records native state; the aggregator does NOT promote 'active' into healthy/recovered/safe — that boundary is the evaluator's. active != healthy; inactive != broken. Missing remains insufficient_coverage.",
+  "landed": [
+    "services.rs check_systemd captures native ActiveState/SubState/LoadState/UnitFileState (one systemctl show); coarse status mapping unchanged.",
+    "ServiceData + ServiceRow gained 4 native fields (serde-default, wire-additive); pull/mod.rs + e2e conversions carry them; all ~14 ServiceRow construction sites updated.",
+    "publish.rs 5c: writes service_observations for systemd-collected rows each cycle (one per host/service/generation).",
+    "service_state_witness_projection::project_service_observation -> nq.witness.v1 (envelope + native-state payload, plain coverage_limits, NO claim vocab, wire-validated).",
+    "coverage manifest: service_state_systemd_collector + service_state_witness_projection backends."
+  ],
+  "tests": "live_systemd_collection_feeds_service_observations_and_evaluator (collect->publish->evaluator admissible_with_scope, refusals present, support never says healthy/recovered) + 3 projection tests; full workspace suite green.",
+  "scope_guard": "systemd ONLY. Docker still maps to coarse status (no native docker state on the wire) — named follow-on. No Kea live-wire, no P1 adapters. Projection is proof-of-shape; not yet fed into PreflightSupport.witness_packet (still None) — named follow-on.",
+  "deferred_named": "feed projection into evaluator's PreflightSupport.witness_packet; served_surface_registry entry; docker/process native-state capture.",
+  "acceptance": "service_state now observes real systemd services end-to-end (collect->service_observations->evaluator) and proves nq.witness.v1 projection. The witness family is real, not ornamental. FEATURE_HISTORY § SERVICE_STATE_LIVE_COLLECTOR; breadcrumb updated; manifest extended. Loop AUDIT/idle. PUSH: held (workweek). STOP per operator sequence."
+}
