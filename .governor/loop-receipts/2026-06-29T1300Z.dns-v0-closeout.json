@@ -1,0 +1,25 @@
+{
+  "slice": "DNS V0 closeout — response_kind matrix + qtype/refusal boundaries (lab-backed)",
+  "date": "2026-06-29",
+  "lane": "operator-directed (DNS closeout per BASELINE_SERVICE_ROLLOUT recommended next slice)",
+  "doctrine": "Close V0, do not greenfield. NQ records what the resolver returned, refuses what it cannot witness. Lab-backed compatibility, not live testimony.",
+  "method": "Returned to the BIND 9.18 docker lab; added a reverse zone (PTR), a TXT record, and a forward-to-dead-upstream zone (192.0.2.1) to produce a REAL SERVFAIL. Captured raw response bytes for servfail/ptr/txt via in-container python UDP client. Container --rm; no residue.",
+  "completed": [
+    "response_kind matrix: all FIVE RCODE-bearing kinds now real-resolver-validated — success, nodata, nxdomain, servfail (RCODE 2 real, was synthetic-only), refused.",
+    "qtype answer decoding validated on real bytes: A/AAAA (prior) + PTR + TXT. PTR confirmed as SEPARATE testimony (Answer/success), never an inferred reverse mapping.",
+    "fixtures crates/nq-monitor/tests/fixtures/dns/{servfail_a,ptr,txt}.hex + README matrix updated.",
+    "7 real-bytes parse_response tests (was 5) — removed 2 crafted defensive tests that duplicated the EXISTING extensive synthetic suite (truncation/16-RCODE/compression/fuzz already covered).",
+    "DNS_WITNESS_FAMILY_GAP V0 closeout section: matrix coverage, qtype list, refusal boundaries (no health/reachability/global-truth/authoritative/DNSSEC/recursive-vs-authoritative/consequence; no TCP/EDNS), + Decision A.",
+    "FEATURE_HISTORY DNS entry updated."
+  ],
+  "decision_A": "dns_state shape = BOTH: native (nq-monitor probe dns -> dns_observations -> dns_state) ships now; near-term keep the shape normalizable into canonical nq.witness.dns_state.v0 (witness/vantage/subject identity + coverage + standing + response_kind/rcode/answer/timing/freshness). NOT blocked on witness ingestion; native shape kept profile-compatible.",
+  "not_covered_by_wire_fixtures_named": "timeout / transport_error are socket-layer outcomes (no answer bytes) — covered by synthetic outcome_from_wire + parse_response defensive suites; validation_failure reserved for a future DNSSEC-validating probe.",
+  "verify": {
+    "dns_real_bytes_tests": "7/7 (success/nodata/nxdomain/servfail/refused/ptr/txt) + id-mismatch -> green",
+    "build": "cargo build -p nq-monitor 0 warnings",
+    "gates": "gap-status / receipt-gate green",
+    "full_suite": "cargo test --all --locked (background; see commit verification)"
+  },
+  "scope_guard": "Did NOT add a new family, TCP fallback, EDNS, DNSSEC validation, or any DNS-health claim; did NOT build the witness-JSON normalization (Decision A near-term, recorded not implemented); did NOT touch other buckets.",
+  "acceptance": "DNS V0 wire surface closed: full RCODE matrix real-validated, qtype/refusal boundaries pinned, Decision A recorded. Loop AUDIT/idle. PUSH: held (workweek no-push). NEXT per rollout: TLS certificate-state spec (refusals first) or Kea witness profile."
+}
