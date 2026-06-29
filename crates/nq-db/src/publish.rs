@@ -183,6 +183,46 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
         }
     }
 
+    // 5c. Persist native systemd service-state observations for the
+    // `service_state` witness family (migration 059). The coarse `status`
+    // above feeds findings; the NATIVE state feeds `service_observations`.
+    // `active` is NOT promoted to healthy/recovered/safe here — that boundary
+    // is the evaluator's. Only systemd-collected rows carry `active_state`;
+    // docker is a named follow-on. One row per (host, service) per generation
+    // (the UNIQUE index backstops); the idempotent/conflict writer API is for
+    // the probe/manual path, not this append. The guard skips preparing the
+    // statement when no row carries native state — both an optimization and
+    // what lets the upgrade test publish against a schema predating table 059.
+    if batch
+        .service_sets
+        .iter()
+        .any(|ss| ss.rows.iter().any(|r| r.active_state.is_some()))
+    {
+        let mut ins = tx.prepare_cached(
+            "INSERT INTO service_observations
+                (generation_id, host, service_manager, service_name,
+                 active_state, sub_state, load_state, unit_file_state, observed_at)
+             VALUES (?1, ?2, 'systemd', ?3, ?4, ?5, ?6, ?7, ?8)",
+        )?;
+        for ss in &batch.service_sets {
+            let observed_at = fmt_ts(&ss.collected_at);
+            for row in &ss.rows {
+                if let Some(active_state) = &row.active_state {
+                    ins.execute(rusqlite::params![
+                        generation_id,
+                        &ss.host,
+                        &row.service,
+                        active_state,
+                        &row.sub_state,
+                        &row.load_state,
+                        &row.unit_file_state,
+                        &observed_at,
+                    ])?;
+                }
+            }
+        }
+    }
+
     // 6. Delete+replace monitored_dbs_current for successful sqlite_health collectors
     {
         let mut del = tx.prepare_cached("DELETE FROM monitored_dbs_current WHERE host = ?1")?;
@@ -2364,6 +2404,10 @@ mod tests {
                         queue_depth: None,
                         consumer_lag: None,
                         drop_count: None,
+                        active_state: None,
+                        sub_state: None,
+                        load_state: None,
+                        unit_file_state: None,
                     },
                     ServiceRow {
                         service: "svc-b".into(),
@@ -2376,6 +2420,10 @@ mod tests {
                         queue_depth: None,
                         consumer_lag: None,
                         drop_count: None,
+                        active_state: None,
+                        sub_state: None,
+                        load_state: None,
+                        unit_file_state: None,
                     },
                 ],
             }],
@@ -2435,6 +2483,10 @@ mod tests {
                     queue_depth: None,
                     consumer_lag: None,
                     drop_count: None,
+                    active_state: None,
+                    sub_state: None,
+                    load_state: None,
+                    unit_file_state: None,
                 }],
             }],
             sqlite_db_sets: vec![],
@@ -2457,6 +2509,104 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn live_systemd_collection_feeds_service_observations_and_evaluator() {
+        // The live path end-to-end: a systemd-collected ServiceRow carrying
+        // native state -> publish writes a service_observations row (5c) -> the
+        // evaluator satisfies ServiceState from it at witness scope. If the 5c
+        // wiring is removed, this fails (the native row never lands).
+        let mut db = test_db();
+        let t = now();
+        let batch = Batch {
+            cycle_started_at: t,
+            cycle_completed_at: t,
+            sources_expected: 1,
+            source_runs: vec![SourceRun {
+                source: "box-1".into(),
+                status: SourceStatus::Ok,
+                received_at: t,
+                collected_at: Some(t),
+                duration_ms: Some(10),
+                error_message: None,
+            }],
+            collector_runs: vec![CollectorRun {
+                source: "box-1".into(),
+                collector: CollectorKind::Services,
+                status: CollectorStatus::Ok,
+                collected_at: Some(t),
+                entity_count: Some(1),
+                error_message: None,
+            }],
+            host_rows: vec![],
+            service_sets: vec![ServiceSet {
+                host: "box-1".into(),
+                collected_at: t,
+                rows: vec![ServiceRow {
+                    service: "kea-dhcp4".into(),
+                    status: ServiceStatus::Up,
+                    health_detail_json: None,
+                    pid: Some(100),
+                    uptime_seconds: None,
+                    last_restart: None,
+                    eps: None,
+                    queue_depth: None,
+                    consumer_lag: None,
+                    drop_count: None,
+                    active_state: Some("active".into()),
+                    sub_state: Some("running".into()),
+                    load_state: Some("loaded".into()),
+                    unit_file_state: Some("enabled".into()),
+                }],
+            }],
+            sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
+            zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
+            wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
+        };
+        publish_batch(&mut db, &batch).unwrap();
+
+        // 1. The native observation landed in service_observations.
+        let (active, sub): (String, Option<String>) = db
+            .conn
+            .query_row(
+                "SELECT active_state, sub_state FROM service_observations
+                 WHERE host='box-1' AND service_manager='systemd' AND service_name='kea-dhcp4'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(active, "active");
+        assert_eq!(sub.as_deref(), Some("running"));
+
+        // 2. The evaluator satisfies ServiceState from the collected row.
+        let key = crate::ServiceObservationTuple {
+            host: "box-1",
+            service_manager: "systemd",
+            service_name: "kea-dhcp4",
+        };
+        let r =
+            crate::evaluate_service_state_preflight_from_conn_at(&db.conn, &key, t).unwrap();
+        assert_eq!(r.verdict, nq_core::preflight::Verdict::AdmissibleWithScope);
+        assert_eq!(r.supports.len(), 1);
+
+        // 3. Refusal boundary intact: 'active' did not become healthy/recovered.
+        let refusals: String = r
+            .cannot_testify
+            .iter()
+            .map(|c| c.statement.to_lowercase())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(refusals.contains("health"));
+        assert!(refusals.contains("recovery"));
+        assert!(refusals.contains("safety"));
+        let support = r.supports[0].claim.to_lowercase();
+        assert!(!support.contains("healthy"));
+        assert!(!support.contains("recovered"));
     }
 
     #[test]

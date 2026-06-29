@@ -23,11 +23,17 @@ pub fn collect(config: &PublisherConfig) -> CollectorPayload<Vec<ServiceData>> {
             .as_deref()
             .unwrap_or(&svc_config.name);
 
-        let (status, pid) = match svc_config.check_type.as_str() {
+        let (status, pid, native) = match svc_config.check_type.as_str() {
             "systemd" => check_systemd(unit_name),
-            "docker" => check_docker(unit_name),
-            "pid_file" => check_pid_file(svc_config.pid_file.as_deref()),
-            _ => (ServiceStatus::Unknown, None),
+            "docker" => {
+                let (s, p) = check_docker(unit_name);
+                (s, p, SystemdNative::none())
+            }
+            "pid_file" => {
+                let (s, p) = check_pid_file(svc_config.pid_file.as_deref());
+                (s, p, SystemdNative::none())
+            }
+            _ => (ServiceStatus::Unknown, None, SystemdNative::none()),
         };
 
         services.push(ServiceData {
@@ -41,6 +47,10 @@ pub fn collect(config: &PublisherConfig) -> CollectorPayload<Vec<ServiceData>> {
             queue_depth: None,
             consumer_lag: None,
             drop_count: None,
+            active_state: native.active_state,
+            sub_state: native.sub_state,
+            load_state: native.load_state,
+            unit_file_state: native.unit_file_state,
         });
     }
 
@@ -52,44 +62,76 @@ pub fn collect(config: &PublisherConfig) -> CollectorPayload<Vec<ServiceData>> {
     }
 }
 
-fn check_systemd(unit: &str) -> (ServiceStatus, Option<u32>) {
+/// Native systemd states for the `service_state` witness family. `None` per
+/// field when the property is unavailable; the witness records what it saw.
+struct SystemdNative {
+    active_state: Option<String>,
+    sub_state: Option<String>,
+    load_state: Option<String>,
+    unit_file_state: Option<String>,
+}
+impl SystemdNative {
+    fn none() -> Self {
+        Self {
+            active_state: None,
+            sub_state: None,
+            load_state: None,
+            unit_file_state: None,
+        }
+    }
+}
+
+fn check_systemd(unit: &str) -> (ServiceStatus, Option<u32>, SystemdNative) {
     let unit_with_suffix = if unit.contains('.') {
         unit.to_string()
     } else {
         format!("{unit}.service")
     };
 
-    // Get ActiveState
-    let active = Command::new("systemctl")
-        .args(["show", &unit_with_suffix, "--property=ActiveState", "--value"])
+    // One read-only `systemctl show` for all properties (Key=Value per line).
+    let out = Command::new("systemctl")
+        .args([
+            "show",
+            &unit_with_suffix,
+            "--property=ActiveState,SubState,LoadState,UnitFileState,MainPID",
+        ])
         .output();
 
-    let status = match active {
-        Ok(out) if out.status.success() => {
-            match String::from_utf8_lossy(&out.stdout).trim() {
-                "active" => ServiceStatus::Up,
-                "failed" => ServiceStatus::Down,
-                "inactive" => ServiceStatus::Down,
-                "activating" => ServiceStatus::Degraded,
-                "deactivating" => ServiceStatus::Degraded,
-                _ => ServiceStatus::Unknown,
+    let mut props: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if let Ok(o) = &out {
+        if o.status.success() {
+            for line in String::from_utf8_lossy(&o.stdout).lines() {
+                if let Some((k, v)) = line.split_once('=') {
+                    props.insert(k.trim().to_string(), v.trim().to_string());
+                }
             }
         }
+    }
+
+    let nonempty = |k: &str| props.get(k).filter(|v| !v.is_empty()).cloned();
+    let active_state = nonempty("ActiveState");
+
+    // Coarse status (findings path) — unchanged mapping.
+    let status = match active_state.as_deref() {
+        Some("active") => ServiceStatus::Up,
+        Some("failed") | Some("inactive") => ServiceStatus::Down,
+        Some("activating") | Some("deactivating") => ServiceStatus::Degraded,
         _ => ServiceStatus::Unknown,
     };
 
-    // Get MainPID
-    let pid = Command::new("systemctl")
-        .args(["show", &unit_with_suffix, "--property=MainPID", "--value"])
-        .output()
-        .ok()
-        .and_then(|out| {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            s.parse::<u32>().ok()
-        })
+    let pid = props
+        .get("MainPID")
+        .and_then(|s| s.parse::<u32>().ok())
         .filter(|p| *p > 0);
 
-    (status, pid)
+    let native = SystemdNative {
+        active_state,
+        sub_state: nonempty("SubState"),
+        load_state: nonempty("LoadState"),
+        unit_file_state: nonempty("UnitFileState"),
+    };
+
+    (status, pid, native)
 }
 
 fn check_docker(container: &str) -> (ServiceStatus, Option<u32>) {

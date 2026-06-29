@@ -25,6 +25,7 @@ pub mod nq_binary_mtime_state;
 pub mod nq_evaluator_state;
 pub mod snapshot;
 pub mod service_state;
+pub mod service_state_witness_projection;
 pub mod sqlite_wal_state;
 pub mod sqlite_wal_state_witness_projection;
 pub mod views;

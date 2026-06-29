@@ -56,10 +56,13 @@ Landed (this slice):
 - reader `latest_service_observation_for_tuple`; evaluator `evaluate_service_state_preflight*` (missing → `insufficient_coverage`; fresh → `admissible_with_scope` at witness scope only; stale → `stale_testimony`).
 - `nq_evaluator_probe` dispatch arm; `expected_coverage` flipped `service_state` → implemented.
 
+Landed (live wiring slice, 2026-06-29):
+- **live systemd collector wiring**: `services.rs` `check_systemd` now captures native `ActiveState`/`SubState`/`LoadState`/`UnitFileState` (one `systemctl show`); carried on `ServiceData`/`ServiceRow`; `publish.rs` (5c) writes `service_observations` for systemd rows each cycle. End-to-end test: collect → publish → evaluator `admissible_with_scope`, refusals intact.
+- **witness projection** `service_state_witness_projection::project_service_observation` → `nq.witness.v1` (proof-of-shape: envelope + native-state payload, plain-language `coverage_limits`, no claim vocab; wire-validated).
+
 Still deferred (named):
-- **witness projection** `service_state_witness_projection` → `nq.witness.v1` (Layer 2 — `PreflightSupport.witness_packet` is `None` until it lands).
-- **live collector wiring**: a real collection cycle capturing native systemd/docker states into `service_observations` (today the collector path produces coarse `ServiceStatus` findings; the native-state witness write is unwired).
-- `served_surface_registry` entry; docker/process manager variants beyond systemd.
+- feed the projection into the evaluator's `PreflightSupport.witness_packet` (today the projection stands alone; the support's packet is still `None`).
+- `served_surface_registry` entry; **docker / process** manager variants (collector captures native state for systemd only; docker still maps to coarse status).
 
 ## Adjacent, NOT this
 

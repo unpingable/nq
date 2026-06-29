@@ -143,6 +143,10 @@ fn missing_signal_dropout_service() {
                 queue_depth: None,
                 consumer_lag: None,
                 drop_count: None,
+                active_state: None,
+                sub_state: None,
+                load_state: None,
+                unit_file_state: None,
             }],
         });
         let r = publish_batch(&mut db, &b).unwrap();
@@ -274,6 +278,10 @@ fn unstable_service_down() {
             queue_depth: None,
             consumer_lag: None,
             drop_count: None,
+            active_state: None,
+            sub_state: None,
+            load_state: None,
+            unit_file_state: None,
         }],
     });
     publish_batch(&mut db, &b).unwrap();
@@ -322,6 +330,10 @@ fn degrading_service_flap() {
                 queue_depth: None,
                 consumer_lag: None,
                 drop_count: None,
+                active_state: None,
+                sub_state: None,
+                load_state: None,
+                unit_file_state: None,
             }],
         });
         let r = publish_batch(&mut db, &b).unwrap();
@@ -518,6 +530,10 @@ fn every_detector_emits_diagnosis() {
                 queue_depth: None,
                 consumer_lag: None,
                 drop_count: None,
+                active_state: None,
+                sub_state: None,
+                load_state: None,
+                unit_file_state: None,
             }],
         });
         let r = publish_batch(&mut db, &b).unwrap();
@@ -616,6 +632,10 @@ fn service_status_down_emits_immediate_risk() {
             queue_depth: None,
             consumer_lag: None,
             drop_count: None,
+            active_state: None,
+            sub_state: None,
+            load_state: None,
+            unit_file_state: None,
         }],
     });
     publish_batch(&mut db, &b).unwrap();
@@ -3798,6 +3818,10 @@ fn diverse_batch_findings() -> Vec<nq_db::detect::Finding> {
                 queue_depth: None,
                 consumer_lag: None,
                 drop_count: None,
+                active_state: None,
+                sub_state: None,
+                load_state: None,
+                unit_file_state: None,
             }],
         });
         let r = publish_batch(&mut db, &b).unwrap();

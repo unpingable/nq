@@ -87,6 +87,10 @@ fn host_detail_populates_host_row_services_sqlite_dbs() {
                 queue_depth: None,
                 consumer_lag: None,
                 drop_count: None,
+                active_state: None,
+                sub_state: None,
+                load_state: None,
+                unit_file_state: None,
             }],
         }],
         sqlite_db_sets: vec![SqliteDbSet {

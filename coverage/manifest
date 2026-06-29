@@ -28,3 +28,6 @@ backend|kea_memfile|lab_backed|crates/nq-monitor/tests/fixtures/kea/kea-leases4.
 backend|kea_control_socket|lab_backed|crates/nq-monitor/tests/fixtures/kea/lease4_get_all.json|
 backend|tls_cert_verdict|lab_backed|crates/nq-monitor/tests/fixtures/tls/lab_leaf.pem|
 claim_kind|service_state|implemented|crates/nq-core/src/preflight.rs|
+# service_state live wiring: systemd collector -> service_observations (publish 5c) -> evaluator; + nq.witness.v1 projection.
+backend|service_state_systemd_collector|implemented|crates/nq-witness/src/collect/services.rs|
+backend|service_state_witness_projection|implemented|crates/nq-db/src/service_state_witness_projection.rs|

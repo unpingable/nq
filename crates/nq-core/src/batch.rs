@@ -164,6 +164,12 @@ pub struct ServiceRow {
     pub queue_depth: Option<i64>,
     pub consumer_lag: Option<i64>,
     pub drop_count: Option<i64>,
+    // Native systemd states for the service_state witness family (carried from
+    // ServiceData). Populated only for systemd-collected rows.
+    pub active_state: Option<String>,
+    pub sub_state: Option<String>,
+    pub load_state: Option<String>,
+    pub unit_file_state: Option<String>,
 }
 
 /// Full replacement set: all sqlite DBs for one host from one collection.

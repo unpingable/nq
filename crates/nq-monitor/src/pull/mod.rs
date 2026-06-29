@@ -275,6 +275,10 @@ async fn pull_one(source: SourceConfig) -> PullResult {
                             queue_depth: s.queue_depth,
                             consumer_lag: s.consumer_lag,
                             drop_count: s.drop_count,
+                            active_state: s.active_state.clone(),
+                            sub_state: s.sub_state.clone(),
+                            load_state: s.load_state.clone(),
+                            unit_file_state: s.unit_file_state.clone(),
                         })
                         .collect(),
                 });

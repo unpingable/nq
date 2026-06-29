@@ -133,6 +133,10 @@ fn service_row(name: &str) -> ServiceRow {
         queue_depth: None,
         consumer_lag: None,
         drop_count: None,
+        active_state: None,
+        sub_state: None,
+        load_state: None,
+        unit_file_state: None,
     }
 }
 

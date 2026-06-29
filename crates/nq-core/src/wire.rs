@@ -120,6 +120,19 @@ pub struct ServiceData {
     pub queue_depth: Option<i64>,
     pub consumer_lag: Option<i64>,
     pub drop_count: Option<i64>,
+    // Native service-manager states for the `service_state` witness family
+    // (systemd today). Populated only for systemd-collected rows; the coarse
+    // `status` above feeds findings, these feed `service_observations`. The
+    // aggregator does NOT promote `active` into healthy/recovered/safe — that
+    // boundary is the evaluator's. `#[serde(default)]` keeps the wire additive.
+    #[serde(default)]
+    pub active_state: Option<String>,
+    #[serde(default)]
+    pub sub_state: Option<String>,
+    #[serde(default)]
+    pub load_state: Option<String>,
+    #[serde(default)]
+    pub unit_file_state: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

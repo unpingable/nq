@@ -20,6 +20,22 @@ The chronological order below is newest-first.
 
 ---
 
+## SERVICE_STATE_LIVE_COLLECTOR (native systemd states feed the evaluator)
+
+**Status:** `shipped` 2026-06-29 (systemd; docker/process deferred).
+
+**What landed:** `service_state` now testifies from **live observations**, not just a hand-written row.
+- `services.rs` `check_systemd` captures native `ActiveState`/`SubState`/`LoadState`/`UnitFileState` via one `systemctl show`; carried additively on `ServiceData` + `ServiceRow` (serde-default, wire-compatible).
+- `publish.rs` (5c) writes `service_observations` for systemd-collected rows every cycle (one per host/service/generation; coarse `status` still feeds findings — `active` is **not** promoted to healthy here).
+- `service_state_witness_projection::project_service_observation` → `nq.witness.v1` (proof-of-shape: envelope + native-state local payload, plain-language `coverage_limits`, **no** claim vocab; wire-validated).
+- coverage manifest gains `service_state_systemd_collector` + `service_state_witness_projection` backends.
+
+**Evidence:** end-to-end publish test (`live_systemd_collection_feeds_service_observations_and_evaluator`: collect → publish writes the row → evaluator `admissible_with_scope`, refusals present, support never says healthy/recovered) + 3 projection tests + the wire ripple (`ServiceData`/`ServiceRow` +4 fields) compiled clean across all construction sites; full workspace suite green.
+
+**Deferred (named):** feed the projection into the evaluator's `PreflightSupport.witness_packet` (still `None`); `served_surface_registry` entry; **docker/process** native-state capture (systemd-only today).
+
+---
+
 ## SERVICE_STATE_V0 (native service-state witness family — core landed)
 
 **Status:** `partial` 2026-06-29. The data + evaluation core landed; witness projection + live collector wiring deferred (named).

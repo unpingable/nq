@@ -53,6 +53,10 @@ fn batch_with_services(host: &str, services: &[&str]) -> Batch {
                     queue_depth: None,
                     consumer_lag: None,
                     drop_count: None,
+                    active_state: None,
+                    sub_state: None,
+                    load_state: None,
+                    unit_file_state: None,
                 })
                 .collect(),
         }],
