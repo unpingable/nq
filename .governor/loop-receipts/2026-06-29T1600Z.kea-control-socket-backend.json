@@ -1,0 +1,17 @@
+{
+  "slice": "P0 #3 — Kea control-socket lease backend (second backend, same shape)",
+  "date": "2026-06-29",
+  "lane": "operator-directed (P0 implementation; #1 service_state DEFERRED as a schema/design slice — operator+ChatGPT confirmed it is not implementation-ready)",
+  "decision_recorded": "#1 service_state DEFERRED: CLAIM_CATALOG marks the witness shape undecided; no ServiceState ClaimKind / observation storage / preflight decision doc. NOT built. Do NOT invent a migration/observation shape by pattern-matching dns_state. Comes back as a dedicated schema/design slice (ClaimKind + observation row shape + writer idempotency/conflict + evaluator + refusal boundary may-testify-state-at-T0/refuse-recovered/healthy/safe/coverage + migration + registry wiring).",
+  "doctrine": "A backend supplies observations toward the same witness shape; it does not change the contract. Lab-backed compatibility, not live testimony.",
+  "built": [
+    "crates/nq-monitor/src/kea_control.rs: parse_lease4_get_all (pure) + fetch_leases_via_control_socket (unix socket). Produces the EXISTING KeaLease shape (no new abstraction) via lease4-get-all; expire = cltt + valid-lft.",
+    "Typed KeaControlError per boundary: SocketMissing / ConnectionRefused / Timeout / Io / MalformedResponse / UnsupportedCommand (Kea result 2) / KeaResult (other non-zero).",
+    "Fixture crates/nq-monitor/tests/fixtures/kea/lease4_get_all.json (REAL captured lab response) + README."
+  ],
+  "tests": "11 (+1 gated #[ignore] real-Kea): parser vs real fixture; CROSS-BACKEND CONSISTENCY (API == memfile KeaLease); unsupported/error/empty/malformed result; fake in-process unix-socket server happy-path; missing socket; malformed-over-socket; timeout; connection-refused (stale socket file). Real Kea behind NQ_KEA_CTRL_SOCKET + --ignored.",
+  "scope_guard": "No new abstraction (same KeaLease). Did NOT wire into live_lease_presence (the live SSH read still uses memfile; control-socket-over-SSH via nc -U is the gated real-integration step). Did NOT build #1 service_state. Fake-socket tests first, real Kea gated — exactly as specified.",
+  "verify": {"kea_control_tests": "11 pass + 1 ignored", "build": "cargo build -p nq-monitor 0 warnings", "full_suite": "verify at commit"},
+  "deferred_named": "Wire control-socket backend into live_lease_presence (gated real Kea); stat-lease4-get pool utilization; canonical witness-JSON emission; dhcp_dns_identity_consistency composite.",
+  "acceptance": "P0 #3 done (backend + fake-socket tests + gated real-Kea + captured fixture). Loop AUDIT/idle. PUSH: held (workweek). NEXT: P0 #2 expected_coverage manifest — scoped to existing/ready surfaces ONLY; must REPRESENT service_state as explicitly deferred/not-expected (pointer to CLAIM_CATALOG), NOT force it into existence; prevents silent absence, does not promote undecided work."
+}
