@@ -5,7 +5,7 @@ use tracing::info;
 /// with the last entry of `MIGRATIONS` below. Exposed for consumer
 /// surfaces (e.g. the finding export path) so they can preflight
 /// against a DB whose schema is older than the code was built for.
-pub const CURRENT_SCHEMA_VERSION: u32 = 58;
+pub const CURRENT_SCHEMA_VERSION: u32 = 59;
 
 /// Read `PRAGMA user_version` from an arbitrary connection. Returns 0
 /// for a freshly-opened SQLite file that's never been migrated.
@@ -74,6 +74,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (56, include_str!("../migrations/056_nq_evaluator_observations.sql")),
     (57, include_str!("../migrations/057_origin_mode_discriminator.sql")),
     (58, include_str!("../migrations/058_scrape_target_provenance.sql")),
+    (59, include_str!("../migrations/059_service_observations.sql")),
 ];
 
 pub fn migrate(db: &mut WriteDb) -> anyhow::Result<()> {
@@ -1943,5 +1944,34 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn service_observations_rejects_unknown_manager() {
+        let db = fresh_db();
+        let err = db
+            .conn
+            .execute(
+                "INSERT INTO service_observations
+                   (generation_id, host, service_manager, service_name, active_state, observed_at)
+                 VALUES (1, 'sushi-k', 'nope', 'kea-dhcp4', 'active', '2026-06-29T12:00:00Z')",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("check"));
+    }
+
+    #[test]
+    fn service_observations_unique_identity_per_generation() {
+        // One observation per (generation, host, manager, service). The writer
+        // turns a repeat of this identity into idempotent-or-conflict; the DB
+        // backstop is this UNIQUE index.
+        let db = fresh_db();
+        let row = "INSERT INTO service_observations
+                   (generation_id, host, service_manager, service_name, active_state, observed_at)
+                 VALUES (1, 'sushi-k', 'systemd', 'kea-dhcp4', ?1, '2026-06-29T12:00:00Z')";
+        db.conn.execute(row, ["active"]).unwrap();
+        let err = db.conn.execute(row, ["failed"]).unwrap_err();
+        assert!(err.to_string().to_ascii_lowercase().contains("unique"));
     }
 }
