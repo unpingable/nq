@@ -526,4 +526,112 @@ TT0mQ/r5XyA4MEAiabn7XJjvCERlF2dcn2wqJw+CreTkkQ2R
         let v = validate_observed_chain(&chain, "wrong.example.com", at("2026-06-19T00:00:00Z"));
         assert!(matches!(v, ChainValidation::Invalid { .. }), "wrong name must not validate: {v:?}");
     }
+
+    // ───────── lab-backed verdict ladder (controlled cert) ─────────
+    // Drives evaluate_tls_cert from a REAL parsed certificate (multi-SAN,
+    // self-signed lab blob) via the injected probe clock — the ladder was
+    // previously only exercised by synthetic facts. Lab-backed compatibility,
+    // not live testimony. See tests/fixtures/tls/README.md.
+
+    use crate::tls_cert_probe::{TlsCertVerdict, ValidationPolicy};
+
+    const LAB_LEAF_PEM: &str = include_str!("../tests/fixtures/tls/lab_leaf.pem");
+
+    fn lab_leaf() -> PresentedCert {
+        let (_, pem) =
+            x509_parser::pem::parse_x509_pem(LAB_LEAF_PEM.as_bytes()).expect("lab pem parses");
+        parse_presented_cert(&pem.contents).expect("lab cert parses")
+    }
+
+    fn lab_facts() -> TlsCertFacts {
+        TlsCertFacts {
+            delivery: DeliveryBasis {
+                dns_answers: vec![],
+                tcp_connected: true,
+                tls_handshake_completed: true,
+            },
+            response_horizon: ResponseHorizon {
+                timeout_ms: 10_000,
+                elapsed_ms: None,
+            },
+            presented_chain: vec![lab_leaf()],
+            validation: ChainValidation::Valid,
+        }
+    }
+
+    fn lab_verdict(expected_name: &str, now: &str, threshold: i64) -> TlsCertVerdict {
+        let target = TlsCertTarget {
+            target: "tls-lab.test:443".to_string(),
+            sni: "tls-lab.test".to_string(),
+            vantage: "lab-vantage".to_string(),
+        };
+        let policy = TlsCertPolicy {
+            expected_names: vec![expected_name.to_string()],
+            warning_threshold_days: threshold,
+            validation_policy: ValidationPolicy::Webpki,
+        };
+        let clock = ClockBasis {
+            source: "system_wall".to_string(),
+            ntp_status: "unknown".to_string(),
+        };
+        evaluate_tls_cert(&target, &lab_facts(), &policy, &clock, at(now)).verdict
+    }
+
+    #[test]
+    fn lab_cert_parses_multi_san_and_fields() {
+        let c = lab_leaf();
+        assert_eq!(
+            c.sans,
+            vec!["tls-lab.test".to_string(), "www.tls-lab.test".to_string()]
+        );
+        assert!(c.subject.contains("tls-lab.test"), "subject: {}", c.subject);
+        assert_eq!(c.not_before, at("2026-06-29T16:31:29Z"));
+        assert_eq!(c.not_after, at("2027-06-29T16:31:29Z"));
+        assert_eq!(
+            c.sha256_fingerprint,
+            "06:3F:00:37:EA:50:15:C8:FC:34:84:50:3D:F2:2F:F1:D1:98:2F:0B:70:E6:73:02:8F:E2:25:50:54:58:EF:1D"
+        );
+    }
+
+    #[test]
+    fn lab_cert_valid_at_probe_time() {
+        assert_eq!(
+            lab_verdict("tls-lab.test", "2026-12-01T00:00:00Z", 30),
+            TlsCertVerdict::ValidAtProbeTime
+        );
+    }
+
+    #[test]
+    fn lab_cert_second_san_also_matches() {
+        assert_eq!(
+            lab_verdict("www.tls-lab.test", "2026-12-01T00:00:00Z", 30),
+            TlsCertVerdict::ValidAtProbeTime
+        );
+    }
+
+    #[test]
+    fn lab_cert_within_warning_horizon() {
+        // ~9 days before notAfter (2027-06-29), threshold 30 -> warning.
+        assert_eq!(
+            lab_verdict("tls-lab.test", "2027-06-20T00:00:00Z", 30),
+            TlsCertVerdict::ValidButWithinWarningHorizon
+        );
+    }
+
+    #[test]
+    fn lab_cert_expired_under_probe_clock() {
+        // Clock after notAfter. Same bytes, later clock -> expired (never absolutely).
+        assert_eq!(
+            lab_verdict("tls-lab.test", "2027-07-01T00:00:00Z", 30),
+            TlsCertVerdict::ExpiredUnderProbeClock
+        );
+    }
+
+    #[test]
+    fn lab_cert_name_mismatch_when_expected_name_absent() {
+        assert_eq!(
+            lab_verdict("not-in-cert.test", "2026-12-01T00:00:00Z", 30),
+            TlsCertVerdict::NameMismatch
+        );
+    }
 }

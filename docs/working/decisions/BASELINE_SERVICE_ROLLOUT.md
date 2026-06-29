@@ -44,12 +44,13 @@ Each entry: **family · current conformance · claim kind · may say (weaker) ·
 - **Must refuse:** client connectivity, client identity ownership, address reachability, DNS correctness, **reverse-DNS correctness**, host authorization, renewal will succeed, network health, remediation/failover/page. (DDNS `fqdn_fwd`/`fqdn_rev` are *intent*, never a DNS-content claim.)
 - **Next slice:** control-socket backend (`lease4-get-all` / `stat-lease4-get` — JSON already captured in lab) extending the native reader's coverage; map the native shape into the canonical witness JSON. Deferred composite (named, not built): `dhcp_dns_identity_consistency` — composes Kea + DNS testimony, never DHCP laundering DNS into existence.
 
-### tls_certificate_state — partially built (next real protocol witness)
-- **Conformance:** native probe code exists (`tls_cert_probe.rs` / `tls_cert_transport.rs` / series, frozen specimen). 2d-b = operationalize into a claim kind.
-- **Claim (candidate):** `tls_certificate_state`.
-- **May say:** endpoint presented cert fingerprint F / SAN covering SNI / notAfter T / chain-validation result R under trust basis B, from vantage V at T0.
-- **Must refuse:** "site is secure," domain ownership, account/CA custody, key safety, app health, "users unaffected," "cert will renew."
-- **Next slice:** spec the refusals first; then fixtures, one-shot probe operationalization, `tls_certificate_state` preflight. Composes with DNS without collapsing into it (name resolved ≠ endpoint identity presented).
+### tls_certificate_state — ACTIVE-WITNESS PROBE built + refusals pinned + lab fixtures
+- **Lane (decided):** `nq.probe.tls_cert.v1` is an **active-witness probe** (receipt-only, clock-injected, observe-only), a sibling of gateway-path / lease-presence / declared-deny — **NOT** a claim-registry *preflight* kind. The witness statement is the probe receipt's typed `TlsCertVerdict`. ("tls_certificate_state preflight" in earlier framing was a mislabel.)
+- **Conformance:** probe core + live rustls transport + WebPKI chain validation + receipt series + CLI (`nq-monitor probe tls-cert`) all exist (frozen specimen 2026-06-19). Refusals are **pinned in code** (`scope_ceiling_non_claims`) and now exercised against a real cert.
+- **May say:** endpoint presented cert fingerprint F / SAN set S / notBefore..notAfter, chain-validation result R under trust basis B, from vantage V at the probe clock; typed verdict (`valid_at_probe_time` / `valid_but_within_warning_horizon` / `expired_under_probe_clock` / `name_mismatch` / `chain_invalid` / handshake-or-transport failures).
+- **Must refuse (in `non_claims`):** "site is secure," domain ownership, account/CA custody, key safety, app health, "users unaffected," "cert will renew," absolute expiry (only ever *under the probe clock*).
+- **Lab validation (2026-06-29):** verdict ladder driven from a **real OpenSSL-generated cert** (`tests/fixtures/tls/lab_leaf.pem`, multi-SAN) via injected clock — valid / second-SAN / within-warning / expired-under-probe-clock / name-mismatch. The parser already had a real single-SAN leaf test; this adds multi-SAN + the end-to-end ladder. See FEATURE_HISTORY § TLS_CERT_VERDICT_LAB_VALIDATION.
+- **Next slice (deferred):** 2d-b operationalization (a scheduled/standing emission of the receipt series — currently manual append-only, no scheduler). Composes with DNS without collapsing into it (name resolved ≠ endpoint identity presented). No "tls claim kind" is needed unless a preflight consumer forces one.
 
 ### time_basis — FOUNDATIONAL, `proposed` (TIME_BASIS_POISONING_GAP)
 - **Conformance:** architecture floor, not a service. The witness reports offset/sync; **NQ's claim layer decides whether that poisons standing.** The witness must NOT conclude "freshness invalid" — that collapses observation into authority (the constitutional bug).

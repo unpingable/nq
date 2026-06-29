@@ -20,6 +20,22 @@ The chronological order below is newest-first.
 
 ---
 
+## TLS_CERT_VERDICT_LAB_VALIDATION (tls_cert probe — lab-backed compatibility)
+
+**Status:** `shipped` 2026-06-29. Lab validation + fixture for the existing `nq.probe.tls_cert.v1` verdict ladder; no probe-semantics change.
+
+**Shipped commits:** the TLS-lab commits adding `crates/nq-monitor/tests/fixtures/tls/` (controlled OpenSSL cert + README) and the lab-cert ladder tests in `tls_cert_transport.rs`.
+
+**What landed:** the TLS cert **verdict ladder** (`evaluate_tls_cert`) is now exercised end-to-end from a **real certificate**, not synthetic `PresentedCert` values. A controlled multi-SAN self-signed cert (`tests/fixtures/tls/lab_leaf.pem`, OpenSSL 3.0, SAN `tls-lab.test`+`www.tls-lab.test`, validity 2026-06-29→2027-06-29) is parsed by `parse_presented_cert` and driven through the ladder via the probe's injected clock: `valid_at_probe_time`, second-SAN match, `valid_but_within_warning_horizon` (~9d before notAfter, threshold 30), `expired_under_probe_clock` (clock past notAfter — never "absolutely"), and `name_mismatch`. Multi-SAN parsing is newly covered (the prior real-cert test was the single-SAN `nq.neutral.zone` leaf).
+
+**Lane (recorded):** `nq.probe.tls_cert.v1` is an **active-witness probe** (receipt-only, observe-only, clock-injected) — a sibling of gateway-path / lease-presence / declared-deny, NOT a claim-registry preflight kind. Refusals live in `scope_ceiling_non_claims` and are now exercised against real cert material.
+
+**Evidence:** 6 tests in `tls_cert_transport::tests` (parse multi-SAN + fingerprint/validity, + the five ladder verdicts) against the committed lab cert. `cargo build -p nq-monitor` 0 warnings; the pre-existing probe/transport/series/WebPKI tests unchanged. Fixture provenance + reproduce: `tests/fixtures/tls/README.md`. Lab-backed **compatibility** evidence (the parser + verdict core classify a real cert correctly under declared lab conditions), never live testimony about any real endpoint.
+
+**Deferred (named):** 2d-b operationalization (scheduled/standing emission of the receipt series — currently manual, no scheduler); a WebPKI-untrusted real-chain fixture for `chain_invalid` (the self-signed lab cert isolates parse + name/expiry verdicts; chain validity is tested separately against bundled roots).
+
+---
+
 ## DNS_WIRE_DECODER_LAB_VALIDATION (dns_state probe — lab-backed compatibility)
 
 **Status:** `shipped` 2026-06-29. Validation + fixtures for the already-shipped V0 DNS wire decoder; no probe-semantics change.
