@@ -1,0 +1,18 @@
+{
+  "slice": "service_state V0 — native service-state witness family (core)",
+  "date": "2026-06-29",
+  "lane": "operator-directed — opened the deferred schema slice (breadcrumb did its job; ChatGPT ratified the minimal shape)",
+  "doctrine": "The witness records the manager's native state; the evaluator interprets it at witness scope and refuses everything stronger. Absence is 'no witness', not 'false'. active != healthy; inactive != broken. WLP stays out (adjacent courier layer).",
+  "three_layer_shape_held": "per-kind observation table -> (witness projection DEFERRED) -> receipt/claim. The portable nq.witness.v1 envelope is the projection layer; the per-kind table sits under it (the correction from the schema thread).",
+  "landed": [
+    "migration 059 service_observations (host, service_manager systemd/docker/process/unknown, service_name, native active_state, nullable sub/load/unit_file_state, observed_at) + UNIQUE identity index; NO recovered/healthy/safe/coverage/desired_state columns; CURRENT_SCHEMA_VERSION 58->59.",
+    "ServiceState ClaimKind + PREFLIGHT_SERVICE_STATE_SCHEMA + service_state_cannot_testify (recovery/health/dependency/coverage/future-liveness/safety/causal-repair).",
+    "writer insert_service_observation (idempotent same-state; EXPLICIT conflict on differing state under one identity key; no silent overwrite); reader latest_service_observation_for_tuple; evaluator evaluate_service_state_preflight* (missing->insufficient_coverage; fresh->admissible_with_scope; stale->stale_testimony).",
+    "nq_evaluator_probe dispatch arm; coverage manifest service_state deferred->implemented; breadcrumb status partial."
+  ],
+  "tests": "6 module tests (roundtrip / idempotent-same / explicit-conflict / missing->insufficient_coverage / admissible-with-scope+refusals-present / stale) + 2 migration CHECK/UNIQUE; full workspace suite green (ClaimKind ripple clean).",
+  "scope_guard": "Witness records native state; evaluator refuses recovered/healthy/safe/coverage. No new generic super-table (per-kind table like dns/wal). WLP not pulled in. Did NOT build the projection or live collector wiring (named deferred).",
+  "commit_split": "059 migration (already committed) then the core vertical (nq-core ClaimKind+refusal, nq-db module, dispatch arm, manifest, tests, docs) as one coherent commit (intermediate per-file commits would not compile due to ClaimKind coupling).",
+  "deferred_named": "service_state_witness_projection -> nq.witness.v1 (PreflightSupport.witness_packet None until then); live collector wiring (native systemd/docker state into service_observations during a real cycle; collector today emits coarse ServiceStatus findings); served_surface_registry entry; docker/process variants.",
+  "acceptance": "service_state V0 core landed: table+ClaimKind+refusal+writer(idempotent/conflict)+reader+evaluator+tests, witness-scope-only with the refusal boundary enforced. FEATURE_HISTORY § SERVICE_STATE_V0; breadcrumb -> partial; manifest -> implemented. Loop AUDIT/idle. PUSH: held (workweek). NEXT (named): projection, live collector wiring."
+}
