@@ -1,0 +1,32 @@
+# Expected-coverage manifest (P0 #2). Machine-checked by scripts/check-coverage-manifest.sh (CI job coverage-manifest).
+# Purpose: make absence DECLARED, not laundered. Every implemented NQ-repo witness surface MUST appear here;
+# every entry's evidence MUST exist; deferred/not_expected MUST carry a rationale.
+# Columns:  category | name | status | evidence(path, repo-relative) | rationale(required for deferred/not_expected)
+# category ∈ claim_kind | active_probe | backend ;  status ∈ implemented | lab_backed | deferred | not_expected
+# Scope: NQ-repo surfaces only. nq-witness profiles (zfs/smart/fs_inode/kea_dhcp) are that repo's coverage concern.
+#
+# --- claim kinds (the ClaimKind enum; enumerated from code) ---
+claim_kind|disk_state|implemented|crates/nq-core/src/preflight.rs|
+claim_kind|ingest_state|implemented|crates/nq-core/src/preflight.rs|
+claim_kind|dns_state|implemented|crates/nq-core/src/preflight.rs|
+claim_kind|sqlite_wal_state|implemented|crates/nq-core/src/preflight.rs|
+claim_kind|component_testimony_observation_loop_alive|implemented|crates/nq-core/src/preflight.rs|
+claim_kind|nq_binary_mtime_state|implemented|crates/nq-core/src/preflight.rs|
+claim_kind|nq_evaluator_state|implemented|crates/nq-core/src/preflight.rs|
+claim_kind|nq_sql_contract_state|implemented|crates/nq-core/src/preflight.rs|
+#
+# --- active-witness probes (nq-monitor *_probe.rs; enumerated from code) ---
+active_probe|declared_deny|implemented|crates/nq-monitor/src/declared_deny_probe.rs|
+active_probe|gateway_path|implemented|crates/nq-monitor/src/gateway_path_probe.rs|
+active_probe|lease_presence|implemented|crates/nq-monitor/src/lease_presence_probe.rs|
+active_probe|nq_evaluator|implemented|crates/nq-monitor/src/nq_evaluator_probe.rs|
+active_probe|tls_cert|implemented|crates/nq-monitor/src/tls_cert_probe.rs|
+#
+# --- lab-backed backends/adapters (must have their fixture evidence) ---
+backend|dns_wire_decoder|lab_backed|crates/nq-monitor/tests/fixtures/dns|
+backend|kea_memfile|lab_backed|crates/nq-monitor/tests/fixtures/kea/kea-leases4.csv|
+backend|kea_control_socket|lab_backed|crates/nq-monitor/tests/fixtures/kea/lease4_get_all.json|
+backend|tls_cert_verdict|lab_backed|crates/nq-monitor/tests/fixtures/tls/lab_leaf.pem|
+#
+# --- deferred / not-expected (declared absence, with rationale) ---
+claim_kind|service_state|deferred|docs/working/decisions/preflights/SERVICE_STATE.md|not P0; witness shape candidate (breadcrumb). Layering+refusal pinned, storage columns candidate. No ClaimKind/table/evaluator yet.

@@ -65,10 +65,10 @@ Each entry: **family · current conformance · claim kind · may say (weaker) ·
 - **Must refuse:** recovered, healthy, "deployment good," "traffic flowing," coverage complete, safe-to-restart, safe-to-ignore.
 - **Next slice:** consume existing systemd/docker observations → preflight result; examples for down/degraded/flapping/stale/absent.
 
-### expected_coverage — `candidate` (SUBSTRATE_COVERAGE_DECLARATION_GAP) — add before adapters sprawl
-- **May say:** this host/service/query was expected / observed / stale / absent / not-asked.
-- **Must refuse:** silent green; "not configured" becoming "fine"; coverage-of-named-things implying coverage-of-host.
-- **Next slice:** expected-observation manifest; the partial-coverage refusal already named in the gap.
+### expected_coverage — dev/impl manifest LANDED (P0 #2); runtime-coverage still candidate
+- **Two distinct "coverage" notions — keep separate:**
+  - **dev/impl coverage (LANDED 2026-06-29):** `coverage/manifest` + `scripts/check-coverage-manifest.sh` (CI job `coverage-manifest`) — which witness surfaces are implemented/lab-backed/deferred; fails closed on silent absence, dead evidence, or unrationalized deferral. `service_state` declared deferred. See FEATURE_HISTORY § EXPECTED_COVERAGE_MANIFEST.
+  - **runtime substrate coverage (still `candidate`, SUBSTRATE_COVERAGE_DECLARATION_GAP):** what host/service/query was expected / observed / stale / absent / not-asked. **May say** that; **must refuse** silent green, "not configured" becoming "fine," coverage-of-named-things implying coverage-of-host. Next slice: the expected-observation manifest at runtime; the partial-coverage refusal already named in the gap.
 
 ### http_tcp_probe — synthetic reachability (blackbox first)
 - **Conformance:** observation source; blackbox-style first, native only with a forcing case.

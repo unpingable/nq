@@ -20,6 +20,22 @@ The chronological order below is newest-first.
 
 ---
 
+## EXPECTED_COVERAGE_MANIFEST (P0 #2 — declared absence, machine-checked)
+
+**Status:** `shipped` 2026-06-29.
+
+**Shipped commits:** the coverage-manifest commits adding `coverage/manifest` + `scripts/check-coverage-manifest.sh` + the `coverage-manifest` CI job.
+
+**What landed:** a machine-readable declaration of which NQ-repo witness surfaces are implemented / lab-backed / deferred, with a fail-closed checker (CI job `coverage-manifest`). It makes **absence declared, not laundered** — no "missing means fine." The checker fails closed when (1) an implemented surface is absent from the manifest (every `ClaimKind` enum variant, every `*_probe.rs`, every `tests/fixtures/<dir>`), (2) an entry references dead/unknown evidence, or (3) a deferred/not_expected entry lacks a rationale. Format: `category | name | status | evidence | rationale`.
+
+**Scope (deliberate):** NQ-repo surfaces only. The `nq-witness` profiles are that repo's coverage concern (nq's CI doesn't check out the sibling repo, so referencing them would be a dead-evidence false-positive). `service_state` is declared **`deferred`**, pointing at `preflights/SERVICE_STATE.md` — the manifest surfaces the gap, it does not force the work into existence.
+
+**Evidence:** `scripts/check-coverage-manifest.sh` PASS over `coverage/manifest`; all three failure modes proven (dead evidence → exit 1; a dropped `claim_kind` → exit 1; a deferred entry with no rationale → exit 1). 8 claim kinds + 5 active probes + 4 lab-backed backends declared, plus `service_state` deferred.
+
+**Deferred (named):** runtime substrate-coverage declaration (the *other* "coverage" — `SUBSTRATE_COVERAGE_DECLARATION_GAP`, what hosts/services are expected to be observed) is separate from this dev/impl-coverage manifest; an `nq-witness`-side manifest for its profiles if it wants one.
+
+---
+
 ## KEA_CONTROL_SOCKET_BACKEND (second Kea lease backend)
 
 **Status:** `shipped` 2026-06-29. Backend + fake-socket tests; live SSH wiring + real-Kea test gated.
