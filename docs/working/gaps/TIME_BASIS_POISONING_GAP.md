@@ -108,6 +108,12 @@ The first implementation surface does **not** depend on an nq-witness `clock_ske
 
 These checks read NQ's own state — testimony already in flight — and require no external skew authority. They define a **time-basis sanity preflight**, not a NTP monitor. The first internal slice should land one or two of these checks, not all six; the rest queue as the model demands more.
 
+> **V0 internal sanity — landed (2026-06-29), both annotation-only ("Mark"):**
+> - **Check 1 (future-skew) — already wired:** `PreflightResult::compute_time_basis` (`crates/nq-core/src/preflight.rs`) emits suspicion kind `observed_at_future_of_evaluator` → `TimeBasisStatus::Suspect` when a support's `observed_at` is implausibly ahead of the evaluator clock. Verdict unchanged; annotation on the result.
+> - **Check 2 (backward-regression) — added inert:** `crates/nq-core/src/time_basis.rs::observed_at_regression` — a pure detector for `witness_observed_at` stepping sharply backward for the same host/stream across cycles (the case a single snapshot cannot see). Annotation-only; **inert** until a follow-on feeds it prior-cycle `observed_at` (e.g. at DB ingest). Suspicion kind `observed_at_backward_regression`.
+>
+> Neither refuses, downgrades, corrects, mutates, or notifies. The remaining four checks + the claim-layer consumption (refuse/downgrade per freshness-keyed kinds) + the external `clock_skew` witness profile stay deferred. See FEATURE_HISTORY § TIME_BASIS_SANITY_V0.
+
 External corroboration (a future `clock_skew` witness profile in nq-witness, or `time_peer_observed_at` from a peer host) becomes a separate input feeding the same adjudication pipeline. It is not a precondition for the first slice. The witness profile, when it lands, augments the sanity surface; it does not replace it.
 
 ## Refusal / downgrade shape

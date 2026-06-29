@@ -8,6 +8,7 @@ pub mod receipt_check;
 pub mod receipt_replay;
 pub mod render;
 pub mod status;
+pub mod time_basis;
 pub mod wire;
 pub mod witness;
 

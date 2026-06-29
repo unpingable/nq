@@ -20,6 +20,22 @@ The chronological order below is newest-first.
 
 ---
 
+## TIME_BASIS_SANITY_V0 (internal receiver-side sanity — annotation-only)
+
+**Status:** `partial` 2026-06-29. Two of the gap's six internal checks; both annotation-only; check 2 inert pending ingest wiring. Claim-layer consumption + external `clock_skew` witness deferred.
+
+**Shipped commits:** the time-basis commits adding `crates/nq-core/src/time_basis.rs` (`observed_at_regression`) + the `TIME_BASIS_POISONING_GAP` V0 note.
+
+**What landed (Decision C):** the internal time-basis sanity layer the gap names — receiver-side checks over timestamps NQ already has, no external skew authority. **Check 1 (future-skew)** was already wired: `PreflightResult::compute_time_basis` emits `observed_at_future_of_evaluator` → `TimeBasisStatus::Suspect`. **Check 2 (backward-regression)** is new: `time_basis::observed_at_regression` — a pure detector for `witness_observed_at` stepping sharply backward for the same host/stream across cycles (the case a single snapshot can't see), tolerating small jitter under a threshold, emitting suspicion kind `observed_at_backward_regression`.
+
+**Doctrine — "Mark" only:** the witness reports facts; whether a suspicion poisons standing is the claim layer's call. Neither check mints a verdict, refuses, downgrades, corrects a clock, mutates a receipt, or notifies. Time-basis is a modifier on the admissibility of *other* testimony, not a monitoring surface. Absence of suspicion is `unknown`, never `verified`.
+
+**Evidence:** 4 tests in `time_basis::tests` (no-prior → none; forward progress → none; small backward jitter within threshold → none; sharp backward step → fires with seconds + kind) + the 8 existing `compute_time_basis` tests. `cargo build -p nq-core` 0 warnings.
+
+**Deferred (named):** check 2 is **inert** — wiring it needs prior-cycle `observed_at` per stream (e.g. at DB ingest), a follow-on slice; the remaining four checks (monotonicity, fresh-by-witness-stale-by-receiver, wall-clock jump, reboot-sentinel); claim-layer **consumption** (refuse/downgrade for freshness-keyed kinds — the controlled `suspicion_kind` vocabulary must ratify first); and the external `clock_skew` nq-witness profile.
+
+---
+
 ## TLS_CERT_VERDICT_LAB_VALIDATION (tls_cert probe — lab-backed compatibility)
 
 **Status:** `shipped` 2026-06-29. Lab validation + fixture for the existing `nq.probe.tls_cert.v1` verdict ladder; no probe-semantics change.

@@ -52,11 +52,11 @@ Each entry: **family · current conformance · claim kind · may say (weaker) ·
 - **Lab validation (2026-06-29):** verdict ladder driven from a **real OpenSSL-generated cert** (`tests/fixtures/tls/lab_leaf.pem`, multi-SAN) via injected clock — valid / second-SAN / within-warning / expired-under-probe-clock / name-mismatch. The parser already had a real single-SAN leaf test; this adds multi-SAN + the end-to-end ladder. See FEATURE_HISTORY § TLS_CERT_VERDICT_LAB_VALIDATION.
 - **Next slice (deferred):** 2d-b operationalization (a scheduled/standing emission of the receipt series — currently manual append-only, no scheduler). Composes with DNS without collapsing into it (name resolved ≠ endpoint identity presented). No "tls claim kind" is needed unless a preflight consumer forces one.
 
-### time_basis — FOUNDATIONAL, `proposed` (TIME_BASIS_POISONING_GAP)
-- **Conformance:** architecture floor, not a service. The witness reports offset/sync; **NQ's claim layer decides whether that poisons standing.** The witness must NOT conclude "freshness invalid" — that collapses observation into authority (the constitutional bug).
-- **May say (internal sanity, V0):** observed_at implausibly future of evaluator/aggregator time; observed_at regression for a host/witness stream → annotate.
+### time_basis — internal sanity V0 LANDED (Decision C), annotation-only
+- **Conformance:** architecture floor, not a service. The witness reports offset/sync; **NQ's claim layer decides whether that poisons standing.** The witness must NOT conclude "freshness invalid" — that collapses observation into authority.
+- **Landed (annotation-only, 2026-06-29):** check 1 future-skew already wired (`compute_time_basis` → `observed_at_future_of_evaluator`); check 2 backward-regression added inert (`time_basis::observed_at_regression`). Both "Mark" only — no verdict/refusal/correction/mutation. See FEATURE_HISTORY § TIME_BASIS_SANITY_V0.
 - **Must refuse:** clock correction, paging, mutating historical receipts, freshness-invalidation-by-witness-fiat, consequence.
-- **Next slice:** internal receiver-side sanity annotation seam first (over timestamps already in flight); external `clock_skew` witness profile only once the adjudication seam exists to consume it. P0 *architecture*, not necessarily first code after DNS.
+- **Next slice (deferred):** wire check 2 (feed prior-cycle `observed_at` at ingest); the remaining four checks; claim-layer **consumption** (refuse/downgrade for freshness-keyed kinds, once the `suspicion_kind` vocabulary ratifies); external `clock_skew` nq-witness profile.
 
 ### service_state — named-but-not-built (breadth without sprawl)
 - **Conformance:** generic claim kind over EXISTING systemd/docker/process observations. **Build the claim kind, not per-daemon hacks.** (No recovery witness exists; a liveness-only witness may not testify recovery.)
@@ -120,7 +120,7 @@ Parked — pfSense PHP self-description comparator (position-diversity terrarium
 
 - **A. dns_state shape:** native probe only (A) / nq-witness profile (B) / both with native normalized into witness JSON later (C). **Lean: A short-term, C near-term.**
 - **B. Kea:** RESOLVED — full witness profile now (`nq-witness/profiles/kea_dhcp.md`), native memfile reader kept as the first backend adapter; `dhcp_dns_identity_consistency` composite recorded but not built.
-- **C. time_basis first-code timing:** internal sanity annotation immediately after DNS, or hold until a freshness-consuming claim needs it?
+- **C. time_basis first-code timing:** RESOLVED — internal sanity annotation now (2026-06-29). Check 1 already wired; check 2 (`observed_at_regression`) added inert/annotation-only. Consumption + external witness deferred.
 - **D. Prom curation surface:** `docs/operator/baseline-prom-exporters.md` (curated examples + history policy) vs folding into `integrations.md`.
 
 ## Recommended next slice
