@@ -1474,4 +1474,88 @@ mod tests {
             assert_eq!(obs.response_kind, *expected, "{kind:?}");
         }
     }
+
+    // ───────── parse_response vs REAL resolver bytes (lab-backed) ─────────
+    // Hex captured from BIND 9.18.49 (docker). Validates the hand-rolled wire
+    // decoder against real datagrams — especially the success-vs-nodata split
+    // (RCODE 0 with vs without a matching answer). Compatibility evidence, not
+    // live testimony. See tests/fixtures/dns/README.md.
+
+    fn from_hex(s: &str) -> Vec<u8> {
+        let s = s.trim();
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex"))
+            .collect()
+    }
+
+    const REAL_SUCCESS_A: &str = include_str!("../tests/fixtures/dns/success_a.hex");
+    const REAL_NODATA_AAAA: &str = include_str!("../tests/fixtures/dns/nodata_aaaa.hex");
+    const REAL_NXDOMAIN_A: &str = include_str!("../tests/fixtures/dns/nxdomain_a.hex");
+    const REAL_REFUSED_A: &str = include_str!("../tests/fixtures/dns/refused_a.hex");
+
+    #[test]
+    fn parse_response_real_bind_success_decodes_a_record() {
+        // qid 0x1234, qtype A(1)
+        match parse_response(&from_hex(REAL_SUCCESS_A), 0x1234, 1) {
+            WireOutcome::Answer {
+                rcode,
+                answer_summary,
+                min_ttl_seconds,
+            } => {
+                assert_eq!(rcode, 0);
+                assert!(
+                    answer_summary.contains("10.1.2.3"),
+                    "summary was {answer_summary:?}"
+                );
+                assert_eq!(min_ttl_seconds, Some(60));
+            }
+            other => panic!("expected Answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_real_bind_nodata_is_not_success() {
+        // qid 0x2345, qtype AAAA(28): RCODE 0 but no matching answer. The
+        // load-bearing split — a naive RCODE-0-means-success decoder fails here.
+        assert_eq!(
+            parse_response(&from_hex(REAL_NODATA_AAAA), 0x2345, 28),
+            WireOutcome::Negative {
+                kind: NegativeKind::Nodata,
+                rcode: 0
+            }
+        );
+    }
+
+    #[test]
+    fn parse_response_real_bind_nxdomain() {
+        assert_eq!(
+            parse_response(&from_hex(REAL_NXDOMAIN_A), 0x3456, 1),
+            WireOutcome::Negative {
+                kind: NegativeKind::Nxdomain,
+                rcode: 3
+            }
+        );
+    }
+
+    #[test]
+    fn parse_response_real_bind_refused() {
+        assert_eq!(
+            parse_response(&from_hex(REAL_REFUSED_A), 0x4567, 1),
+            WireOutcome::Negative {
+                kind: NegativeKind::Refused,
+                rcode: 5
+            }
+        );
+    }
+
+    #[test]
+    fn parse_response_rejects_id_mismatch_on_real_bytes() {
+        // A real success datagram presented with the WRONG expected id is a
+        // transport error (possible off-path / stale reply), never an answer.
+        match parse_response(&from_hex(REAL_SUCCESS_A), 0x9999, 1) {
+            WireOutcome::TransportError { .. } => {}
+            other => panic!("expected TransportError on id mismatch, got {other:?}"),
+        }
+    }
 }

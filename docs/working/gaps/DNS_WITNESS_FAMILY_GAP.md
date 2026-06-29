@@ -10,6 +10,8 @@
 
 > A DNS response is testimony from one resolver to one vantage at one instant. It is not global DNS truth. It is not endpoint reachability. It is not service health. NQ records what the resolver said and refuses everything stronger.
 
+> **Lab validation 2026-06-29:** the V0 hand-rolled UDP wire decoder (`probe.rs::parse_response`) is now validated against **real BIND 9.18 response bytes** (Docker lab) — success / nodata / nxdomain / refused, including the load-bearing success-vs-nodata split. Fixtures + tests under `crates/nq-monitor/tests/fixtures/dns/`; see FEATURE_HISTORY § DNS_WIRE_DECODER_LAB_VALIDATION. Lab-backed compatibility evidence, not live testimony. The broader V0 witness-family expansion below remains `proposed`.
+
 ## Decision: Option B — third bespoke evaluator
 
 Per the parked candidate framing (`project_dns_witness_candidate.md`, reframed 2026-05-19 evening), the first artifact for DNS must decide the registry question explicitly. Three options were named:

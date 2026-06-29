@@ -20,6 +20,22 @@ The chronological order below is newest-first.
 
 ---
 
+## DNS_WIRE_DECODER_LAB_VALIDATION (dns_state probe — lab-backed compatibility)
+
+**Status:** `shipped` 2026-06-29. Validation + fixtures for the already-shipped V0 DNS wire decoder; no probe-semantics change.
+
+**Shipped commits:** the DNS-lab commits adding `crates/nq-monitor/tests/fixtures/dns/` (real BIND response bytes + README) and the `parse_response`-vs-real-bytes tests in `crates/nq-monitor/src/probe.rs`.
+
+**What landed:** the hand-rolled UDP DNS wire decoder (`probe.rs::parse_response`) — the risky part of the `dns_state` V0 probe — is now validated against **real BIND 9.18.49 response datagrams** captured from a Docker lab (authoritative zone, recursion off). Four fixtures, one per RCODE-distinguished `WireOutcome`: `success_a` (RCODE 0 + matching A → `Answer`, A 10.1.2.3, ttl 60), `nodata_aaaa` (RCODE 0, no matching answer → `Negative{Nodata}` — the load-bearing success-vs-nodata split a naive RCODE-0 decoder would miss), `nxdomain_a` (`Negative{Nxdomain}`, RCODE 3), `refused_a` (`Negative{Refused}`, RCODE 5), plus an id-mismatch→`TransportError` check on real bytes. The decoder was previously only unit-tested via synthetic `WireOutcome`s through `outcome_from_wire`; it had never met a real resolver. It now has, and is correct.
+
+**Doctrine:** adapter coverage built/validated against synthetic lab substrate, before live use. The fixtures + README are **lab-backed compatibility evidence** — "the decoder correctly classifies real resolver responses under declared lab conditions" — never live testimony about any network's DNS state. (Global CLAUDE.md § YAGNI "Recognition vs authority".)
+
+**Evidence:** 5 tests in `probe::tests` against `tests/fixtures/dns/*.hex` (captured from BIND, see that dir's README + reproduce steps); `cargo test -p nq-monitor` green (129 in-module), full suite green. The pre-existing `dns_state` evaluator/storage/`UdpDnsClient`/CLI are unchanged.
+
+**Deferred (named):** `servfail` (RCODE 2) shares the negative decode path with refused; a real-server capture + DNSSEC `validation_failure` belong to a later validating probe; TCP-fallback on truncation and EDNS are V0-out-of-scope per the DNS gap. DNS_WITNESS_FAMILY_GAP V0 family expansion remains `proposed`.
+
+---
+
 ## KEA_LEASE_ADAPTER (Kea memfile lease reader — adapter coverage)
 
 **Status:** `shipped` 2026-06-29. Lab-backed compatibility coverage; not live-estate testimony.
