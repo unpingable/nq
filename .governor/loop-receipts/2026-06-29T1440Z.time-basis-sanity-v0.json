@@ -1,0 +1,22 @@
+{
+  "slice": "Time-basis internal sanity V0 (Decision C) — annotation-only",
+  "date": "2026-06-29",
+  "lane": "operator-directed ('both, TLS first' -> time_basis second). Decision C = internal sanity annotation now.",
+  "doctrine": "The witness reports facts; whether suspect time basis poisons standing is the CLAIM layer's call. Mark only — never verdict/refusal/correction/mutation/notification. Absence of suspicion is unknown, never verified. Time-basis is a modifier on the admissibility of OTHER testimony, not a monitoring surface.",
+  "finding_during": "Check 1 (future-skew) ALREADY EXISTS and is wired: preflight::PreflightResult::compute_time_basis emits observed_at_future_of_evaluator -> TimeBasisStatus::Suspect. My first draft duplicated it AND collided on the TimeBasisAnnotation type name. Caught it, reframed to the GENUINELY-missing second check.",
+  "built": [
+    "crates/nq-core/src/time_basis.rs::observed_at_regression — pure detector for witness_observed_at stepping sharply BACKWARD for the same host/stream across cycles (the case a single snapshot cannot see). Tolerates small jitter under a threshold; emits suspicion_kind observed_at_backward_regression. Non-colliding types (ObservedAtRegression).",
+    "lib.rs pub mod time_basis."
+  ],
+  "two_checks_now_present": {
+    "check1_future_skew": "ALREADY WIRED in preflight.compute_time_basis (observed_at_future_of_evaluator). Not re-implemented.",
+    "check2_backward_regression": "ADDED here, INERT (pure detector; pending a follow-on that feeds prior-cycle observed_at, e.g. at DB ingest)."
+  },
+  "verify": {
+    "tests": "4 new (no-prior->none; forward->none; jitter-within-threshold->none; sharp-backward->fires with seconds+kind+host) + 8 existing compute_time_basis tests -> 12 pass",
+    "build": "cargo build -p nq-core 0 warnings"
+  },
+  "scope_guard": "Annotation-only, inert. Did NOT add a verdict/refusal/downgrade; did NOT wire check 2 into the pipeline (named follow-on — needs prior-cycle state + the suspicion_kind vocabulary ratified); did NOT build the remaining four checks or the external clock_skew witness; did NOT duplicate the existing future-skew check.",
+  "deferred_named": "Wire check 2 at ingest (prior observed_at per stream); the other four checks; claim-layer consumption (refuse/downgrade for freshness-keyed kinds, vocabulary ratify first); external clock_skew nq-witness profile.",
+  "acceptance": "Both internal sanity checks present (1 already wired, 2 added inert), annotation-only. Decision C resolved. TIME_BASIS_POISONING_GAP V0 note + FEATURE_HISTORY § TIME_BASIS_SANITY_V0 + rollout time_basis bucket. Loop AUDIT/idle. PUSH: held (workweek). Decisions A/B/C done; D (prom-conformance doc) remaining."
+}
