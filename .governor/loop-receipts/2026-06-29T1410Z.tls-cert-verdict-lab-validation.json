@@ -1,0 +1,22 @@
+{
+  "slice": "TLS cert verdict-ladder lab validation (rollout P0 #2 — TLS first)",
+  "date": "2026-06-29",
+  "lane": "operator-directed (TLS first, then time_basis). Chatty order: spec refusals first -> fixtures.",
+  "doctrine": "Lab-backed compatibility, not live testimony. TLS says 'this endpoint presented this identity material'; it never says secure/owned/healthy.",
+  "finding": "nq.probe.tls_cert.v1 is the MOST-built of the three: verdict core + live rustls transport + WebPKI validation + receipt series + CLI + refusals (scope_ceiling_non_claims), all shipped (frozen specimen 2026-06-19). parse_presented_cert already had a real single-SAN leaf test (nq.neutral.zone). The gap: the VERDICT LADDER (evaluate_tls_cert) had only ever met SYNTHETIC PresentedCert facts.",
+  "method": "Generated a controlled multi-SAN self-signed cert with OpenSSL 3.0 (SAN tls-lab.test + www.tls-lab.test, validity 2026-06-29..2027-06-29). parse_presented_cert parses it; evaluate_tls_cert is driven through the ladder via the probe's INJECTED CLOCK (no real time dependence).",
+  "lane_recorded": "nq.probe.tls_cert.v1 is an ACTIVE-WITNESS PROBE (receipt-only, observe-only, clock-injected) — sibling of gateway-path/lease-presence/declared-deny, NOT a claim-registry preflight kind. 'tls_certificate_state preflight' in earlier framing was a mislabel; corrected in BASELINE_SERVICE_ROLLOUT.",
+  "built": [
+    "crates/nq-monitor/tests/fixtures/tls/lab_leaf.pem (controlled OpenSSL cert) + README (provenance + compatibility-not-live + reproduce).",
+    "6 lab-cert tests in tls_cert_transport::tests: multi-SAN+fingerprint+validity parse; ValidAtProbeTime; second-SAN match; ValidButWithinWarningHorizon; ExpiredUnderProbeClock; NameMismatch."
+  ],
+  "verify": {
+    "tls_lab_tests": "6/6 pass — verdict ladder validated end-to-end from a real cert via injected clock; multi-SAN parsing newly covered",
+    "build": "cargo build -p nq-monitor 0 warnings",
+    "gates": "gap-status green; (receipt-gate/witness-boundaries unaffected)",
+    "full_suite": "cargo test --all --locked (verify at commit)"
+  },
+  "scope_guard": "Did NOT change probe semantics / verdict ladder / refusals; did NOT operationalize 2d-b (scheduler); did NOT add a chain_invalid real-chain fixture (self-signed lab cert isolates parse + name/expiry; WebPKI chain tested separately vs bundled roots); did NOT claim live TLS estate testimony.",
+  "deferred_named": "2d-b operationalization (scheduled/standing receipt-series emission, currently manual no-scheduler); a WebPKI-untrusted real-chain fixture for chain_invalid.",
+  "acceptance": "TLS verdict ladder lab-validated against a real cert; refusals pinned + lane decided (active-witness probe); fixtures labeled compatibility-not-live. FEATURE_HISTORY § TLS_CERT_VERDICT_LAB_VALIDATION; rollout TLS bucket updated. Loop AUDIT/idle. PUSH: held (workweek). NEXT: time_basis internal sanity annotation (Decision C)."
+}
