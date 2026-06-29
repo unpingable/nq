@@ -1,0 +1,28 @@
+{
+  "slice": "Kea memfile lease adapter — adapter coverage (lab-backed compatibility)",
+  "date": "2026-06-29",
+  "lane": "operator-directed — YAGNI correction (build adapter coverage early against synthetic substrate; 'build the zoo, label the cages')",
+  "doctrine": "YAGNI gates LIVE authority, not adapter/recognition coverage. Synthetic compatibility != live testimony. NQ is kitchen-sink-capable, not kitchen-sink-authoritative.",
+  "why_in_scope": "NQ is a monitoring system meant to recognize real infra in the wild so others can use it. 'Don't build the Kea reader until I run Kea' was the wrong law (operator escalation 2026-06-29). DHCP lease state is normal monitoring substrate; the existing core was already backend-agnostic and the seam (DhcpBackend::Kea) was stubbed 'detect but not parse'.",
+  "method": "Spun up REAL kea-dhcp4 2.2.0 in docker (debian bookworm + lease_cmds hook), injected active/expired/declined leases via the unix control socket (lease4-add), captured the actual kea-leases4.csv memfile format + the lease4-get-all API JSON. Format captured, NOT invented. Container was --rm (no residue); no VMs.",
+  "real_format_learned": [
+    "memfile columns: address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context",
+    "expire = absolute unix ts; state column (0 default / 1 declined / 2 expired-reclaimed) is the lease-machine state, NOT validity — a state-0 row can still be lapsed by expire",
+    "lease4-add / lease4-get-all require the lease_cmds hook library (operational fact learned from the daemon)"
+  ],
+  "built": [
+    "parse_kea_leases / kea_lease_state / kea_lease_report_for in lease_presence_transport.rs (sibling to the ISC reader; same backend-agnostic LeaseReport + verdict core).",
+    "live_lease_presence routes DhcpBackend::{Isc,Kea}; SSH gather cats the Kea CSV alongside ISC (no longer errors on Kea).",
+    "Committed lab fixture crates/nq-monitor/tests/fixtures/kea/{kea-leases4.csv (real), README.md (provenance + compatibility-not-live labeling + reproduce steps)}."
+  ],
+  "verify": {
+    "kea_unit_tests": "9 tests vs real fixture + synthetic negatives (parse 3 leases; active/expired-state0-lapsed/declined mapping; empty/header-only -> none; malformed skipped; LFC-repeated header skipped; unknown/unparseable state -> Unknown never Active; missing expire not lapsed; last-row-wins; active-corroborated-by-presence e2e) -> all pass",
+    "build": "cargo build -p nq-monitor 0 warnings (readers used by live path + tests, no dead_code)",
+    "floor_gates": "witness-boundaries / receipt-gate / gap-status all exit 0",
+    "full_suite": "cargo test --all --locked green"
+  },
+  "labeling_is_the_guard": "Every Kea receipt + the fixture README are marked lab-backed COMPATIBILITY evidence: 'the collector observes a Kea memfile surface under declared conditions', never 'this estate has lease state X'. The cage label is the anti-laundering guard.",
+  "scope_guard": "Did NOT claim live Kea estate testimony; did NOT change the ISC path or the verdict core semantics; did NOT build the control-socket-API reader (deferred, format captured); did NOT touch #8 PHP comparator. Refactor avoided (sibling functions, not a backend-trait rewrite) — that YAGNI still holds.",
+  "deferred_named": "Kea control-socket API reader (lease4-get-all JSON, captured); live read vs a real Kea box (= live testimony, ratify only from real deployment); other filed witness-family adapters (DNS_WITNESS_FAMILY, STORAGE_BACKEND, INSTANCE_WITNESS, AGENTIC_CI_WITNESS_FAMILIES) for the same lab-backed treatment.",
+  "acceptance": "Kea adapter coverage shipped lab-backed; format captured not invented; positive + negative fixtures; receipts labeled compatibility-not-live; existing verdicts/ISC path unchanged. FEATURE_HISTORY § KEA_LEASE_ADAPTER; inventory doc updated. Loop returns to AUDIT/idle."
+}
