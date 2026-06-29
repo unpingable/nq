@@ -1,0 +1,24 @@
+{
+  "slice": "P0 #2 — expected_coverage manifest (declared absence, machine-checked)",
+  "date": "2026-06-29",
+  "lane": "operator-directed (P0; scoped to existing/ready surfaces; service_state represented as deferred not forced)",
+  "doctrine": "Absence becomes declared, not laundered. The manifest surfaces gaps; it does not force undecided work into existence.",
+  "built": [
+    "coverage/manifest — machine-readable: category|name|status|evidence|rationale. 8 claim kinds + 5 active probes + 4 lab-backed backends (implemented/lab_backed) + service_state (deferred -> preflights/SERVICE_STATE.md).",
+    "scripts/check-coverage-manifest.sh — fail-closed checker; CI job coverage-manifest.",
+    "coverage/README.md (format + scope)."
+  ],
+  "fails_closed_when": [
+    "an implemented surface is missing from the manifest: every ClaimKind enum variant, every nq-monitor *_probe.rs, every tests/fixtures/<dir> (silent absence)",
+    "an entry references dead/unknown evidence (path missing)",
+    "a deferred/not_expected entry has no rationale, or an unknown status"
+  ],
+  "scope_decision": "NQ-repo surfaces ONLY. nq-witness profiles (zfs/smart/fs_inode/kea_dhcp) are that repo's concern — nq CI does not check out the sibling, so referencing them would be a dead-evidence false-positive. service_state present as deferred (not forced).",
+  "distinct_from": "runtime substrate-coverage declaration (SUBSTRATE_COVERAGE_DECLARATION_GAP — what hosts/services are expected to be OBSERVED) is a separate 'coverage' notion, still candidate. This is dev/impl coverage.",
+  "verify": {
+    "green_run": "COVERAGE MANIFEST: PASS",
+    "three_failure_modes_proven": "dead-evidence -> exit 1; dropped claim_kind -> exit 1; deferred-without-rationale -> exit 1 (scratch-copy meta-proof)",
+    "gates": "gap-status / receipt-gate / witness-boundaries green; no Rust changed (full suite unaffected, CI runs it)"
+  },
+  "acceptance": "P0 #2 done: machine-readable + CI-checked manifest; prevents silent absence; service_state declared deferred pointing to the breadcrumb. Loop AUDIT/idle. PUSH: held (workweek). P0 status: #1 deferred (schema slice), #2 done, #3 done. Remaining: live-wire Kea control-socket (gated real integration), and the deferred service_state schema slice — both operator-gated."
+}
