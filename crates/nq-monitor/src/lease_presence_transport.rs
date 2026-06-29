@@ -217,6 +217,8 @@ fn remote_read_script() -> String {
         "echo {b}; if [ -f /var/dhcpd/var/db/dhcpd.leases ]; then echo isc; \
          elif [ -f /var/db/kea/kea-leases4.csv ]; then echo kea; else echo unknown; fi; \
          echo {l}; cat /var/dhcpd/var/db/dhcpd.leases 2>/dev/null; \
+         cat /var/db/kea/kea-leases4.csv 2>/dev/null; \
+         cat /var/lib/kea/kea-leases4.csv 2>/dev/null; \
          echo {a}; arp -an; echo {e}",
         b = SECTION_BACKEND,
         l = SECTION_LEASES,
@@ -327,6 +329,121 @@ pub fn lease_report_for(
     })
 }
 
+// ───────────────────────── Kea memfile (lab-backed) ─────────────────────────
+//
+// Kea DHCP4 memfile lease backend — sibling to the ISC reader above. Surface is
+// `kea-leases4.csv` (`/var/db/kea/kea-leases4.csv` on pfSense; `/var/lib/kea/...`
+// on stock Kea). The format was CAPTURED from a real kea-dhcp4 2.2.0 instance
+// (docker lab + lease_cmds hook), not invented:
+//
+//   address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context
+//   10.99.0.100,08:00:27:aa:bb:01,,3600,1782750154,1,0,0,lab-host-active,0,
+//
+// `expire` is an ABSOLUTE unix timestamp; `state` is the Kea lease-machine state
+// (0=default, 1=declined, 2=expired-reclaimed), NOT validity — a state-0 row can
+// still be lapsed by `expire`. The CURRENT lease per address is the LAST row.
+//
+// COMPATIBILITY SCOPE: this reader testifies only that the collector observes a
+// Kea memfile lease surface under declared conditions. It is lab-backed
+// compatibility evidence, NOT live-estate testimony about any real network.
+
+/// One Kea memfile lease (the columns this build consumes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeaLease {
+    pub ip: String,
+    pub mac: Option<String>,
+    /// Absolute UNIX expiry (seconds).
+    pub expire: Option<i64>,
+    /// Kea lease-machine state: 0 default, 1 declined, 2 expired-reclaimed.
+    pub state: Option<u8>,
+    pub hostname: Option<String>,
+}
+
+/// Parse a Kea DHCP4 `kea-leases4.csv` memfile. Returns the CURRENT lease per
+/// address (last row wins — memfile is append-history until LFC rewrites it).
+/// Header rows (including a header repeated after LFC) and malformed rows are
+/// skipped — honest omission, never a fabricated field.
+pub fn parse_kea_leases(text: &str) -> Vec<KeaLease> {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_ip: std::collections::HashMap<String, KeaLease> = std::collections::HashMap::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with("address,") {
+            continue; // blank or header (possibly repeated after LFC)
+        }
+        let cols: Vec<&str> = line.split(',').collect();
+        // address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,...
+        if cols.len() < 10 {
+            continue; // malformed row — skip rather than invent columns
+        }
+        let ip = cols[0].trim().to_string();
+        if ip.is_empty() {
+            continue;
+        }
+        let non_empty = |s: &str| {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        };
+        let lease = KeaLease {
+            ip: ip.clone(),
+            mac: non_empty(cols[1]),
+            expire: cols[4].trim().parse::<i64>().ok(),
+            state: cols[9].trim().parse::<u8>().ok(),
+            hostname: non_empty(cols[8]),
+        };
+        if !by_ip.contains_key(&ip) {
+            order.push(ip.clone());
+        }
+        by_ip.insert(ip, lease);
+    }
+    order
+        .into_iter()
+        .filter_map(|ip| by_ip.remove(&ip))
+        .collect()
+}
+
+/// Map a Kea lease (state column + absolute expiry) to the backend-agnostic
+/// [`LeaseState`]. Mirrors `isc_lease_state`'s discipline: a lapsed `expire` is
+/// Expired regardless of the state column; only state-0 with a future expiry
+/// claims a live occupant. Declined (1) holds no occupant; expired-reclaimed (2)
+/// is Expired; an unknown/unparseable state is Unknown — never silently Active.
+pub fn kea_lease_state(state: Option<u8>, expire: Option<i64>, now: OffsetDateTime) -> LeaseState {
+    let lapsed = matches!(expire, Some(e) if e <= now.unix_timestamp());
+    match state {
+        Some(0) => {
+            if lapsed {
+                LeaseState::Expired
+            } else {
+                LeaseState::Active
+            }
+        }
+        Some(1) => LeaseState::Released, // declined: address held in conflict, not a live occupant
+        Some(2) => LeaseState::Expired,  // expired-reclaimed
+        _ => LeaseState::Unknown,
+    }
+}
+
+/// Build a [`LeaseReport`] for `ip` from parsed Kea leases. Sibling to
+/// [`lease_report_for`].
+pub fn kea_lease_report_for(
+    leases: &[KeaLease],
+    ip: &str,
+    now: OffsetDateTime,
+    source: &str,
+) -> Option<LeaseReport> {
+    leases.iter().find(|l| l.ip == ip).map(|l| LeaseReport {
+        hostname: l.hostname.clone().filter(|h| !h.is_empty()),
+        ip: l.ip.clone(),
+        mac: l.mac.clone(),
+        state: kea_lease_state(l.state, l.expire, now),
+        source: source.to_string(),
+    })
+}
+
 /// Presence from the box's own ARP table — a `pfSenseRuntimeReport`. An entry
 /// with a real MAC is `Observed`; absent / incomplete is `NotObserved`.
 pub fn arp_presence(arp: &[ArpEntry], ip: &str, now: OffsetDateTime) -> PresenceObservation {
@@ -355,19 +472,28 @@ pub fn live_lease_presence(
 ) -> anyhow::Result<LeasePresenceReceipt> {
     let gather = ssh_gather(target)?;
     let (backend, leases_text, arp_text) = split_sections(&gather);
-    if backend != DhcpBackend::Isc {
-        return Err(anyhow!(
-            "DHCP backend is {:?}; this build parses ISC dhcpd.leases only (Kea read is a follow-up)",
-            backend
-        ));
-    }
-
-    let leases = parse_isc_leases(&leases_text);
     let arp = parse_arp(&arp_text);
 
-    let source = format!("ssh:{} isc-dhcpd:/var/dhcpd/var/db/dhcpd.leases", target.host);
-    let lease = lease_report_for(&leases, subject_ip, now, &source)
-        .ok_or_else(|| anyhow!("no DHCP lease found for {subject_ip} (cannot run lease-presence)"))?;
+    // Backend-specific lease reader, common LeaseReport. ISC and Kea are
+    // siblings feeding the same verdict core.
+    let lease = match backend {
+        DhcpBackend::Isc => {
+            let leases = parse_isc_leases(&leases_text);
+            let source = format!("ssh:{} isc-dhcpd:/var/dhcpd/var/db/dhcpd.leases", target.host);
+            lease_report_for(&leases, subject_ip, now, &source)
+        }
+        DhcpBackend::Kea => {
+            let leases = parse_kea_leases(&leases_text);
+            let source = format!("ssh:{} kea-memfile:kea-leases4.csv", target.host);
+            kea_lease_report_for(&leases, subject_ip, now, &source)
+        }
+        DhcpBackend::Unknown => {
+            return Err(anyhow!(
+                "DHCP backend not detected (no ISC dhcpd.leases nor Kea kea-leases4.csv found)"
+            ));
+        }
+    }
+    .ok_or_else(|| anyhow!("no DHCP lease found for {subject_ip} (cannot run lease-presence)"))?;
 
     let mut observations = vec![arp_presence(&arp, subject_ip, now)];
     if let Some(spec) = probe {
@@ -565,6 +691,118 @@ lease 10.0.0.5 {
         let lease = lease_report_for(&leases, "10.0.0.5", now, "test").unwrap();
         let obs = vec![arp_presence(&arp, "10.0.0.5", now)];
         let clock = ClockBasis { source: "system_ntp".into(), ntp_status: "recorded".into() };
+        let r = evaluate_lease_presence(&lease, &obs, &clock, now);
+        assert_eq!(
+            r.verdict,
+            crate::lease_presence_probe::LeasePresenceVerdict::LeaseCorroboratedByPresence
+        );
+    }
+
+    // ─────────────── Kea memfile (lab-backed compatibility) ───────────────
+    // KEA_REAL is real kea-dhcp4 2.2.0 output (see tests/fixtures/kea/README.md).
+    // It is compatibility evidence, NOT live-estate testimony.
+
+    const KEA_REAL: &str = include_str!("../tests/fixtures/kea/kea-leases4.csv");
+
+    /// Between the expired lease's `expire` (1782739354) and the active one's
+    /// (1782750154) — pins the lapsed-vs-live boundary against real data.
+    fn kea_now() -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp(1782746554).unwrap()
+    }
+
+    #[test]
+    fn kea_parses_real_fixture_three_current_leases() {
+        let leases = parse_kea_leases(KEA_REAL);
+        assert_eq!(leases.len(), 3);
+        let ips: Vec<&str> = leases.iter().map(|l| l.ip.as_str()).collect();
+        assert!(ips.contains(&"10.99.0.100") && ips.contains(&"10.99.0.101") && ips.contains(&"10.99.0.102"));
+        let active = leases.iter().find(|l| l.ip == "10.99.0.100").unwrap();
+        assert_eq!(active.mac.as_deref(), Some("08:00:27:aa:bb:01"));
+        assert_eq!(active.hostname.as_deref(), Some("lab-host-active"));
+        assert_eq!(active.state, Some(0));
+        assert_eq!(active.expire, Some(1782750154));
+    }
+
+    #[test]
+    fn kea_state_active_expired_declined_against_real_data() {
+        let leases = parse_kea_leases(KEA_REAL);
+        let now = kea_now();
+        let st = |ip: &str| kea_lease_report_for(&leases, ip, now, "lab").unwrap().state;
+        // state-0 + future expire -> Active.
+        assert_eq!(st("10.99.0.100"), LeaseState::Active);
+        // state-0 but LAPSED expire -> Expired (validity beats the state column).
+        assert_eq!(st("10.99.0.101"), LeaseState::Expired);
+        // state-1 (declined) -> no live occupant.
+        assert_eq!(st("10.99.0.102"), LeaseState::Released);
+    }
+
+    #[test]
+    fn kea_empty_and_header_only_yield_no_leases() {
+        assert_eq!(parse_kea_leases("").len(), 0);
+        assert_eq!(
+            parse_kea_leases("address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context\n").len(),
+            0
+        );
+    }
+
+    #[test]
+    fn kea_malformed_row_skipped_not_fabricated() {
+        let csv = "address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context\n\
+                   10.0.0.1,too,few,columns\n\
+                   10.0.0.2,08:00:27:00:00:02,,3600,1782750154,1,0,0,ok,0,\n";
+        let leases = parse_kea_leases(csv);
+        assert_eq!(leases.len(), 1);
+        assert_eq!(leases[0].ip, "10.0.0.2");
+    }
+
+    #[test]
+    fn kea_lfc_repeated_header_is_skipped() {
+        // After lease-file-cleanup Kea rewrites the file with a fresh header;
+        // a concatenated read can contain the header twice.
+        let csv = "address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context\n\
+                   10.0.0.2,08:00:27:00:00:02,,3600,1782750154,1,0,0,a,0,\n\
+                   address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context\n\
+                   10.0.0.3,08:00:27:00:00:03,,3600,1782750154,1,0,0,b,0,\n";
+        assert_eq!(parse_kea_leases(csv).len(), 2);
+    }
+
+    #[test]
+    fn kea_unknown_or_unparseable_state_is_unknown_never_active() {
+        let now = kea_now();
+        // future expire, but an unrecognized state value -> Unknown (not Active).
+        assert_eq!(kea_lease_state(Some(9), Some(1782750154), now), LeaseState::Unknown);
+        assert_eq!(kea_lease_state(None, Some(1782750154), now), LeaseState::Unknown);
+    }
+
+    #[test]
+    fn kea_missing_expire_is_not_treated_as_lapsed() {
+        // No expiry parsed -> not lapsed; a state-0 lease still claims an occupant.
+        assert_eq!(kea_lease_state(Some(0), None, kea_now()), LeaseState::Active);
+    }
+
+    #[test]
+    fn kea_last_row_wins_per_address() {
+        let csv = "address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context\n\
+                   10.0.0.9,08:00:27:00:00:09,,3600,1782739354,1,0,0,old,0,\n\
+                   10.0.0.9,08:00:27:00:00:09,,3600,1782750154,1,0,0,new,0,\n";
+        let leases = parse_kea_leases(csv);
+        assert_eq!(leases.len(), 1);
+        assert_eq!(leases[0].expire, Some(1782750154));
+        assert_eq!(leases[0].hostname.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn kea_active_lease_corroborated_by_presence_e2e() {
+        let leases = parse_kea_leases(KEA_REAL);
+        let now = kea_now();
+        let lease = kea_lease_report_for(&leases, "10.99.0.100", now, "lab:kea-memfile").unwrap();
+        let obs = vec![PresenceObservation::new(
+            PresenceMethod::IcmpEcho,
+            "lab-vantage",
+            PresenceOutcome::Observed,
+            now,
+        )];
+        let clock = ClockBasis { source: "system_wall".into(), ntp_status: "unknown".into() };
         let r = evaluate_lease_presence(&lease, &obs, &clock, now);
         assert_eq!(
             r.verdict,

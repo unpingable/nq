@@ -1,0 +1,4 @@
+address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context
+10.99.0.100,08:00:27:aa:bb:01,,3600,1782750154,1,0,0,lab-host-active,0,
+10.99.0.101,08:00:27:aa:bb:02,,3600,1782739354,1,0,0,lab-host-expired,0,
+10.99.0.102,08:00:27:aa:bb:03,,3600,1782750154,1,0,0,lab-host-declined,1,

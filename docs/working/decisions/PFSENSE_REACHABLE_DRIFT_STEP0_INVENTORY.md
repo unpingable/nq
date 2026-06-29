@@ -333,4 +333,11 @@ declaration (label/table NAME/counters), never table member IPs; fixtures use TE
 *Step-0 grounding artifact with checks #2 (lease-presence), #3 (gateway-path), and #1
 (declared-deny custody) landed. Name early, ratify lazily. Parked for later, surgical
 packets: the active declared-deny subject probe (scratch/lab + benign target); the
-pfSense-classification PHP comparator; an external/off-LAN vantage; Kea lease parsing.*
+pfSense-classification PHP comparator; an external/off-LAN vantage (#7/#7b/#7c — shipped).*
+
+*Update 2026-06-29: Kea lease parsing SHIPPED as adapter coverage (`parse_kea_leases` /
+`kea_lease_state` / `kea_lease_report_for`, sibling to the ISC reader; `live_lease_presence`
+routes both backends). Built against a real `kea-dhcp4` 2.2.0 docker lab, NOT pfSense — see
+FEATURE_HISTORY § KEA_LEASE_ADAPTER. This is lab-backed **compatibility** evidence (the
+collector observes a Kea memfile surface under declared conditions), not live testimony about
+this estate. YAGNI gates live authority, not adapter coverage.*

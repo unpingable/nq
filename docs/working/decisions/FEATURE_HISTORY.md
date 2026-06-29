@@ -20,6 +20,22 @@ The chronological order below is newest-first.
 
 ---
 
+## KEA_LEASE_ADAPTER (Kea memfile lease reader — adapter coverage)
+
+**Status:** `shipped` 2026-06-29. Lab-backed compatibility coverage; not live-estate testimony.
+
+**Shipped commits:** the Kea-adapter commits adding `parse_kea_leases` / `kea_lease_state` / `kea_lease_report_for` to `crates/nq-monitor/src/lease_presence_transport.rs`, the Kea routing in `live_lease_presence`, and the lab fixture `crates/nq-monitor/tests/fixtures/kea/`.
+
+**What landed:** a Kea DHCP4 memfile lease reader, sibling to the existing ISC `dhcpd.leases` reader, feeding the unchanged backend-agnostic lease-presence core. `parse_kea_leases` reads `kea-leases4.csv` (last row wins per address; header/LFC-repeated-header/malformed rows skipped). `kea_lease_state` maps the Kea state column (0 default / 1 declined / 2 expired-reclaimed) **and** the absolute `expire` to `LeaseState` — a lapsed `expire` is Expired even at state 0; unknown/unparseable state is Unknown, never silently Active. `live_lease_presence` now routes `DhcpBackend::{Isc,Kea}` to the right reader; the SSH gather cats the Kea CSV alongside ISC.
+
+**Doctrine — why this is in-scope before anyone here runs Kea:** NQ is a monitoring system with governed witnesses, not a single-house audit log. YAGNI gates **live authority** (a claim about the real estate), not **adapter coverage** (the capability to recognize a substrate at all). The format was **captured from a real `kea-dhcp4` 2.2.0 instance** (Debian/Docker + `lease_cmds` hook, leases injected via the control socket), not invented. Every Kea receipt is lab-backed **compatibility** evidence: it testifies the collector observes a Kea memfile surface under declared conditions, never that any real network has a given lease state. Synthetic compatibility ≠ live testimony. (See global CLAUDE.md § YAGNI "Recognition vs authority".)
+
+**Evidence:** 9 unit tests in `lease_presence_transport.rs` against the real fixture (`tests/fixtures/kea/kea-leases4.csv`) + synthetic negatives — three-lease parse, active/expired(state-0-but-lapsed)/declined state mapping, empty/header-only → none, malformed row skipped, LFC-repeated header skipped, unknown/unparseable state → Unknown, missing expire not lapsed, last-row-wins, and an active-lease-corroborated-by-presence e2e through the core. Fixture provenance + reproduce steps: `tests/fixtures/kea/README.md`. Full workspace suite green.
+
+**Deferred (named):** the Kea **control-socket API** surface (`lease4-get-all` JSON, captured in the lab) as a second reader; live read against an actual Kea-backed box (would be live testimony, ratified only from real deployment). Other filed witness-family adapters (DNS, storage backends, instance) remain candidates for the same lab-backed treatment.
+
+---
+
 ## EXTERNAL_GATEWAY_PATH_VANTAGE #7c (external-arrival corroboration into gateway-path)
 
 **Status:** `shipped` 2026-06-28. Additive combiner; existing gateway-path verdicts unchanged.
