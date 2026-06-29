@@ -1,0 +1,24 @@
+{
+  "event": "push — session work landed on origin (operator green light, after 5pm)",
+  "date": "2026-06-29",
+  "authorization": "Operator explicit go: push cadence is after-5pm OR weekend (clarified from weekend-only). It was ~6pm.",
+  "pushed": [
+    "unpingable/nq  main  ed02499..a632be6  (23 commits)",
+    "unpingable/nq-witness  main  6c6fe15..44909b0  (3 commits)"
+  ],
+  "session_arc_now_public": [
+    "deploy standardization + caddy public reverse-proxy supervision",
+    "fail-closed receipt re-attestation gate; ledger repair; build-graph witness/probe boundaries",
+    "external-vantage egress-liveness beacon folded into gateway-path",
+    "YAGNI correction (gate LIVE authority not adapter coverage) — doctrine",
+    "baseline rollout + source-conformance docs (decisions A/B/C/D)",
+    "lab-backed adapters: Kea memfile + control-socket, DNS wire-decoder, TLS verdict ladder, time-basis sanity",
+    "P0 #2 expected_coverage manifest + fail-closed CI gate",
+    "P0 #3 Kea control-socket backend",
+    "service_state witness family: migration 059 + ClaimKind + refusal boundary + writer(idempotent/conflict) + reader + evaluator (V0 core)",
+    "service_state LIVE systemd collector wiring + nq.witness.v1 projection"
+  ],
+  "state": "origin/main == HEAD for both repos (0 ahead). 5 CI gates green. Loop AUDIT/idle.",
+  "deferred_named": "service_state: feed projection into PreflightSupport.witness_packet; served_surface_registry entry; docker/process native capture. Kea live-wire. P1 adapters (OPNsense/Unbound/AdGuard, exporter->witness wrappers, ingress witnesses).",
+  "note": "Push cadence norm updated: after-5pm-or-weekend (not weekend-only). Memory feedback_push_cadence_workweek updated."
+}
