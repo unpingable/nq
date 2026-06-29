@@ -869,6 +869,14 @@ pub struct ProbeGatewayPathCmd {
     /// this directory (e.g. `runs/gateway-path`). stdout still prints it.
     #[arg(long)]
     pub out_dir: Option<PathBuf>,
+
+    /// Optional path to an `nq.beacon_status.v0` document (from
+    /// `scripts/beacon/beacon-status.sh` on the external vantage). When given,
+    /// a combined `nq.probe.gateway_path_combined.v1` report is also emitted,
+    /// folding the external-arrival position in as corroboration/divergence —
+    /// never as cause, never overriding the LAN-side verdict.
+    #[arg(long)]
+    pub external_beacon_status: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

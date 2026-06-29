@@ -394,6 +394,141 @@ fn compute_verdict(
     }
 }
 
+// ---------------------------------------------------------------------------
+// External-arrival corroboration (Packet #7c). ADDITIVE: the LAN-side verdict
+// above is unchanged. This layer folds the egress-liveness witness (#7b beacon)
+// in as a SECOND POSITION — corroborating or diverging — without changing cause
+// semantics.
+//
+// Doctrine:
+//   Position diversity can corroborate or create divergence. It cannot launder
+//   absence into cause.
+// ---------------------------------------------------------------------------
+
+pub const GATEWAY_PATH_COMBINED_SCHEMA: &str = "nq.probe.gateway_path_combined.v1";
+
+/// Coarse classification of the LAN-side verdict into the three shapes the
+/// combination cares about. Deliberately collapses every refusal AND path
+/// ambiguity into `LanUnknown` — the LAN basis must positively say alive or
+/// not-alive before an external position can corroborate or diverge from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LanBasis {
+    LanAlive,
+    LanNotAlive,
+    LanUnknown,
+}
+
+impl LanBasis {
+    pub fn from_verdict(v: GatewayPathVerdict) -> Self {
+        match v {
+            GatewayPathVerdict::CorroboratedByPath => LanBasis::LanAlive,
+            GatewayPathVerdict::EgressTroubleNotWanDown => LanBasis::LanNotAlive,
+            // every cannot_testify AND path_ambiguity: the LAN basis does not
+            // cleanly say alive/not-alive, so the combination cannot classify.
+            _ => LanBasis::LanUnknown,
+        }
+    }
+}
+
+/// The external vantage's contribution, mirroring `beacon-status.sh`'s
+/// `nq.beacon_status.v0` verdicts. `AbsenceAtVantage` is a POSITION fact
+/// (external arrival not witnessed), never a cause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalArrivalBasis {
+    ArrivalWitnessed,
+    AbsenceAtVantage,
+    NoBasis,
+}
+
+/// Parse a `nq.beacon_status.v0` document (from `beacon-status.sh`) into an
+/// external basis. Returns `None` if the document is unparseable or carries an
+/// unknown verdict — honest absence beats a fabricated position.
+pub fn external_basis_from_beacon_status(json: &str) -> Option<ExternalArrivalBasis> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    match v.get("verdict")?.as_str()? {
+        "arrival_witnessed" => Some(ExternalArrivalBasis::ArrivalWitnessed),
+        "absence_at_vantage" => Some(ExternalArrivalBasis::AbsenceAtVantage),
+        "cannot_classify_no_arrivals_basis" => Some(ExternalArrivalBasis::NoBasis),
+        _ => None,
+    }
+}
+
+/// The combined position. Never a cause, never a WAN state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CombinedPosition {
+    /// Two independent positions agree (alive-concordant, or trouble-concordant).
+    Corroborated,
+    /// The two positions disagree — ambiguity to investigate, NOT proof of cause.
+    Divergent,
+    /// Not enough basis to combine: the LAN side cannot positively classify, or
+    /// there is no usable external basis. The external vantage never overrides a
+    /// LAN basis that itself cannot testify.
+    CannotClassify,
+}
+
+/// `nq.probe.gateway_path_combined.v1`. Reporting-only: carries both positions
+/// and their combination. `cause_not_inferred` is always true — absence and
+/// divergence are never laundered into cause here.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CombinedGatewayPathReport {
+    pub schema: &'static str,
+    /// The unchanged LAN-side verdict this combination is built over.
+    pub lan_verdict: GatewayPathVerdict,
+    pub lan_basis: LanBasis,
+    /// `None` when no external witness was supplied at all.
+    pub external_basis: Option<ExternalArrivalBasis>,
+    pub combined: CombinedPosition,
+    pub cause_not_inferred: bool,
+    pub non_claims: Vec<String>,
+}
+
+fn combined_non_claims() -> Vec<String> {
+    vec![
+        "absence_at_vantage is a position fact (external arrival not witnessed), never a cause — it does not mean WAN-down, ISP-down, or any specific failed hop; it can be the emitter, SSH/key, the vantage host, a route change, or egress".to_string(),
+        "divergence between the LAN-side basis and the external position is ambiguity to investigate, never proof of cause or outage".to_string(),
+        "the external vantage does not outrank the LAN-side basis; when the LAN basis cannot testify, the combination cannot classify (it is not rescued by the external position)".to_string(),
+        "corroboration — including trouble-concordant agreement — reports that two positions agree, not a verified WAN/internet/user-impact state".to_string(),
+    ]
+}
+
+/// Fold an optional external-arrival basis into the LAN-side gateway-path
+/// verdict. Pure, additive, cause-free. The LAN verdict is read, never changed.
+pub fn combine_gateway_path_with_external(
+    receipt: &GatewayPathReceipt,
+    external: Option<ExternalArrivalBasis>,
+) -> CombinedGatewayPathReport {
+    let lan_basis = LanBasis::from_verdict(receipt.verdict);
+    let combined = match (lan_basis, external) {
+        // No usable external basis -> cannot combine.
+        (_, None) | (_, Some(ExternalArrivalBasis::NoBasis)) => CombinedPosition::CannotClassify,
+        // LAN can't positively classify -> external never overrides it.
+        (LanBasis::LanUnknown, _) => CombinedPosition::CannotClassify,
+        // Concordance (alive-concordant or trouble-concordant).
+        (LanBasis::LanAlive, Some(ExternalArrivalBasis::ArrivalWitnessed))
+        | (LanBasis::LanNotAlive, Some(ExternalArrivalBasis::AbsenceAtVantage)) => {
+            CombinedPosition::Corroborated
+        }
+        // Discordance.
+        (LanBasis::LanAlive, Some(ExternalArrivalBasis::AbsenceAtVantage))
+        | (LanBasis::LanNotAlive, Some(ExternalArrivalBasis::ArrivalWitnessed)) => {
+            CombinedPosition::Divergent
+        }
+    };
+
+    CombinedGatewayPathReport {
+        schema: GATEWAY_PATH_COMBINED_SCHEMA,
+        lan_verdict: receipt.verdict,
+        lan_basis,
+        external_basis: external,
+        combined,
+        cause_not_inferred: true,
+        non_claims: combined_non_claims(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -631,5 +766,122 @@ mod tests {
         assert_eq!(m.role, PathRole::MonitorTarget);
         assert_eq!(a.role, PathRole::EgressAnchor);
         assert_eq!(m.testimony_type, "observed_reachability");
+    }
+
+    // --- Packet #7c: external-arrival corroboration ---
+
+    /// Build a receipt carrying a chosen LAN verdict (the combiner only reads
+    /// `.verdict`; constructing via `eval` then overriding keeps the rest real).
+    fn receipt_with(v: GatewayPathVerdict) -> GatewayPathReceipt {
+        let mut r = eval(&dpinger_reaching(), &[anchor_probe(PathOutcome::Reached)]);
+        r.verdict = v;
+        r
+    }
+
+    fn combine(
+        v: GatewayPathVerdict,
+        ext: Option<ExternalArrivalBasis>,
+    ) -> CombinedGatewayPathReport {
+        combine_gateway_path_with_external(&receipt_with(v), ext)
+    }
+
+    #[test]
+    fn alive_plus_arrival_is_corroborated() {
+        let c = combine(
+            GatewayPathVerdict::CorroboratedByPath,
+            Some(ExternalArrivalBasis::ArrivalWitnessed),
+        );
+        assert_eq!(c.lan_basis, LanBasis::LanAlive);
+        assert_eq!(c.combined, CombinedPosition::Corroborated);
+        assert!(c.cause_not_inferred);
+    }
+
+    #[test]
+    fn trouble_plus_absence_is_corroborated_negative_concordance() {
+        let c = combine(
+            GatewayPathVerdict::EgressTroubleNotWanDown,
+            Some(ExternalArrivalBasis::AbsenceAtVantage),
+        );
+        assert_eq!(c.lan_basis, LanBasis::LanNotAlive);
+        assert_eq!(c.combined, CombinedPosition::Corroborated);
+    }
+
+    #[test]
+    fn alive_plus_absence_is_divergent_not_cause() {
+        let c = combine(
+            GatewayPathVerdict::CorroboratedByPath,
+            Some(ExternalArrivalBasis::AbsenceAtVantage),
+        );
+        assert_eq!(c.combined, CombinedPosition::Divergent);
+        assert!(c.cause_not_inferred);
+        // absence is never laundered into a cause.
+        assert!(c
+            .non_claims
+            .iter()
+            .any(|s| s.contains("never a cause")));
+    }
+
+    #[test]
+    fn trouble_plus_arrival_is_divergent() {
+        let c = combine(
+            GatewayPathVerdict::EgressTroubleNotWanDown,
+            Some(ExternalArrivalBasis::ArrivalWitnessed),
+        );
+        assert_eq!(c.combined, CombinedPosition::Divergent);
+    }
+
+    /// The load-bearing refusal: a LAN basis that cannot testify is NOT rescued
+    /// by an external arrival. The external vantage never outranks the LAN side.
+    #[test]
+    fn external_never_overrides_lan_unknown() {
+        for v in [
+            GatewayPathVerdict::CannotTestifyDpingerSocketAbsent,
+            GatewayPathVerdict::CannotTestifyDpingerSocketUnreadable,
+            GatewayPathVerdict::CannotTestifyUnknownCustody,
+            GatewayPathVerdict::CannotTestifyNoPathBasis,
+            GatewayPathVerdict::PathAmbiguous,
+        ] {
+            let c = combine(v, Some(ExternalArrivalBasis::ArrivalWitnessed));
+            assert_eq!(c.lan_basis, LanBasis::LanUnknown);
+            assert_eq!(c.combined, CombinedPosition::CannotClassify, "{v:?}");
+        }
+    }
+
+    #[test]
+    fn no_external_or_no_basis_cannot_classify() {
+        assert_eq!(
+            combine(GatewayPathVerdict::CorroboratedByPath, None).combined,
+            CombinedPosition::CannotClassify
+        );
+        assert_eq!(
+            combine(
+                GatewayPathVerdict::CorroboratedByPath,
+                Some(ExternalArrivalBasis::NoBasis)
+            )
+            .combined,
+            CombinedPosition::CannotClassify
+        );
+    }
+
+    #[test]
+    fn beacon_status_parses_to_external_basis() {
+        assert_eq!(
+            external_basis_from_beacon_status(r#"{"schema":"nq.beacon_status.v0","verdict":"arrival_witnessed","age_s":1}"#),
+            Some(ExternalArrivalBasis::ArrivalWitnessed)
+        );
+        assert_eq!(
+            external_basis_from_beacon_status(r#"{"verdict":"absence_at_vantage"}"#),
+            Some(ExternalArrivalBasis::AbsenceAtVantage)
+        );
+        assert_eq!(
+            external_basis_from_beacon_status(r#"{"verdict":"cannot_classify_no_arrivals_basis"}"#),
+            Some(ExternalArrivalBasis::NoBasis)
+        );
+        // Unparseable / unknown verdict -> honest None, never a fabricated position.
+        assert_eq!(external_basis_from_beacon_status("not json"), None);
+        assert_eq!(
+            external_basis_from_beacon_status(r#"{"verdict":"something_else"}"#),
+            None
+        );
     }
 }

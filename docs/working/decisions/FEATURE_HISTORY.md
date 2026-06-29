@@ -20,6 +20,22 @@ The chronological order below is newest-first.
 
 ---
 
+## EXTERNAL_GATEWAY_PATH_VANTAGE #7c (external-arrival corroboration into gateway-path)
+
+**Status:** `shipped` 2026-06-28. Additive combiner; existing gateway-path verdicts unchanged.
+
+**Shipped commits:** the Packet #7c commits adding the combiner to `crates/nq-monitor/src/gateway_path_probe.rs` and the `--external-beacon-status` wiring in `cmd/probe.rs` + `cli.rs`.
+
+**What landed:** the #7b egress-liveness witness is folded into gateway-path as a **second position**. `combine_gateway_path_with_external()` reads the unchanged LAN-side `GatewayPathVerdict` plus an optional `ExternalArrivalBasis` (parsed from the `nq.beacon_status.v0` artifact) and emits `nq.probe.gateway_path_combined.v1`: `lan_basis` ∈ {lan_alive, lan_not_alive, lan_unknown}, `external_basis`, and `combined` ∈ {corroborated, divergent, cannot_classify}, with `cause_not_inferred: true` and refusal non-claims. `nq-monitor probe gateway-path --external-beacon-status <path>` emits it alongside the LAN-side receipt.
+
+**Doctrine:** position diversity can corroborate or create divergence; it cannot launder absence into cause. The combined report never infers cause, never calls absence "WAN down," and — the load-bearing rule — the external vantage **never overrides** a LAN basis that cannot testify (LanUnknown → cannot_classify regardless of external arrival).
+
+**Evidence:** 7 combiner unit tests in `gateway_path_probe.rs` — alive+arrival→corroborated, trouble+absence→corroborated (negative concordance), alive+absence & trouble+arrival→divergent, every cannot_testify/path_ambiguity + arrival→cannot_classify (external never overrides), no-external/no-basis→cannot_classify, and the beacon-status parser (3 verdicts + unparseable→None). Existing gateway-path verdict tests unchanged and green; full workspace suite green. Design record: [`EXTERNAL_GATEWAY_PATH_VANTAGE_GAP.md`](../gaps/EXTERNAL_GATEWAY_PATH_VANTAGE_GAP.md).
+
+**Deferred (named):** automated piping of a live beacon-status into the probe on a cadence (still manual / operator-fed); the supervised beacon timer remains not-enabled (#7b).
+
+---
+
 ## EXTERNAL_GATEWAY_PATH_VANTAGE #7b (egress-liveness witness, minimal slice)
 
 **Status:** `partial` 2026-06-28. Minimal vertical slice shipped (manual mode); supervised low-rate cadence + any nq-monitor verdict integration are deferred.

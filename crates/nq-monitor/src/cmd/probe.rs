@@ -278,5 +278,21 @@ fn run_gateway_path(cmd: ProbeGatewayPathCmd) -> anyhow::Result<()> {
         let path = persist_receipt(out_dir, &receipt)?;
         eprintln!("appended receipt to series: {}", path.display());
     }
+
+    // Packet #7c: optionally fold an external-arrival position (the #7b beacon
+    // status) into a combined report. Additive — the LAN-side receipt above is
+    // unchanged. An unparseable/unknown beacon verdict yields `None` (honest
+    // absence), which combines to `cannot_classify` rather than a fabricated
+    // position.
+    if let Some(status_path) = &cmd.external_beacon_status {
+        use crate::gateway_path_probe::{
+            combine_gateway_path_with_external, external_basis_from_beacon_status,
+        };
+        let raw = std::fs::read_to_string(status_path)
+            .with_context(|| format!("reading external beacon status {:?}", status_path))?;
+        let external = external_basis_from_beacon_status(&raw);
+        let combined = combine_gateway_path_with_external(&receipt, external);
+        println!("{}", serde_json::to_string_pretty(&combined)?);
+    }
     Ok(())
 }
