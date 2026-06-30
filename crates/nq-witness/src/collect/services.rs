@@ -7,30 +7,26 @@ pub fn collect(config: &PublisherConfig) -> CollectorPayload<Vec<ServiceData>> {
     collect_for(config, Platform::current())
 }
 
-/// Service collection, parameterized on the substrate so the
-/// unsupported-platform path is testable on Linux CI. This collector
-/// is systemd-centric (its native state fields, its primary check
-/// type); on any non-Linux platform it emits a typed
-/// [`CollectorStatus::NotSupported`] (substrate `systemd/systemctl`,
-/// per [`nq_core::CollectorKind::requires`]) for the whole collector
-/// rather than shelling a missing `systemctl` into a generic failure.
-/// Per-check portability (e.g. docker / pid_file checks that could run
-/// on macOS) is deferred to the later native-services slice. Linux
-/// behavior is unchanged.
+/// Service collection, dispatched per check so the platform-specific
+/// path is testable on Linux CI:
+/// - **docker** and **pid_file** checks are cross-platform and run on
+///   every platform;
+/// - **systemd** checks are Linux-only.
+///
+/// On a non-Linux platform a configured systemd check is not run (no
+/// fabricated row): if *every* configured check is unsupported here the
+/// collector reports typed [`CollectorStatus::NotSupported`]; otherwise
+/// it reports the checks it could honestly run and names the skipped
+/// systemd checks in `error_message`. This removes the Slice-0
+/// over-refusal that returned whole-collector `not_supported` on
+/// non-Linux even for portable docker/pid_file checks. Linux behavior is
+/// unchanged. (Native launchd / rc.d witnesses are a separate,
+/// schema-bearing slice.)
 pub fn collect_for(
     config: &PublisherConfig,
     platform: Platform,
 ) -> CollectorPayload<Vec<ServiceData>> {
     let now = OffsetDateTime::now_utc();
-
-    if platform != Platform::Linux {
-        return CollectorPayload {
-            status: CollectorStatus::NotSupported,
-            collected_at: Some(now),
-            error_message: None,
-            data: None,
-        };
-    }
 
     if config.service_health_urls.is_empty() {
         return CollectorPayload {
@@ -42,12 +38,21 @@ pub fn collect_for(
     }
 
     let mut services = Vec::new();
+    let mut unsupported = Vec::new();
 
     for svc_config in &config.service_health_urls {
         let unit_name = svc_config
             .unit
             .as_deref()
             .unwrap_or(&svc_config.name);
+
+        // systemd is Linux-only; docker/pid_file/unknown are portable.
+        // Don't fabricate a row for a systemd check on a non-Linux host —
+        // record it as unsupported and skip.
+        if svc_config.check_type == "systemd" && platform != Platform::Linux {
+            unsupported.push(svc_config.name.clone());
+            continue;
+        }
 
         let (status, pid, native) = match svc_config.check_type.as_str() {
             "systemd" => check_systemd(unit_name),
@@ -80,10 +85,33 @@ pub fn collect_for(
         });
     }
 
+    // If every configured check was unsupported on this platform, the
+    // collector as configured cannot testify here — typed incapacity, not
+    // a green empty list.
+    if services.is_empty() && !unsupported.is_empty() {
+        return CollectorPayload {
+            status: CollectorStatus::NotSupported,
+            collected_at: Some(now),
+            error_message: None,
+            data: None,
+        };
+    }
+
+    // Some (or all) checks ran honestly. Name any skipped systemd checks
+    // so they aren't silently absent.
+    let error_message = if unsupported.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "systemd checks unsupported on this platform: {}",
+            unsupported.join(", ")
+        ))
+    };
+
     CollectorPayload {
         status: CollectorStatus::Ok,
         collected_at: Some(now),
-        error_message: None,
+        error_message,
         data: Some(services),
     }
 }
@@ -234,26 +262,85 @@ fn check_pid_file(path: Option<&str>) -> (ServiceStatus, Option<u32>) {
 #[cfg(test)]
 mod platform_tests {
     use super::*;
+    use nq_core::config::ServiceHealthConfig;
+
+    fn svc(name: &str, check_type: &str) -> ServiceHealthConfig {
+        ServiceHealthConfig {
+            name: name.into(),
+            check_type: check_type.into(),
+            unit: None,
+            health_url: None,
+            pid_file: Some("/nonexistent/pidfile".into()),
+        }
+    }
+
+    fn cfg_with(services: Vec<ServiceHealthConfig>) -> PublisherConfig {
+        PublisherConfig {
+            service_health_urls: services,
+            ..PublisherConfig::default()
+        }
+    }
 
     #[test]
-    fn non_linux_substrate_is_not_supported_not_error() {
-        let config = PublisherConfig::default();
-        let p = collect_for(&config, Platform::Other);
-        assert_eq!(p.status, CollectorStatus::NotSupported);
-        assert_ne!(p.status, CollectorStatus::Error);
-        assert!(
-            p.data.is_none(),
-            "an unsupported substrate must not appear green/observed"
-        );
+    fn empty_config_is_ok_empty_on_any_platform() {
+        // Nothing configured = nothing to refuse. Ok+empty everywhere
+        // (the Slice-0 whole-collector NotSupported here was over-refusal).
+        for plat in [Platform::Linux, Platform::MacOs, Platform::FreeBsd, Platform::Other] {
+            let p = collect_for(&PublisherConfig::default(), plat);
+            assert_eq!(p.status, CollectorStatus::Ok, "{plat:?}");
+            assert_eq!(p.data.as_ref().map(|v| v.is_empty()), Some(true));
+        }
+    }
+
+    #[test]
+    fn portable_check_runs_on_non_linux_not_blocked() {
+        // A pid_file check is cross-platform: on a non-Linux substrate it
+        // must RUN (producing a row), not be blocked by a whole-collector
+        // platform gate. (The row's health is Down — pidfile absent — but
+        // the point is the collector is Ok and a row exists.)
+        let p = collect_for(&cfg_with(vec![svc("app", "pid_file")]), Platform::MacOs);
+        assert_eq!(p.status, CollectorStatus::Ok);
+        assert_ne!(p.status, CollectorStatus::NotSupported);
+        assert_eq!(p.data.as_ref().map(|v| v.len()), Some(1));
         assert!(p.error_message.is_none());
     }
 
     #[test]
-    fn linux_empty_config_path_unchanged() {
-        // Empty service config on Linux still reports Ok with an empty
-        // set — the platform gate does not change the existing behavior.
-        let config = PublisherConfig::default();
-        let p = collect_for(&config, Platform::Linux);
+    fn all_systemd_checks_on_non_linux_is_not_supported() {
+        // Every configured check is Linux-only here → typed incapacity,
+        // not a green empty list and not an Error.
+        let p = collect_for(&cfg_with(vec![svc("a", "systemd")]), Platform::FreeBsd);
+        assert_eq!(p.status, CollectorStatus::NotSupported);
+        assert_ne!(p.status, CollectorStatus::Error);
+        assert!(p.data.is_none());
+    }
+
+    #[test]
+    fn mixed_config_runs_portable_and_names_skipped_systemd() {
+        // pid_file runs; systemd is skipped but named in error_message
+        // (not silently dropped, not a fabricated row).
+        let p = collect_for(
+            &cfg_with(vec![svc("portable", "pid_file"), svc("linuxonly", "systemd")]),
+            Platform::MacOs,
+        );
         assert_eq!(p.status, CollectorStatus::Ok);
+        assert_eq!(p.data.as_ref().map(|v| v.len()), Some(1));
+        let em = p.error_message.expect("skipped systemd must be named");
+        assert!(em.contains("linuxonly"), "{em}");
+        assert!(em.contains("systemd"), "{em}");
+    }
+
+    #[test]
+    fn linux_path_unchanged() {
+        // Empty config and systemd config both behave as before on Linux.
+        assert_eq!(
+            collect_for(&PublisherConfig::default(), Platform::Linux).status,
+            CollectorStatus::Ok
+        );
+        // A systemd check on Linux runs (status depends on the host, but
+        // the collector is Ok and a row is produced — not NotSupported).
+        let p = collect_for(&cfg_with(vec![svc("a", "systemd")]), Platform::Linux);
+        assert_eq!(p.status, CollectorStatus::Ok);
+        assert_eq!(p.data.as_ref().map(|v| v.len()), Some(1));
     }
 }

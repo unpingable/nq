@@ -12,28 +12,23 @@ pub fn collect(config: &PublisherConfig) -> CollectorPayload<Vec<LogObservation>
     collect_for(config, Platform::current())
 }
 
-/// Log collection, parameterized on the substrate so the
-/// unsupported-platform path is testable on Linux CI. The journald
-/// path shells `journalctl`; on any non-Linux platform this collector
-/// emits a typed [`CollectorStatus::NotSupported`] (substrate
-/// `journalctl`, per [`nq_core::CollectorKind::requires`]) rather than
-/// letting a missing `journalctl` fail into a generic error. The
-/// cross-platform file adapter's portability is deferred to the later
-/// native-logs slice. Linux behavior is unchanged.
+/// Log collection, dispatched per source so the platform-specific path
+/// is testable on Linux CI:
+/// - the cross-platform **file** adapter runs on every platform;
+/// - the **journald** adapter is Linux-only — on a non-Linux platform
+///   that source emits a `fetch_status: "not_supported"` observation
+///   (typed per-source incapacity: never a fabricated count, never a
+///   silent drop, never shelling a missing `journalctl`).
+///
+/// This removes the Slice-0 over-refusal that returned whole-collector
+/// `not_supported` on non-Linux even for portable file sources. Linux
+/// behavior is unchanged. (A native macOS unified-logging witness is a
+/// separate, schema-bearing slice.)
 pub fn collect_for(
     config: &PublisherConfig,
     platform: Platform,
 ) -> CollectorPayload<Vec<LogObservation>> {
     let now = OffsetDateTime::now_utc();
-
-    if platform != Platform::Linux {
-        return CollectorPayload {
-            status: CollectorStatus::NotSupported,
-            collected_at: Some(now),
-            error_message: None,
-            data: None,
-        };
-    }
 
     if config.log_sources.is_empty() {
         return CollectorPayload {
@@ -48,6 +43,14 @@ pub fn collect_for(
     let mut errors = Vec::new();
 
     for src in &config.log_sources {
+        // journald is Linux-only. On a non-Linux substrate the source is
+        // structurally unobservable here — emit a typed per-source
+        // not_supported observation rather than dropping it (green
+        // silence) or shelling a missing journalctl (generic error).
+        if src.adapter == "journald" && platform != Platform::Linux {
+            observations.push(not_supported_observation(&src.source_id, now));
+            continue;
+        }
         match collect_source(src, now) {
             Ok(obs) => observations.push(obs),
             Err(e) => errors.push(format!("{}: {}", src.source_id, e)),
@@ -68,6 +71,25 @@ pub fn collect_for(
         collected_at: Some(now),
         error_message: if errors.is_empty() { None } else { Some(errors.join("; ")) },
         data: Some(observations),
+    }
+}
+
+/// A typed per-source refusal: the source is structurally unobservable
+/// on this platform (e.g. a journald source on non-Linux). Zero counts,
+/// no exemplars, `fetch_status = "not_supported"` — distinct from
+/// `source_quiet` (observed, nothing in window) and from a fetch error.
+fn not_supported_observation(source_id: &str, now: OffsetDateTime) -> LogObservation {
+    LogObservation {
+        source_id: source_id.to_string(),
+        window_start: now - time::Duration::seconds(60),
+        window_end: now,
+        fetch_status: "not_supported".to_string(),
+        lines_total: 0,
+        lines_error: 0,
+        lines_warn: 0,
+        last_log_ts: None,
+        transport_lag_ms: None,
+        examples: Vec::new(),
     }
 }
 
@@ -282,28 +304,69 @@ mod tests {
 #[cfg(test)]
 mod platform_tests {
     use super::*;
+    use nq_core::config::LogSourceConfig;
+    use std::io::Write;
 
-    #[test]
-    fn non_linux_substrate_is_not_supported_not_error() {
-        let config = PublisherConfig::default();
-        let p = collect_for(&config, Platform::Other);
-        assert_eq!(p.status, CollectorStatus::NotSupported);
-        assert_ne!(p.status, CollectorStatus::Error);
-        assert!(
-            p.data.is_none(),
-            "an unsupported substrate must not appear green/observed"
-        );
-        assert!(p.error_message.is_none());
+    fn src(source_id: &str, adapter: &str, target: &str) -> LogSourceConfig {
+        LogSourceConfig {
+            source_id: source_id.into(),
+            adapter: adapter.into(),
+            target: target.into(),
+            silence_budget_secs: 120,
+            max_lines: 100,
+        }
+    }
+
+    fn cfg_with(sources: Vec<LogSourceConfig>) -> PublisherConfig {
+        PublisherConfig {
+            log_sources: sources,
+            ..PublisherConfig::default()
+        }
     }
 
     #[test]
-    fn linux_empty_config_path_unchanged() {
-        // Empty log_sources on Linux → Skipped (disabled / nothing to
-        // collect), unchanged by the platform gate. Distinct from
-        // NotSupported.
-        let config = PublisherConfig::default();
-        let p = collect_for(&config, Platform::Linux);
-        assert_eq!(p.status, CollectorStatus::Skipped);
-        assert_ne!(p.status, CollectorStatus::NotSupported);
+    fn empty_config_is_skipped_on_any_platform() {
+        for plat in [Platform::Linux, Platform::MacOs, Platform::FreeBsd, Platform::Other] {
+            let p = collect_for(&PublisherConfig::default(), plat);
+            assert_eq!(p.status, CollectorStatus::Skipped, "{plat:?}");
+            assert_ne!(p.status, CollectorStatus::NotSupported);
+        }
+    }
+
+    #[test]
+    fn file_source_runs_on_non_linux_not_blocked() {
+        // The file adapter is cross-platform: on a non-Linux substrate it
+        // must RUN, not be blocked by a whole-collector platform gate.
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "line one\nline two").unwrap();
+        let path = f.path().to_str().unwrap().to_string();
+        let p = collect_for(&cfg_with(vec![src("applog", "file", &path)]), Platform::MacOs);
+        assert_eq!(p.status, CollectorStatus::Ok);
+        let obs = p.data.expect("observations");
+        assert_eq!(obs.len(), 1);
+        assert_ne!(obs[0].fetch_status, "not_supported", "file source is observable on macOS");
+    }
+
+    #[test]
+    fn journald_source_on_non_linux_is_not_supported_per_source() {
+        // journald is Linux-only: on a non-Linux substrate the source is
+        // marked not_supported per-source (typed, not green silence, not
+        // a generic error), and the collector still reports Ok.
+        let p = collect_for(&cfg_with(vec![src("syslog", "journald", "sshd")]), Platform::FreeBsd);
+        assert_eq!(p.status, CollectorStatus::Ok);
+        let obs = p.data.expect("observations");
+        assert_eq!(obs.len(), 1);
+        assert_eq!(obs[0].fetch_status, "not_supported");
+        assert_eq!(obs[0].lines_total, 0);
+        assert!(obs[0].examples.is_empty());
+    }
+
+    #[test]
+    fn linux_path_unchanged() {
+        // Empty config → Skipped on Linux, as before.
+        assert_eq!(
+            collect_for(&PublisherConfig::default(), Platform::Linux).status,
+            CollectorStatus::Skipped
+        );
     }
 }

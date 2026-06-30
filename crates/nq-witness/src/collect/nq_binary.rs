@@ -77,14 +77,14 @@ pub fn collect(config: &PublisherConfig) -> CollectorPayload<NqBinaryObservation
             observe_binary(&path, &path_str, observed_at_s)
         }
         Err(err) => {
-            // Path resolution itself failed (e.g. /proc/self/exe is
-            // unreadable in a sandbox without an override). Surface as
+            // Path resolution itself failed (e.g. current_exe() is
+            // unresolvable in a sandbox without an override). Surface as
             // a stat_error row keyed to the failing identity so the
             // substrate still receives one row per cycle.
             let path_str = config
                 .nq_binary_path
                 .clone()
-                .unwrap_or_else(|| "/proc/self/exe".to_string());
+                .unwrap_or_else(|| "<current_exe>".to_string());
             NqBinaryObservationData {
                 binary_path: path_str,
                 observation_status: STATUS_STAT_ERROR.to_string(),
@@ -109,17 +109,23 @@ pub fn collect(config: &PublisherConfig) -> CollectorPayload<NqBinaryObservation
 ///
 /// - Operator override (`config.nq_binary_path = Some(p)`) → use `p`
 ///   verbatim, every cycle. No canonicalize, no caching.
-/// - Default → `canonicalize("/proc/self/exe")` cached on first
-///   resolve. The cache is a `OnceLock<Result<...>>` so a persistent
-///   failure surfaces consistently across cycles.
+/// - Default → `std::env::current_exe()` (portable across Linux/BSD/
+///   macOS — reads `/proc/self/exe` on Linux, uses the right mechanism
+///   elsewhere), canonicalized and cached on first resolve. The cache is
+///   a `OnceLock<Result<...>>` so a persistent failure surfaces
+///   consistently across cycles.
 fn resolve_binary_path(config: &PublisherConfig) -> Result<PathBuf, String> {
     if let Some(ref override_path) = config.nq_binary_path {
         return Ok(PathBuf::from(override_path));
     }
     DEFAULT_BINARY_PATH
         .get_or_init(|| {
-            std::fs::canonicalize("/proc/self/exe")
-                .map_err(|e| format!("canonicalize /proc/self/exe failed: {e}"))
+            std::env::current_exe()
+                .map_err(|e| format!("current_exe() failed: {e}"))
+                .and_then(|p| {
+                    std::fs::canonicalize(&p)
+                        .map_err(|e| format!("canonicalize {} failed: {e}", p.display()))
+                })
         })
         .clone()
 }
@@ -251,6 +257,26 @@ mod tests {
     /// observed_at, so test assertions don't depend on wall-clock.
     fn observe_at(path: &Path, binary_path_id: &str) -> NqBinaryObservationData {
         observe_binary(path, binary_path_id, "2026-06-02T00:00:00Z".to_string())
+    }
+
+    #[test]
+    fn default_resolves_via_current_exe_and_observes_self() {
+        // No override: the default path must resolve via current_exe()
+        // — portable across Linux/BSD/macOS, not a hardcoded
+        // /proc/self/exe — and observe the running test binary (which
+        // exists) as "observed".
+        let cfg = PublisherConfig {
+            nq_binary_path: None,
+            ..PublisherConfig::default()
+        };
+        let p = collect(&cfg);
+        assert_eq!(p.status, CollectorStatus::Ok);
+        let d = p.data.expect("data");
+        assert_eq!(
+            d.observation_status, "observed",
+            "running binary should be observed: {d:?}"
+        );
+        assert!(d.size_bytes.unwrap_or(0) > 0);
     }
 
     #[test]
