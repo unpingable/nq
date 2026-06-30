@@ -1,10 +1,36 @@
 use nq_core::wire::{CollectorPayload, ServiceData};
-use nq_core::{CollectorStatus, PublisherConfig, ServiceStatus};
+use nq_core::{CollectorStatus, Platform, PublisherConfig, ServiceStatus};
 use std::process::Command;
 use time::OffsetDateTime;
 
 pub fn collect(config: &PublisherConfig) -> CollectorPayload<Vec<ServiceData>> {
+    collect_for(config, Platform::current())
+}
+
+/// Service collection, parameterized on the substrate so the
+/// unsupported-platform path is testable on Linux CI. This collector
+/// is systemd-centric (its native state fields, its primary check
+/// type); on any non-Linux platform it emits a typed
+/// [`CollectorStatus::NotSupported`] (substrate `systemd/systemctl`,
+/// per [`nq_core::CollectorKind::requires`]) for the whole collector
+/// rather than shelling a missing `systemctl` into a generic failure.
+/// Per-check portability (e.g. docker / pid_file checks that could run
+/// on macOS) is deferred to the later native-services slice. Linux
+/// behavior is unchanged.
+pub fn collect_for(
+    config: &PublisherConfig,
+    platform: Platform,
+) -> CollectorPayload<Vec<ServiceData>> {
     let now = OffsetDateTime::now_utc();
+
+    if platform != Platform::Linux {
+        return CollectorPayload {
+            status: CollectorStatus::NotSupported,
+            collected_at: Some(now),
+            error_message: None,
+            data: None,
+        };
+    }
 
     if config.service_health_urls.is_empty() {
         return CollectorPayload {
@@ -203,4 +229,31 @@ fn check_pid_file(path: Option<&str>) -> (ServiceStatus, Option<u32>) {
     };
 
     (status, pid)
+}
+
+#[cfg(test)]
+mod platform_tests {
+    use super::*;
+
+    #[test]
+    fn non_linux_substrate_is_not_supported_not_error() {
+        let config = PublisherConfig::default();
+        let p = collect_for(&config, Platform::Other);
+        assert_eq!(p.status, CollectorStatus::NotSupported);
+        assert_ne!(p.status, CollectorStatus::Error);
+        assert!(
+            p.data.is_none(),
+            "an unsupported substrate must not appear green/observed"
+        );
+        assert!(p.error_message.is_none());
+    }
+
+    #[test]
+    fn linux_empty_config_path_unchanged() {
+        // Empty service config on Linux still reports Ok with an empty
+        // set — the platform gate does not change the existing behavior.
+        let config = PublisherConfig::default();
+        let p = collect_for(&config, Platform::Linux);
+        assert_eq!(p.status, CollectorStatus::Ok);
+    }
 }

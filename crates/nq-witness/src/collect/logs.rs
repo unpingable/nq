@@ -3,13 +3,37 @@
 //! counts only.
 
 use nq_core::wire::{CollectorPayload, LogExample, LogObservation};
-use nq_core::{CollectorStatus, PublisherConfig};
+use nq_core::{CollectorStatus, Platform, PublisherConfig};
 use std::process::Command;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 pub fn collect(config: &PublisherConfig) -> CollectorPayload<Vec<LogObservation>> {
+    collect_for(config, Platform::current())
+}
+
+/// Log collection, parameterized on the substrate so the
+/// unsupported-platform path is testable on Linux CI. The journald
+/// path shells `journalctl`; on any non-Linux platform this collector
+/// emits a typed [`CollectorStatus::NotSupported`] (substrate
+/// `journalctl`, per [`nq_core::CollectorKind::requires`]) rather than
+/// letting a missing `journalctl` fail into a generic error. The
+/// cross-platform file adapter's portability is deferred to the later
+/// native-logs slice. Linux behavior is unchanged.
+pub fn collect_for(
+    config: &PublisherConfig,
+    platform: Platform,
+) -> CollectorPayload<Vec<LogObservation>> {
     let now = OffsetDateTime::now_utc();
+
+    if platform != Platform::Linux {
+        return CollectorPayload {
+            status: CollectorStatus::NotSupported,
+            collected_at: Some(now),
+            error_message: None,
+            data: None,
+        };
+    }
 
     if config.log_sources.is_empty() {
         return CollectorPayload {
@@ -252,5 +276,34 @@ mod tests {
     #[test]
     fn truncate_ascii_at_boundary() {
         assert_eq!(truncate("hello world", 5), "hello...");
+    }
+}
+
+#[cfg(test)]
+mod platform_tests {
+    use super::*;
+
+    #[test]
+    fn non_linux_substrate_is_not_supported_not_error() {
+        let config = PublisherConfig::default();
+        let p = collect_for(&config, Platform::Other);
+        assert_eq!(p.status, CollectorStatus::NotSupported);
+        assert_ne!(p.status, CollectorStatus::Error);
+        assert!(
+            p.data.is_none(),
+            "an unsupported substrate must not appear green/observed"
+        );
+        assert!(p.error_message.is_none());
+    }
+
+    #[test]
+    fn linux_empty_config_path_unchanged() {
+        // Empty log_sources on Linux → Skipped (disabled / nothing to
+        // collect), unchanged by the platform gate. Distinct from
+        // NotSupported.
+        let config = PublisherConfig::default();
+        let p = collect_for(&config, Platform::Linux);
+        assert_eq!(p.status, CollectorStatus::Skipped);
+        assert_ne!(p.status, CollectorStatus::NotSupported);
     }
 }

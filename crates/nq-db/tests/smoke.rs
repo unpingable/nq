@@ -549,3 +549,63 @@ fn service_lifecycle_three_generations() {
         "stale services (gen {svc_gen_id}) should be from an earlier generation than host (gen {host_gen_id})"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Capability honesty (PORTABILITY_GAP Slice 0): a `not_supported`
+// collector run must persist and read back as its own status string.
+// This proves migration 060 widened the collector_runs.status CHECK —
+// without it, publish_batch would abort with a CHECK violation.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn not_supported_collector_persists_and_reads_back() {
+    let tdb = TestDb::new();
+    let mut wdb = tdb.write_db();
+    let t = now();
+
+    // A host collector that ran on an unsupported substrate: no data,
+    // typed NotSupported — not Ok, not Error.
+    let batch = Batch {
+        cycle_started_at: t,
+        cycle_completed_at: t,
+        sources_expected: 1,
+        source_runs: vec![ok_source("mac-mini", t)],
+        collector_runs: vec![CollectorRun {
+            source: "mac-mini".into(),
+            collector: CollectorKind::Host,
+            status: CollectorStatus::NotSupported,
+            collected_at: Some(t),
+            entity_count: None,
+            error_message: None,
+        }],
+        host_rows: vec![],
+        service_sets: vec![],
+        sqlite_db_sets: vec![],
+        metric_sets: vec![],
+        log_sets: vec![],
+        zfs_witness_rows: vec![],
+        smart_witness_rows: vec![],
+        wal_observation_sets: vec![],
+        nq_binary_observation_rows: vec![],
+    };
+    publish_batch(&mut wdb, &batch).unwrap();
+
+    // The CHECK admits it and it round-trips as its own string —
+    // distinct from 'error' / 'skipped' / 'ok'.
+    let status = tdb.query_scalar(
+        "SELECT status FROM collector_runs WHERE source = 'mac-mini' AND collector = 'host'",
+    );
+    assert_eq!(status, "not_supported");
+
+    // It is NOT laundered into error, and no host row was observed.
+    assert_eq!(
+        tdb.query_count("SELECT COUNT(*) FROM collector_runs WHERE status = 'error'"),
+        0,
+        "not_supported must not collapse into error"
+    );
+    assert_eq!(
+        tdb.query_count("SELECT COUNT(*) FROM hosts_current WHERE host = 'mac-mini'"),
+        0,
+        "an unsupported host collector must not produce a green host row"
+    );
+}

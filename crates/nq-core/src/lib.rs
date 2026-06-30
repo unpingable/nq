@@ -32,5 +32,7 @@ pub use claim_registry::{
 };
 pub use receipt::{NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef, RECEIPT_SCHEMA};
 pub use render::{render_human, render_json, render_jsonl, render_markdown};
-pub use status::{CollectorKind, CollectorStatus, GenerationStatus, ServiceStatus, SourceStatus};
+pub use status::{
+    CollectorKind, CollectorStatus, GenerationStatus, Platform, ServiceStatus, SourceStatus,
+};
 pub use witness::{WitnessPacket, WitnessValidationError, WITNESS_SCHEMA};

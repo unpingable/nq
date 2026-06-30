@@ -195,7 +195,7 @@ fn default_timeout_ms() -> u64 {
     10_000
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PublisherConfig {
     #[serde(default = "default_bind_addr")]
     pub bind_addr: String,

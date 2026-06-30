@@ -1,9 +1,29 @@
 use nq_core::wire::{CollectorPayload, HostData};
-use nq_core::CollectorStatus;
+use nq_core::{CollectorStatus, Platform};
 use time::OffsetDateTime;
 
 pub fn collect() -> CollectorPayload<HostData> {
+    collect_for(Platform::current())
+}
+
+/// Host collection, parameterized on the substrate so the
+/// unsupported-platform path is testable on Linux CI. The real body
+/// reads `/proc`; on any non-Linux platform it emits a typed
+/// [`CollectorStatus::NotSupported`] (substrate `/proc`, per
+/// [`nq_core::CollectorKind::requires`]) rather than letting the
+/// `/proc/loadavg` read fail into a generic `Error`. Linux behavior is
+/// unchanged.
+pub fn collect_for(platform: Platform) -> CollectorPayload<HostData> {
     let now = OffsetDateTime::now_utc();
+
+    if platform != Platform::Linux {
+        return CollectorPayload {
+            status: CollectorStatus::NotSupported,
+            collected_at: Some(now),
+            error_message: None,
+            data: None,
+        };
+    }
 
     match collect_host_data() {
         Ok(data) => CollectorPayload {
@@ -120,4 +140,40 @@ fn nix_statvfs(path: &str) -> anyhow::Result<(u64, u64, u64)> {
         stat.f_blocks as u64,
         stat.f_bavail as u64,
     ))
+}
+
+#[cfg(test)]
+mod platform_tests {
+    use super::*;
+
+    #[test]
+    fn non_linux_substrate_is_not_supported_not_error() {
+        let p = collect_for(Platform::Other);
+        assert_eq!(p.status, CollectorStatus::NotSupported);
+        assert_ne!(
+            p.status,
+            CollectorStatus::Error,
+            "incapacity must not launder into a generic error"
+        );
+        assert!(
+            p.data.is_none(),
+            "an unsupported substrate must not produce host data (green silence)"
+        );
+        assert!(
+            p.error_message.is_none(),
+            "not_supported is incapacity, not an error string"
+        );
+    }
+
+    #[test]
+    fn linux_substrate_path_unchanged() {
+        // On the Linux reference substrate the collector reads /proc and
+        // testifies Ok; the platform gate must not alter that. Asserted
+        // only where CI actually runs Linux.
+        let p = collect_for(Platform::Linux);
+        if cfg!(target_os = "linux") {
+            assert_eq!(p.status, CollectorStatus::Ok, "payload: {p:?}");
+            assert!(p.data.is_some());
+        }
+    }
 }

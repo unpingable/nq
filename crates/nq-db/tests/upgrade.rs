@@ -39,23 +39,26 @@ const PREVIOUS_SCHEMA_VERSION: u32 = CURRENT_SCHEMA_VERSION - 1;
 /// of NQ_EVALUATOR_STATE. The rollback fixture drops it to represent
 /// a real v(N-1) DB that never had it.
 ///
-/// Migration 059 (SERVICE_OBSERVATIONS) adds a new table
-/// `service_observations` (+ its indexes, dropped automatically with the
-/// table). It adds no columns to existing tables and recreates no views.
-/// (Per-migration maintenance: these constants track the LATEST
-/// migration's changes; update them each migration.)
-const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["service_observations"];
+/// Migration 060 (collector_runs not_supported) widens the
+/// `collector_runs.status` CHECK to admit `'not_supported'` via the
+/// SQLite table-rebuild pattern. It adds NO new tables, adds no columns
+/// to existing tables, and recreates no views — same shape as the prior
+/// collector_runs-rebuild migrations (007/050/055), for which these
+/// constants were likewise empty. (Per-migration maintenance: these
+/// constants track the LATEST migration's changes; update them each
+/// migration.)
+const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &[];
 
 /// Columns added by the most recent migration, as (table, column)
 /// pairs. The rollback fixture drops these so the upgrade test
 /// represents a real v(N-1) DB that never had the column. SQLite's
 /// `ALTER TABLE DROP COLUMN` (3.35+) handles this directly. Views that
 /// reference these columns are dropped first (below) so DROP COLUMN
-/// succeeds. (Migration 059 adds no columns to existing tables.)
+/// succeeds. (Migration 060 adds no columns to existing tables.)
 const COLUMNS_ADDED_IN_LATEST_MIGRATION: &[(&str, &str)] = &[];
 
 /// Views recreated by the most recent migration. The rollback fixture
-/// drops them so re-migration recreates them cleanly. (Migration 059
+/// drops them so re-migration recreates them cleanly. (Migration 060
 /// recreates no views.)
 const VIEWS_RECREATED_IN_LATEST_MIGRATION: &[&str] = &[];
 
