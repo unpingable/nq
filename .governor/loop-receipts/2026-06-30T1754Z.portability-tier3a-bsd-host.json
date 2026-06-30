@@ -1,0 +1,25 @@
+{
+  "slice": "PORTABILITY Tier 3a — partial-native BSD host collector (shared read_bsd_facts + pure assemble_bsd); macOS/FreeBSD graduate from not_supported to status:ok + cannot_testify",
+  "date": "2026-06-30",
+  "lane": "operator-directed (operator + ChatGPT ratified D-A..D-D; codegen direct, Qwen advisory-only and not used)",
+  "decision_recorded": "D-A: Platform extended to {Linux,MacOs,FreeBsd,Other} (internal, never serialized). D-B: HostData.cannot_testify: Vec<HostField> — typed enum (MemAvailable/MemPressure/BootId), typos unrepresentable, field-level testimony refusal not prose. D-C: additive + wire-only (#[serde(default)] + skip_serializing_if=Vec::is_empty); NOT persisted into hosts_current (V1; later reader-driven seam); no DB migration. D-D: once read_bsd_facts exists, BSD host = status:ok + cannot_testify (partial native), NOT collector-level not_supported; services/logs stay not_supported. Raw libc/sysctl/getloadavg/statvfs, NO sysinfo crate.",
+  "doctrine": "Capability honesty extends to partial native: a substrate testifies to what it honestly can and REFUSES the rest at field level, rather than being wholesale unsupported or counterfeiting Linux-equivalent values. The FreeBSD run (prior receipt) proved the shared-BSD-fact-reader shape over a Darwin-only collector — design the abstraction with the third substrate in view, not the second alone.",
+  "built": [
+    "nq-core/src/status.rs: Platform { Linux, MacOs, FreeBsd, Other } + current() by target_os.",
+    "nq-core/src/wire.rs: HostData.cannot_testify: Vec<HostField> (additive, wire-only) + HostField enum {MemAvailable, MemPressure, BootId} (snake_case).",
+    "nq-witness/src/collect/host_bsd.rs (NEW): BsdHostFacts intermediate; read_bsd_facts() cfg(macos|freebsd) raw libc (getloadavg, statvfs via shared nix_statvfs, sysctl kern.boottime/kern.osrelease, hw.memsize|hw.physmem MIB delta, kern.bootsessionuuid|None); pure assemble_bsd(facts, now) -> HostData with field-level cannot_testify; bsd_collect() (real on BSD, NotSupported stub on non-BSD).",
+    "nq-witness/src/collect/host.rs: collect_for dispatch over the 4 platforms (Linux /proc UNCHANGED; MacOs|FreeBsd -> bsd_collect; Other -> NotSupported); nix_statvfs made pub(crate) and shared.",
+    "Lab harness ~/nqlab/work/build_run.py: bakes NQ_BUILD_COMMIT so git-archive/tarball builds don't masquerade as the build_commit portability failure."
+  ],
+  "tests": "Linux CI (all green, cargo test -p nq-core -p nq-witness -p nq-db --no-fail-fast exit 0): Darwin/FreeBSD assembler fixtures; counterfeit guard (mem_available/mem_pressure never synthesized, always refused); FreeBSD boot_id None+refused vs Darwin populated+not-refused; host_bsd contains no procfs ref (include_str self-grep, needle built by concat); platform_current_resolves_by_target_os; collect() smoke Ok on any supported substrate. HostData serde backward-compatible when cannot_testify absent (skip_serializing_if).",
+  "freebsd_verification": "FreeBSD 14.4-RELEASE-p6 VM (sushi-k libvirt/KVM, pkg rustc 1.94, NQ_BUILD_COMMIT=e2b3c0ba746f baked): cfg(freebsd) read_bsd_facts COMPILES; full suite GREEN (TEST_RC=0, build_commit artifact eliminated). Load-bearing tests confirmed by name in /root/test.log: collect_on_a_supported_substrate_is_ok ... ok (LIVE read_bsd_facts executed real getloadavg/sysctl/statvfs -> status:ok + cannot_testify[MemAvailable,MemPressure]), platform_current_resolves_by_target_os ... ok (==FreeBsd), build_commit_returns_some_when_compiled_in_repo ... ok, host_bsd assembler fixtures ... ok. Lab-backed compatibility + live-on-lab capability evidence, NOT real-hardware production testimony.",
+  "scope_guard": "Host only. Linux /proc path unchanged (output identical; only nix_statvfs visibility widened). services/logs unchanged (collector-level not_supported). NO launchd, NO rc.d, NO syslog/unified logging. NO full Tier-3 macOS/FreeBSD support claim. cannot_testify NOT persisted (V1 wire-only). read_bsd_facts is mem-total amd64-width assumption (8-byte sysctl) — fine for lab targets, noted.",
+  "verify": {
+    "linux": "cargo check + cargo test (nq-core/nq-witness/nq-db) exit 0; 8 new tests green",
+    "freebsd_vm": "build + full suite TEST_RC=0; cfg(freebsd) branch compiled; live collect() smoke green",
+    "qwen": "not used; direct codegen; Qwen remains advisory-only per operator"
+  },
+  "commits": ["e2b3c0b feat(portability): Tier 3a — partial-native BSD host collector"],
+  "deferred_named": "Persist cannot_testify into hosts_current (reader-driven migration when a consumer needs it); native services (launchd/rc.d) and logs (unified logging/syslog) per-platform; mac mini live verification of read_bsd_facts (Darwin MIBs incl kern.bootsessionuuid) via AG; real-hardware testimony to promote lab evidence; sysctl width-robustness if a non-amd64 target appears.",
+  "acceptance": "Tier 3a done, green on Linux, verified on the FreeBSD VM. macOS/FreeBSD are partial-native host witnesses. Loop AUDIT/idle. PUSH: held (workweek; main ahead 7 after bookkeeping). NEXT: operator call."
+}

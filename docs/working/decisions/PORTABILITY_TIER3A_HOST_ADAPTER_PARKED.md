@@ -1,9 +1,23 @@
-# Tier 3a host adapter — PARKED pending FreeBSD evidence
+# Tier 3a host adapter — IMPLEMENTED (BSD fact reader)
 
-**Status:** parked (design ratified provisionally; implementation deferred)
-**Date parked:** 2026-06-30
-**Parks:** native Darwin `host.rs` collector (Tier 3a from `gaps/PORTABILITY_GAP.md`)
-**Blocked-by (deliberate):** a FreeBSD portability run (Tier 0/1) — see "Why parked"
+**Status:** ✅ IMPLEMENTED 2026-06-30 as a shared BSD fact reader (commit
+`e2b3c0b`), verified on the FreeBSD 14.4 VM (the `cfg(freebsd)` reader
+compiles + live `collect()` runs `status: ok` + `cannot_testify`). The
+"parked" history below is retained for the design rationale and the
+FreeBSD-evidence table that drove the Darwin-only → BSD-fact-reader
+decision. Decisions shipped: **D-A** Platform `{Linux,MacOs,FreeBsd,Other}`;
+**D-B** typed `cannot_testify: Vec<HostField>`; **D-C** wire-only, no
+migration; **D-D** macOS/FreeBSD → partial-native (`status: ok`), services/
+logs stay `not_supported`. Scope held: host only; no launchd/rc.d/syslog;
+no full Tier-3 claim. Still open (deferred): per-field persistence into
+`hosts_current`; native services/logs; live-on-real-hardware testimony
+(current evidence is lab-backed).
+
+---
+
+**Original parking record (2026-06-30):** native Darwin `host.rs` collector
+(Tier 3a from `gaps/PORTABILITY_GAP.md`), deliberately deferred behind a
+FreeBSD portability run — see "Why parked".
 
 ## Why parked
 
