@@ -9,6 +9,7 @@
 ## Compatibility evidence log
 
 - **2026-06-30:** NQ builds clean and the current test suite passes on `aarch64-apple-darwin` / rustc 1.96.0 using the M4 mini substrate. This is **build + current-suite compatibility evidence**, relayed as a frontier-safe aggregate; full transcripts remain SECRET-local. It is **not live runtime testimony**. The Linux-bound collectors remain ungated: `host.rs` still hardcodes `/proc`, `services.rs` shells `systemctl`, and `logs.rs` shells `journalctl`. This removes the "won't even compile on macOS" caveat but **does not resolve the Tier-3 capability-honesty gap.**
+- **2026-06-30 (Slice 0 landed, local):** capability-honesty Slice 0 — `host`/`services`/`logs` now emit a typed `CollectorStatus::NotSupported` (wire string `not_supported`, substrate derived from `CollectorKind::requires`) on non-Linux substrates instead of laundering absence into a generic `Error`. Injectable `Platform` seam (testable on Linux CI); migration 060 widens the `collector_runs.status` CHECK. **Capability honesty only — no Darwin native collection; Tier-3 macOS support remains unbuilt and this gap stays `proposed`.**
 
 ## The Problem
 

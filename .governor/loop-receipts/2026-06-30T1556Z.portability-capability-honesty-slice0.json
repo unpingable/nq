@@ -1,0 +1,26 @@
+{
+  "slice": "PORTABILITY_GAP capability-honesty Slice 0 — typed CollectorStatus::NotSupported on non-Linux substrates (host/services/logs)",
+  "date": "2026-06-30",
+  "lane": "operator-directed (operator + ChatGPT + AG-claude thread; prompted by AG-claude's macOS build+test green on the M4 mini)",
+  "decision_recorded": "Decision C (operator-ratified): NotSupported is a UNIT variant on CollectorStatus (wire string 'not_supported', Copy preserved, bare-string TEXT/CHECK contract intact). The substrate it would require is DERIVED from CollectorKind::requires() (Host=/proc, Services=systemd/systemctl, Logs=journalctl), never carried on the wire — no field to misset, so status=Ok+requires is unrepresentable. Data-carrying variant NotSupported{requires} was REJECTED: kills Copy and turns the status wire shape from a bare string into an object, breaking the TEXT/CHECK persistence + wire contract (a schema break, not Slice 0). Platform gate is an INJECTABLE seam (Platform::current() / collect_for(platform)), not bare #[cfg], so the unsupported path is testable on Linux CI.",
+  "doctrine": "Capability honesty, not equal support. Unavailable probes emit a typed capability gap, never a false negative or a green silence. NotSupported (incapacity) is distinct from Error (a real attempt that failed), Skipped (operator-disabled / nothing configured), and Ok (observed). This is NOT macOS support: there is no Darwin native collection behind the seam, only a typed refusal — compatibility-honesty, not live Tier-3 testimony.",
+  "built": [
+    "nq-core/src/status.rs: CollectorStatus::NotSupported unit variant + as_str arm; CollectorKind::requires() -> Option<&'static str>; Platform { Linux, Other } + Platform::current() (compile-time target_os resolution behind a runtime value). Exported from lib.rs.",
+    "nq-witness/src/collect/{host,services,logs}.rs: collect() delegates to collect_for(platform[, config]); non-Linux returns typed NotSupported (no data, no error_message); Linux body unchanged.",
+    "nq-db/migrations/060_collector_runs_not_supported.sql: widen collector_runs.status CHECK to admit 'not_supported' via SQLite table-rebuild v6->v7 (rows + index preserved; same pattern as 007/050/055). Registered in migrate.rs; CURRENT_SCHEMA_VERSION 59->60.",
+    "nq-core/src/config.rs: PublisherConfig gains #[derive(Default)] (additive; does not alter serde-default) so collector tests can build an empty config."
+  ],
+  "tests": "12 new, all green. nq-core (5): not_supported wire-string == \"not_supported\"; roundtrip + distinct from Ok/Error/Timeout/Skipped; as_str matches serde for every variant; requires() keyed off Host/Services/Logs (None for non-Linux-bound kinds); Platform::current()==Linux on Linux CI. nq-witness (6): host/services/logs each — non-Linux substrate -> NotSupported (NOT Error, data None, error_message None) + Linux path unchanged (host Ok, services empty->Ok, logs empty->Skipped). nq-db (1): not_supported collector run persists, reads back as its own string, does NOT collapse into 'error' and produces NO green host row.",
+  "scope_guard": "Linux behavior unchanged (asserted). NO Darwin native collection. NO launchd. NO unified logging. NO claim of Tier-3 macOS support. PORTABILITY_GAP stays 'proposed'. Whole-collector NotSupported on non-Linux for services/logs is the bounded Slice-0 behavior — per-check portability (services docker/pid_file, logs file-adapter) is DEFERRED to the later native slices, not silently dropped. Two files beyond the literal cut (upgrade.rs per-migration constants; PublisherConfig Default) are completeness of the migration opened, not scope widening — flagged to operator.",
+  "verify": {
+    "targeted_new_tests": "nq-core status::tests 5/0; nq-witness collect::*::platform_tests 6/0; nq-db smoke not_supported 1/0 — all exit 0",
+    "full_suite": "cargo test -p nq-core -p nq-db -p nq-witness --no-fail-fast -> exit 0",
+    "check": "cargo check -p nq-core -p nq-witness -p nq-db -p nq-monitor --all-targets -> exit 0 (no non-exhaustive matches)"
+  },
+  "commits": [
+    "3573c00 docs(portability): 2026-06-30 macOS build+test compatibility evidence breadcrumb",
+    "a4ac381 feat(portability): capability-honesty Slice 0 — typed NotSupported on non-Linux"
+  ],
+  "deferred_named": "Tier 3a: smallest native Darwin host.rs slice (platform-adapter boundary; Linux /proc unchanged; Darwin host impl separate, never touches /proc; honest partial/not_supported per field) — propose shape before coding. Then per-check portability for services (docker/pid_file) and logs (file-adapter); launchd services; unified-logging logs; distinct dashboard rendering of not_supported.",
+  "acceptance": "Slice 0 done and green. Loop AUDIT/idle. PUSH: held (workweek; main ahead 2, unpushed). NEXT: bring back Tier 3a host.rs design shape for ratification — NO code until ratified."
+}
