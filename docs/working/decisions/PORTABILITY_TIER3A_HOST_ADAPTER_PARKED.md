@@ -64,6 +64,39 @@ specific MIB names — `hw.physmem` vs `hw.memsize`, `kern.boottime`,
 `kern.osrelease` — differ), and therefore which belong in a shared
 `read_bsd_facts()` with deltas vs a Darwin-only path.
 
+## FreeBSD evidence (2026-06-30) — resolves "Darwin-only vs BSD fact reader"
+
+Ran the FreeBSD Tier 0/1 portability pass (FreeBSD 14.4-RELEASE-p6,
+sushi-k libvirt/KVM, pkg rustc 1.94). Result: **compiles clean;
+`NotSupported` generalizes** (`Platform::current() == Other` on real
+FreeBSD; all collector `not_supported` tests green). Receipt:
+`.governor/loop-receipts/2026-06-30T*.freebsd-portability-run.json`.
+
+Mapping the host facts across **Darwin and FreeBSD** shows they share a
+BSD mechanism for most fields, with small per-OS deltas — which settles
+the open question in favor of a **shared BSD fact reader, not a
+Darwin-only collector**:
+
+| Field | Darwin | FreeBSD | Relationship |
+|---|---|---|---|
+| `cpu_load_*` | `getloadavg(3)` | `getloadavg(3)` | **identical** |
+| `disk_*` | `statvfs` | `statvfs` | **identical** (already shared with Linux) |
+| `uptime_seconds` | `sysctl kern.boottime` | `sysctl kern.boottime` | **identical MIB** |
+| `kernel_version` | `sysctl kern.osrelease` | `sysctl kern.osrelease` | **identical MIB** |
+| `mem_total_mb` | `sysctl hw.memsize` | `sysctl hw.physmem` | sysctl, **MIB delta** |
+| `boot_id` | `kern.bootsessionuuid` | no per-boot UUID (`kern.hostuuid` is per-host) | **delta / field not_supported on FBSD** |
+| `mem_available_mb`, `mem_pressure_pct` | not 1:1 | not 1:1 | **field not_supported on both** |
+
+**Revised D-line for the eventual implementation:** Tier 3a becomes a
+`read_bsd_facts()` shared core (`getloadavg`, `statvfs`, `sysctl`
+`kern.boottime`/`kern.osrelease`) plus a tiny per-OS delta table
+(`hw.memsize` vs `hw.physmem`; boot-id mechanism; the two
+already-not_supported mem fields). **D4 (raw libc/sysctl) is now the
+clear choice** — the handful of shared sysctls don't justify the
+`sysinfo` dependency, and a shared BSD reader is cleaner with raw MIBs.
+This is the wart the FreeBSD-first detour was meant to prevent: writing
+`read_darwin_facts()` and then discovering half of it was `read_bsd_facts()`.
+
 ## Resume condition
 
 After the FreeBSD Tier 0/1 run, redesign the native host adapter with

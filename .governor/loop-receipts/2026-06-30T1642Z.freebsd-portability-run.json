@@ -1,0 +1,23 @@
+{
+  "slice": "FreeBSD portability run (Tier 0/1) — compile + capability-honesty evidence; does NotSupported generalize beyond macOS?",
+  "date": "2026-06-30",
+  "lane": "operator-directed (operator + ChatGPT: FreeBSD-first before native Darwin host.rs, to avoid baking a Darwin-shaped abstraction)",
+  "decision_recorded": "Do NOT implement FreeBSD (or Darwin) native collectors yet. Run is evidence-gathering only: (a) does NQ compile/test on FreeBSD, (b) does the Slice-0 typed NotSupported behavior fire on a real non-Linux, non-Darwin substrate. Lab-backed compatibility + capability evidence, NOT live FreeBSD support certification.",
+  "doctrine": "Build the zoo; keep the cages labeled. A real non-Linux server substrate (FreeBSD) tests whether NotSupported was a macOS special case or a portability primitive. Unsupported things must fail WITH POSTURE on FreeBSD too, not just macOS.",
+  "substrate": "FreeBSD 14.4-RELEASE-p6 amd64, fresh official BASIC-CLOUDINIT-ufs qcow2 (sha256 verified d957fe...), on sushi-k libvirt/KVM (2 vCPU / 4 GB / 24 GB disk), NAT networking + egress, NoCloud seed (root pw), serial-console driven via the reused pfSense-lab harness (~/nqlab/work/{fbsd_con,build_run}.py). pkg rustc/cargo 1.94.0 (above NQ MSRV 1.88; non-rustup cargo ignores rust-toolchain.toml pin). Source transferred as git-archive tarball of nq HEAD abce670 (no .git in the build sandbox).",
+  "result": {
+    "tier0_compile": "CLEAN — all crates compiled under rustc 1.94 / x86_64-unknown-freebsd (edition 2021).",
+    "tier1_capability_honesty": "GREEN — platform_current_is_linux_on_linux_ci asserts Platform::current()==Other on real FreeBSD; collect::{host,services,logs}::platform_tests::non_linux_substrate_is_not_supported_not_error all pass; not_supported_collector_persists_and_reads_back passes. NotSupported generalizes beyond macOS = confirmed portability primitive.",
+    "full_suite": "cargo test -p nq-core -p nq-witness -p nq-db --no-fail-fast: all test binaries green EXCEPT one test.",
+    "single_failure_classified": "nq-db lib build_commit_returns_some_when_compiled_in_repo (600 passed; 1 failed). Classification: BUILD-METHOD ARTIFACT, not portability/capability. build.rs runs `git rev-parse` to bake NQ_BUILD_COMMIT; this run built from a git-archive tarball (no .git) so the env is unset and build_commit()==None. The test's own comment states tarball/sandbox builds legitimately produce None. Reproducible on ANY OS built from a tarball; would be green from a real git checkout. NOT patched (per operator: classify, do not patch)."
+  },
+  "architectural_finding": "FreeBSD and Darwin SHARE most host-fact mechanisms: getloadavg(3), statvfs, sysctl kern.boottime, sysctl kern.osrelease are identical; deltas are hw.memsize (Darwin) vs hw.physmem (FreeBSD), boot-id mechanism, and mem_available/mem_pressure (field not_supported on both). This settles the Tier-3a open question in favor of a SHARED read_bsd_facts() core + per-OS delta table, NOT a Darwin-only read_darwin_facts(). D4 (raw libc/sysctl over the sysinfo crate) is now the clear choice. Recorded in decisions/PORTABILITY_TIER3A_HOST_ADAPTER_PARKED.md.",
+  "scope_guard": "NO native FreeBSD collectors. NO rc.d/service collector. NO logging implementation. NO Darwin host.rs (still parked). NO Tier-3 support claim for any platform. NO code changes to nq. Lab artifacts (VM image, seed ISO, serial driver) live under ~/nqlab, gitignored/outside the repo. VM shut down after the run; image retained as a re-runnable Tier-3 lab substrate.",
+  "verify": {
+    "compile": "cargo test (build phase) exit 0 for compilation; 129 crates compiled fresh on FreeBSD",
+    "tests": "TEST_RC=101 (the one tarball-artifact failure); every other target 'test result: ok' with 0 failures; capability tests explicitly green",
+    "provenance": "image sha256 matches FreeBSD published CHECKSUM.SHA256; benign RFC1918 lab only"
+  },
+  "deferred_named": "Unpark Tier 3a as a BSD-fact-reader (read_bsd_facts core + Darwin/FreeBSD deltas); codegen of read_bsd_facts can be farmed to the mac-mini local Qwen and verified here. Then services/logs native per-platform; rc.d/launchd; logs. A from-real-git-checkout FreeBSD re-run would also green the build_commit test (optional).",
+  "acceptance": "FreeBSD Tier 0/1 done and green (modulo the classified tarball artifact). NotSupported confirmed as a cross-platform primitive. Tier 3a redesign direction (BSD fact reader) now evidence-backed. Loop AUDIT/idle. PUSH: held (workweek). NEXT: operator call — unpark Tier 3a as BSD-fact-reader, or hold."
+}
