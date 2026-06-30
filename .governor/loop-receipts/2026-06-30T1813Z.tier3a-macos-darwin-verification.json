@@ -1,0 +1,19 @@
+{
+  "slice": "Tier 3a macOS/Darwin branch verification — close the 'Darwin written but unverified' caveat",
+  "date": "2026-06-30",
+  "lane": "operator-directed (verify-only; no code changes unless the Darwin branch failed to compile or a MIB was wrong — neither occurred)",
+  "decision_recorded": "macOS/Darwin branch of the Tier 3a BSD host collector is LAB-VERIFIED. No Darwin-specific fix was needed; the shared read_bsd_facts was genuinely shared (not Darwin-shaped), validating the FreeBSD-first sequencing.",
+  "substrate": "M4 mac mini (AG's box, reached via `ssh mac`), macOS 15.7.3 / Darwin 24.6.0 arm64, cargo 1.x (homebrew). Real Apple hardware — a lab box, NOT production. Source transferred as git-archive of HEAD 20760eaa9a7f into throwaway ~/nq_t3a_verify; NQ_BUILD_COMMIT baked.",
+  "result": {
+    "compile": "cfg(macos) Darwin branch of read_bsd_facts COMPILES (never compiled before this run).",
+    "lib_tests": "LIB_RC=0 — nq-core 190 passed, nq-witness 85 passed; incl platform_current_resolves_by_target_os (== MacOs) and collect_on_a_supported_substrate_is_ok (LIVE collect() -> read_bsd_facts on Darwin -> status:ok + cannot_testify) and host_bsd assembler fixtures.",
+    "darwin_smoke": "SMOKE_RC=0 — mini-local integration test (NOT committed): host::collect() status:ok; boot_id populated (kern.bootsessionuuid); mem_total_mb populated (hw.memsize, 16384); load/uptime/kernel_version populated (getloadavg/kern.boottime/kern.osrelease); mem_available_mb and mem_pressure_pct absent AND in cannot_testify; BootId NOT refused (Darwin has it); services + logs not_supported; Platform::current()==MacOs.",
+    "mibs_exercised": "getloadavg, statvfs(\"/\"), kern.boottime, kern.osrelease, hw.memsize, kern.bootsessionuuid — all correct."
+  },
+  "scope_guard": "Verify-only. NO code changes (repo unchanged; still ahead 7, clean). NO native services/logs. NO launchd. NO full Tier-3 support claim. Mini-local darwin_smoke.rs and full smoke.log remain on the mini (custody: only sanitized aggregate recorded here). Throwaway ~/nq_t3a_verify retained on the mini, re-runnable.",
+  "interpretation": "Closes the 'Darwin branch written but unverified' caveat from the 2026-06-30T1754Z Tier 3a receipt. Both FreeBSD (VM, lab) and macOS (M4 mini, real hardware lab box) now confirm the shared BSD partial-native host witness. Lab-backed compatibility + live-on-lab capability evidence, NOT production deployment testimony.",
+  "verify": {"lib": "LIB_RC=0", "smoke": "SMOKE_RC=0", "fix_needed": "none"},
+  "commits": ["docs-only: PORTABILITY_GAP macOS evidence line + this receipt (local, workweek, no push)"],
+  "deferred_named": "Persist cannot_testify into hosts_current (reader-driven migration); native BSD services (launchd/rc.d) and logs (unified logging/syslog) as separate slices; real-hardware PRODUCTION testimony to promote lab evidence; cleanup of ~/nq_t3a_verify on the mini on request.",
+  "acceptance": "macOS Tier 3a verified; caveat closed. Loop AUDIT/idle. PUSH: held (workweek; main ahead 8 after this docs commit). HOLD the arc per operator."
+}
