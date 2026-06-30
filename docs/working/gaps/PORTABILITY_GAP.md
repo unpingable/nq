@@ -4,7 +4,11 @@
 **Depends on:** OBSERVER_DISTORTION_GAP (Δq self-manifest is the integration point; this gap extends the manifest with platform capability declarations), EVIDENCE_LAYER (capability-gap findings flow through the same pipe)
 **Build phase:** structural — introduces a platform-capability manifest and the degraded-mode probe discipline
 **Blocks:** any non-Linux deployment; the NAS deployment path (LLM-free config, `nq-monitor validate`, `nq-monitor test-targets`) that already exists in the deferred list; an honest `nq-monitor preflight` on anything that isn't systemd Linux
-**Last updated:** 2026-04-15
+**Last updated:** 2026-06-30
+
+## Compatibility evidence log
+
+- **2026-06-30:** NQ builds clean and the current test suite passes on `aarch64-apple-darwin` / rustc 1.96.0 using the M4 mini substrate. This is **build + current-suite compatibility evidence**, relayed as a frontier-safe aggregate; full transcripts remain SECRET-local. It is **not live runtime testimony**. The Linux-bound collectors remain ungated: `host.rs` still hardcodes `/proc`, `services.rs` shells `systemctl`, and `logs.rs` shells `journalctl`. This removes the "won't even compile on macOS" caveat but **does not resolve the Tier-3 capability-honesty gap.**
 
 ## The Problem
 
