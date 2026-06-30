@@ -1,3 +1,4 @@
+use super::host_bsd;
 use nq_core::wire::{CollectorPayload, HostData};
 use nq_core::{CollectorStatus, Platform};
 use time::OffsetDateTime;
@@ -6,36 +7,38 @@ pub fn collect() -> CollectorPayload<HostData> {
     collect_for(Platform::current())
 }
 
-/// Host collection, parameterized on the substrate so the
-/// unsupported-platform path is testable on Linux CI. The real body
-/// reads `/proc`; on any non-Linux platform it emits a typed
-/// [`CollectorStatus::NotSupported`] (substrate `/proc`, per
-/// [`nq_core::CollectorKind::requires`]) rather than letting the
-/// `/proc/loadavg` read fail into a generic `Error`. Linux behavior is
-/// unchanged.
+/// Host collection, dispatched on the substrate (injectable so dispatch
+/// is testable on Linux CI):
+/// - **Linux** — reads `/proc` (unchanged reference path).
+/// - **macOS / FreeBSD** — partial-native BSD host collector
+///   ([`super::host_bsd`]): `status: ok` plus a `cannot_testify` list
+///   for fields with no honest BSD equivalent. The BSD fact-reading is
+///   cfg-gated; on a non-BSD build target the dispatch falls through to
+///   [`CollectorStatus::NotSupported`].
+/// - **Other** (e.g. Windows) — typed [`CollectorStatus::NotSupported`].
 pub fn collect_for(platform: Platform) -> CollectorPayload<HostData> {
     let now = OffsetDateTime::now_utc();
 
-    if platform != Platform::Linux {
-        return CollectorPayload {
+    match platform {
+        Platform::Linux => match collect_host_data() {
+            Ok(data) => CollectorPayload {
+                status: CollectorStatus::Ok,
+                collected_at: Some(now),
+                error_message: None,
+                data: Some(data),
+            },
+            Err(e) => CollectorPayload {
+                status: CollectorStatus::Error,
+                collected_at: Some(now),
+                error_message: Some(e.to_string()),
+                data: None,
+            },
+        },
+        Platform::MacOs | Platform::FreeBsd => host_bsd::bsd_collect(now),
+        Platform::Other => CollectorPayload {
             status: CollectorStatus::NotSupported,
             collected_at: Some(now),
             error_message: None,
-            data: None,
-        };
-    }
-
-    match collect_host_data() {
-        Ok(data) => CollectorPayload {
-            status: CollectorStatus::Ok,
-            collected_at: Some(now),
-            error_message: None,
-            data: Some(data),
-        },
-        Err(e) => CollectorPayload {
-            status: CollectorStatus::Error,
-            collected_at: Some(now),
-            error_message: Some(e.to_string()),
             data: None,
         },
     }
@@ -102,6 +105,8 @@ fn collect_host_data() -> anyhow::Result<HostData> {
         uptime_seconds,
         kernel_version,
         boot_id,
+        // Linux testifies to every host field via /proc + statvfs.
+        cannot_testify: Vec::new(),
     })
 }
 
@@ -117,7 +122,10 @@ fn parse_meminfo_kb(meminfo: &str, key: &str) -> Option<u64> {
     None
 }
 
-fn nix_statvfs(path: &str) -> anyhow::Result<(u64, u64, u64)> {
+/// `(block_size, total_blocks, avail_blocks)` for `path` via POSIX
+/// `statvfs`. Shared with the BSD host collector — `statvfs` is portable
+/// across Linux and the BSDs, so the disk path is identical everywhere.
+pub(crate) fn nix_statvfs(path: &str) -> anyhow::Result<(u64, u64, u64)> {
     // (block_size, total_blocks, avail_blocks)
     // Use libc::statvfs directly to avoid heavy deps
     use std::ffi::CString;
@@ -147,7 +155,10 @@ mod platform_tests {
     use super::*;
 
     #[test]
-    fn non_linux_substrate_is_not_supported_not_error() {
+    fn other_platform_is_not_supported_not_error() {
+        // `Other` (e.g. Windows) is the truly-unsupported arm. macOS and
+        // FreeBSD now dispatch to the partial-native BSD collector and are
+        // exercised in `host_bsd` via fixtures, not here.
         let p = collect_for(Platform::Other);
         assert_eq!(p.status, CollectorStatus::NotSupported);
         assert_ne!(
@@ -174,6 +185,32 @@ mod platform_tests {
         if cfg!(target_os = "linux") {
             assert_eq!(p.status, CollectorStatus::Ok, "payload: {p:?}");
             assert!(p.data.is_some());
+        }
+    }
+
+    #[test]
+    fn collect_on_a_supported_substrate_is_ok() {
+        // Live smoke against whatever substrate runs the suite. On Linux
+        // this drives /proc; on the macOS/FreeBSD lab substrates this is
+        // the ONLY in-suite exercise of the cfg-gated BSD fact reader
+        // (read_bsd_facts), which Linux CI cannot compile. All three
+        // supported substrates must return Ok with data.
+        if cfg!(any(target_os = "linux", target_os = "macos", target_os = "freebsd")) {
+            let p = collect();
+            assert_eq!(p.status, CollectorStatus::Ok, "payload: {p:?}");
+            let data = p.data.expect("supported substrate must produce host data");
+            // On the BSDs the partial-native collector must refuse the
+            // memory fields it has no honest equivalent for — proving the
+            // real fact reader produced a cannot_testify list, not silence.
+            if cfg!(any(target_os = "macos", target_os = "freebsd")) {
+                use nq_core::wire::HostField;
+                assert!(
+                    data.cannot_testify.contains(&HostField::MemAvailable)
+                        && data.cannot_testify.contains(&HostField::MemPressure),
+                    "BSD host must refuse mem_available/mem_pressure: {:?}",
+                    data.cannot_testify
+                );
+            }
         }
     }
 }

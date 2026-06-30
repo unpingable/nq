@@ -118,20 +118,32 @@ impl CollectorKind {
 /// on Linux CI — see `collect_for` on the Linux-bound collectors. This
 /// is a capability-honesty seam, **not** macOS support: there is no
 /// Darwin collection behind `Other`, only a typed refusal.
+///
+/// `MacOs`/`FreeBsd` get a *partial native* host collector (a shared
+/// BSD fact reader — see `nq-witness collect::host_bsd`); `Other`
+/// (e.g. Windows) is typed non-support. Internal only — never
+/// serialized. The BSD *fact-reading* is cfg-gated and lab-verified on
+/// real substrates; the BSD *assembly* is pure and unit-tested here
+/// with fixtures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     Linux,
+    MacOs,
+    FreeBsd,
     Other,
 }
 
 impl Platform {
     /// The platform this binary is running on, resolved at compile time
-    /// from `target_os`. Anything that isn't Linux is `Other` — NQ's
-    /// reference substrate is Linux, and the non-Linux story is typed
-    /// non-support, not silent best-effort.
+    /// from `target_os`. Linux is the reference substrate; macOS/FreeBSD
+    /// are partial-native BSD substrates; anything else is `Other`.
     pub fn current() -> Self {
         if cfg!(target_os = "linux") {
             Platform::Linux
+        } else if cfg!(target_os = "macos") {
+            Platform::MacOs
+        } else if cfg!(target_os = "freebsd") {
+            Platform::FreeBsd
         } else {
             Platform::Other
         }
@@ -247,13 +259,19 @@ mod tests {
     }
 
     #[test]
-    fn platform_current_is_linux_on_linux_ci() {
-        // The reference substrate. This pins that the injectable seam's
-        // default resolves correctly where CI runs.
+    fn platform_current_resolves_by_target_os() {
+        // Pins that the injectable seam's default resolves to the right
+        // substrate on each target. On Linux CI this asserts Linux; on
+        // the FreeBSD/macOS lab substrates it asserts FreeBsd/MacOs.
+        let p = Platform::current();
         if cfg!(target_os = "linux") {
-            assert_eq!(Platform::current(), Platform::Linux);
+            assert_eq!(p, Platform::Linux);
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(p, Platform::MacOs);
+        } else if cfg!(target_os = "freebsd") {
+            assert_eq!(p, Platform::FreeBsd);
         } else {
-            assert_eq!(Platform::current(), Platform::Other);
+            assert_eq!(p, Platform::Other);
         }
     }
 }

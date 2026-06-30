@@ -105,6 +105,35 @@ pub struct HostData {
     pub uptime_seconds: Option<u64>,
     pub kernel_version: Option<String>,
     pub boot_id: Option<String>,
+    /// Fields this substrate structurally **cannot testify to**, as a
+    /// typed list — distinct from a value that happened to be `None`
+    /// (transiently absent). Populated by the partial-native BSD host
+    /// collector for fields with no honest equivalent (e.g. macOS/FreeBSD
+    /// have no `MemAvailable` analog; FreeBSD has no per-boot UUID). On
+    /// Linux this is empty (every field is testified). Additive and
+    /// wire-only: `#[serde(default)]` keeps older payloads deserializing,
+    /// `skip_serializing_if` keeps the Linux wire shape unchanged, and it
+    /// is not persisted into `hosts_current` (V1 — a later reader-driven
+    /// seam). See `docs/working/decisions/PORTABILITY_TIER3A_HOST_ADAPTER_PARKED.md`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cannot_testify: Vec<HostField>,
+}
+
+/// A `HostData` field that a substrate may be structurally unable to
+/// testify to. Typed (not free `String`) so a typo is unrepresentable
+/// and consumers branch on a machine identity — the field-level sibling
+/// of [`RefusalKind`]. Closed vocabulary: only fields that can actually
+/// be field-level absent today are listed; grow it when a new collector
+/// surfaces a new honest gap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostField {
+    /// macOS/FreeBSD have no 1:1 `MemAvailable` analog; not synthesized.
+    MemAvailable,
+    /// Derived from available memory; not synthesized where that is absent.
+    MemPressure,
+    /// FreeBSD has no per-boot UUID (`kern.hostuuid` is per-host, not per-boot).
+    BootId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

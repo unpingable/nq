@@ -1,4 +1,5 @@
 pub mod host;
+pub mod host_bsd;
 pub mod logs;
 pub mod nq_binary;
 pub mod prometheus;
