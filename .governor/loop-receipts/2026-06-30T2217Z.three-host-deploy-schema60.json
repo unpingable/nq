@@ -1,0 +1,16 @@
+{
+  "event": "three-host deploy — schema 60 (capability-honesty + Tier 3a BSD + over-refusal fix + residue note + version posture) to all running instances",
+  "date": "2026-06-30",
+  "authorization": "Operator explicit go (after-hours gate met, ~6pm ET). Deploy followed the project_deployment playbook: per-host build (glibc), fail-closed, VM last (public blast radius). Pushed first (origin/main = 7735d84) then deployed.",
+  "deployed_commit": "7735d84 (origin/main HEAD); schema 59 -> 60 (migration 060 collector_runs_not_supported applied cleanly on every host)",
+  "schema_60_delta": "NotSupported collector status (Slice 0) + Tier 3a partial-native BSD host collector (read_bsd_facts / cannot_testify; FreeBSD VM + M4 mini verified) + over-refusal fix (services docker/pid_file + logs file adapter now run on non-Linux; systemd/journald stay not_supported; nq_binary current_exe) + refusal-residue-preservation note/test + VERSION_POSTURE doc.",
+  "hosts": {
+    "sushi-k": "canary. local build (glibc 2.39, 35.6s). pre-schema60 binaries -> ~/nq/rollback/pre-schema60-*; DB pre-migration backup. GREEN: active/active, dash 200, schema 60, boundaries 3/3, leak 0, migration applying->complete version=60.",
+    "lil-nas-x": "192.168.69.10. scp sushi-k binaries (glibc match, no build) via .new + mv (ETXTBSY-safe). binaries + DB backed up .pre-schema60-*. GREEN: active/active, dash 200, schema 60 (via migration log), boundaries 3/3, leak 0.",
+    "linode-vm": "labelwatch -> nq.neutral.zone. ON-HOST build (glibc 2.35, 59.9s). rsync --exclude runs/.git/.governor/.claude/target (real LAN receipts kept off public box). stop -> backup(.pre-schema60-*) -> swap -> start. GREEN: active/active, local dash 200, schema 60 (PRAGMA user_version), boundaries 3/3, leak 0; PUBLIC https://nq.neutral.zone 200, boundaries 3/3, leak 0 (both LAN subnets 192.168.68 + 192.168.69, dmz.spooky, proven-correct, neglected, P1 all 0)."
+  },
+  "verify_each": "dashboard HTTP 200; render boundaries present (not an incident commander / not a proof checker / cannot testify); leak language 0; PRAGMA user_version 60 (sushi-k + VM via sqlite3; NAS via migration log); clean migration logs (applying version=60 -> complete version=60). VM also verified the PUBLIC https://nq.neutral.zone.",
+  "rollback_available": "per host: pre-schema60 binaries (.pre-schema60-* / ~/nq/rollback/) + nq.db.pre-schema60-*.bak (pre-migration). Not needed — all GREEN.",
+  "state": "all three running instances now on schema 60 / commit 7735d84. origin == HEAD == live on all hosts (no public/live fork remaining). Loop AUDIT/idle.",
+  "note": "Schema fork resolved: repo public, live deployments, and origin all at 60. The capability-honesty arc (NotSupported + partial-native BSD host + over-refusal fix) is now live in production. Migration 060 is additive (widened collector_runs.status CHECK to admit not_supported)."
+}
