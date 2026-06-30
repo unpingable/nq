@@ -481,6 +481,34 @@ mod tests {
         assert!(s.contains("consequence claim"));
     }
 
+    /// Residue-preservation regression — the ops-facing cousin of the
+    /// Lean `residue_preserved` theorem (Witnessed resource sequent): a
+    /// refusal list (`cannot_testify`) must survive EVERY render
+    /// projection unchanged. No entry may be silently dropped, deduped,
+    /// or truncated; a refusal is residue, not a consumable. Locks the
+    /// claim-layer residue channel. See
+    /// docs/working/gaps/REFUSAL_RESIDUE_PRESERVATION_CANDIDATE.md.
+    #[test]
+    fn cannot_testify_residue_survives_every_render_projection() {
+        let mut r = sample();
+        let refusals = [
+            ClaimRefusal::new(RefusalKind::AboveSubstrate, "alpha refusal statement"),
+            ClaimRefusal::new(RefusalKind::ConsequenceClaim, "beta refusal statement"),
+            ClaimRefusal::new(RefusalKind::FutureStateClaim, "gamma refusal statement"),
+        ];
+        r.cannot_testify = refusals.to_vec();
+
+        for rendered in [render_human(&r), render_markdown(&r)] {
+            for refusal in &refusals {
+                assert!(
+                    rendered.contains(&refusal.statement),
+                    "a render projection dropped a refusal ({:?}); residue must survive projection\n--- output ---\n{rendered}",
+                    refusal.statement
+                );
+            }
+        }
+    }
+
     #[test]
     fn markdown_renders_signals_section_namespace_aware() {
         let s = render_markdown(&sample_with_consumer_fields());
