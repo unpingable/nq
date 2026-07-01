@@ -178,3 +178,54 @@ fn no_substrate_sub_row_when_no_matching_sqlite_db() {
         "no substrate sub-row should render when the lookup misses"
     );
 }
+
+/// Lane A completeness (C1 #2): the monitor readout must not surface a
+/// `visibility_state = "suppressed"` finding as an active signal row, and
+/// suppression must not inflate the header severity counts. Suppressed
+/// signal findings are folded under their host — never leaked into the
+/// readout as observed testimony. `render_overview` filters `signal_warnings`
+/// (and every header count derived from it) to `visibility_state == "observed"`
+/// (routes.rs); this pins that promise so a regression can't silently start
+/// rendering held findings as live signal.
+#[test]
+fn suppressed_signal_finding_is_folded_not_rendered_as_active_readout() {
+    let mut vm = empty_vm();
+
+    let observed = {
+        let mut w = freelist_bloat_finding("host-a", "/var/lib/observed.sqlite");
+        w.message = "OBSERVED_SENTINEL reclaimable 41.5 MB".into();
+        w
+    };
+    let suppressed = {
+        let mut w = freelist_bloat_finding("host-a", "/var/lib/suppressed.sqlite");
+        w.message = "SUPPRESSED_SENTINEL reclaimable 41.5 MB".into();
+        w.visibility_state = "suppressed".into();
+        w.suppression_reason = Some("suppressed_by_declaration".into());
+        w
+    };
+    vm.warnings = vec![observed, suppressed];
+
+    let html = render_overview(&vm, &[]);
+
+    // The observed finding renders as signal; the suppressed one does not
+    // leak into the readout as an active row.
+    assert!(
+        html.contains("OBSERVED_SENTINEL"),
+        "observed finding must render in the readout"
+    );
+    assert!(
+        !html.contains("SUPPRESSED_SENTINEL"),
+        "suppressed finding must NOT leak into the readout as an active signal row"
+    );
+
+    // Suppression must not inflate the header severity count: two critical
+    // findings, one suppressed, must summarize as "1 critical" — never "2".
+    assert!(
+        html.contains("1 critical"),
+        "header severity must count only observed criticals; html: {html}"
+    );
+    assert!(
+        !html.contains("2 critical"),
+        "suppressed finding must not inflate the header severity count"
+    );
+}
