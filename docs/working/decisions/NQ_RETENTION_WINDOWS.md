@@ -60,4 +60,6 @@ No legal-compliance modeling (GDPR/SOC2/HIPAA). No retroactive purging. No undo-
 
 ---
 
-*Locked by ag-claude under operator authorization 2026-06-12 ("NQ-CLOSE-002: lock the retention-windows decision"). The class structure and principles are ratified; the integers are proposed for operator confirmation. The build remains unauthorized.*
+*Locked by ag-claude under operator authorization 2026-06-12 ("NQ-CLOSE-002: lock the retention-windows decision"). The class structure and principles are ratified; the integers are proposed for operator confirmation.*
+
+*Build update 2026-07-01: **Slice A authorized + shipped** (operator ratified slice boundary + tombstone schema vocabulary). The tombstone primitive exists — the one prior silent-purge path (`retention.rs::prune`) is now a receipted act minting `evidence_tombstones` (migration 061). Principle 3 ("no silent purge path") and 5 ("sweep is observable") are enforced in code for the generation-cascade prune. The per-class time-windowed enforcement of the concrete integers above (raw 3wk / rollups 6mo as distinct sweeps) remains **Slice B — deferred/named**: today the cascade ties all history/observation tables to one generation lifetime, so the integers are not yet split per rung. See `../gaps/EVIDENCE_FORGETTING_GAP.md` build status + FEATURE_HISTORY `NQ_CLOSE_002_SLICE_A`.*

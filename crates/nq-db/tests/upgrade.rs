@@ -47,7 +47,7 @@ const PREVIOUS_SCHEMA_VERSION: u32 = CURRENT_SCHEMA_VERSION - 1;
 /// constants were likewise empty. (Per-migration maintenance: these
 /// constants track the LATEST migration's changes; update them each
 /// migration.)
-const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &[];
+const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["evidence_tombstones"];
 
 /// Columns added by the most recent migration, as (table, column)
 /// pairs. The rollback fixture drops these so the upgrade test

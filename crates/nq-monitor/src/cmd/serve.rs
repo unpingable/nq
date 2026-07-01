@@ -328,7 +328,17 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
                     if cycle % pull_config.retention.prune_every_n_cycles == 0 {
                         match nq_db::prune(&mut db, pull_config.retention.max_generations) {
                             Ok(stats) if stats.generations_pruned > 0 => {
-                                info!(pruned = stats.generations_pruned, "retention prune");
+                                // NQ-CLOSE-002: the sweep is observable — surface
+                                // the tombstone id, the deleted generation range,
+                                // and the per-table cascade counts, not just a count.
+                                info!(
+                                    pruned = stats.generations_pruned,
+                                    tombstone_id = stats.tombstone_id,
+                                    gen_low = stats.generation_id_low,
+                                    gen_high = stats.generation_id_high,
+                                    rows_deleted = ?stats.rows_deleted,
+                                    "retention prune (tombstoned)"
+                                );
                             }
                             Err(e) => {
                                 error!(err = %e, "retention prune failed");

@@ -20,6 +20,19 @@ The chronological order below is newest-first.
 
 ---
 
+## NQ_CLOSE_002_SLICE_A (evidence tombstones — deletion is a receipted act)
+
+**Status:** `shipped` 2026-07-01 (Slice A; B/C deferred by name).
+
+**What landed:** the one existing silent-purge path is now receipted, implementing the locked NQ-CLOSE-002 retention policy (`docs/working/decisions/NQ_RETENTION_WINDOWS.md`).
+- Migration 061 `evidence_tombstones` — forever-retention audit receipt, deliberately no FK to `generations` (it must outlive what it records): `(tombstone_id, generation_id_low, generation_id_high, generations_deleted, rows_deleted_json, retention_rule_cited, tombstoned_at)` + CHECKs.
+- `retention.rs::prune()` rewritten as a receipted act: enumerates `generation_id`-bearing tables **dynamically** from `sqlite_master` (a new history/observation table cannot silently escape the receipt), counts the doomed rows per table, mints one tombstone in the **same transaction** as the cascade delete, and returns observable `PruneStats` (tombstone id, generation range, per-table counts). `serve.rs` logs it.
+- `tombstoned_at` is the deletion-receipt time, NOT `observed_at` — post-C2 that name carries authority-freshness weight; a deletion receipt is not testimony observation.
+
+**Evidence:** `retention::tests` — no-op mints nothing; prune mints one tombstone covering the deleted range with correct per-table counts + rule; **`no_generation_prune_can_delete_history_without_a_receipt`** (deleted rows == receipted rows, mutation-verified to bite); dynamic enumeration excludes `generations` + current tables, includes history. Migration `upgrade`/`backup` tests green across the 60→61 bump. Full workspace suite green.
+
+**Deferred (named):** Slice B (per-class time-windowed retention, raw 3wk vs rollups 6mo); Slice C (finding basis-ladder on tombstoned evidence + dangling-citation render).
+
 ## C2_DUAL_EXPLICIT_HOST_FRESHNESS (host row shows both staleness clocks, asymmetrically fenced)
 
 **Status:** `shipped` 2026-07-01 (host row; services/dbs deferred).
