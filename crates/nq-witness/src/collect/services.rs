@@ -1,5 +1,6 @@
 use nq_core::wire::{CollectorPayload, ServiceData};
 use nq_core::{CollectorStatus, Platform, PublisherConfig, ServiceStatus};
+use std::collections::HashMap;
 use std::process::Command;
 use time::OffsetDateTime;
 
@@ -41,10 +42,7 @@ pub fn collect_for(
     let mut unsupported = Vec::new();
 
     for svc_config in &config.service_health_urls {
-        let unit_name = svc_config
-            .unit
-            .as_deref()
-            .unwrap_or(&svc_config.name);
+        let unit_name = svc_config.unit.as_deref().unwrap_or(&svc_config.name);
 
         // systemd is Linux-only; docker/pid_file/unknown are portable.
         // Don't fabricate a row for a systemd check on a non-Linux host —
@@ -151,21 +149,34 @@ fn check_systemd(unit: &str) -> (ServiceStatus, Option<u32>, SystemdNative) {
         ])
         .output();
 
-    let mut props: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    if let Ok(o) = &out {
-        if o.status.success() {
-            for line in String::from_utf8_lossy(&o.stdout).lines() {
-                if let Some((k, v)) = line.split_once('=') {
-                    props.insert(k.trim().to_string(), v.trim().to_string());
-                }
-            }
+    let props = match &out {
+        Ok(o) if o.status.success() => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            parse_systemd_show(&stdout)
+        }
+        _ => HashMap::new(),
+    };
+
+    classify_systemd_props(&props)
+}
+
+fn parse_systemd_show(stdout: &str) -> HashMap<String, String> {
+    let mut props = HashMap::new();
+    for line in stdout.lines() {
+        if let Some((k, v)) = line.split_once('=') {
+            props.insert(k.trim().to_string(), v.trim().to_string());
         }
     }
+    props
+}
 
+fn classify_systemd_props(
+    props: &HashMap<String, String>,
+) -> (ServiceStatus, Option<u32>, SystemdNative) {
     let nonempty = |k: &str| props.get(k).filter(|v| !v.is_empty()).cloned();
     let active_state = nonempty("ActiveState");
 
-    // Coarse status (findings path) — unchanged mapping.
+    // Coarse status (findings path) - unchanged mapping.
     let status = match active_state.as_deref() {
         Some("active") => ServiceStatus::Up,
         Some("failed") | Some("inactive") => ServiceStatus::Down,
@@ -191,7 +202,12 @@ fn check_systemd(unit: &str) -> (ServiceStatus, Option<u32>, SystemdNative) {
 fn check_docker(container: &str) -> (ServiceStatus, Option<u32>) {
     // First get state + pid (always works)
     let output = Command::new("docker")
-        .args(["inspect", "--format", "{{.State.Status}} {{.State.Pid}}", container])
+        .args([
+            "inspect",
+            "--format",
+            "{{.State.Status}} {{.State.Pid}}",
+            container,
+        ])
         .output();
 
     let (state, pid) = match &output {
@@ -199,7 +215,10 @@ fn check_docker(container: &str) -> (ServiceStatus, Option<u32>) {
             let text = String::from_utf8_lossy(&out.stdout);
             let parts: Vec<&str> = text.trim().split_whitespace().collect();
             let state = parts.first().copied().unwrap_or("").to_string();
-            let pid = parts.get(1).and_then(|s| s.parse::<u32>().ok()).filter(|p| *p > 0);
+            let pid = parts
+                .get(1)
+                .and_then(|s| s.parse::<u32>().ok())
+                .filter(|p| *p > 0);
             (state, pid)
         }
         Ok(out) => {
@@ -282,10 +301,49 @@ mod platform_tests {
     }
 
     #[test]
+    fn systemd_show_parser_carries_native_fields_and_pid() {
+        let props = parse_systemd_show(
+            "ActiveState=active\n\
+             SubState=running\n\
+             LoadState=loaded\n\
+             UnitFileState=enabled\n\
+             MainPID=4242\n",
+        );
+        let (status, pid, native) = classify_systemd_props(&props);
+        assert_eq!(status, ServiceStatus::Up);
+        assert_eq!(pid, Some(4242));
+        assert_eq!(native.active_state.as_deref(), Some("active"));
+        assert_eq!(native.sub_state.as_deref(), Some("running"));
+        assert_eq!(native.load_state.as_deref(), Some("loaded"));
+        assert_eq!(native.unit_file_state.as_deref(), Some("enabled"));
+    }
+
+    #[test]
+    fn systemd_show_parser_ignores_blank_fields_and_zero_pid() {
+        let props = parse_systemd_show(
+            "ActiveState=failed\n\
+             SubState=failed\n\
+             LoadState=loaded\n\
+             UnitFileState=\n\
+             MainPID=0\n",
+        );
+        let (status, pid, native) = classify_systemd_props(&props);
+        assert_eq!(status, ServiceStatus::Down);
+        assert_eq!(pid, None);
+        assert_eq!(native.active_state.as_deref(), Some("failed"));
+        assert_eq!(native.unit_file_state, None);
+    }
+
+    #[test]
     fn empty_config_is_ok_empty_on_any_platform() {
         // Nothing configured = nothing to refuse. Ok+empty everywhere
         // (the Slice-0 whole-collector NotSupported here was over-refusal).
-        for plat in [Platform::Linux, Platform::MacOs, Platform::FreeBsd, Platform::Other] {
+        for plat in [
+            Platform::Linux,
+            Platform::MacOs,
+            Platform::FreeBsd,
+            Platform::Other,
+        ] {
             let p = collect_for(&PublisherConfig::default(), plat);
             assert_eq!(p.status, CollectorStatus::Ok, "{plat:?}");
             assert_eq!(p.data.as_ref().map(|v| v.is_empty()), Some(true));
@@ -320,7 +378,10 @@ mod platform_tests {
         // pid_file runs; systemd is skipped but named in error_message
         // (not silently dropped, not a fabricated row).
         let p = collect_for(
-            &cfg_with(vec![svc("portable", "pid_file"), svc("linuxonly", "systemd")]),
+            &cfg_with(vec![
+                svc("portable", "pid_file"),
+                svc("linuxonly", "systemd"),
+            ]),
             Platform::MacOs,
         );
         assert_eq!(p.status, CollectorStatus::Ok);

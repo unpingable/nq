@@ -57,7 +57,6 @@
   "last_updated": "2026-06-27T00:00:00Z",
   "review_pending_commit": "none — pfSense lease-presence Phase 1 (3599c85) and Phase 2 (68f9c61) committed; loop closure to follow as a small governor commit. No push.",
   "deferred_operator_directed": [
-    "nq-witness host.rs/services.rs collector parser unit tests (0 tests today) — Lane A completeness candidate from the 2026-06-18 witness backlog audit; NOT started.",
     "Earlier-session items still open: C1 #2 monitor-readout suppression test (Lane A); C2 Regime B clock divergence (collected_at vs observed_at, design seam — operator-directed)."
   ],
   "session_id": "ag-claude-drives-nq (operator-dispatched, impunity granted: nq-claude stood down)",

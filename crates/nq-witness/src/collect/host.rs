@@ -113,10 +113,7 @@ fn collect_host_data() -> anyhow::Result<HostData> {
 fn parse_meminfo_kb(meminfo: &str, key: &str) -> Option<u64> {
     for line in meminfo.lines() {
         if line.starts_with(key) {
-            return line
-                .split_whitespace()
-                .nth(1)
-                .and_then(|v| v.parse().ok());
+            return line.split_whitespace().nth(1).and_then(|v| v.parse().ok());
         }
     }
     None
@@ -153,6 +150,20 @@ pub(crate) fn nix_statvfs(path: &str) -> anyhow::Result<(u64, u64, u64)> {
 #[cfg(test)]
 mod platform_tests {
     use super::*;
+
+    #[test]
+    fn parse_meminfo_kb_extracts_named_key_value() {
+        let meminfo = "MemTotal:       16384256 kB\nMemAvailable:    8192000 kB\n";
+        assert_eq!(parse_meminfo_kb(meminfo, "MemTotal"), Some(16_384_256));
+        assert_eq!(parse_meminfo_kb(meminfo, "MemAvailable"), Some(8_192_000));
+    }
+
+    #[test]
+    fn parse_meminfo_kb_refuses_missing_or_malformed_values() {
+        let meminfo = "MemTotal: not-a-number kB\nSwapTotal: 42 kB\n";
+        assert_eq!(parse_meminfo_kb(meminfo, "MemTotal"), None);
+        assert_eq!(parse_meminfo_kb(meminfo, "MemAvailable"), None);
+    }
 
     #[test]
     fn other_platform_is_not_supported_not_error() {
@@ -195,7 +206,11 @@ mod platform_tests {
         // the ONLY in-suite exercise of the cfg-gated BSD fact reader
         // (read_bsd_facts), which Linux CI cannot compile. All three
         // supported substrates must return Ok with data.
-        if cfg!(any(target_os = "linux", target_os = "macos", target_os = "freebsd")) {
+        if cfg!(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "freebsd"
+        )) {
             let p = collect();
             assert_eq!(p.status, CollectorStatus::Ok, "payload: {p:?}");
             let data = p.data.expect("supported substrate must produce host data");
