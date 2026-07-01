@@ -94,4 +94,7 @@ pub use service_state::{
     insert_service_observation, latest_service_observation_for_tuple, ServiceObservation,
     ServiceObservationTuple, SERVICE_STATE_STALE_THRESHOLD_SECONDS,
 };
-pub use views::{host_detail, host_states, overview, HostDetailVm, HostStateVm, OverviewVm};
+pub use views::{
+    host_detail, host_evidence_standing, host_states, overview, HostDetailVm, HostEvidenceStanding,
+    HostFreshnessVm, HostStateVm, OverviewVm, HOST_STATE_STALE_THRESHOLD_SECONDS,
+};

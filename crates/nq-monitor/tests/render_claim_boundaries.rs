@@ -123,6 +123,7 @@ fn vm() -> OverviewVm {
             ),
         ],
         history_generations: 10,
+        host_freshness: vec![],
     }
 }
 
@@ -281,6 +282,7 @@ fn no_canon_line_without_recorded_canon() {
         sqlite_dbs: vec![],
         warnings: vec![warning("freelist_bloat", "Δg", "critical", false)],
         history_generations: 10,
+        host_freshness: vec![],
     };
     bare.warnings[0].work_state = "new".into();
     bare.warnings[0].note = None;

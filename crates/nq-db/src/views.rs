@@ -14,6 +14,65 @@ pub struct OverviewVm {
     pub sqlite_dbs: Vec<SqliteDbSummaryVm>,
     pub warnings: Vec<WarningVm>,
     pub history_generations: i64,
+    /// Per-host Regime A (authority) evidence standing, parallel to `hosts`
+    /// and joined by host name at render time. See
+    /// `docs/working/decisions/DISPLAY_FRESHNESS_VS_ADMISSIBILITY_FRESHNESS.md`.
+    /// Regime B (display freshness) stays on `HostSummaryVm::stale`.
+    pub host_freshness: Vec<HostFreshnessVm>,
+}
+
+/// C2 (ratified 2026-07-01): the freshness threshold for host-packet
+/// admissibility. Matches the established evaluator constant (dns/ingest/
+/// service/nq_binary/nq_evaluator all use 300s). A host whose `collected_at`
+/// is older than this is `stale testimony` — its readout packet is no longer
+/// admissibly fresh, regardless of the (separate) Regime B display clock.
+pub const HOST_STATE_STALE_THRESHOLD_SECONDS: i64 = 300;
+
+/// Regime A — the host **readout packet's** own `observed_at` (== its
+/// `collected_at`, the witness's observation time) freshness verdict.
+/// Authority-bearing. NOT an aggregate over the host's nested findings
+/// (that is a separately-named future `Claim standing` marker, per the C2
+/// decision record's non-goal). NEVER conflate with Regime B display staleness.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostEvidenceStanding {
+    /// `collected_at` within the freshness horizon — testimony still admissible.
+    Admissible,
+    /// `collected_at` beyond the horizon — the host's testimony is stale.
+    StaleTestimony,
+    /// `collected_at` missing or unparseable — no admissibility claim possible.
+    Unknown,
+}
+
+/// Per-host Regime A standing carrier. Parallel to `HostSummaryVm`; joined by
+/// `host`. `observed_age_s` is the age of the host packet's `collected_at`
+/// (the "observed N ago" the marker renders), `None` when unknown.
+#[derive(Debug, Clone)]
+pub struct HostFreshnessVm {
+    pub host: String,
+    pub evidence_standing: HostEvidenceStanding,
+    pub observed_age_s: Option<i64>,
+}
+
+/// Pure Regime A classifier: is the host packet's `collected_at` still within
+/// the freshness horizon as of `now`? Mirrors the evaluator staleness pattern
+/// (`age = now - observed_at; stale = age > threshold`). Injectable `now` keeps
+/// it unit-testable without a DB or a wall clock. Returns the standing and the
+/// observed age in seconds (for rendering), `None` age when unparseable.
+pub fn host_evidence_standing(
+    collected_at: &str,
+    now: time::OffsetDateTime,
+    threshold_seconds: i64,
+) -> (HostEvidenceStanding, Option<i64>) {
+    let parsed =
+        time::OffsetDateTime::parse(collected_at, &time::format_description::well_known::Rfc3339)
+            .ok();
+    let age_seconds = parsed.map(|t| (now - t).whole_seconds());
+    let standing = match age_seconds {
+        None => HostEvidenceStanding::Unknown,
+        Some(age) if age > threshold_seconds => HostEvidenceStanding::StaleTestimony,
+        Some(_) => HostEvidenceStanding::Admissible,
+    };
+    (standing, age_seconds)
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +248,29 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
         })?
         .collect::<Result<_, _>>()?;
 
+    // Per-host Regime A evidence standing (host packet collected_at freshness).
+    // Parallel to `hosts`; Regime B display staleness stays on HostSummaryVm.stale.
+    let now = time::OffsetDateTime::now_utc();
+    let mut fresh_stmt = db
+        .conn
+        .prepare("SELECT host, collected_at FROM hosts_current ORDER BY host")?;
+    let host_freshness: Vec<HostFreshnessVm> = fresh_stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|(host, collected_at)| {
+            let (evidence_standing, observed_age_s) =
+                host_evidence_standing(&collected_at, now, HOST_STATE_STALE_THRESHOLD_SECONDS);
+            HostFreshnessVm {
+                host,
+                evidence_standing,
+                observed_age_s,
+            }
+        })
+        .collect();
+
     // Services
     let mut svc_stmt = db.conn.prepare(
         "SELECT host, service, status, eps, queue_depth, as_of_generation
@@ -290,6 +372,7 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
         sqlite_dbs,
         warnings,
         history_generations,
+        host_freshness,
     })
 }
 
@@ -501,5 +584,62 @@ fn action_bias_rank(s: &str) -> u8 {
         "investigate_business_hours" => 3,
         "watch" => 4,
         _ => 5,
+    }
+}
+
+#[cfg(test)]
+mod host_freshness_tests {
+    use super::*;
+    use time::format_description::well_known::Rfc3339;
+    use time::OffsetDateTime;
+
+    fn at(s: &str) -> OffsetDateTime {
+        OffsetDateTime::parse(s, &Rfc3339).unwrap()
+    }
+
+    #[test]
+    fn recent_collected_at_is_admissible() {
+        // 120s old, threshold 300s -> host testimony still admissible.
+        let (standing, age) = host_evidence_standing(
+            "2026-06-29T12:00:00Z",
+            at("2026-06-29T12:02:00Z"),
+            HOST_STATE_STALE_THRESHOLD_SECONDS,
+        );
+        assert_eq!(standing, HostEvidenceStanding::Admissible);
+        assert_eq!(age, Some(120));
+    }
+
+    #[test]
+    fn beyond_horizon_is_stale_testimony() {
+        // 301s old, threshold 300s -> stale testimony (Regime A).
+        let (standing, age) = host_evidence_standing(
+            "2026-06-29T12:00:00Z",
+            at("2026-06-29T12:05:01Z"),
+            HOST_STATE_STALE_THRESHOLD_SECONDS,
+        );
+        assert_eq!(standing, HostEvidenceStanding::StaleTestimony);
+        assert_eq!(age, Some(301));
+    }
+
+    #[test]
+    fn exactly_at_threshold_is_still_admissible() {
+        // age == threshold is NOT yet stale (strict >).
+        let (standing, _) = host_evidence_standing(
+            "2026-06-29T12:00:00Z",
+            at("2026-06-29T12:05:00Z"),
+            HOST_STATE_STALE_THRESHOLD_SECONDS,
+        );
+        assert_eq!(standing, HostEvidenceStanding::Admissible);
+    }
+
+    #[test]
+    fn unparseable_collected_at_is_unknown_not_a_fabricated_verdict() {
+        let (standing, age) = host_evidence_standing(
+            "not-a-timestamp",
+            at("2026-06-29T12:00:00Z"),
+            HOST_STATE_STALE_THRESHOLD_SECONDS,
+        );
+        assert_eq!(standing, HostEvidenceStanding::Unknown);
+        assert_eq!(age, None);
     }
 }

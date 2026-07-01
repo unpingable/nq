@@ -417,6 +417,7 @@ async fn happy_path_full_loop() {
                 sqlite_dbs: vec![],
                 warnings: vec![],
                 history_generations: 0,
+                host_freshness: vec![],
             });
             // Minimal rendering: just include the host name so we can assert on it
             let host_lines: String = vm

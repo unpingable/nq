@@ -12,7 +12,9 @@
 //!    the finding, not only in the footer SQLite DBs table.
 
 use nq_monitor::http::routes::render_overview;
-use nq_db::views::{HostSummaryVm, OverviewVm, SqliteDbSummaryVm, WarningVm};
+use nq_db::views::{
+    HostEvidenceStanding, HostFreshnessVm, HostSummaryVm, OverviewVm, SqliteDbSummaryVm, WarningVm,
+};
 
 fn empty_vm() -> OverviewVm {
     OverviewVm {
@@ -25,6 +27,7 @@ fn empty_vm() -> OverviewVm {
         sqlite_dbs: vec![],
         warnings: vec![],
         history_generations: 10,
+        host_freshness: vec![],
     }
 }
 
@@ -227,5 +230,96 @@ fn suppressed_signal_finding_is_folded_not_rendered_as_active_readout() {
     assert!(
         !html.contains("2 critical"),
         "suppressed finding must not inflate the header severity count"
+    );
+}
+
+// ---- C2: dual-explicit host freshness markers ----
+// docs/working/decisions/DISPLAY_FRESHNESS_VS_ADMISSIBILITY_FRESHNESS.md.
+// The host row must show BOTH staleness clocks, asymmetrically fenced:
+// Regime A (Evidence standing, authority) primary; Regime B (Display
+// freshness) secondary. Never conflate; never a bare unqualified "stale".
+
+fn plain_host(host: &str, display_stale: bool) -> HostSummaryVm {
+    HostSummaryVm {
+        host: host.into(),
+        cpu_load_1m: Some(0.5),
+        mem_pressure_pct: Some(20.0),
+        disk_used_pct: Some(40.0),
+        disk_avail_mb: Some(50_000),
+        uptime_seconds: Some(3600),
+        as_of_generation: 1,
+        stale: display_stale,
+    }
+}
+
+fn freshness(host: &str, standing: HostEvidenceStanding, age_s: i64) -> HostFreshnessVm {
+    HostFreshnessVm {
+        host: host.into(),
+        evidence_standing: standing,
+        observed_age_s: Some(age_s),
+    }
+}
+
+#[test]
+fn c2_host_row_renders_evidence_standing_before_display_freshness() {
+    let mut vm = empty_vm();
+    vm.hosts = vec![plain_host("host-a", false)];
+    vm.host_freshness = vec![freshness("host-a", HostEvidenceStanding::Admissible, 180)];
+
+    let html = render_overview(&vm, &[]);
+
+    let ev = html
+        .find("Evidence standing:")
+        .expect("Regime A evidence standing marker must render");
+    let disp = html
+        .find("Display freshness:")
+        .expect("Regime B display freshness marker must render");
+    assert!(
+        ev < disp,
+        "Evidence standing (authority, primary) must render BEFORE Display freshness (secondary)"
+    );
+    assert!(html.contains("admissible"), "host packet within horizon -> admissible");
+    assert!(html.contains("current"), "non-stale generation lag -> display 'current'");
+}
+
+#[test]
+fn c2_divergence_admissible_evidence_but_display_old() {
+    // The canonical C2 case: evidence still stands, dashboard is behind.
+    // Both must be legible, and the display clock must NOT borrow authority
+    // vocabulary ("stale testimony") to describe a display lag.
+    let mut vm = empty_vm();
+    vm.hosts = vec![plain_host("host-a", true)]; // Regime B: display old
+    vm.host_freshness = vec![freshness("host-a", HostEvidenceStanding::Admissible, 200)];
+
+    let html = render_overview(&vm, &[]);
+
+    assert!(html.contains("admissible"), "evidence standing must remain admissible");
+    assert!(
+        html.contains("display old"),
+        "display lag must render as 'display old', never a bare unqualified 'stale'"
+    );
+    assert!(
+        !html.contains("stale testimony"),
+        "a mere display lag must NOT be described with Regime A authority vocabulary"
+    );
+}
+
+#[test]
+fn c2_stale_testimony_uses_authority_vocab_independent_of_display() {
+    // Inverse divergence: testimony expired (Regime A) while the collector
+    // is current (Regime B). Authority vocab on A, display vocab on B.
+    let mut vm = empty_vm();
+    vm.hosts = vec![plain_host("host-a", false)]; // Regime B: current
+    vm.host_freshness = vec![freshness("host-a", HostEvidenceStanding::StaleTestimony, 600)];
+
+    let html = render_overview(&vm, &[]);
+
+    assert!(
+        html.contains("stale testimony"),
+        "host packet beyond horizon -> Regime A 'stale testimony'"
+    );
+    assert!(
+        html.contains("current"),
+        "display freshness is independent: collector current even as testimony expires"
     );
 }

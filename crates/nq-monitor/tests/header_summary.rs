@@ -53,6 +53,7 @@ fn vm_with_one_critical_business_hours() -> OverviewVm {
             external_ref: None,
         }],
         history_generations: 10,
+        host_freshness: vec![],
     }
 }
 
@@ -150,6 +151,7 @@ fn no_active_findings_register_is_not_coined() {
         sqlite_dbs: vec![],
         warnings: vec![],
         history_generations: 10,
+        host_freshness: vec![],
     };
 
     let html = render_overview(&vm, &[]);

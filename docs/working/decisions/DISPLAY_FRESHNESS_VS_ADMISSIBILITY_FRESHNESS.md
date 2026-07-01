@@ -85,14 +85,43 @@ but must never drive or imply evidence standing. Permitted labels:
 
 - **Doctrine:** ratified (this record). Binding now — no code may read Regime B
   staleness as admissibility, and no unqualified `stale` label may be added.
-- **Dual-explicit UI:** deferred pending a scoped slice. Blocker: Regime A
-  authority freshness is computed in the evaluator/preflight layer but is **not
-  currently plumbed into the overview readout** (`OverviewVm` carries the
-  Regime B `stale` bool only). The slice must first make per-host/per-finding
-  admissibility standing available at the render seam
-  (`render_overview` / `views.rs`), then render the two asymmetric markers.
-  This is completeness work on an already-opened surface, gated on the plumbing
-  design, not a new speculative surface.
+- **Dual-explicit UI:** shipped 2026-07-01 for the host row.
+  `views.rs` computes per-host Regime A standing (`HostFreshnessVm` +
+  `host_evidence_standing`, freshness horizon `HOST_STATE_STALE_THRESHOLD_SECONDS
+  = 300`, injectable-now, unit-tested) parallel to `hosts`; `render_overview`
+  joins by host and emits the asymmetric dual marker (Evidence standing primary,
+  Display freshness secondary). The header substrate summary's bare
+  "N host(s) stale" was qualified to "display-stale" to honor the no-unqualified-
+  stale rule. Regime B stays on `HostSummaryVm::stale` (generation lag).
+- **Residual (named, not built):** service / sqlite-db rows show only the Regime B
+  `stale` bool — no dual marker yet (host row first). The header still expresses
+  Regime B in generation-lag terms; a future slice may add a per-row
+  `Claim standing` rollup (the non-goal below) and extend the dual marker to
+  services/dbs.
+
+### Host-row Evidence standing = host packet `observed_at` freshness (ratified 2026-07-01)
+
+The host-row Evidence standing marker uses the **host testimony/readout packet's
+own `observed_at` freshness** — Regime A applied to the *same object* the Regime B
+`last collected` clock describes. It is NOT the worst admissibility among the
+host's nested findings.
+
+Rationale: C2 is clock disambiguation for one surface — `observed_at` vs
+`collected_at` on the **same host row**. The matching Regime A object at the host
+row is the host packet, not an aggregate over nested claims. Worst-over-findings
+can make a host look authority-stale because one nested claim expired, which is a
+*different* semantic object and would blur host-packet standing, finding standing,
+display freshness, and severity summarization into one marker.
+
+- **UI language (host row):**
+  `Evidence standing: admissible · observed <age> ago`
+  `Display freshness: display old | current · last collected <age> ago`
+- **Non-goal:** do not aggregate finding-level admissibility into the C2 host-row
+  Evidence standing marker.
+- **Follow-on candidate (named, not built):** a separately-named
+  `Claim standing` / `Worst finding standing` rollup marker
+  (`Claim standing: 1 stale testimony, 7 admissible`). It must NOT be called host
+  Evidence standing.
 
 ## References
 

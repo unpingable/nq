@@ -76,6 +76,7 @@ fn hostile_strings_are_escaped_in_overview_html() {
             external_ref: None,
         }],
         history_generations: 10,
+        host_freshness: vec![],
     };
 
     let html = render_overview(&vm, &[]);

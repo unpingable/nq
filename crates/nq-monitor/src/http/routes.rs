@@ -160,6 +160,7 @@ async fn index(State(db): State<Db>) -> Html<String> {
         sqlite_dbs: vec![],
         warnings: vec![],
         history_generations: 0,
+        host_freshness: vec![],
     });
     let host_states = nq_db::host_states(&db).unwrap_or_default();
 
@@ -1217,6 +1218,57 @@ async fn api_preflight_sqlite_wal_state(
     }
 }
 
+/// C2 dual-explicit freshness cell for a host row. Renders BOTH staleness
+/// clocks, asymmetrically fenced per
+/// `docs/working/decisions/DISPLAY_FRESHNESS_VS_ADMISSIBILITY_FRESHNESS.md`:
+///
+/// - **Evidence standing (Regime A, PRIMARY)** — authority-bearing host-packet
+///   `observed_at` freshness. Labels: `admissible` / `stale testimony` /
+///   `cannot testify`. Never a bare "stale".
+/// - **Display freshness (Regime B, SECONDARY)** — generation-lag display
+///   staleness (`h.stale`). Labels: `current` / `display old`. Never "stale"
+///   unqualified, never authority vocabulary.
+///
+/// Evidence standing renders first (primary); display freshness second
+/// (secondary help text). The two must not be read as symmetric verdicts.
+fn render_host_freshness(freshness: Option<&nq_db::HostFreshnessVm>, display_stale: bool) -> String {
+    use nq_db::HostEvidenceStanding;
+
+    let observed_suffix = |age: Option<i64>| -> String {
+        match age {
+            Some(a) => format!(" · observed {} ago", nq_core::humanize_duration_s(a.max(0))),
+            None => String::new(),
+        }
+    };
+
+    // Regime A — authority-bearing, primary.
+    let evidence = match freshness.map(|f| &f.evidence_standing) {
+        Some(HostEvidenceStanding::Admissible) => format!(
+            "<span class=\"ev-standing ev-admissible\">admissible</span><span class=\"ev-obs\">{}</span>",
+            observed_suffix(freshness.and_then(|f| f.observed_age_s))
+        ),
+        Some(HostEvidenceStanding::StaleTestimony) => format!(
+            "<span class=\"ev-standing ev-stale-testimony\">stale testimony</span><span class=\"ev-obs\">{}</span>",
+            observed_suffix(freshness.and_then(|f| f.observed_age_s))
+        ),
+        Some(HostEvidenceStanding::Unknown) | None => {
+            "<span class=\"ev-standing ev-cannot-testify\">cannot testify</span><span class=\"ev-obs\"> · no observation timestamp</span>".to_string()
+        }
+    };
+
+    // Regime B — display freshness only, secondary.
+    let display = if display_stale {
+        "<span class=\"disp-fresh disp-old\">display old</span>"
+    } else {
+        "<span class=\"disp-fresh disp-current\">current</span>"
+    };
+
+    format!(
+        "<div class=\"ev-primary\">Evidence standing: {evidence}</div>\
+         <div class=\"disp-secondary\">Display freshness: {display}</div>"
+    )
+}
+
 pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm]) -> String {
     let gen_line = match (&vm.generation_id, &vm.generation_status, &vm.generation_age_s) {
         (Some(id), Some(status), Some(age)) => {
@@ -1290,7 +1342,9 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
 
         let mut substrate_parts: Vec<String> = Vec::new();
         if hosts_stale > 0 {
-            substrate_parts.push(format!("{} host(s) stale", hosts_stale));
+            // Regime B (display freshness) — qualified per the C2 doctrine; a
+            // bare "N host(s) stale" would read as authority staleness.
+            substrate_parts.push(format!("{} host(s) display-stale", hosts_stale));
         } else {
             substrate_parts.push(format!("{} host(s) up", hosts_up));
         }
@@ -1607,18 +1661,26 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
         })
         .collect();
 
+    // C2: join Regime A (authority) evidence standing to each host row by name.
+    // Regime B (display freshness) stays on `h.stale`. See
+    // docs/working/decisions/DISPLAY_FRESHNESS_VS_ADMISSIBILITY_FRESHNESS.md.
+    let freshness_by_host: std::collections::HashMap<&str, &nq_db::HostFreshnessVm> =
+        vm.host_freshness.iter().map(|f| (f.host.as_str(), f)).collect();
     let host_rows: String = vm
         .hosts
         .iter()
         .map(|h| {
             let stale_class = if h.stale { " stale" } else { "" };
+            let freshness_cell =
+                render_host_freshness(freshness_by_host.get(h.host.as_str()).copied(), h.stale);
             format!(
-                "<tr class=\"{stale_class}\"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                "<tr class=\"{stale_class}\"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 escape_html(&h.host),
                 h.cpu_load_1m.map(|v| format!("{v:.1}")).unwrap_or_default(),
                 h.mem_pressure_pct.map(|v| format!("{v:.0}%")).unwrap_or_default(),
                 h.disk_used_pct.map(|v| format!("{v:.0}%")).unwrap_or_default(),
                 h.disk_avail_mb.map(|v| format!("{v} MB")).unwrap_or_default(),
+                freshness_cell,
             )
         })
         .collect();
@@ -1731,6 +1793,17 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 .gens {{ color: #484f58; font-size: 11px; white-space: nowrap; }}
 .kind-sub {{ color: #484f58; font-size: 11px; }}
 .suppressed-badge {{ display: inline-block; background: #21262d; border: 1px solid #30363d; color: #8b949e; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 6px; }}
+/* C2 dual-explicit host freshness: Regime A (authority) primary, Regime B (display) secondary. */
+.ev-primary {{ font-size: 11px; }}
+.disp-secondary {{ font-size: 10px; color: #6e7681; margin-top: 1px; }}
+.ev-standing {{ font-weight: 600; }}
+.ev-admissible {{ color: #3fb950; }}
+.ev-stale-testimony {{ color: #d29922; }}
+.ev-cannot-testify {{ color: #6e7681; }}
+.ev-obs {{ color: #6e7681; font-weight: 400; }}
+.disp-fresh {{ font-weight: 500; }}
+.disp-current {{ color: #6e7681; }}
+.disp-old {{ color: #8b949e; }}
 .diag-badge {{ display: inline-block; background: #21262d; border: 1px solid #30363d; color: #8b949e; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }}
 .diag-badge-active {{ display: inline-block; background: #1c2333; border: 1px solid #1f6feb; color: #58a6ff; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }}
 .diag-badge-urgent {{ display: inline-block; background: #2d1215; border: 1px solid #da3633; color: #f85149; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }}
@@ -1816,7 +1889,7 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 
 <h2>Hosts</h2>
 <table>
-<tr><th>Host</th><th>CPU 1m</th><th>Mem%</th><th>Disk%</th><th>Free</th></tr>
+<tr><th>Host</th><th>CPU 1m</th><th>Mem%</th><th>Disk%</th><th>Free</th><th>Freshness</th></tr>
 {host_rows}
 </table>
 

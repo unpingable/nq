@@ -28,6 +28,7 @@ fn minimal_vm() -> OverviewVm {
         sqlite_dbs: vec![],
         warnings: vec![],
         history_generations: 10,
+        host_freshness: vec![],
     }
 }
 

@@ -20,6 +20,19 @@ The chronological order below is newest-first.
 
 ---
 
+## C2_DUAL_EXPLICIT_HOST_FRESHNESS (host row shows both staleness clocks, asymmetrically fenced)
+
+**Status:** `shipped` 2026-07-01 (host row; services/dbs deferred).
+
+**What landed:** the overview host row now renders the two staleness clocks as separate, asymmetrically-fenced markers, implementing the ratified C2 doctrine (`docs/working/decisions/DISPLAY_FRESHNESS_VS_ADMISSIBILITY_FRESHNESS.md`).
+- `views.rs`: `HostEvidenceStanding` (`Admissible`/`StaleTestimony`/`Unknown`), pure `host_evidence_standing(collected_at, now, threshold)` (injectable now, mirrors the evaluator staleness pattern), `HOST_STATE_STALE_THRESHOLD_SECONDS = 300`, and `HostFreshnessVm` computed in `overview()` parallel to `hosts`.
+- `render_overview`: joins freshness by host and emits `render_host_freshness` — **Evidence standing** (Regime A, authority: `admissible` / `stale testimony` / `cannot testify`) primary, **Display freshness** (Regime B, generation lag: `current` / `display old`) secondary. Header substrate summary's bare "N host(s) stale" qualified to "display-stale".
+- Regime A uses the host packet's own `observed_at` (== `collected_at`), NOT a worst-over-findings aggregate (operator-ratified non-goal).
+
+**Evidence:** `nq-db` `views::host_freshness_tests` (admissible / beyond-horizon / at-threshold / unparseable-is-unknown); `nq-monitor` `dashboard_ordering` C2 tests (evidence-before-display ordering, admissible-but-display-old divergence, stale-testimony-with-current-display inverse). Full workspace suite green.
+
+**Deferred (named):** dual marker on service / sqlite-db rows; a separately-named `Claim standing` (worst-finding) rollup — must never be called host Evidence standing.
+
 ## STATE_SCHEMA_CONSUMER_ENFORCEMENT (/state envelope schema refused when absent or unsupported)
 
 **Status:** `shipped` 2026-07-01.
