@@ -74,6 +74,7 @@ fn hostile_strings_are_escaped_in_overview_html() {
             owner: Some("<u>me</u>".into()),
             note: Some("<i>cleanup debt</i>".into()),
             external_ref: None,
+            basis_state: "live".into(),
         }],
         history_generations: 10,
         host_freshness: vec![],

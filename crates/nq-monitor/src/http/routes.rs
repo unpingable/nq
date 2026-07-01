@@ -1286,8 +1286,16 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
     let signal_all: Vec<_> = vm.warnings.iter()
         .filter(|w| w.finding_class.as_deref().unwrap_or("signal") == "signal")
         .collect();
+    // EVIDENCE_RETIREMENT: a `retired` finding is explicitly-withdrawn evidence.
+    // It is NOT active signal — excluded from the active rows and every header
+    // count — and renders in its own distinctly-labelled block below (never as
+    // active/success/silence). It also does not page (see nq_db::notify).
+    let retired_findings: Vec<_> = signal_all.iter()
+        .filter(|w| w.basis_state == "retired")
+        .copied()
+        .collect();
     let signal_warnings: Vec<_> = signal_all.iter()
-        .filter(|w| w.visibility_state == "observed")
+        .filter(|w| w.visibility_state == "observed" && w.basis_state != "retired")
         .copied()
         .collect();
     let suppressed_by_host: std::collections::HashMap<String, usize> = {
@@ -1300,6 +1308,33 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
     let meta_warnings: Vec<_> = vm.warnings.iter()
         .filter(|w| w.finding_class.as_deref().unwrap_or("signal") == "meta")
         .collect();
+
+    // EVIDENCE_RETIREMENT: retired evidence renders in its own block, blunt and
+    // distinct — explicitly-withdrawn evidence, not active, not resolved, not
+    // silence. Historical + non-paging by construction.
+    let retired_section: String = if retired_findings.is_empty() {
+        String::new()
+    } else {
+        let rows: String = retired_findings
+            .iter()
+            .map(|w| {
+                format!(
+                    "<tr class=\"retired-row\"><td>{}</td><td>{}</td><td>{}</td>\
+                     <td><span class=\"retired-badge\">Retired evidence · source explicitly retired</span></td></tr>",
+                    escape_html(&w.host),
+                    escape_html(&w.category),
+                    escape_html(&w.message),
+                )
+            })
+            .collect();
+        format!(
+            "<h2>Retired Evidence ({})</h2>\
+             <p style=\"color:#6e7681;font-size:12px;\">Findings whose source was explicitly retired. \
+             Historical evidence, not active findings — these do not page and are not \"resolved\" or \"gone.\"</p>\
+             <table><tr><th>Host</th><th>Kind</th><th>Message</th><th>State</th></tr>{rows}</table>",
+            retired_findings.len(),
+        )
+    };
 
     // Build terse status summary (signal only). Per
     // docs/working/decisions/preflights/DASHBOARD_HEADER_SEVERITY_URGENCY_SPLIT.md
@@ -1804,6 +1839,9 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 .disp-fresh {{ font-weight: 500; }}
 .disp-current {{ color: #6e7681; }}
 .disp-old {{ color: #8b949e; }}
+/* EVIDENCE_RETIREMENT: retired evidence — muted, distinct, never success-green. */
+.retired-row td {{ color: #6e7681; opacity: 0.75; }}
+.retired-badge {{ display: inline-block; background: #21262d; border: 1px solid #30363d; color: #8b949e; font-size: 10px; padding: 1px 6px; border-radius: 8px; }}
 .diag-badge {{ display: inline-block; background: #21262d; border: 1px solid #30363d; color: #8b949e; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }}
 .diag-badge-active {{ display: inline-block; background: #1c2333; border: 1px solid #1f6feb; color: #58a6ff; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }}
 .diag-badge-urgent {{ display: inline-block; background: #2d1215; border: 1px solid #da3633; color: #f85149; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }}
@@ -1883,6 +1921,7 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 {findings_rows}
 </table>
 {no_findings}
+{retired_section}
 {meta_section}
 
 {host_state_section}
@@ -2114,6 +2153,7 @@ loadSaved();
         },
         signal_count = signal_warnings.len(),
         no_findings = if signal_warnings.is_empty() { "<p style=\"color:#484f58;font-size:13px;\">No open findings.</p>" } else { "" },
+        retired_section = retired_section,
         meta_section = if meta_warnings.is_empty() { String::new() } else {
             let meta_rows: String = meta_warnings.iter().map(|w| {
                 let (cell, tooltip) = format_age_gens(w.first_seen_at.as_deref(), w.consecutive_gens);

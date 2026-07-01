@@ -70,6 +70,7 @@ fn warning(
         owner: None,
         note: None,
         external_ref: None,
+        basis_state: "live".into(),
     }
 }
 

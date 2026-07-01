@@ -56,6 +56,7 @@ fn freelist_bloat_finding(host: &str, db_path: &str) -> WarningVm {
         owner: None,
         note: None,
         external_ref: None,
+        basis_state: "live".into(),
     }
 }
 
@@ -322,4 +323,46 @@ fn c2_stale_testimony_uses_authority_vocab_independent_of_display() {
         html.contains("current"),
         "display freshness is independent: collector current even as testimony expires"
     );
+}
+
+/// EVIDENCE_RETIREMENT render: a `basis_state = "retired"` finding renders in
+/// its own blunt "Retired Evidence" block — explicitly-withdrawn evidence,
+/// never active/success/silence — and does NOT inflate the active header counts.
+#[test]
+fn retired_finding_renders_distinctly_and_not_as_active_signal() {
+    let mut vm = empty_vm();
+
+    let active = {
+        let mut w = freelist_bloat_finding("host-a", "/var/lib/active.sqlite");
+        w.message = "ACTIVE_SENTINEL reclaimable".into();
+        w
+    };
+    let retired = {
+        let mut w = freelist_bloat_finding("host-a", "/var/lib/retired.sqlite");
+        w.message = "RETIRED_SENTINEL reclaimable".into();
+        w.basis_state = "retired".into();
+        w
+    };
+    vm.warnings = vec![active, retired];
+
+    let html = render_overview(&vm, &[]);
+
+    // Retired evidence renders in its own labelled block, blunt.
+    assert!(html.contains("Retired Evidence"), "retired block must render");
+    assert!(
+        html.contains("source explicitly retired"),
+        "retired findings carry the blunt explicit-retirement label"
+    );
+    assert!(html.contains("RETIRED_SENTINEL"), "the retired finding is still visible");
+
+    // ...but it is NOT active signal: two critical findings, one retired, must
+    // summarize as "1 critical" — never "2".
+    assert!(html.contains("1 critical"), "active count excludes retired; html: {html}");
+    assert!(
+        !html.contains("2 critical"),
+        "retired evidence must not inflate the active severity count"
+    );
+
+    // Retired must never render as success/resolved/gone language.
+    assert!(!html.contains(">OK<"), "retired is not OK");
 }

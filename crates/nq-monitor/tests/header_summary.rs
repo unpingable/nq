@@ -51,6 +51,7 @@ fn vm_with_one_critical_business_hours() -> OverviewVm {
             owner: None,
             note: None,
             external_ref: None,
+            basis_state: "live".into(),
         }],
         history_generations: 10,
         host_freshness: vec![],

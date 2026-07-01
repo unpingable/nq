@@ -149,6 +149,11 @@ pub struct WarningVm {
     pub owner: Option<String>,
     pub note: Option<String>,
     pub external_ref: Option<String>,
+    /// EVIDENCE_RETIREMENT basis lifecycle: `live` / `stale` / `retired` /
+    /// `invalidated` / `unknown`. A `retired` finding is explicitly-withdrawn
+    /// evidence — it must render distinctly (never as active/success/silence)
+    /// and must not page.
+    pub basis_state: String,
 }
 
 /// Per-host operational summary from dominance projection.
@@ -318,7 +323,8 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
         let mut warn_stmt = db.conn.prepare(
             "SELECT severity, kind, host, subject, message, domain, first_seen_at, consecutive_gens, acknowledged, finding_class, visibility_state, suppression_reason,
                     failure_class, service_impact, action_bias, synopsis, stability,
-                    maintenance_state, maintenance_id, work_state, owner, note, external_ref
+                    maintenance_state, maintenance_id, work_state, owner, note, external_ref,
+                    basis_state
              FROM v_warnings ORDER BY severity DESC, kind, host",
         )?;
         let rows = warn_stmt
@@ -347,6 +353,9 @@ pub fn overview(db: &ReadDb) -> anyhow::Result<OverviewVm> {
                     owner: row.get(20).ok(),
                     note: row.get(21).ok(),
                     external_ref: row.get(22).ok(),
+                    basis_state: row
+                        .get::<_, String>(23)
+                        .unwrap_or_else(|_| "unknown".to_string()),
                 })
             })?
             .collect::<Result<_, _>>()?;

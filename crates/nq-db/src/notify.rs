@@ -159,7 +159,8 @@ pub fn find_pending(db: &WriteDb, min_severity: &str) -> anyhow::Result<Vec<Pend
            ON ws.host = nh.host AND ws.kind = nh.kind AND ws.subject = nh.subject
          WHERE (ws.notified_severity IS NULL OR ws.severity != ws.notified_severity)
            AND COALESCE(ws.work_state, 'new') NOT IN ('quiesced', 'suppressed', 'closed')
-           AND ws.visibility_state = 'observed'",
+           AND ws.visibility_state = 'observed'
+           AND ws.basis_state != 'retired'",
     )?;
 
     let now = time::OffsetDateTime::now_utc();
@@ -888,6 +889,29 @@ mod tests {
         let pending = find_pending(&db, "info").unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].notification_kind, NotificationKind::New);
+    }
+
+    #[test]
+    fn retired_basis_does_not_page() {
+        // EVIDENCE_RETIREMENT: an explicitly-retired finding is historical
+        // evidence and must not page, even though it is observed + unquiesced.
+        let mut db = setup_db();
+        insert_finding(&mut db, "host1", "zfs_pool_degraded", "tank", "critical");
+
+        // Baseline: it pages while live-ish (basis_state defaults to 'unknown').
+        assert_eq!(find_pending(&db, "info").unwrap().len(), 1);
+
+        db.conn
+            .execute(
+                "UPDATE warning_state SET basis_state = 'retired' WHERE host = 'host1'",
+                [],
+            )
+            .unwrap();
+
+        assert!(
+            find_pending(&db, "info").unwrap().is_empty(),
+            "retired evidence must not page"
+        );
     }
 
     #[test]

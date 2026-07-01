@@ -20,6 +20,20 @@ The chronological order below is newest-first.
 
 ---
 
+## EVIDENCE_RETIREMENT_RETIRED_RENDER_AND_GATING (retired evidence is visible and non-paging)
+
+**Status:** `shipped` 2026-07-01 (restricted to explicit `retired`; passive basis-stale deferred behind a design record).
+
+**What landed:** the explicit half of the knife is now legible and safe — a retired source's findings render distinctly and never page.
+- `WarningVm` carries `basis_state` (selected from `v_warnings`, which already exposed it since migration 033).
+- `render_overview` pulls `basis_state = 'retired'` findings out of active signal — excluded from the active rows and **every header severity count** — and renders them in a distinct **Retired Evidence** block with the blunt label "Retired evidence · source explicitly retired". Never OK/inactive/resolved/gone: retirement is not laundered into success or silence.
+- `notify::find_pending` gains `AND ws.basis_state != 'retired'`. Retired findings do not page; since the Slack payload flows from `find_pending`, they never reach Slack either.
+- Restricted to `retired` deliberately — `stale`/`invalidated` are not set by any runtime yet, so gating them now would be premature.
+
+**Evidence:** `dashboard_ordering::retired_finding_renders_distinctly_and_not_as_active_signal` (retired block + blunt label present, retired excluded from "1 critical" count, no success language); `notify::retired_basis_does_not_page` (pages while unknown, silent once retired). Full workspace suite green.
+
+**Deferred (named):** the basis-stale detector (passive `live -> stale`) is gated behind a `BASIS_STALE_CONTRACT` design record (OQ1) — no runtime until the freshness-window / outage-block / reversibility / granularity questions are fenced. "Do not let time become a little cop."
+
 ## ZFS_COLLECTOR_DETECTORS_6_TO_9 (the four gated ZFS detectors; V1 detector set complete)
 
 **Status:** `shipped` 2026-07-01 (lab-fixture compatibility evidence, not live testimony).
