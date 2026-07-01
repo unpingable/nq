@@ -20,6 +20,17 @@ The chronological order below is newest-first.
 
 ---
 
+## STATE_SCHEMA_CONSUMER_ENFORCEMENT (/state envelope schema refused when absent or unsupported)
+
+**Status:** `shipped` 2026-07-01.
+
+**What landed:** `nq-monitor` now enforces the documented `nq.witness_packet.v1` `/state` envelope schema on the pull-consumer side.
+- `pull_one` accepts only `PublisherState.schema == Some(PUBLISHER_STATE_SCHEMA)`.
+- Missing schema and unsupported schema both become a failed source run (`SourceStatus::Error`) with an explicit refusal message; neither is laundered into v1.
+- The e2e mock publisher fixture now emits the current schema on happy-path `/state` examples.
+
+**Evidence:** `pull::tests::state_schema_validator_{accepts_current_v1,refuses_missing_schema,refuses_unsupported_schema}` plus focused e2e checks `happy_path_full_loop` and `lying_publisher_identity_contract`.
+
 ## SERVICE_STATE_WITNESS_SUPPORT_CUTOVER (service_state supports carry projected packet identity)
 
 **Status:** `shipped` 2026-07-01.

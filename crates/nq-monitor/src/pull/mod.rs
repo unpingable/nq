@@ -2,10 +2,10 @@
 //! No DB writes here. Returns a Batch ready for atomic publish.
 
 use nq_core::batch::*;
-use nq_core::status::*;
-use nq_core::wire::PublisherState;
-use nq_core::{Config, SmartWitnessRow, SourceConfig, ZfsWitnessRow};
 use nq_core::batch::{NqBinaryObservationRow, WalObservationSet};
+use nq_core::status::*;
+use nq_core::wire::{PublisherState, PUBLISHER_STATE_SCHEMA};
+use nq_core::{Config, SmartWitnessRow, SourceConfig, ZfsWitnessRow};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 use time::OffsetDateTime;
@@ -123,6 +123,20 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
     })
 }
 
+fn validate_publisher_state_schema(state: &PublisherState) -> Result<(), String> {
+    match state.schema.as_deref() {
+        Some(PUBLISHER_STATE_SCHEMA) => Ok(()),
+        None => Err(format!(
+            "publisher /state envelope is missing schema; expected {}; refusing unversioned testimony",
+            PUBLISHER_STATE_SCHEMA
+        )),
+        Some(other) => Err(format!(
+            "publisher /state envelope schema {other:?} is unsupported; expected {}",
+            PUBLISHER_STATE_SCHEMA
+        )),
+    }
+}
+
 enum PullResult {
     Ok {
         source_run: SourceRun,
@@ -170,6 +184,18 @@ async fn pull_one(source: SourceConfig) -> PullResult {
     };
 
     let duration_ms = start.elapsed().as_millis() as u64;
+
+    if let Err(error_message) = validate_publisher_state_schema(&state) {
+        warn!(source = %source.name, err = %error_message, "pull refused unsupported /state schema");
+        return PullResult::Failed(SourceRun {
+            source: source.name,
+            status: SourceStatus::Error,
+            received_at,
+            collected_at: Some(state.collected_at),
+            duration_ms: Some(duration_ms),
+            error_message: Some(error_message),
+        });
+    }
 
     // Identity contract: the configured source name is the canonical host identity.
     // The payload's self-reported host is logged for debugging but never used as a DB key.
@@ -221,7 +247,11 @@ async fn pull_one(source: SourceConfig) -> PullResult {
             collector: CollectorKind::Host,
             status: payload.status,
             collected_at: payload.collected_at,
-            entity_count: if payload.data.is_some() { Some(1) } else { None },
+            entity_count: if payload.data.is_some() {
+                Some(1)
+            } else {
+                None
+            },
             error_message: payload.error_message.clone(),
         });
         if payload.status == CollectorStatus::Ok {
@@ -388,19 +418,22 @@ async fn pull_one(source: SourceConfig) -> PullResult {
                         .iter()
                         .map(|obs| LogObsRow {
                             source_id: obs.source_id.clone(),
-                            window_start: obs.window_start
+                            window_start: obs
+                                .window_start
                                 .format(&time::format_description::well_known::Rfc3339)
                                 .unwrap_or_default(),
-                            window_end: obs.window_end
+                            window_end: obs
+                                .window_end
                                 .format(&time::format_description::well_known::Rfc3339)
                                 .unwrap_or_default(),
                             fetch_status: obs.fetch_status.clone(),
                             lines_total: obs.lines_total as i64,
                             lines_error: obs.lines_error as i64,
                             lines_warn: obs.lines_warn as i64,
-                            last_log_ts: obs.last_log_ts.map(|ts|
+                            last_log_ts: obs.last_log_ts.map(|ts| {
                                 ts.format(&time::format_description::well_known::Rfc3339)
-                                    .unwrap_or_default()),
+                                    .unwrap_or_default()
+                            }),
                             transport_lag_ms: obs.transport_lag_ms,
                             examples_json: serde_json::to_string(&obs.examples)
                                 .unwrap_or_else(|_| "[]".to_string()),
@@ -519,5 +552,52 @@ async fn pull_one(source: SourceConfig) -> PullResult {
         smart_witness_row,
         wal_observation_set,
         nq_binary_observation_row,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn state_from_json(v: serde_json::Value) -> PublisherState {
+        serde_json::from_value(v).expect("fixture must deserialize as PublisherState")
+    }
+
+    #[test]
+    fn state_schema_validator_accepts_current_v1() {
+        let state = state_from_json(json!({
+            "schema": PUBLISHER_STATE_SCHEMA,
+            "host": "publisher-a",
+            "collected_at": "2026-06-18T19:33:00Z",
+            "collectors": {}
+        }));
+        assert!(validate_publisher_state_schema(&state).is_ok());
+    }
+
+    #[test]
+    fn state_schema_validator_refuses_missing_schema() {
+        let state = state_from_json(json!({
+            "host": "publisher-a",
+            "collected_at": "2026-06-18T19:33:00Z",
+            "collectors": {}
+        }));
+        let err = validate_publisher_state_schema(&state).unwrap_err();
+        assert!(err.contains("missing schema"), "{err}");
+        assert!(err.contains(PUBLISHER_STATE_SCHEMA), "{err}");
+    }
+
+    #[test]
+    fn state_schema_validator_refuses_unsupported_schema() {
+        let state = state_from_json(json!({
+            "schema": "nq.witness_packet.v2",
+            "host": "publisher-a",
+            "collected_at": "2026-06-18T19:33:00Z",
+            "collectors": {}
+        }));
+        let err = validate_publisher_state_schema(&state).unwrap_err();
+        assert!(err.contains("unsupported"), "{err}");
+        assert!(err.contains("nq.witness_packet.v2"), "{err}");
+        assert!(err.contains(PUBLISHER_STATE_SCHEMA), "{err}");
     }
 }

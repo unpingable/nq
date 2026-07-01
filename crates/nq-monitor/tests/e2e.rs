@@ -4,10 +4,10 @@
 //! talks to it over TCP via reqwest, and verifies the full pipeline from
 //! publisher JSON -> aggregator pull -> DB publish -> web UI rendering.
 
-use axum::{Json, Router, routing::get};
+use axum::{routing::get, Json, Router};
 use nq_core::batch::*;
 use nq_core::status::*;
-use nq_core::wire::PublisherState;
+use nq_core::wire::{PublisherState, PUBLISHER_STATE_SCHEMA};
 use nq_db::{migrate, open_ro, open_rw, overview, publish_batch};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -26,6 +26,7 @@ fn sample_publisher_state(host: &str) -> serde_json::Value {
         .unwrap();
 
     serde_json::json!({
+        "schema": PUBLISHER_STATE_SCHEMA,
         "host": host,
         "collected_at": ts,
         "collectors": {
@@ -127,12 +128,7 @@ fn seed_generation(conn: &rusqlite::Connection) {
 /// `crates/nq-db/src/preflight.rs::tests::insert_finding`, which is
 /// intentionally not exported as a public API — the duplication is
 /// the cost of nq-db keeping its test fixtures private.
-fn insert_observed_finding(
-    conn: &rusqlite::Connection,
-    host: &str,
-    kind: &str,
-    subject: &str,
-) {
+fn insert_observed_finding(conn: &rusqlite::Connection, host: &str, kind: &str, subject: &str) {
     conn.execute(
         "INSERT INTO warning_state
            (host, kind, subject, domain, message, severity,
@@ -224,7 +220,11 @@ fn state_to_batch(state: &PublisherState, canonical_host: &str) -> Batch {
             collector: CollectorKind::Host,
             status: payload.status,
             collected_at: payload.collected_at,
-            entity_count: if payload.data.is_some() { Some(1) } else { None },
+            entity_count: if payload.data.is_some() {
+                Some(1)
+            } else {
+                None
+            },
             error_message: payload.error_message.clone(),
         });
         if payload.status == CollectorStatus::Ok {
@@ -341,11 +341,11 @@ fn state_to_batch(state: &PublisherState, canonical_host: &str) -> Batch {
         service_sets,
         sqlite_db_sets,
         metric_sets: vec![],
-            log_sets: vec![],
-            zfs_witness_rows: vec![],
-            smart_witness_rows: vec![],
-            wal_observation_sets: vec![],
-            nq_binary_observation_rows: vec![],
+        log_sets: vec![],
+        zfs_witness_rows: vec![],
+        smart_witness_rows: vec![],
+        wal_observation_sets: vec![],
+        nq_binary_observation_rows: vec![],
     }
 }
 
@@ -424,9 +424,7 @@ async fn happy_path_full_loop() {
                 .iter()
                 .map(|h| format!("<tr><td>{}</td></tr>", h.host))
                 .collect();
-            Html(format!(
-                "<html><body><h1>nq</h1>{host_lines}</body></html>"
-            ))
+            Html(format!("<html><body><h1>nq</h1>{host_lines}</body></html>"))
         }
 
         async fn api_overview(State(db): State<Db>) -> Json<serde_json::Value> {
@@ -988,12 +986,7 @@ async fn serve_http_only_does_not_write_to_db() {
 
     let nq_bin = env!("CARGO_BIN_EXE_nq-monitor");
     let mut child = Command::new(nq_bin)
-        .args([
-            "serve",
-            "--http-only",
-            "-c",
-            cfg_path.to_str().unwrap(),
-        ])
+        .args(["serve", "--http-only", "-c", cfg_path.to_str().unwrap()])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -1478,8 +1471,7 @@ async fn smoke_disk_state_passes_on_unseeded_host_with_honest_refusal() {
     // expected per the in-process evaluator's test), it must not be
     // verified / admissible — that would imply testimony from nothing.
     assert!(
-        report.verdict == "insufficient_coverage"
-            || report.verdict == "cannot_testify",
+        report.verdict == "insufficient_coverage" || report.verdict == "cannot_testify",
         "unseeded host must surface as a refusal, got {:?}",
         report.verdict
     );
@@ -2020,12 +2012,7 @@ async fn preflight_disk_state_http_time_basis_suspect_when_observed_at_in_far_fu
     {
         let write_db = open_rw(&db_path).unwrap();
         seed_generation(write_db.conn());
-        insert_finding_with_future_observed_at(
-            write_db.conn(),
-            host,
-            "zfs_pool_degraded",
-            "tank",
-        );
+        insert_finding_with_future_observed_at(write_db.conn(), host, "zfs_pool_degraded", "tank");
         drop(write_db);
     }
 
@@ -2505,13 +2492,13 @@ async fn sqlite_wal_state_http_whitespace_host_returns_400() {
 
 #[test]
 fn sqlite_wal_probe_pipeline_end_to_end_smoke() {
-    use nq_witness::collect::sqlite_wal_probe;
     use nq_core::batch::WalObservationSet;
     use nq_core::config::SqliteWalTargetConfig;
     use nq_core::PublisherConfig;
     use nq_db::sqlite_wal_state::{
         load_recent_wal_observations, ObservationStatus, SqliteWalTarget,
     };
+    use nq_witness::collect::sqlite_wal_probe;
     use std::str::FromStr;
 
     // Tempdir with two declared targets: one real (existing .db with
@@ -2714,7 +2701,9 @@ fn write_receipt(dir: &TempDir, name: &str, body: &str) -> std::path::PathBuf {
 async fn preflight_nq_sql_contract_state_empty_artifact_returns_400() {
     let base = nq_sql_contract_router_addr().await;
     let resp = reqwest::Client::new()
-        .get(format!("{base}/api/preflight/nq-sql-contract-state?artifact="))
+        .get(format!(
+            "{base}/api/preflight/nq-sql-contract-state?artifact="
+        ))
         .send()
         .await
         .unwrap();
@@ -2916,7 +2905,11 @@ async fn artifact_registry_endpoint_returns_registry_shape() {
     assert!(resp["generated_at"].is_string());
 
     let entries = resp["entries"].as_array().expect("entries array");
-    assert!(entries.len() >= 12, "expected >=12 entries; got {}", entries.len());
+    assert!(
+        entries.len() >= 12,
+        "expected >=12 entries; got {}",
+        entries.len()
+    );
 
     // Every entry has the 7 declared fields (externally_observable_at
     // may be absent via skip_serializing_if).
@@ -3074,4 +3067,3 @@ async fn artifact_registry_preflight_entries_carry_http_routes() {
         }
     }
 }
-
