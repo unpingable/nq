@@ -2975,10 +2975,19 @@ async fn served_surface_registry_endpoint_returns_routes_and_evaluators() {
     assert!(resp["generated_at"].is_string());
 
     let routes = resp["routes"].as_array().expect("routes array");
-    assert!(routes.len() >= 17, "expected >=17 routes; got {}", routes.len());
+    assert!(
+        routes.len() >= 17,
+        "expected >=17 routes; got {}",
+        routes.len()
+    );
 
     let evaluators = resp["evaluators"].as_array().expect("evaluators array");
-    assert_eq!(evaluators.len(), 8, "expected 8 evaluators; got {}", evaluators.len());
+    assert_eq!(
+        evaluators.len(),
+        9,
+        "expected 9 evaluators; got {}",
+        evaluators.len()
+    );
 
     // Spot-check shape of a route entry.
     let preflight_dns = routes
@@ -3003,6 +3012,16 @@ async fn served_surface_registry_endpoint_returns_routes_and_evaluators() {
         .unwrap()
         .iter()
         .any(|v| v.as_str().unwrap_or("").contains("public_views")));
+
+    let service_state_eval = evaluators
+        .iter()
+        .find(|e| e["evaluator_kind"] == "service_state")
+        .expect("service_state evaluator present");
+    assert!(service_state_eval["evaluator_inputs_required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str().unwrap_or("").contains("service_observations")));
 }
 
 #[tokio::test]

@@ -60,9 +60,12 @@ Landed (live wiring slice, 2026-06-29):
 - **live systemd collector wiring**: `services.rs` `check_systemd` now captures native `ActiveState`/`SubState`/`LoadState`/`UnitFileState` (one `systemctl show`); carried on `ServiceData`/`ServiceRow`; `publish.rs` (5c) writes `service_observations` for systemd rows each cycle. End-to-end test: collect → publish → evaluator `admissible_with_scope`, refusals intact.
 - **witness projection** `service_state_witness_projection::project_service_observation` → `nq.witness.v1` (proof-of-shape: envelope + native-state payload, plain-language `coverage_limits`, no claim vocab; wire-validated).
 
+Follow-on landed 2026-07-01:
+- `evaluate_service_state_preflight*` now feeds the projected packet identity into `PreflightSupport.witness_packet` for admitted supports. Projection refusal surfaces as a `PreflightExclusion`, not as support.
+- `served_surface_registry` declares the owned `service_state` evaluator. No HTTP preflight route was added in that follow-on.
+
 Still deferred (named):
-- feed the projection into the evaluator's `PreflightSupport.witness_packet` (today the projection stands alone; the support's packet is still `None`).
-- `served_surface_registry` entry; **docker / process** manager variants (collector captures native state for systemd only; docker still maps to coarse status).
+- **docker / process** manager variants (collector captures native state for systemd only; docker still maps to coarse status).
 
 ## Adjacent, NOT this
 

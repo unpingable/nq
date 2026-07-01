@@ -209,7 +209,8 @@ pub const ROUTES: &[ServedRouteEntry] = &[
     ServedRouteEntry {
         route: "/api/preflight/component-testimony-observation-loop-alive",
         method: "GET",
-        served_by_component: "nq-monitor http::routes::api_preflight_component_testimony_observation_loop_alive",
+        served_by_component:
+            "nq-monitor http::routes::api_preflight_component_testimony_observation_loop_alive",
         purpose: "Observation-loop heartbeat preflight",
         status: Status::Stable,
         externally_observable: true,
@@ -318,15 +319,27 @@ pub const EVALUATORS: &[OwnedEvaluatorEntry] = &[
         status: Status::Stable,
     },
     OwnedEvaluatorEntry {
+        evaluator_kind: "service_state",
+        evaluator_component: "nq_db::service_state::evaluate_service_state_preflight",
+        evaluator_inputs_required: &[
+            "service_observations (host + service_manager + service_name scoped)",
+        ],
+        evaluator_outputs: "nq.preflight.service_state.v1 PreflightResult",
+        status: Status::Stable,
+    },
+    OwnedEvaluatorEntry {
         evaluator_kind: "component_testimony_observation_loop_alive",
-        evaluator_component: "nq_db::component_testimony::evaluate_observation_loop_alive_preflight",
+        evaluator_component:
+            "nq_db::component_testimony::evaluate_observation_loop_alive_preflight",
         evaluator_inputs_required: &["observation_loop_alive_observations"],
-        evaluator_outputs: "nq.preflight.component_testimony_observation_loop_alive.v1 PreflightResult",
+        evaluator_outputs:
+            "nq.preflight.component_testimony_observation_loop_alive.v1 PreflightResult",
         status: Status::Stable,
     },
     OwnedEvaluatorEntry {
         evaluator_kind: "nq_binary_mtime_state",
-        evaluator_component: "nq_db::nq_binary_mtime_state::evaluate_nq_binary_mtime_state_preflight",
+        evaluator_component:
+            "nq_db::nq_binary_mtime_state::evaluate_nq_binary_mtime_state_preflight",
         evaluator_inputs_required: &["nq_binary_observations"],
         evaluator_outputs: "nq.preflight.nq_binary_mtime_state.v1 PreflightResult",
         status: Status::Stable,
@@ -340,7 +353,8 @@ pub const EVALUATORS: &[OwnedEvaluatorEntry] = &[
     },
     OwnedEvaluatorEntry {
         evaluator_kind: "nq_sql_contract_state",
-        evaluator_component: "nq_monitor::nq_sql_contract_state::evaluate_nq_sql_contract_state_preflight",
+        evaluator_component:
+            "nq_monitor::nq_sql_contract_state::evaluate_nq_sql_contract_state_preflight",
         evaluator_inputs_required: &["nq.sql_contract.public_views.v1 artifact (file)"],
         evaluator_outputs: "nq.preflight.nq_sql_contract_state.v1 PreflightResult",
         status: Status::Stable,
@@ -414,6 +428,7 @@ mod tests {
             ClaimKind::IngestState,
             ClaimKind::DnsState,
             ClaimKind::SqliteWalState,
+            ClaimKind::ServiceState,
             ClaimKind::ComponentTestimonyObservationLoopAlive,
             ClaimKind::NqBinaryMtimeState,
             ClaimKind::NqEvaluatorState,
@@ -445,6 +460,7 @@ mod tests {
             ClaimKind::IngestState,
             ClaimKind::DnsState,
             ClaimKind::SqliteWalState,
+            ClaimKind::ServiceState,
             ClaimKind::ComponentTestimonyObservationLoopAlive,
             ClaimKind::NqBinaryMtimeState,
             ClaimKind::NqEvaluatorState,
@@ -464,8 +480,11 @@ mod tests {
         let snap = ServedSurfaceResponse::snapshot(now);
         let v = serde_json::to_value(&snap).unwrap();
         assert_eq!(v["schema"], SERVED_SURFACE_REGISTRY_SCHEMA);
-        assert!(v["generated_at"].as_str().unwrap().starts_with("2025-01-01"));
+        assert!(v["generated_at"]
+            .as_str()
+            .unwrap()
+            .starts_with("2025-01-01"));
         assert!(v["routes"].as_array().unwrap().len() >= 17);
-        assert!(v["evaluators"].as_array().unwrap().len() == 8);
+        assert!(v["evaluators"].as_array().unwrap().len() == 9);
     }
 }

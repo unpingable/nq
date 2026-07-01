@@ -8,6 +8,8 @@
 //! healthy / safe / coverage / future-liveness / consequence (those are the
 //! constitutional `service_state_cannot_testify`, preloaded by the skeleton).
 
+use crate::service_state_witness_projection::project_service_observation;
+use crate::witness_projection_support::{make_projection_refusal_exclusion, packet_identity};
 use crate::ReadDb;
 use anyhow::{anyhow, Context};
 use nq_core::preflight::{
@@ -87,7 +89,12 @@ pub fn insert_service_observation(
                     active_state, sub_state, load_state, unit_file_state, observed_at
              FROM service_observations
              WHERE generation_id = ?1 AND host = ?2 AND service_manager = ?3 AND service_name = ?4",
-            params![obs.generation_id, obs.host, obs.service_manager, obs.service_name],
+            params![
+                obs.generation_id,
+                obs.host,
+                obs.service_manager,
+                obs.service_name
+            ],
             from_row,
         )
         .optional()
@@ -223,7 +230,7 @@ pub fn evaluate_service_state_preflight_from_conn_at(
         )),
     };
     let mut result =
-        PreflightResult::skeleton(ClaimKind::ServiceState, target, generated_at);
+        PreflightResult::skeleton(ClaimKind::ServiceState, target, generated_at.clone());
 
     let Some(obs) = latest_service_observation_for_tuple(conn, key)? else {
         // Absence is read as insufficient_coverage — "no witness", not "false".
@@ -257,7 +264,35 @@ pub fn evaluate_service_state_preflight_from_conn_at(
         SERVICE_STATE_STALE_THRESHOLD_SECONDS,
     );
 
+    let projected_packet = match project_service_observation(&obs, &generated_at) {
+        Ok(packet) => packet,
+        Err(refusal) => {
+            result.excludes.push(make_projection_refusal_exclusion(
+                "service_state_observed".to_string(),
+                format!("{}/{}:{}", obs.host, obs.service_manager, obs.service_name),
+                &refusal,
+            ));
+            result.coverage.push(PreflightCoverage {
+                witness: "service_manager".to_string(),
+                standing: "observable".to_string(),
+                note: Some(
+                    "latest service_observations row refused projection - see excludes for the custody constraint"
+                        .to_string(),
+                ),
+            });
+            result.verdict = Verdict::InsufficientCoverage;
+            result.verdict_note = Some(
+                "Latest service_observations row could not be projected into an admissible \
+                 witness packet; service_state evidence is in custody refusal."
+                    .to_string(),
+            );
+            result.compute_time_basis();
+            return Ok(result);
+        }
+    };
+
     let mut support = make_support(&obs);
+    support.witness_packet = packet_identity(&projected_packet);
 
     if stale {
         support.freshness = Some("stale".to_string());
@@ -350,9 +385,12 @@ mod tests {
     #[test]
     fn insert_then_read_latest_roundtrips() {
         let db = make_db_gen();
-        let id = insert_service_observation(&db.conn, &obs("active", "2026-06-29T12:00:00Z")).unwrap();
+        let id =
+            insert_service_observation(&db.conn, &obs("active", "2026-06-29T12:00:00Z")).unwrap();
         assert!(id > 0);
-        let got = latest_service_observation_for_tuple(&db.conn, &tuple()).unwrap().unwrap();
+        let got = latest_service_observation_for_tuple(&db.conn, &tuple())
+            .unwrap()
+            .unwrap();
         assert_eq!(got.active_state, "active");
         assert_eq!(got.sub_state.as_deref(), Some("running"));
     }
@@ -360,11 +398,18 @@ mod tests {
     #[test]
     fn exact_duplicate_write_is_idempotent() {
         let db = make_db_gen();
-        let id1 = insert_service_observation(&db.conn, &obs("active", "2026-06-29T12:00:00Z")).unwrap();
+        let id1 =
+            insert_service_observation(&db.conn, &obs("active", "2026-06-29T12:00:00Z")).unwrap();
         // Same identity key + same native state -> idempotent, returns the same id, no second row.
-        let id2 = insert_service_observation(&db.conn, &obs("active", "2026-06-29T12:00:05Z")).unwrap();
+        let id2 =
+            insert_service_observation(&db.conn, &obs("active", "2026-06-29T12:00:05Z")).unwrap();
         assert_eq!(id1, id2);
-        let n: i64 = db.conn.query_row("SELECT COUNT(*) FROM service_observations", [], |r| r.get::<_, i64>(0)).unwrap();
+        let n: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM service_observations", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap();
         assert_eq!(n, 1);
     }
 
@@ -372,10 +417,16 @@ mod tests {
     fn conflicting_state_under_same_identity_fails_explicitly() {
         let db = make_db_gen();
         insert_service_observation(&db.conn, &obs("active", "2026-06-29T12:00:00Z")).unwrap();
-        let err = insert_service_observation(&db.conn, &obs("failed", "2026-06-29T12:00:01Z")).unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("conflicting"), "{err}");
+        let err = insert_service_observation(&db.conn, &obs("failed", "2026-06-29T12:00:01Z"))
+            .unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("conflicting"),
+            "{err}"
+        );
         // No silent overwrite: the original row stands.
-        let got = latest_service_observation_for_tuple(&db.conn, &tuple()).unwrap().unwrap();
+        let got = latest_service_observation_for_tuple(&db.conn, &tuple())
+            .unwrap()
+            .unwrap();
         assert_eq!(got.active_state, "active");
     }
 
@@ -392,13 +443,35 @@ mod tests {
         let db = make_db_gen();
         insert_service_observation(&db.conn, &obs("active", "2026-06-29T12:00:00Z")).unwrap();
         let r = evaluate_service_state_preflight_from_conn_at(
-            &db.conn, &tuple(), at("2026-06-29T12:00:30Z"),
-        ).unwrap();
+            &db.conn,
+            &tuple(),
+            at("2026-06-29T12:00:30Z"),
+        )
+        .unwrap();
         assert_eq!(r.verdict, Verdict::AdmissibleWithScope);
         assert_eq!(r.supports.len(), 1);
         assert!(r.supports[0].claim.contains("native state 'active'"));
+        let wp = r.supports[0]
+            .witness_packet
+            .as_ref()
+            .expect("admitted service_state support must carry projected packet identity");
+        assert_eq!(
+            wp.witness_type,
+            crate::service_state_witness_projection::WITNESS_TYPE_SERVICE_MANAGER
+        );
+        assert_eq!(
+            wp.custody_basis.as_deref(),
+            Some(nq_core::witness::CUSTODY_BASIS_LEGACY_PROJECTION)
+        );
+        assert!(wp.digest.starts_with("sha256:"));
+        assert_eq!(wp.observed_at, "2026-06-29T12:00:00Z");
         // The constitutional refusals are present (recovered / healthy / safe).
-        let refusals: String = r.cannot_testify.iter().map(|c| c.statement.clone()).collect::<Vec<_>>().join(" | ");
+        let refusals: String = r
+            .cannot_testify
+            .iter()
+            .map(|c| c.statement.clone())
+            .collect::<Vec<_>>()
+            .join(" | ");
         assert!(refusals.to_lowercase().contains("recovery"));
         assert!(refusals.to_lowercase().contains("health"));
         assert!(refusals.to_lowercase().contains("safety"));
@@ -410,8 +483,49 @@ mod tests {
         insert_service_observation(&db.conn, &obs("active", "2026-06-29T12:00:00Z")).unwrap();
         // > 300s later.
         let r = evaluate_service_state_preflight_from_conn_at(
-            &db.conn, &tuple(), at("2026-06-29T12:10:00Z"),
-        ).unwrap();
+            &db.conn,
+            &tuple(),
+            at("2026-06-29T12:10:00Z"),
+        )
+        .unwrap();
         assert_eq!(r.verdict, Verdict::StaleTestimony);
+    }
+
+    #[test]
+    fn projection_refusal_is_exclusion_not_support() {
+        let db = make_db_gen();
+        db.conn
+            .execute(
+                "INSERT INTO service_observations
+                    (generation_id, host, service_manager, service_name,
+                     active_state, sub_state, load_state, unit_file_state, observed_at)
+                 VALUES (1, 'sushi-k', 'systemd', 'kea-dhcp4',
+                         'active', 'running', 'loaded', 'enabled', 'not-a-timestamp')",
+                [],
+            )
+            .unwrap();
+
+        let r = evaluate_service_state_preflight_from_conn_at(
+            &db.conn,
+            &tuple(),
+            at("2026-06-29T12:00:30Z"),
+        )
+        .unwrap();
+
+        assert_eq!(r.verdict, Verdict::InsufficientCoverage);
+        assert!(
+            r.supports.is_empty(),
+            "projection-refused service_state row must not appear in supports"
+        );
+        let refusal = r
+            .excludes
+            .iter()
+            .find(|e| e.finding_kind == "service_state_observed")
+            .expect("projection-refused row must appear in excludes");
+        assert!(
+            refusal.reason.contains("projection refused"),
+            "exclusion reason must name projection refusal: {}",
+            refusal.reason
+        );
     }
 }

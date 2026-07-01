@@ -20,6 +20,19 @@ The chronological order below is newest-first.
 
 ---
 
+## SERVICE_STATE_WITNESS_SUPPORT_CUTOVER (service_state supports carry projected packet identity)
+
+**Status:** `shipped` 2026-07-01.
+
+**What landed:** the existing `service_state_witness_projection` is now admitted into the evaluator result surface.
+- `evaluate_service_state_preflight*` projects the selected `service_observations` row into `nq.witness.v1` and stamps `PreflightSupport.witness_packet` with the packet identity (`witness_type`, digest, observed_at, custody basis, position).
+- Projection custody failures surface as `PreflightExclusion`, not as supports; the verdict stays bounded rather than fabricating admissible testimony.
+- `served_surface_registry` now declares the owned `service_state` evaluator. No `/api/preflight/service-state` route was invented in this slice.
+
+**Evidence:** focused `service_state` tests cover the support packet identity, constitutional refusals remaining present, stale testimony, and projection-refusal-as-exclusion; `served_surface_registry` tests cover the added evaluator entry.
+
+**Deferred (named):** docker/process native-state capture remains deferred; systemd is still the only live native-state collector path.
+
 ## SERVICE_STATE_LIVE_COLLECTOR (native systemd states feed the evaluator)
 
 **Status:** `shipped` 2026-06-29 (systemd; docker/process deferred).
@@ -32,7 +45,7 @@ The chronological order below is newest-first.
 
 **Evidence:** end-to-end publish test (`live_systemd_collection_feeds_service_observations_and_evaluator`: collect → publish writes the row → evaluator `admissible_with_scope`, refusals present, support never says healthy/recovered) + 3 projection tests + the wire ripple (`ServiceData`/`ServiceRow` +4 fields) compiled clean across all construction sites; full workspace suite green.
 
-**Deferred (named):** feed the projection into the evaluator's `PreflightSupport.witness_packet` (still `None`); `served_surface_registry` entry; **docker/process** native-state capture (systemd-only today).
+**Deferred (named):** **docker/process** native-state capture (systemd-only today). The `PreflightSupport.witness_packet` and `served_surface_registry` follow-ons landed in `SERVICE_STATE_WITNESS_SUPPORT_CUTOVER`.
 
 ---
 
@@ -51,7 +64,7 @@ The chronological order below is newest-first.
 
 **Evidence:** 6 `service_state` module tests (roundtrip, idempotent-same, conflict-explicit, missing→insufficient_coverage, admissible-with-scope **with** the refusals present, stale) + 2 migration schema tests (manager CHECK, UNIQUE identity); full workspace suite green (the new ClaimKind variant rippled cleanly through every exhaustive match).
 
-**Deferred (named):** witness projection `service_state_witness_projection` → `nq.witness.v1` (`PreflightSupport.witness_packet` is `None` until then); live collector wiring (capturing native systemd/docker states into `service_observations` during a real cycle — the collector today produces coarse `ServiceStatus` findings, not the native-state witness write); `served_surface_registry` entry; docker/process manager variants.
+**Deferred (named, updated):** V0's witness projection, live systemd collector wiring, support packet cut-over, and served-surface evaluator entry have since landed. Remaining deferred manager variants: docker/process native-state capture.
 
 ---
 
