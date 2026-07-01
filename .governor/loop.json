@@ -57,7 +57,7 @@
   "last_updated": "2026-06-27T00:00:00Z",
   "review_pending_commit": "none — pfSense lease-presence Phase 1 (3599c85) and Phase 2 (68f9c61) committed; loop closure to follow as a small governor commit. No push.",
   "deferred_operator_directed": [
-    "C2 Regime B clock divergence (collected_at vs observed_at, design seam — operator-directed doctrine: 'legacy dashboard staleness is observational convenience, not admissibility freshness'). AWAITING operator decision on how UI-stale vs authority-stale should surface; not actuator-safe to decide unilaterally. (C1 #2 monitor-readout suppression test — DONE 2026-07-01, dashboard_ordering.rs::suppressed_signal_finding_is_folded_not_rendered_as_active_readout.)"
+    "C2 Regime B clock divergence — DOCTRINE RATIFIED 2026-07-01 (docs/working/decisions/DISPLAY_FRESHNESS_VS_ADMISSIBILITY_FRESHNESS.md): dual-explicit markers, asymmetrically fenced; 'display freshness is not admissibility freshness'; do NOT unify. REMAINING = dual-explicit UI slice, gated on plumbing Regime A (observed_at admissibility standing) into the overview readout (OverviewVm carries only the Regime B `stale` bool today). Completeness work on an open surface, not a new surface."
   ],
   "session_id": "ag-claude-drives-nq (operator-dispatched, impunity granted: nq-claude stood down)",
   "loop_master": "opus (controller); escalate to fable for doctrine only",
