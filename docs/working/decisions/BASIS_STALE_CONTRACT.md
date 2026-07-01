@@ -65,6 +65,28 @@ Clause 7 makes the runtime conditional on a substrate fact that must be verified
 - Witness packets (ZFS/SMART) carry the witness's own `collected_at` (observation time at the witness) — a candidate authority timestamp, but it must be confirmed as plumbed to the evaluator and treated as authority (not Regime B) before use.
 - **Any class lacking this is runtime-blocked (clause 7), not backfilled.** The audit's output is a per-class eligibility table; the detector covers only the classes that pass.
 
+### Audit result — COMPLETE 2026-07-01
+
+| Source class | `basis_source_id` set? | Authority obs timestamp | Reachable per `basis_source_id`? | Verdict |
+|---|---|---|---|---|
+| **ZFS witness** | ✅ `witness_id` (detect.rs, all `zfs_*` + `node_unobservable`) | ✅ `zfs_witness_current.witness_collected_at` (migration 031; distinct from ingest `received_at`) | ✅ `JOIN … ON w.host = f.host AND w.witness_id = f.basis_source_id` | **ELIGIBLE** |
+| **SMART witness** | ✅ `witness_id` (detect.rs, all `smart_*`) | ✅ `smart_witness_current.witness_collected_at` (migration 034; distinct from `received_at`) | ✅ same shape | **ELIGIBLE** |
+| **Pull sources** (service/dns/wal/nq_binary) | ❌ findings carry `basis_source_id = None` | mixed (`service_state.observed_at` is aliased from ingest `collected_at` at `publish.rs:208` — Regime B trap; dns/wal/nq_binary have authority `observed_at` but emit verdicts, not findings) | N/A — nothing to key on | **DEFERRED (not a timestamp hack away)** |
+
+**Naming caveat (matters given clause 7):** the eligible column is `witness_collected_at`, which reads like the Regime B villain but is semantically the **witness's own testimony time** (when the witness observed the ZFS/SMART state). The monitor's ingest clock is a *separate* column, `received_at`. Observation-table `collected_at` (e.g. `zfs_pools_current.collected_at`) is also ingest and stays out of authority state. So clause 7 is satisfied by `witness_collected_at`, and only that.
+
+**Resolution.** Runtime is **UNBLOCKED for the witness classes (ZFS + SMART)** — which are precisely the clause-1 declared-cadence classes. Pull-source basis-stale is a separate, larger prerequisite slice (plumb `basis_source_id` + a real authority `observed_at` onto those findings; fix the `service_state` Regime B alias first), correctly deferred.
+
+## Next slice when runtime is authorized (spec, for clean pickup)
+
+A basis-stale detector over **ZFS + SMART** findings:
+- **Eligibility/threshold (clauses 1, 7):** for each `live` finding whose `basis_source_id` is a ZFS/SMART witness, join to `{zfs,smart}_witness_current.witness_collected_at`; transition `live → stale` when `now − witness_collected_at > declared_window`. Window = the existing static profile const (`ZFS_WITNESS_STALE_SECONDS = 300`, and the SMART equivalent) — static/NQ-side per clause 2, not source-declared-at-runtime.
+- **Blockers (clause 3):** skip if the source is `retired`, under active maintenance/suppression, `invalidated`, or unknown identity.
+- **Reversibility (clause 5):** `stale → live` automatically when `witness_collected_at` is fresh again.
+- **Granularity (clause 6):** per `basis_source_id`.
+- **OPEN DESIGN POINT (clause 4) — the one genuinely new bit, needs operator sign-off:** `zfs_witness_silent` / `smart_witness_silent` **already fire** at the source level when a witness goes quiet. Basis-stale downgrades that witness's *findings* off the same silence. Per clause 4 these must be **notification-deduped** — the source-level `*_witness_silent` is the single alert; the stale-downgraded findings must not each page again (retired already doesn't page; stale needs the same or a dedup-against-the-silence-parent rule). Settle this before building.
+- **Substrate:** likely no migration (transition writes `warning_state.basis_state`/`basis_state_at`, which exist); confirm the render already handles `stale` distinctly (today only `retired` is split out — `stale` may need the same treatment as a small companion slice).
+
 ## Explicitly NOT in this record
 
 - No detector, migration, or code. This record locks the contract only.
