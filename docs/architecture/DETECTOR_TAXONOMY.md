@@ -75,7 +75,44 @@ The **mechanism is not the contract** — three implementation shapes stay disti
 
 **Shipped (V1, 2026-06-12):** the two witness detectors — `smart_witness_silent` + `zfs_witness_silent` — carry the full contract, **derived at the persist seam** (`publish.rs`) from existing finding fields; `detect.rs` is untouched, so detector semantics are structurally unaffected (OQ1 resolved as "documented finding-meta fields," not a `Finding` struct field). `extraction_stale` (DURABLE_ARTIFACT_SUBSTRATE V1) also composes onto the contract. Consumers must read a missing `silence` block as **"not yet unified," not "not silence."**
 
-**Deferred (the four non-witness detectors):** `stale_host`, `stale_service`, `signal_dropout`, `log_silence` await OQ3/OQ4 — whether `stale_*` reclassify to bucket 8 once REGISTRY_PROJECTION lands, and whether `signal_dropout` is liveness or inventory. They emit `FailureClass::Silence` today but do not yet carry the contract fields.
+##### Silence doctrine — the knife (operator-ruled 2026-07-01)
+
+Silence is a **positive finding under a contract**, not an inference from missing data:
+
+> A silence finding testifies: **"I stopped hearing X under expected-hearing contract Y."**
+> It does NOT testify that the condition X reported on is gone, changed, or resolved.
+
+The name is not the contract — a detector is admissible to the silence bucket only once it can name its *expected-hearing contract* (which producer, at what expected cadence/scope). Absent that, it is silence-shaped vibes, not a silence finding.
+
+What silence is **not** — four things it is routinely confused with, kept distinct on purpose:
+
+```text
+silence ≠ absence               (a NULL/empty row is not a finding; bucket 9 coverage-gap is "we failed to observe")
+silence ≠ retirement            (retired/invalidated/superseded evidence is a lifecycle verb, not a liveness fact)
+silence ≠ inventory disappearance (an object leaving a known set is a registry/intended-set question, bucket 8)
+silence  = expected testimony did not arrive, under a declared expectation contract
+```
+
+This is the **precursor knife for EVIDENCE_RETIREMENT** — retirement needs the same three-way cut so "not heard from" is never laundered into "no longer valid":
+
+```text
+not heard from   → silence / liveness / expected-testimony failure        (bucket 2)
+no longer valid  → retired / invalidated / superseded evidence            (lifecycle)
+not in inventory → registry / intended-set / projection question          (bucket 8)
+```
+
+##### Held detectors (NON-authorizing — do not tag pending REGISTRY_PROJECTION)
+
+The four non-witness detectors emit `FailureClass::Silence` today but do **not** carry the contract fields, and MUST NOT be tagged until the gate below clears. Tagging them now would turn a missing registry into fake certainty with a nicer enum.
+
+```text
+stale_host:     HOLD — may become intended-liveness (bucket 8) once REGISTRY_PROJECTION defines the expected host set.
+stale_service:  HOLD — may become intended-liveness (bucket 8) once REGISTRY_PROJECTION defines the expected service set.
+signal_dropout: HOLD — unresolved silence vs inventory disappearance; requires known-set (intended-set) semantics.
+log_silence:    HOLD — silence-shaped, but must name its expected producer/scope (its contract) before bucket admission.
+```
+
+Gate: an OQ3/OQ4 operator ruling, or REGISTRY_PROJECTION landing (whichever forces the bucket assignment first). Until then the witness pair + `extraction_stale` are the only contract-carrying silence findings.
 
 **Witness-silence is parent-node evidence, not a peer alert.** Under TESTIMONY_DEPENDENCY_GAP, `*_witness_silent` detects that *a producer of other findings has stopped testifying* and promotes to a `node_unobservable` parent that suppresses the descendants the witness produced (one parent alert, not N peer alerts). The detector stays — kind string and mechanism preserved — but its role on the alerting surface changes. This is why these two straddle bucket 2 and bucket 9 (see §9).
 

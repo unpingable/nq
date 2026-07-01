@@ -139,13 +139,17 @@ Deferred out of V1:
 
 ## Open questions
 
-1. Should `silence_basis` live as a typed enum on `FindingDiagnosis`, or as a meta field looked up from finding kind?
-2. Should `signal_dropout` split into two detectors — one for services, one for metrics? They emit identical kind today but differ enough in the meta to be worth distinguishing.
-3. Do `stale_host` / `stale_service` belong in this bucket at all, or do they migrate to bucket 8 (intended-liveness) once REGISTRY_PROJECTION lands? They straddle.
-4. Is `signal_dropout` (presence-delta) actually a silence finding, or an inventory finding? It's about an object disappearing from a known set, which is closer to bucket 8 (intended-liveness) than bucket 2 (liveness).
+1. **RESOLVED** (2026-06-12): `silence_basis` is a meta field derived at the persist seam from finding kind, not a typed `FindingDiagnosis` enum. Settled by the shipped column shape.
+2. **HELD** (2026-07-01): does `signal_dropout` split into service vs metric detectors? Bound up with OQ4; do not split until the silence-vs-inventory classification resolves.
+3. **HELD pending REGISTRY_PROJECTION** (operator-ruled 2026-07-01): do `stale_host`/`stale_service` belong in the silence bucket, or migrate to bucket 8 (intended-liveness)? They straddle. Do NOT tag them until a registry defines the expected host/service set. See `docs/architecture/DETECTOR_TAXONOMY.md` §2a "Held detectors."
+4. **HELD pending REGISTRY_PROJECTION** (operator-ruled 2026-07-01): is `signal_dropout` (presence-delta) silence or inventory? An object leaving a known set is a registry/intended-set question (bucket 8), not liveness. Requires known-set semantics before admission.
+
+**Doctrine ruling (2026-07-01) — the silence knife.** The classification questions above are held, but the doctrine that governs them is now pinned in `DETECTOR_TAXONOMY.md` §2a: silence is a positive finding under a contract ("I stopped hearing X under expected-hearing contract Y"), and it is NOT absence, NOT retirement, NOT inventory disappearance. This is the precursor knife for EVIDENCE_RETIREMENT: *not heard from* (silence) vs *no longer valid* (retired/invalidated) vs *not in inventory* (registry). The four detectors stay held rather than tagged so a missing registry is not laundered into fake certainty with a nicer enum.
 
 ## Compact invariant block
 
+> **Silence is a positive finding under a contract: "I stopped hearing X under expected-hearing contract Y."**
+> **silence ≠ absence ≠ retirement ≠ inventory disappearance.** (The knife; operator-ruled 2026-07-01, DETECTOR_TAXONOMY §2a.)
 > **Silence is a positive finding, not a NULL row.**
 > **Three mechanism shapes (age-threshold, presence-delta, baseline-collapse) share an operator concept, not a SQL pattern.**
 > **`silence_expected` is the bridge to maintenance, retirement, and intended-liveness.**

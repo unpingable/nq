@@ -49,3 +49,11 @@ These are classification/policy choices about *what a silence finding is*, not i
 ## Exact operator decision needed (only for the full rollout)
 
 The witness-silence retrofits (steps 1–2) need no decision — execute under standing authorization. For steps 3–4: rule on OQ3 (do stale_host/service belong in silence vs intended-liveness) and OQ4 (is signal_dropout silence vs inventory), or defer them until REGISTRY_PROJECTION forces the bucket assignment.
+
+## RULED 2026-07-01 — doctrine only; the four stay held
+
+Operator ruled: **doctrine/taxonomy only; do NOT tag the four.** Tagging them before REGISTRY_PROJECTION exists would "turn a missing registry into fake certainty with a nicer enum." OQ3 and OQ4 stay **HELD pending REGISTRY_PROJECTION / intended-set semantics** (OQ2 rides with OQ4). What landed instead is the silence **knife** — pinned in `../../architecture/DETECTOR_TAXONOMY.md` §2a:
+
+> Silence is a positive finding under a contract: "I stopped hearing X under expected-hearing contract Y." It is NOT absence, NOT retirement, NOT inventory disappearance.
+
+Plus the non-authorizing per-detector HOLD record (`stale_host` / `stale_service` / `signal_dropout` / `log_silence`, each with its admission condition — notably `log_silence` must name its expected producer/scope before bucket admission). This is the precursor knife for EVIDENCE_RETIREMENT (next slice): *not heard from* vs *no longer valid* vs *not in inventory*. No code changed; detector semantics untouched.
