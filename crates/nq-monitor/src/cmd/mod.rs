@@ -11,6 +11,7 @@ pub mod receipt;
 pub mod sentinel;
 pub mod serve;
 pub mod smoke;
+pub mod source;
 pub mod validate_witness;
 pub mod verify;
 pub mod witness;
@@ -27,6 +28,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Liveness(cmd) => liveness::run(cmd),
         Command::Fleet(cmd) => fleet::run(cmd),
         Command::Maintenance(cmd) => maintenance::run(cmd),
+        Command::Source(cmd) => source::run(cmd),
         Command::Preflight(cmd) => preflight::run(cmd),
         Command::ValidateWitness(cmd) => validate_witness::run(cmd),
         Command::Verify(cmd) => verify::run(cmd),

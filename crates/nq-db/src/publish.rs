@@ -1162,6 +1162,11 @@ fn update_warning_state_inner(
 ) -> anyhow::Result<()> {
     let now = fmt_ts(&OffsetDateTime::now_utc());
 
+    // EVIDENCE_RETIREMENT: currently-retired sources (source_id -> retired_at).
+    // Loaded once per cycle so a re-detected finding from a deliberately
+    // retired source stays `retired` instead of re-living itself.
+    let retired_sources = crate::source_retirement::retired_source_map(tx)?;
+
     let recovery_window: i64 = 3; // require 3 clean gens before clearing
 
     // D0-Origin: thread `origin_mode` through the upsert as ?39. The closed
@@ -1387,15 +1392,21 @@ fn update_warning_state_inner(
             };
 
         // Basis lifecycle (EVIDENCE_RETIREMENT_GAP V1):
-        //   basis_source_id present → basis_state = 'live', last_basis_generation
+        //   basis_source_id retired  → basis_state = 'retired' (an explicit
+        //                              operator withdrawal STICKS; a re-detected
+        //                              finding from a torn-down source must not
+        //                              re-live itself — the sushi-k haunting scar).
+        //   basis_source_id present  → basis_state = 'live', last_basis_generation
         //                              and basis_state_at carry real values.
         //   basis_source_id absent   → basis_state = 'unknown', both stamps NULL.
         // No inference. Invariant 7: default to non-current, never silently live.
         let (basis_state, last_basis_generation, basis_state_at): (&str, Option<i64>, Option<&str>) =
-            if f.basis_source_id.is_some() {
-                ("live", Some(generation_id), Some(now.as_str()))
-            } else {
-                ("unknown", None, None)
+            match f.basis_source_id.as_deref() {
+                Some(sid) if retired_sources.contains_key(sid) => {
+                    ("retired", None, retired_sources.get(sid).map(|s| s.as_str()))
+                }
+                Some(_) => ("live", Some(generation_id), Some(now.as_str())),
+                None => ("unknown", None, None),
             };
 
         insert_obs.execute(rusqlite::params![
@@ -5699,5 +5710,50 @@ mod tests {
         assert_eq!(state, "covered",
             "annotation lane is orthogonal — covered stamps regardless of visibility");
         assert_eq!(id.as_deref(), Some("maint_x"));
+    }
+
+    fn basis_state_of(db: &WriteDb, kind: &str) -> String {
+        db.conn
+            .query_row(
+                "SELECT basis_state FROM warning_state WHERE kind = ?1",
+                [kind],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn retired_source_finding_stays_retired_across_a_publish_cycle() {
+        // The sushi-k haunting scar (EVIDENCE_RETIREMENT): a finding from a
+        // deliberately-retired source must NOT re-live itself when the detector
+        // re-fires from stale current-state. Retirement is explicit and sticks.
+        let mut db = test_db();
+        let esc = EscalationConfig::default();
+        ensure_host_known(&db, "sushi-k");
+
+        let mut f = finding("sushi-k", "zfs_pool_degraded", "tank", "Δg");
+        f.basis_source_id = Some("zfs.lil-nas-x".into());
+        update_warning_state(&mut db, 1, &[f.clone()], &esc).unwrap();
+        assert_eq!(basis_state_of(&db, "zfs_pool_degraded"), "live");
+
+        // Operator retires the torn-down source.
+        crate::source_retirement::retire_source(
+            &mut db,
+            "zfs.lil-nas-x",
+            "witness torn down",
+            crate::source_retirement::LOCAL_OPERATOR_ACTOR,
+            "2026-07-01T01:00:00Z",
+        )
+        .unwrap();
+        assert_eq!(basis_state_of(&db, "zfs_pool_degraded"), "retired");
+
+        // Next cycle re-detects the same finding from stale state. It must STAY
+        // retired — the guard in update_warning_state_inner refuses to re-live it.
+        update_warning_state(&mut db, 2, &[f], &esc).unwrap();
+        assert_eq!(
+            basis_state_of(&db, "zfs_pool_degraded"),
+            "retired",
+            "retirement must survive re-detection (the haunting scar)"
+        );
     }
 }

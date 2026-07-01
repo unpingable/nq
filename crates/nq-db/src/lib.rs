@@ -21,6 +21,7 @@ pub mod publish;
 pub mod query;
 pub mod regime;
 pub mod retention;
+pub mod source_retirement;
 pub mod nq_binary_mtime_state;
 pub mod nq_evaluator_state;
 pub mod snapshot;
@@ -74,6 +75,10 @@ pub use publish::{
 };
 pub use query::{query_read_only, QueryLimits, QueryResult};
 pub use retention::{prune, PruneStats};
+pub use source_retirement::{
+    retire_source, retired_source_map, unretire_source, RetireStats, UnretireStats,
+    LOCAL_OPERATOR_ACTOR,
+};
 pub use snapshot::create_snapshot;
 pub use preflight::{
     evaluate_disk_state_preflight, evaluate_disk_state_preflight_at,

@@ -20,6 +20,21 @@ The chronological order below is newest-first.
 
 ---
 
+## EVIDENCE_RETIREMENT_RETIREMENT_VERB (explicit source retirement; the sushi-k scar closed)
+
+**Status:** `shipped` 2026-07-01 (V1 slice step 3; basis-stale detector + render + notification gating deferred by name).
+
+**What landed:** the explicit evidence-retirement verb — teardown becomes a first-class operation instead of leaking haunted findings.
+- Migration 062 `sources_retired` — authoritative current-state for "deliberately withdrawn" (source_id, retired_at, retired_reason, retired_by); no FK. The durable audit lives in `finding_transitions`, so deleting this row on unretire never erases history.
+- `nq-db::{retire_source, unretire_source}` — atomic, idempotent. `retire` transitions every finding with matching `basis_source_id` (not already retired) to `retired` + one `finding_transitions` row each; preserves the original receipt on re-retire. `unretire` returns findings to `unknown` — **never auto-`live`** (Invariant 7) — and keeps the audit trail.
+- **Publish guard**: `update_warning_state_inner` loads the retired-source set each cycle and keeps a re-detected finding from a retired source `retired` instead of re-living it. This is the persist-seam fix for the founding sushi-k haunting scar.
+- CLI `nq-monitor source retire --source-id X --reason Y` (reason required) / `source unretire --source-id X`. Actor fixed `local-operator`.
+- Composes with the silence knife (DETECTOR_TAXONOMY §2a): retirement is the *explicit* "no longer valid"; silence is the *passive* "not heard from." The basis-stale detector (passive half) stays a named follow-on.
+
+**Evidence:** `source_retirement::tests` (retire transitions + audit; explicit/scoped, not inferred; idempotent + receipt preserved; unretire→unknown-not-live + receipt survives; never-retired no-op); `publish::tests::retired_source_finding_stays_retired_across_a_publish_cycle` (the scar reproduction); live CLI end-to-end verified. upgrade/backup green across 61→62. Full workspace suite green.
+
+**Deferred (named):** basis-stale detector (passive silence→stale), render distinction (v_warnings/Slack), per-state notification gating, `finding invalidate` verb, multi-basis findings.
+
 ## NQ_CLOSE_002_SLICE_A (evidence tombstones — deletion is a receipted act)
 
 **Status:** `shipped` 2026-07-01 (Slice A; B/C deferred by name).

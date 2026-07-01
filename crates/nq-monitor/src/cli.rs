@@ -37,6 +37,12 @@ pub enum Command {
     /// persists). Annotation only — never suppresses or hides findings.
     /// See `docs/working/gaps/MAINTENANCE_DECLARATION_GAP.md`.
     Maintenance(MaintenanceCmd),
+    /// Source — explicit evidence-retirement verb. `retire` withdraws a
+    /// deliberately torn-down source and transitions the findings it backs to
+    /// `retired`; `unretire` reverses the current state (to `unknown`, never
+    /// auto-`live`) while preserving the audit trail. Retirement is explicit,
+    /// never inferred from silence. See `docs/working/gaps/EVIDENCE_RETIREMENT_GAP.md`.
+    Source(SourceCmd),
     /// Claim preflight — bounded verdict against existing NQ testimony for a
     /// structured claim kind. V1 supports `disk_state`. NQ testifies; NQ does
     /// not authorize consequence. See `docs/working/decisions/CLAIM_PREFLIGHT.md`.
@@ -496,6 +502,47 @@ pub struct MaintenanceListCmd {
     /// Default: list all rows.
     #[arg(long)]
     pub active: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SourceCmd {
+    #[command(subcommand)]
+    pub action: SourceAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SourceAction {
+    /// Retire a source: record it as deliberately withdrawn and transition
+    /// every finding it backs to `retired`, atomically, with a per-finding
+    /// audit row. `--reason` is required — explicit retirement carries a why.
+    Retire(SourceRetireCmd),
+    /// Unretire a source: remove its current-state retirement and return its
+    /// findings to `unknown` (never auto-`live`). The retirement audit trail is
+    /// preserved — unretire is not retroactive laundering.
+    Unretire(SourceUnretireCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct SourceRetireCmd {
+    /// Path to the nq database.
+    #[arg(long)]
+    pub db: PathBuf,
+    /// The source identity to retire (matches findings' `basis_source_id`).
+    #[arg(long = "source-id")]
+    pub source_id: String,
+    /// Why the source is being withdrawn. Required — retirement is explicit.
+    #[arg(long)]
+    pub reason: String,
+}
+
+#[derive(Debug, Args)]
+pub struct SourceUnretireCmd {
+    /// Path to the nq database.
+    #[arg(long)]
+    pub db: PathBuf,
+    /// The source identity to unretire.
+    #[arg(long = "source-id")]
+    pub source_id: String,
 }
 
 #[derive(Debug, Args)]
