@@ -4215,3 +4215,131 @@ fn zfs_pool_capacity_pressure_silent_below_floor_or_without_coverage() {
         );
     }
 }
+
+// ---- ZFS_COLLECTOR 8-of-9 & 9-of-9: cross-generation transition detectors ----
+
+/// A ZFS witness batch carrying a single spare observation (plus the default
+/// pool obs from `zfs_witness_batch`). Drives the `is_active` edge for the
+/// spare-activation detector.
+fn zfs_spare_batch(
+    host: &str,
+    pool: &str,
+    spare_subject: &str,
+    is_active: bool,
+    tags: &[&str],
+    t: OffsetDateTime,
+) -> Batch {
+    use nq_core::wire::{ZfsObservation, ZfsSpareObservation};
+    let mut b = zfs_witness_batch(host, pool, "ONLINE", "ok", tags, t);
+    b.zfs_witness_rows[0]
+        .report
+        .observations
+        .push(ZfsObservation::Spare(ZfsSpareObservation {
+            subject: spare_subject.into(),
+            pool: pool.into(),
+            spare_name: Some(spare_subject.into()),
+            state: Some(if is_active { "INUSE" } else { "AVAIL" }.into()),
+            is_active: Some(is_active),
+            replacing_vdev_guid: None,
+        }));
+    b
+}
+
+#[test]
+fn zfs_pool_health_changed_fires_warning_on_degrading_transition() {
+    let mut db = test_db();
+    let config = DetectorConfig::default();
+
+    // Gen 1: ONLINE. Gen 2: DEGRADED. (health_numeric 0 -> 3 = degrading.)
+    let g1 = zfs_witness_batch("lil-nas-x", "tank", "ONLINE", "ok", &["pool_state"], now());
+    publish_batch(&mut db, &g1).unwrap();
+    let g2 = zfs_witness_batch("lil-nas-x", "tank", "DEGRADED", "ok", &["pool_state"], now());
+    publish_batch(&mut db, &g2).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_pool_health_changed");
+    assert_eq!(d.len(), 1, "one transition finding");
+    assert_eq!(d[0].subject, "tank");
+    assert!(d[0].message.contains("ONLINE -> DEGRADED"), "msg: {}", d[0].message);
+    let dx = d[0].diagnosis.as_ref().unwrap();
+    assert_eq!(dx.service_impact, nq_db::ServiceImpact::Degraded, "degrading = warning band");
+}
+
+#[test]
+fn zfs_pool_health_changed_is_informational_on_improving_transition() {
+    let mut db = test_db();
+    let config = DetectorConfig::default();
+
+    // Gen 1: DEGRADED. Gen 2: ONLINE. (health_numeric 3 -> 0 = improving.)
+    publish_batch(&mut db, &zfs_witness_batch("h", "tank", "DEGRADED", "ok", &["pool_state"], now())).unwrap();
+    publish_batch(&mut db, &zfs_witness_batch("h", "tank", "ONLINE", "ok", &["pool_state"], now())).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_pool_health_changed");
+    assert_eq!(d.len(), 1);
+    let dx = d[0].diagnosis.as_ref().unwrap();
+    assert_eq!(dx.service_impact, nq_db::ServiceImpact::NoneCurrent, "improving = informational");
+    assert_eq!(dx.action_bias, nq_db::ActionBias::Watch);
+}
+
+#[test]
+fn zfs_pool_health_changed_silent_when_state_unchanged_or_uncovered() {
+    // Unchanged across two gens -> no transition finding.
+    {
+        let mut db = test_db();
+        let config = DetectorConfig::default();
+        publish_batch(&mut db, &zfs_witness_batch("h", "tank", "DEGRADED", "ok", &["pool_state"], now())).unwrap();
+        publish_batch(&mut db, &zfs_witness_batch("h", "tank", "DEGRADED", "ok", &["pool_state"], now())).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        assert!(find_by_kind(&findings, "zfs_pool_health_changed").is_empty(), "no change, no finding");
+    }
+    // A real transition but WITHOUT pool_state coverage this cycle -> silent.
+    {
+        let mut db = test_db();
+        let config = DetectorConfig::default();
+        publish_batch(&mut db, &zfs_witness_batch("h", "tank", "ONLINE", "ok", &["pool_state"], now())).unwrap();
+        publish_batch(&mut db, &zfs_witness_batch("h", "tank", "DEGRADED", "ok", &[/* no pool_state */], now())).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        assert!(find_by_kind(&findings, "zfs_pool_health_changed").is_empty(), "gated off without coverage");
+    }
+}
+
+#[test]
+fn zfs_spare_activated_fires_on_false_to_true_edge() {
+    let mut db = test_db();
+    let config = DetectorConfig::default();
+
+    // Gen 1: spare available. Gen 2: spare in-use.
+    publish_batch(&mut db, &zfs_spare_batch("lil-nas-x", "tank", "tank/spare-1", false, &["spare_state"], now())).unwrap();
+    publish_batch(&mut db, &zfs_spare_batch("lil-nas-x", "tank", "tank/spare-1", true, &["spare_state"], now())).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_spare_activated");
+    assert_eq!(d.len(), 1, "one spare_activated finding");
+    assert_eq!(d[0].subject, "tank/spare-1");
+    let dx = d[0].diagnosis.as_ref().unwrap();
+    assert_eq!(dx.failure_class, nq_db::FailureClass::Availability);
+    assert_eq!(dx.service_impact, nq_db::ServiceImpact::Degraded);
+}
+
+#[test]
+fn zfs_spare_activated_silent_when_already_active_or_uncovered() {
+    // Already active in both gens -> no edge, no finding.
+    {
+        let mut db = test_db();
+        let config = DetectorConfig::default();
+        publish_batch(&mut db, &zfs_spare_batch("h", "tank", "tank/spare-1", true, &["spare_state"], now())).unwrap();
+        publish_batch(&mut db, &zfs_spare_batch("h", "tank", "tank/spare-1", true, &["spare_state"], now())).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        assert!(find_by_kind(&findings, "zfs_spare_activated").is_empty(), "no edge, no finding");
+    }
+    // Real activation but WITHOUT spare_state coverage -> silent.
+    {
+        let mut db = test_db();
+        let config = DetectorConfig::default();
+        publish_batch(&mut db, &zfs_spare_batch("h", "tank", "tank/spare-1", false, &["spare_state"], now())).unwrap();
+        publish_batch(&mut db, &zfs_spare_batch("h", "tank", "tank/spare-1", true, &[/* no spare_state */], now())).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        assert!(find_by_kind(&findings, "zfs_spare_activated").is_empty(), "gated off without coverage");
+    }
+}

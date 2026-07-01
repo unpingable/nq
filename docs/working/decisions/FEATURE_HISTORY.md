@@ -20,6 +20,18 @@ The chronological order below is newest-first.
 
 ---
 
+## ZFS_COLLECTOR_DETECTORS_6_TO_9 (the four gated ZFS detectors; V1 detector set complete)
+
+**Status:** `shipped` 2026-07-01 (lab-fixture compatibility evidence, not live testimony).
+
+**What landed:** the four previously forcing-case-gated ZFS detectors, taking the V1 set from 5-of-9 to 9-of-9. Built against crafted witness fixtures per the recognition-coverage doctrine (breadth of recognition is definitional scope for a monitor; YAGNI gates live authority, not adapter coverage).
+- **Current-state (no new substrate):** `zfs_pool_suspended` (pool_state==SUSPENDED → critical, distinct kind so a serving-but-degraded pool never renders as one that stopped serving); `zfs_pool_capacity_pressure` (alloc/size ≥80% warn / ≥90% critical, `FailureClass::Saturation`, ratio-based). Both mirror `zfs_pool_degraded`, gated on `pool_state` / `pool_capacity` coverage.
+- **Transition (new substrate):** `zfs_pool_health_changed` (pool state transition; direction from `health_numeric` — decrease=improving/info, increase=degrading/warning) and `zfs_spare_activated` (`is_active` false→true edge). Migration 063 adds `zfs_pools_history` + `zfs_spares_history` (mirroring `zfs_vdev_errors_history`, CASCADE on prune → receipted by NQ-CLOSE-002); publish writes them each cycle; detectors use the two-row `ROW_NUMBER() OVER (PARTITION … ORDER BY generation_id DESC)` pattern of `zfs_error_count_increased`.
+
+**Evidence:** `detector_fixtures` — suspended fires critical + doesn't double-fire as degraded; capacity warns at 85% / escalates at 95% / silent below floor + without coverage; health_changed fires degrading-warning + improving-info + silent when unchanged or uncovered; spare_activated fires on the false→true edge + silent when already-active or uncovered. Every detector's coverage-gating verified (fires only when its required `can_testify` tag is present). Schema 62→63, upgrade/backup green. Full workspace suite green.
+
+**Deferred (named):** live worked-example verification on real `lil-nas-x` (deployment/observation, not code); per-pool capacity-threshold overrides (`DetectorThresholds`).
+
 ## EVIDENCE_RETIREMENT_RETIREMENT_VERB (explicit source retirement; the sushi-k scar closed)
 
 **Status:** `shipped` 2026-07-01 (V1 slice step 3; basis-stale detector + render + notification gating deferred by name).

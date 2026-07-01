@@ -619,6 +619,21 @@ fn publish_zfs_witness(
                             &collected_at,
                         ],
                     )?;
+                    // Narrow history projection for the edge-triggered
+                    // zfs_pool_health_changed detector (CASCADE on prune).
+                    tx.execute(
+                        "INSERT INTO zfs_pools_history
+                            (generation_id, host, pool, state, health_numeric, collected_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        rusqlite::params![
+                            generation_id,
+                            &row.host,
+                            &p.subject,
+                            &p.state,
+                            p.health_numeric,
+                            &collected_at,
+                        ],
+                    )?;
                 }
                 ZfsObservation::Vdev(v) => {
                     tx.execute(
@@ -696,6 +711,21 @@ fn publish_zfs_witness(
                             sp.is_active.unwrap_or(false) as i64,
                             &sp.replacing_vdev_guid,
                             generation_id,
+                            &collected_at,
+                        ],
+                    )?;
+                    // Narrow history projection for the edge-triggered
+                    // zfs_spare_activated detector (CASCADE on prune).
+                    tx.execute(
+                        "INSERT INTO zfs_spares_history
+                            (generation_id, host, subject, pool, is_active, collected_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        rusqlite::params![
+                            generation_id,
+                            &row.host,
+                            &sp.subject,
+                            &sp.pool,
+                            sp.is_active.unwrap_or(false) as i64,
                             &collected_at,
                         ],
                     )?;

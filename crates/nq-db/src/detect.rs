@@ -627,6 +627,8 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     detect_zfs_pool_degraded(db, &mut findings)?;
     detect_zfs_pool_suspended(db, &mut findings)?;
     detect_zfs_pool_capacity_pressure(db, &mut findings)?;
+    detect_zfs_pool_health_changed(db, &mut findings)?;
+    detect_zfs_spare_activated(db, &mut findings)?;
     detect_zfs_vdev_faulted(db, &mut findings)?;
     detect_zfs_error_count_increased(db, &mut findings)?;
     detect_zfs_scrub_overdue(db, &mut findings)?;
@@ -2240,6 +2242,168 @@ fn detect_zfs_pool_capacity_pressure(
                            for free space and fragments) and, past ~90%, risks \
                            write failures. Reclaim space or expand the pool before \
                            it fills."
+                    .into(),
+            }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
+            coverage_envelope: None,
+            node_unobservable_envelope: None,
+        });
+    }
+    Ok(())
+}
+
+/// Δh: ZFS pool state changed between the last two generations. Gated on
+/// `pool_state` coverage; reads `zfs_pools_history`.
+///
+/// The edge, not the level: `zfs_pool_degraded`/`_suspended` report the current
+/// state; this reports the *transition*. Direction is read from `health_numeric`
+/// (lower is healthier) — a decrease is improving (info: a repair/resilver
+/// completed), an increase is degrading (warning: redundancy just narrowed).
+/// Mirrors the two-row window pattern of `zfs_error_count_increased`.
+fn detect_zfs_pool_health_changed(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "WITH ranked AS (
+            SELECT h.host, h.pool, h.state, h.health_numeric, h.generation_id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY h.host, h.pool ORDER BY h.generation_id DESC
+                   ) AS rn
+            FROM zfs_pools_history h
+            INNER JOIN zfs_witness_coverage_current c
+               ON c.host = h.host AND c.tag = 'pool_state' AND c.can_testify = 1
+         ),
+         latest AS (SELECT * FROM ranked WHERE rn = 1),
+         prior  AS (SELECT * FROM ranked WHERE rn = 2)
+         SELECT latest.host, latest.pool, latest.state, prior.state,
+                latest.health_numeric, prior.health_numeric, w.witness_id
+         FROM latest
+         INNER JOIN prior ON prior.host = latest.host AND prior.pool = latest.pool
+         LEFT JOIN zfs_witness_current w ON w.host = latest.host",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<i64>>(4)?,
+            row.get::<_, Option<i64>>(5)?,
+            row.get::<_, Option<String>>(6)?,
+        ))
+    })?;
+    for row in rows {
+        let (host, pool, cur_state, prev_state, cur_h, prev_h, witness_id) = row?;
+        if cur_state == prev_state {
+            continue; // no transition
+        }
+        let cur_s = cur_state.unwrap_or_else(|| "?".into());
+        let prev_s = prev_state.unwrap_or_else(|| "?".into());
+        // Improving only when both numerics are known and health fell.
+        let improving = matches!((cur_h, prev_h), (Some(c), Some(p)) if c < p);
+        let (state_kind, service_impact, action_bias, verb) = if improving {
+            (
+                StateKind::Informational,
+                ServiceImpact::NoneCurrent,
+                ActionBias::Watch,
+                "improved",
+            )
+        } else {
+            (
+                StateKind::Degradation,
+                ServiceImpact::Degraded,
+                ActionBias::InvestigateBusinessHours,
+                "degraded",
+            )
+        };
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "zfs_pool_health_changed".into(),
+            subject: pool.clone(),
+            message: format!("pool {pool} {verb}: {prev_s} -> {cur_s}"),
+            value: cur_h.map(|n| n as f64),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Drift,
+                service_impact,
+                action_bias,
+                synopsis: format!(
+                    "ZFS pool {pool} changed state from {prev_s} to {cur_s} between generations."
+                ),
+                why_care: "A pool state transition is the moment worth catching — a \
+                           degrade means redundancy just narrowed; an improve means a \
+                           repair or resilver completed. The steady-state detectors \
+                           report the level; this reports the edge."
+                    .into(),
+            }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
+            coverage_envelope: None,
+            node_unobservable_envelope: None,
+        });
+    }
+    Ok(())
+}
+
+/// Δh: ZFS hot spare moved from available to in-use since the last generation.
+/// Gated on `spare_state` coverage; reads `zfs_spares_history`.
+///
+/// Fires on the `is_active` false→true edge for a spare. A spare activating
+/// means a drive failed and the spare kicked in — the pool self-heals, but the
+/// reserve redundancy is now spent, which the operator should know.
+fn detect_zfs_spare_activated(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "WITH ranked AS (
+            SELECT h.host, h.subject, h.pool, h.is_active, h.generation_id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY h.host, h.subject ORDER BY h.generation_id DESC
+                   ) AS rn
+            FROM zfs_spares_history h
+            INNER JOIN zfs_witness_coverage_current c
+               ON c.host = h.host AND c.tag = 'spare_state' AND c.can_testify = 1
+         ),
+         latest AS (SELECT * FROM ranked WHERE rn = 1),
+         prior  AS (SELECT * FROM ranked WHERE rn = 2)
+         SELECT latest.host, latest.subject, latest.pool, w.witness_id
+         FROM latest
+         INNER JOIN prior ON prior.host = latest.host AND prior.subject = latest.subject
+         LEFT JOIN zfs_witness_current w ON w.host = latest.host
+         WHERE prior.is_active = 0 AND latest.is_active = 1",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<String>>(3)?,
+        ))
+    })?;
+    for row in rows {
+        let (host, subject, pool, witness_id) = row?;
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "zfs_spare_activated".into(),
+            subject: subject.clone(),
+            message: format!("hot spare {subject} activated in pool {pool}"),
+            value: None,
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: StateKind::Degradation,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Availability,
+                service_impact: ServiceImpact::Degraded,
+                action_bias: ActionBias::InvestigateBusinessHours,
+                synopsis: format!(
+                    "A hot spare ({subject}) moved from available to in-use in pool \
+                     {pool}. A drive failed and the spare took over."
+                ),
+                why_care: "The pool is self-healing, but the spare is now consumed — \
+                           redundancy that was in reserve is spent. Replace the failed \
+                           drive so the spare returns to standby; until then a second \
+                           failure has less cushion."
                     .into(),
             }),
             basis_source_id: witness_id.clone(),
