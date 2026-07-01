@@ -4084,3 +4084,134 @@ fn pre_migration_null_diagnosis_columns_are_queryable() {
     ).unwrap();
     assert_eq!(obs_count, 1, "legacy observation queryable");
 }
+
+// ---- ZFS_COLLECTOR 6-of-9 & 7-of-9: current-state pool detectors ----
+
+/// Build a ZFS witness batch with explicit capacity so capacity-pressure tests
+/// can drive the allocated ratio. Reuses `zfs_witness_batch` and overrides the
+/// pool observation's byte fields. `size_bytes = alloc + free`.
+fn zfs_capacity_batch(
+    host: &str,
+    pool: &str,
+    alloc: i64,
+    free: i64,
+    tags: &[&str],
+    t: OffsetDateTime,
+) -> Batch {
+    let mut b = zfs_witness_batch(host, pool, "ONLINE", "ok", tags, t);
+    if let nq_core::wire::ZfsObservation::Pool(p) =
+        &mut b.zfs_witness_rows[0].report.observations[0]
+    {
+        p.size_bytes = Some(alloc + free);
+        p.alloc_bytes = Some(alloc);
+        p.free_bytes = Some(free);
+    }
+    b
+}
+
+#[test]
+fn zfs_pool_suspended_fires_critical_when_pool_state_is_testified() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let b = zfs_witness_batch("lil-nas-x", "tank", "SUSPENDED", "ok", &["pool_state"], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_pool_suspended");
+    assert_eq!(d.len(), 1, "exactly one pool_suspended finding for tank");
+    assert_eq!(d[0].subject, "tank");
+    let dx = d[0].diagnosis.as_ref().unwrap();
+    assert_eq!(dx.failure_class, nq_db::FailureClass::Availability);
+    assert_eq!(dx.service_impact, nq_db::ServiceImpact::ImmediateRisk);
+    assert_eq!(dx.action_bias, nq_db::ActionBias::InterveneNow);
+
+    // SUSPENDED is not DEGRADED — the degraded detector must NOT also fire.
+    assert!(
+        find_by_kind(&findings, "zfs_pool_degraded").is_empty(),
+        "a SUSPENDED pool must not render as merely degraded"
+    );
+}
+
+#[test]
+fn zfs_pool_suspended_stays_silent_without_coverage() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    let b = zfs_witness_batch("lil-nas-x", "tank", "SUSPENDED", "ok", &[/* no pool_state */], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    assert!(
+        find_by_kind(&findings, "zfs_pool_suspended").is_empty(),
+        "pool_suspended MUST NOT fire when pool_state is not in can_testify"
+    );
+}
+
+#[test]
+fn zfs_pool_capacity_pressure_fires_warning_above_ceiling() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // 85% allocated -> warn band (>=80, <90).
+    let b = zfs_capacity_batch("lil-nas-x", "tank", 850, 150, &["pool_capacity"], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_pool_capacity_pressure");
+    assert_eq!(d.len(), 1, "one capacity_pressure finding at 85%");
+    assert_eq!(d[0].subject, "tank");
+    let dx = d[0].diagnosis.as_ref().unwrap();
+    assert_eq!(dx.failure_class, nq_db::FailureClass::Saturation);
+    assert_eq!(dx.service_impact, nq_db::ServiceImpact::Degraded, "85% is warn, not critical");
+}
+
+#[test]
+fn zfs_pool_capacity_pressure_escalates_to_immediate_risk_above_critical() {
+    let mut db = test_db();
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // 95% allocated -> critical band (>=90).
+    let b = zfs_capacity_batch("lil-nas-x", "tank", 950, 50, &["pool_capacity"], t);
+    publish_batch(&mut db, &b).unwrap();
+
+    let findings = run_all(db.conn(), &config).unwrap();
+    let d = find_by_kind(&findings, "zfs_pool_capacity_pressure");
+    assert_eq!(d.len(), 1);
+    let dx = d[0].diagnosis.as_ref().unwrap();
+    assert_eq!(dx.service_impact, nq_db::ServiceImpact::ImmediateRisk, "95% escalates");
+    assert_eq!(dx.action_bias, nq_db::ActionBias::InterveneSoon);
+}
+
+#[test]
+fn zfs_pool_capacity_pressure_silent_below_floor_or_without_coverage() {
+    let t = now();
+    let config = DetectorConfig::default();
+
+    // Below the floor (10% allocated) with coverage -> silent.
+    {
+        let mut db = test_db();
+        let b = zfs_capacity_batch("lil-nas-x", "tank", 100, 900, &["pool_capacity"], t);
+        publish_batch(&mut db, &b).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        assert!(
+            find_by_kind(&findings, "zfs_pool_capacity_pressure").is_empty(),
+            "no capacity pressure at 10% allocated"
+        );
+    }
+    // Above the ceiling but WITHOUT pool_capacity coverage -> silent (gating).
+    {
+        let mut db = test_db();
+        let b = zfs_capacity_batch("lil-nas-x", "tank", 950, 50, &[/* no pool_capacity */], t);
+        publish_batch(&mut db, &b).unwrap();
+        let findings = run_all(db.conn(), &config).unwrap();
+        assert!(
+            find_by_kind(&findings, "zfs_pool_capacity_pressure").is_empty(),
+            "capacity_pressure MUST NOT fire without pool_capacity coverage"
+        );
+    }
+}

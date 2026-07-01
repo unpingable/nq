@@ -547,6 +547,14 @@ impl From<&nq_core::config::DetectorThresholds> for DetectorConfig {
 /// `DetectorThresholds` if a deployment needs a different cadence.
 const ZFS_WITNESS_STALE_SECONDS: i64 = 300;
 
+/// ZFS pool capacity pressure thresholds (allocated / size). ZFS copy-on-write
+/// performance degrades notably as a pool fills (fragmentation, slower
+/// allocation); above ~80% is the classic warn line, above ~90% is act-soon.
+/// Ratios, not absolute bytes, so they hold across pool sizes. Move to
+/// `DetectorThresholds` if a deployment needs per-pool overrides.
+const ZFS_POOL_ALLOC_WARN_PCT: f64 = 80.0;
+const ZFS_POOL_ALLOC_CRITICAL_PCT: f64 = 90.0;
+
 /// NVMe wear threshold. SMART NVMe drives self-report a percentage used
 /// estimate (0 = new, 100 = at projected end-of-life). Vendors publish
 /// warranties typically in the 60-80% range; past 80% the drive is in
@@ -617,6 +625,8 @@ pub fn run_all(db: &Connection, config: &DetectorConfig) -> anyhow::Result<Vec<F
     detect_error_shift(db, &mut findings)?;
     // ZFS witness detectors — gated on declared coverage, not inferred.
     detect_zfs_pool_degraded(db, &mut findings)?;
+    detect_zfs_pool_suspended(db, &mut findings)?;
+    detect_zfs_pool_capacity_pressure(db, &mut findings)?;
     detect_zfs_vdev_faulted(db, &mut findings)?;
     detect_zfs_error_count_increased(db, &mut findings)?;
     detect_zfs_scrub_overdue(db, &mut findings)?;
@@ -2090,6 +2100,147 @@ fn detect_zfs_pool_degraded(
                            durability has narrowed. If a second failure lands before \
                            repair, the pool may enter a state that blocks writes or \
                            loses data.".into(),
+            }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
+            coverage_envelope: None,
+            node_unobservable_envelope: None,
+        });
+    }
+    Ok(())
+}
+
+/// Δh: ZFS pool in state SUSPENDED. Gated on `pool_state` coverage.
+///
+/// SUSPENDED is strictly worse than DEGRADED: the pool has lost too many
+/// devices to continue and I/O is blocked. Critical, distinct kind from
+/// `zfs_pool_degraded` so a still-serving degraded pool never renders the same
+/// as one that has stopped serving.
+fn detect_zfs_pool_suspended(db: &Connection, out: &mut Vec<Finding>) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "SELECT p.host, p.pool, p.state, p.health_numeric, w.witness_id
+         FROM zfs_pools_current p
+         INNER JOIN zfs_witness_coverage_current c
+            ON c.host = p.host AND c.tag = 'pool_state' AND c.can_testify = 1
+         LEFT JOIN zfs_witness_current w ON w.host = p.host
+         WHERE p.state = 'SUSPENDED'",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<i64>>(3)?,
+            row.get::<_, Option<String>>(4)?,
+        ))
+    })?;
+    for row in rows {
+        let (host, pool, state, health_numeric, witness_id) = row?;
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "zfs_pool_suspended".into(),
+            subject: pool.clone(),
+            message: format!("pool {pool} reports {state} — I/O is blocked"),
+            value: health_numeric.map(|n| n as f64),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: StateKind::Incident,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Availability,
+                service_impact: ServiceImpact::ImmediateRisk,
+                action_bias: ActionBias::InterveneNow,
+                synopsis: format!(
+                    "ZFS pool {pool} is SUSPENDED. It has lost too many devices to \
+                     continue; reads and writes are blocked."
+                ),
+                why_care: "A SUSPENDED pool stops serving I/O entirely. Anything \
+                           depending on it will hang or error until devices are \
+                           reattached and the pool is cleared, or it is failed over. \
+                           This is beyond degraded — the pool is not serving data."
+                    .into(),
+            }),
+            basis_source_id: witness_id.clone(),
+            basis_witness_id: witness_id,
+            coverage_envelope: None,
+            node_unobservable_envelope: None,
+        });
+    }
+    Ok(())
+}
+
+/// Δh: ZFS pool allocated ratio above the warn/critical ceiling. Gated on
+/// `pool_capacity` coverage.
+///
+/// Fires on `alloc_bytes / size_bytes` crossing [`ZFS_POOL_ALLOC_WARN_PCT`];
+/// severity scales at [`ZFS_POOL_ALLOC_CRITICAL_PCT`]. Ratio-based so it holds
+/// across pool sizes. A near-full CoW pool is both slow and at risk of write
+/// failure, so this is a genuine availability-adjacent pressure signal, not a
+/// cosmetic gauge.
+fn detect_zfs_pool_capacity_pressure(
+    db: &Connection,
+    out: &mut Vec<Finding>,
+) -> anyhow::Result<()> {
+    let mut stmt = db.prepare(
+        "SELECT p.host, p.pool, p.size_bytes, p.alloc_bytes, p.free_bytes, w.witness_id
+         FROM zfs_pools_current p
+         INNER JOIN zfs_witness_coverage_current c
+            ON c.host = p.host AND c.tag = 'pool_capacity' AND c.can_testify = 1
+         LEFT JOIN zfs_witness_current w ON w.host = p.host
+         WHERE p.size_bytes IS NOT NULL AND p.size_bytes > 0",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, Option<i64>>(3)?,
+            row.get::<_, Option<i64>>(4)?,
+            row.get::<_, Option<String>>(5)?,
+        ))
+    })?;
+    for row in rows {
+        let (host, pool, size_bytes, alloc_bytes, free_bytes, witness_id) = row?;
+        // Prefer alloc_bytes; fall back to size - free when the witness only
+        // testified to free_bytes. Skip when neither is available.
+        let alloc = match (alloc_bytes, free_bytes) {
+            (Some(a), _) => a,
+            (None, Some(f)) => size_bytes - f,
+            (None, None) => continue,
+        };
+        let alloc_pct = (alloc as f64 / size_bytes as f64) * 100.0;
+        if alloc_pct < ZFS_POOL_ALLOC_WARN_PCT {
+            continue;
+        }
+        let critical = alloc_pct >= ZFS_POOL_ALLOC_CRITICAL_PCT;
+        let (service_impact, action_bias) = if critical {
+            (ServiceImpact::ImmediateRisk, ActionBias::InterveneSoon)
+        } else {
+            (ServiceImpact::Degraded, ActionBias::InvestigateBusinessHours)
+        };
+        out.push(Finding {
+            host,
+            domain: "Δh".into(),
+            kind: "zfs_pool_capacity_pressure".into(),
+            subject: pool.clone(),
+            message: format!("pool {pool} is {alloc_pct:.0}% allocated"),
+            value: Some(alloc_pct),
+            finding_class: "signal".into(),
+            rule_hash: None,
+            state_kind: StateKind::Degradation,
+            diagnosis: Some(FindingDiagnosis {
+                failure_class: FailureClass::Saturation,
+                service_impact,
+                action_bias,
+                synopsis: format!(
+                    "ZFS pool {pool} is {alloc_pct:.0}% allocated (warn {ZFS_POOL_ALLOC_WARN_PCT:.0}%, \
+                     critical {ZFS_POOL_ALLOC_CRITICAL_PCT:.0}%)."
+                ),
+                why_care: "A near-full ZFS pool slows down (copy-on-write must hunt \
+                           for free space and fragments) and, past ~90%, risks \
+                           write failures. Reclaim space or expand the pool before \
+                           it fills."
+                    .into(),
             }),
             basis_source_id: witness_id.clone(),
             basis_witness_id: witness_id,
