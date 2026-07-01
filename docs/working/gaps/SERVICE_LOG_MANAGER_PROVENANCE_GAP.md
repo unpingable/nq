@@ -1,6 +1,11 @@
-# Candidate: ServiceData / LogObservation manager-provenance + cannot_testify
+# Gap: ServiceData / LogObservation manager-provenance + cannot_testify
 
-**Status:** `candidate` / **non-binding schema note — NOT authorization to build.** A handle for later review, filed under "name early, ratify lazily" (architectural surfaces — wire formats, cross-module vocabulary — get named before the retrofit cost spreads). Provenance: operator-surfaced ChatGPT spitball (a two-fer), synthesized here 2026-07-01; sanity-checked against the repo (mostly uncaptured — see § "What exists today").
+**Status:** **named schema debt** — recognition ratified 2026-07-01; **build deferred**, recognition is not. This is **not** an enhancement candidate and **not** speculative architecture: provenance + field-admissibility on `ServiceData` / `LogObservation` is a known category requirement for NQ's portability model, and the *absence* of these fields is **already a correctness gap** (the wire is silently systemd/journald-shaped). What defers is the *build* — until a non-systemd service collector or non-journald log collector lands. What does NOT defer is the *recognition*:
+
+> **Deferred build is fine. Deferred recognition is not.**
+> Otherwise the next non-Linux collector grows another local workaround, and NQ has three dialects of "not Linux" before breakfast.
+
+Provenance: operator + ChatGPT, 2026-07-01; sanity-checked against the repo (§ "What exists today"). The *exact enum surface, the wire default policy, collector specifics, and the cannot_testify persistence strategy* remain open design (§ "Recognized now vs still-open") — but the field-shaped hole itself is ratified debt, not a maybe.
 **Composes with:** `PORTABILITY_GAP.md` (the non-systemd init / non-journald log collectors that would *populate* these fields — launchd/rc.d/openrc, unified logging/syslog, all currently `not_supported` on BSD), the shipped `HostData.cannot_testify` pattern (this is the same move at the service/log layer), and the capability-honesty doctrine.
 
 ## The doctrine line (the whole point)
@@ -24,6 +29,24 @@ If the two axes collapse, future-you inherits `fetch_status="ok"` doing double d
 - ❌ No `ServiceManager` / `ServiceField` / `LogSourceKind` / `LogField` enums anywhere.
 
 **Reconciliation flagged for ratification:** the existing DB vocabulary is `systemd | docker | process | unknown`. ChatGPT proposed `pid_file` where the DB says `process`, and added `launchd` / `rcd` not yet in the CHECK. A typed wire `ServiceManager` enum must either adopt the existing DB spelling (`process`, extend the CHECK for new managers) or migrate it — **do not silently fork the vocabulary** (wire enum and DB CHECK must agree).
+
+## Recognized now vs still-open (the split)
+
+**Recognized debt (ratified — these SHOULD exist; their absence is the gap):**
+- `ServiceData.manager_kind` (the provenance discriminator, on the wire — not just at persistence)
+- `ServiceData.cannot_testify`
+- a typed `ServiceManager`
+- `LogObservation.source_kind`
+- `LogObservation.cannot_testify`
+- a typed `LogSourceKind`
+- reconcile existing DB `process` vs proposed `pid_file` (one vocabulary, wire ↔ DB)
+- stop overloading `fetch_status` (and `status` / `error_message`) as provenance
+
+**Still open design (genuinely undecided — settle at build time):**
+- the exact enum *surface* (variant lists below are a first cut, not frozen)
+- whether the wire field defaults to `systemd` / `journald` or requires `Option<T>`
+- launchd / rc.d / OpenRC / unified-logging collector specifics
+- the persistence strategy for `cannot_testify` (JSON column vs join table vs stay wire-only)
 
 ## Proposed schema shape (candidate — synthesized best-of-both)
 
@@ -98,9 +121,9 @@ enum ServiceObservationKind { RunningObserved, NotRunningObserved, ManagerReport
 - **No launchd inventory / no `launchctl print` stable parsing / no unified-logging firehose** — when those collectors do land, V0 is: configured labels/predicates only, bounded windows, ndjson/json parse only, narrow runtime testimony.
 - **cannot_testify column** deferred until a reader needs it (wire-only V0).
 
-## Litmus for promotion (when to ratify + build)
+## This is debt, not a maybe (build trigger ≠ recognition trigger)
 
-Ratify the enums + additive wire fields when the first non-systemd service collector or non-journald log collector is actually built (a `PORTABILITY_GAP` slice) — that is the forcing case. Until then this is a named handle: it keeps the next collector from being forced into systemd/journald shape, and keeps `fetch_status` from being drafted into provenance work.
+The debt is recognized now. The **build** lands when the first non-systemd service collector or non-journald log collector does (a `PORTABILITY_GAP` slice) — that is the trigger for *writing the enums + fields*, not for *deciding they're needed*. Until then this record does real work: it keeps the next collector from being forced into systemd/journald shape, keeps `fetch_status` from being drafted into provenance duty, and prevents the "three dialects of not-Linux" fragmentation that happens when each collector invents its own local workaround for the missing provenance/admissibility fields.
 
 ## References
 
