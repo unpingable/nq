@@ -1,6 +1,6 @@
 # BASIS_STALE_CONTRACT v0 — the passive "not heard from" half of the knife
 
-**Status:** contract **ratified v0 2026-07-01** (operator, with redlines on clauses 2/3/7). **Runtime NOT authorized.** This record fences the design; the basis-stale detector is built only after (a) this contract is ratified — done — and (b) the per-source-class substrate audit in § "Pre-runtime blocker" confirms an authority-bearing basis observation timestamp exists for each eligible class. No detector until both hold.
+**Status:** contract **ratified v0 2026-07-01** (operator, with redlines on clauses 2/3/7); **clause 4 dedup elaboration ratified 2026-07-02** (closes the last OPEN DESIGN POINT). **Runtime NOT authorized.** This record fences the design; the basis-stale detector is built only after (a) this contract is ratified — done — and (b) the per-source-class substrate audit in § "Pre-runtime blocker" confirms an authority-bearing basis observation timestamp exists for each eligible class. No detector until both hold.
 **Design record for:** [`../gaps/EVIDENCE_RETIREMENT_GAP.md`](../gaps/EVIDENCE_RETIREMENT_GAP.md) — the deferred basis-stale detector (OQ1).
 **Composes with:** [`DISPLAY_FRESHNESS_VS_ADMISSIBILITY_FRESHNESS.md`](DISPLAY_FRESHNESS_VS_ADMISSIBILITY_FRESHNESS.md) (C2 — the `observed_at` vs `collected_at` authority distinction that clause 7 turns on), the silence knife in [`../../architecture/DETECTOR_TAXONOMY.md`](../../architecture/DETECTOR_TAXONOMY.md) §2a, and the shipped retirement verb (the *explicit* half).
 
@@ -43,7 +43,7 @@ silence finding      → evidences the expected-hearing failure
 basis_state = stale  → summarizes that the basis is no longer fresh
 notification gating  → prevents two pages for the same absence
 ```
-The forbidden shape is *"a silence finding exists, therefore the basis stays live"* — that is the cursed reading and is explicitly rejected.
+The forbidden shape is *"a silence finding exists, therefore the basis stays live"* — that is the cursed reading and is explicitly rejected. The full normative dedup contract (what MUST/SHOULD happen at the finding and notification layers) is the **Clause 4 elaboration** section below; it resolves the former OPEN DESIGN POINT.
 
 **5. Reversibility.** `stale → live` may occur **automatically** when a fresh admissible basis report arrives (stale is a passive observation, not an act). `retired → live` requires an **explicit** `unretire`. This preserves the finding/act distinction.
 
@@ -84,8 +84,29 @@ A basis-stale detector over **ZFS + SMART** findings:
 - **Blockers (clause 3):** skip if the source is `retired`, under active maintenance/suppression, `invalidated`, or unknown identity.
 - **Reversibility (clause 5):** `stale → live` automatically when `witness_collected_at` is fresh again.
 - **Granularity (clause 6):** per `basis_source_id`.
-- **OPEN DESIGN POINT (clause 4) — the one genuinely new bit, needs operator sign-off:** `zfs_witness_silent` / `smart_witness_silent` **already fire** at the source level when a witness goes quiet. Basis-stale downgrades that witness's *findings* off the same silence. Per clause 4 these must be **notification-deduped** — the source-level `*_witness_silent` is the single alert; the stale-downgraded findings must not each page again (retired already doesn't page; stale needs the same or a dedup-against-the-silence-parent rule). Settle this before building.
+- **RESOLVED (clause 4 dedup) — was the one genuinely new bit needing operator sign-off:** `zfs_witness_silent` / `smart_witness_silent` **already fire** at the source level when a witness goes quiet. Basis-stale downgrades that witness's *findings* off the same silence. Per clause 4 these must be **notification-deduped** — the source-level `*_witness_silent` is the single alert; the stale-downgraded findings must not each page again. The settled rule is the **Clause 4 elaboration** section below: write the `basis_stale` transition regardless, coalesce notification on same host/scope + `basis_source_id` + witness class + stale epoch, render `basis_stale` as the authoritative lifecycle state with the witness-silent finding attached as cause/context (not a second page). No longer blocks building.
 - **Substrate:** likely no migration (transition writes `warning_state.basis_state`/`basis_state_at`, which exist); confirm the render already handles `stale` distinctly (today only `retired` is split out — `stale` may need the same treatment as a small companion slice).
+
+## Clause 4 elaboration — Deduplication against witness-silent detectors (ratified, resolves the OPEN DESIGN POINT)
+
+`basis_stale` is a basis lifecycle transition, not a duplicate witness-silence finding.
+
+Existing `*_witness_silent` detectors may testify that an expected witness has failed to produce fresh testimony. They do not, by themselves, update `basis_state`, revoke admissibility, or decide whether a ratified basis is stale.
+
+The `basis_stale` detector MAY use witness silence as evidence that freshness has lapsed, but its transition is keyed to the ratified basis contract: `basis_source_id`, `basis_witness_id`, `last_admissible_basis_observed_at`, generation, and the operator-declared freshness window.
+
+Deduplication applies only to human-facing finding pressure and notification pressure.
+
+A `basis_stale` transition MUST still be written when the basis contract says the basis is stale, even if a related `*_witness_silent` detector has already fired.
+
+However, notification SHOULD be coalesced when both detectors refer to the same host/scope, same `basis_source_id`, same witness class, and same stale epoch. In that case, render `basis_stale` as the authoritative lifecycle state and attach the existing witness-silent finding as cause/context, not as a second independent page.
+
+Dedup MUST NOT allow witness silence to block stale transition.
+Dedup MUST NOT allow stale transition to erase or rewrite the underlying witness-silent finding.
+Dedup MUST NOT infer staleness for non-ratified basis sources.
+Dedup MUST NOT apply across distinct `basis_source_id`s or distinct generations.
+
+Operationally: silence is the symptom; stale is the admissibility consequence.
 
 ## Explicitly NOT in this record
 
