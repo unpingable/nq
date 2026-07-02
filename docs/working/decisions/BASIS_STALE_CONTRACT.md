@@ -84,7 +84,7 @@ A basis-stale detector over **ZFS + SMART** findings:
 - **Blockers (clause 3):** skip if the source is `retired`, under active maintenance/suppression, `invalidated`, or unknown identity.
 - **Reversibility (clause 5):** `stale → live` automatically when `witness_collected_at` is fresh again.
 - **Granularity (clause 6):** per `basis_source_id`.
-- **RESOLVED (clause 4 dedup) — was the one genuinely new bit needing operator sign-off:** `zfs_witness_silent` / `smart_witness_silent` **already fire** at the source level when a witness goes quiet. Basis-stale downgrades that witness's *findings* off the same silence. Per clause 4 these must be **notification-deduped** — the source-level `*_witness_silent` is the single alert; the stale-downgraded findings must not each page again. The settled rule is the **Clause 4 elaboration** section below: write the `basis_stale` transition regardless, coalesce notification on same host/scope + `basis_source_id` + witness class + stale epoch, render `basis_stale` as the authoritative lifecycle state with the witness-silent finding attached as cause/context (not a second page). No longer blocks building.
+- **Clause 4 dedup contract — resolved; runtime still not authorized:** `zfs_witness_silent` / `smart_witness_silent` **already fire** at the source level when a witness goes quiet. Basis-stale downgrades that witness's *findings* off the same silence. Per clause 4 these must be **notification-deduped** — the source-level `*_witness_silent` is the single alert; the stale-downgraded findings must not each page again. The settled rule is the **Clause 4 elaboration** section below: write the `basis_stale` transition regardless, coalesce notification on same host/scope + `basis_source_id` + witness class + stale epoch, render `basis_stale` as the authoritative lifecycle state with the witness-silent finding attached as cause/context (not a second page). No longer blocks building.
 - **Substrate:** likely no migration (transition writes `warning_state.basis_state`/`basis_state_at`, which exist); confirm the render already handles `stale` distinctly (today only `retired` is split out — `stale` may need the same treatment as a small companion slice).
 
 ## Clause 4 elaboration — Deduplication against witness-silent detectors (ratified, resolves the OPEN DESIGN POINT)
@@ -100,6 +100,8 @@ Deduplication applies only to human-facing finding pressure and notification pre
 A `basis_stale` transition MUST still be written when the basis contract says the basis is stale, even if a related `*_witness_silent` detector has already fired.
 
 However, notification SHOULD be coalesced when both detectors refer to the same host/scope, same `basis_source_id`, same witness class, and same stale epoch. In that case, render `basis_stale` as the authoritative lifecycle state and attach the existing witness-silent finding as cause/context, not as a second independent page.
+
+> **stale epoch:** the `basis_state_at` transition window in which a basis source becomes stale because no live refresh was observed. Used as a deduplication key only; it does not authorize recovery, freshness, or suppression of later stale evidence.
 
 Dedup MUST NOT allow witness silence to block stale transition.
 Dedup MUST NOT allow stale transition to erase or rewrite the underlying witness-silent finding.
