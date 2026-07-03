@@ -64,8 +64,11 @@ Follow-on landed 2026-07-01:
 - `evaluate_service_state_preflight*` now feeds the projected packet identity into `PreflightSupport.witness_packet` for admitted supports. Projection refusal surfaces as a `PreflightExclusion`, not as support.
 - `served_surface_registry` declares the owned `service_state` evaluator. No HTTP preflight route was added in that follow-on.
 
+Follow-on landed 2026-07-03 (overnight loop, FEATURE_HISTORY § SERVICE_STATE_DOCKER_NATIVE_CAPTURE):
+- **docker** native-state capture: the collector quotes docker's own vocabulary (`active_state` = `State.Status`, `sub_state` = `State.Health.Status` when a HEALTHCHECK exists) into `service_observations` under `service_manager='docker'`; `load_state`/`unit_file_state` stay NULL — docker has no unit-load/enablement concept and restart policy is declared config, not observed state. Wire gained additive `service_manager` (pre-field wires default to systemd at the publish seam).
+
 Still deferred (named):
-- **docker / process** manager variants (collector captures native state for systemd only; docker still maps to coarse status).
+- **process** manager variant: a `pid_file` check carries no manager-native state vocabulary — a bare PID liveness probe has no `queried_state` to quote. Deferred until a shape that is not fabrication is named (see coverage/manifest rationale).
 
 ## Adjacent, NOT this
 

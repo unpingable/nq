@@ -91,6 +91,7 @@ fn host_detail_populates_host_row_services_sqlite_dbs() {
                 sub_state: None,
                 load_state: None,
                 unit_file_state: None,
+                service_manager: None,
             }],
         }],
         sqlite_db_sets: vec![SqliteDbSet {

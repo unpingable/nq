@@ -147,6 +147,7 @@ fn missing_signal_dropout_service() {
                 sub_state: None,
                 load_state: None,
                 unit_file_state: None,
+                service_manager: None,
             }],
         });
         let r = publish_batch(&mut db, &b).unwrap();
@@ -282,6 +283,7 @@ fn unstable_service_down() {
             sub_state: None,
             load_state: None,
             unit_file_state: None,
+            service_manager: None,
         }],
     });
     publish_batch(&mut db, &b).unwrap();
@@ -334,6 +336,7 @@ fn degrading_service_flap() {
                 sub_state: None,
                 load_state: None,
                 unit_file_state: None,
+                service_manager: None,
             }],
         });
         let r = publish_batch(&mut db, &b).unwrap();
@@ -534,6 +537,7 @@ fn every_detector_emits_diagnosis() {
                 sub_state: None,
                 load_state: None,
                 unit_file_state: None,
+                service_manager: None,
             }],
         });
         let r = publish_batch(&mut db, &b).unwrap();
@@ -636,6 +640,7 @@ fn service_status_down_emits_immediate_risk() {
             sub_state: None,
             load_state: None,
             unit_file_state: None,
+            service_manager: None,
         }],
     });
     publish_batch(&mut db, &b).unwrap();
@@ -3822,6 +3827,7 @@ fn diverse_batch_findings() -> Vec<nq_db::detect::Finding> {
                 sub_state: None,
                 load_state: None,
                 unit_file_state: None,
+                service_manager: None,
             }],
         });
         let r = publish_batch(&mut db, &b).unwrap();

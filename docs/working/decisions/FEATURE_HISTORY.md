@@ -98,6 +98,26 @@ The chronological order below is newest-first.
 
 **Evidence:** `pull::tests::state_schema_validator_{accepts_current_v1,refuses_missing_schema,refuses_unsupported_schema}` plus focused e2e checks `happy_path_full_loop` and `lying_publisher_identity_contract`.
 
+## SERVICE_STATE_DOCKER_NATIVE_CAPTURE (docker joins systemd as a native-state collector)
+
+**Status:** `shipped` 2026-07-03 (overnight loop, operator-ratified queue; process variant stays deferred).
+
+**What landed:** the `service_state` family's named docker deferral closed — docker-checked services now testify native state, in docker's own vocabulary.
+- `services.rs`: `SystemdNative` generalized to `ManagerNative` (+`manager`; invariant: `manager` is `Some` iff `active_state` is `Some` — a probe that observed nothing names no manager). New pure `classify_docker_state`: `active_state` = `State.Status` verbatim (running/exited/paused/…), `sub_state` = `State.Health.Status` only when the container declares a HEALTHCHECK, `load_state`/`unit_file_state` stay `None` — docker has no unit-load/enablement concept, and restart policy is declared config, not observed state, so it is not smuggled in as an analog. Coarse `ServiceStatus` mapping (findings path) unchanged.
+- Wire: `ServiceData`/`ServiceRow` gain additive `service_manager` (`#[serde(default)]`); carried through pull/e2e conversion.
+- `publish.rs` 5c: `service_manager` parameterized (was hardcoded `'systemd'`); a row with native state but no manager came over a pre-field wire, which was systemd-only, and defaults to `systemd` rather than dropping the observation. Migration 059's CHECK already admitted `'docker'` — no schema change.
+- coverage manifest: `service_state_docker_collector` implemented; `service_state_process_collector` explicitly deferred with rationale (a bare PID liveness probe has no `queried_state` to quote).
+
+**Vocabulary-collision note (named, load-bearing):** docker's native health token spells `healthy`, so the systemd-era boundary check "support text never contains 'healthy'" cannot police the claim boundary for docker rows. The boundary is structural, not lexical: the token may appear only inside the quoted manager-report frame (`native state 'running' (sub=healthy)`), never as an NQ assertion, and the constitutional refusals (health/recovery/safety/coverage) stand unchanged. Consumers string-matching for claim-boundary words must anchor on `cannot_testify` structure, not substring absence.
+
+**Evidence:** pure classifier tests (healthcheck / no-healthcheck / unhealthy-degrades-but-quotes-verbatim / exited / empty-state-no-capture / systemd-no-manager-when-unobserved); end-to-end `docker_collected_row_feeds_service_observations_in_docker_vocabulary` (publish → docker-namespace row with NULL load/unit_file → evaluator `admissible_with_scope` + packet identity + refusals intact + quoted-frame boundary asserts); `pre_field_wire_row_with_native_state_defaults_to_systemd` back-compat; full workspace suite green.
+
+**Deploy-ordering constraint (named, from blind review):** an OLD aggregator receiving a NEW witness's docker rows ignores the unknown `service_manager` wire field and its 5c hardcodes `'systemd'` — docker native states would land in the systemd manager namespace. **Deploy the aggregator before (or with) witnesses**; the standard canary order (sushi-k aggregator first) already satisfies this. Inverse direction (new aggregator + old witness) is safe by the systemd default.
+
+**Accepted transitional risk (named, from blind review):** the publish-seam `unwrap_or("systemd")` also masks a future collector that forgets to set the manager. Retirement condition: once the fleet is entirely at/past this commit, tighten the default (refuse-or-log instead of assume-systemd). Per-manager column-shape enforcement at the publish seam (e.g. rejecting a docker row carrying `unit_file_state`) was considered and NOT adopted: the publisher persists testimony verbatim; shape policing is a schema/CHECK policy choice, filed as a candidate hardening, not smuggled in overnight.
+
+**Deferred (named):** **process** native-state capture (see coverage/manifest rationale); live three-host deploy of this collector (deploy is operator-gated); publish-seam manager-default tightening (retirement condition above).
+
 ## SERVICE_STATE_WITNESS_SUPPORT_CUTOVER (service_state supports carry projected packet identity)
 
 **Status:** `shipped` 2026-07-01.

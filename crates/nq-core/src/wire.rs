@@ -149,11 +149,15 @@ pub struct ServiceData {
     pub queue_depth: Option<i64>,
     pub consumer_lag: Option<i64>,
     pub drop_count: Option<i64>,
-    // Native service-manager states for the `service_state` witness family
-    // (systemd today). Populated only for systemd-collected rows; the coarse
-    // `status` above feeds findings, these feed `service_observations`. The
-    // aggregator does NOT promote `active` into healthy/recovered/safe — that
-    // boundary is the evaluator's. `#[serde(default)]` keeps the wire additive.
+    // Native service-manager states for the `service_state` witness family.
+    // Populated only for rows whose manager was natively queried (systemd,
+    // docker); the coarse `status` above feeds findings, these feed
+    // `service_observations`. Each field carries the MANAGER'S OWN vocabulary
+    // verbatim (systemd `ActiveState=active`, docker `State.Status=running`);
+    // a manager with no analog for a field leaves it `None` — absence is not
+    // synthesized into a sibling manager's token. The aggregator does NOT
+    // promote `active`/`running` into healthy/recovered/safe — that boundary
+    // is the evaluator's. `#[serde(default)]` keeps the wire additive.
     #[serde(default)]
     pub active_state: Option<String>,
     #[serde(default)]
@@ -162,6 +166,13 @@ pub struct ServiceData {
     pub load_state: Option<String>,
     #[serde(default)]
     pub unit_file_state: Option<String>,
+    /// Which service manager the native `*_state` fields quote
+    /// (`"systemd"` | `"docker"`). `Some` iff `active_state` is `Some`;
+    /// absent on wires predating this field, which carried systemd only —
+    /// the consumer may read `active_state.is_some() && service_manager
+    /// .is_none()` as systemd.
+    #[serde(default)]
+    pub service_manager: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

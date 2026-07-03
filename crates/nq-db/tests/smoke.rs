@@ -137,6 +137,7 @@ fn service_row(name: &str) -> ServiceRow {
         sub_state: None,
         load_state: None,
         unit_file_state: None,
+        service_manager: None,
     }
 }
 

@@ -164,12 +164,17 @@ pub struct ServiceRow {
     pub queue_depth: Option<i64>,
     pub consumer_lag: Option<i64>,
     pub drop_count: Option<i64>,
-    // Native systemd states for the service_state witness family (carried from
-    // ServiceData). Populated only for systemd-collected rows.
+    // Native service-manager states for the service_state witness family
+    // (carried from ServiceData; manager-native vocabulary, verbatim).
+    // Populated only for rows whose manager was natively queried.
     pub active_state: Option<String>,
     pub sub_state: Option<String>,
     pub load_state: Option<String>,
     pub unit_file_state: Option<String>,
+    /// Which manager the native fields quote (`"systemd"` | `"docker"`).
+    /// `None` on rows without native state, and on pre-field wires (which
+    /// were systemd-only — the publish seam defaults those to systemd).
+    pub service_manager: Option<String>,
 }
 
 /// Full replacement set: all sqlite DBs for one host from one collection.

@@ -57,6 +57,7 @@ fn batch_with_services(host: &str, services: &[&str]) -> Batch {
                     sub_state: None,
                     load_state: None,
                     unit_file_state: None,
+                    service_manager: None,
                 })
                 .collect(),
         }],

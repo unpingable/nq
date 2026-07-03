@@ -54,15 +54,12 @@ pub fn collect_for(
 
         let (status, pid, native) = match svc_config.check_type.as_str() {
             "systemd" => check_systemd(unit_name),
-            "docker" => {
-                let (s, p) = check_docker(unit_name);
-                (s, p, SystemdNative::none())
-            }
+            "docker" => check_docker(unit_name),
             "pid_file" => {
                 let (s, p) = check_pid_file(svc_config.pid_file.as_deref());
-                (s, p, SystemdNative::none())
+                (s, p, ManagerNative::none())
             }
-            _ => (ServiceStatus::Unknown, None, SystemdNative::none()),
+            _ => (ServiceStatus::Unknown, None, ManagerNative::none()),
         };
 
         services.push(ServiceData {
@@ -80,6 +77,7 @@ pub fn collect_for(
             sub_state: native.sub_state,
             load_state: native.load_state,
             unit_file_state: native.unit_file_state,
+            service_manager: native.manager,
         });
     }
 
@@ -114,17 +112,23 @@ pub fn collect_for(
     }
 }
 
-/// Native systemd states for the `service_state` witness family. `None` per
-/// field when the property is unavailable; the witness records what it saw.
-struct SystemdNative {
+/// Native service-manager states for the `service_state` witness family.
+/// Each field quotes the MANAGER'S OWN vocabulary verbatim (systemd
+/// `ActiveState`, docker `State.Status`); a manager with no analog for a
+/// field leaves it `None` — absence is not synthesized into a sibling
+/// manager's token. `manager` is `Some` iff `active_state` is `Some`, so a
+/// probe that observed nothing names no manager.
+struct ManagerNative {
+    manager: Option<String>,
     active_state: Option<String>,
     sub_state: Option<String>,
     load_state: Option<String>,
     unit_file_state: Option<String>,
 }
-impl SystemdNative {
+impl ManagerNative {
     fn none() -> Self {
         Self {
+            manager: None,
             active_state: None,
             sub_state: None,
             load_state: None,
@@ -133,7 +137,7 @@ impl SystemdNative {
     }
 }
 
-fn check_systemd(unit: &str) -> (ServiceStatus, Option<u32>, SystemdNative) {
+fn check_systemd(unit: &str) -> (ServiceStatus, Option<u32>, ManagerNative) {
     let unit_with_suffix = if unit.contains('.') {
         unit.to_string()
     } else {
@@ -172,7 +176,7 @@ fn parse_systemd_show(stdout: &str) -> HashMap<String, String> {
 
 fn classify_systemd_props(
     props: &HashMap<String, String>,
-) -> (ServiceStatus, Option<u32>, SystemdNative) {
+) -> (ServiceStatus, Option<u32>, ManagerNative) {
     let nonempty = |k: &str| props.get(k).filter(|v| !v.is_empty()).cloned();
     let active_state = nonempty("ActiveState");
 
@@ -189,7 +193,8 @@ fn classify_systemd_props(
         .and_then(|s| s.parse::<u32>().ok())
         .filter(|p| *p > 0);
 
-    let native = SystemdNative {
+    let native = ManagerNative {
+        manager: active_state.as_ref().map(|_| "systemd".to_string()),
         active_state,
         sub_state: nonempty("SubState"),
         load_state: nonempty("LoadState"),
@@ -199,18 +204,22 @@ fn classify_systemd_props(
     (status, pid, native)
 }
 
-fn check_docker(container: &str) -> (ServiceStatus, Option<u32>) {
-    // First get state + pid (always works)
+fn check_docker(container: &str) -> (ServiceStatus, Option<u32>, ManagerNative) {
+    // ONE inspect call for state + pid + health. The persisted native tuple is
+    // a single observation, so its fields must come from one atomic read — two
+    // sequential inspects could quote a state/health pair that never coexisted
+    // (blind-review finding, 2026-07-03). The `{{if .State.Health}}` guard
+    // keeps the template from erroring on containers without a HEALTHCHECK.
     let output = Command::new("docker")
         .args([
             "inspect",
             "--format",
-            "{{.State.Status}} {{.State.Pid}}",
+            "{{.State.Status}} {{.State.Pid}} {{if .State.Health}}{{.State.Health.Status}}{{end}}",
             container,
         ])
         .output();
 
-    let (state, pid) = match &output {
+    let (state, pid, health) = match &output {
         Ok(out) if out.status.success() => {
             let text = String::from_utf8_lossy(&out.stdout);
             let parts: Vec<&str> = text.trim().split_whitespace().collect();
@@ -219,43 +228,65 @@ fn check_docker(container: &str) -> (ServiceStatus, Option<u32>) {
                 .get(1)
                 .and_then(|s| s.parse::<u32>().ok())
                 .filter(|p| *p > 0);
-            (state, pid)
+            // Third token present only when a HEALTHCHECK exists.
+            let health = parts.get(2).copied().unwrap_or("").to_string();
+            (state, pid, health)
         }
         Ok(out) => {
             // Inspect ran but returned non-zero. Distinguish two cases on stderr:
             //   - "No such object"/"No such container" → container absent.
             //     The operator declared this container in publisher config; its
             //     absence is a direct failure, not ambiguity. Return Down so
-            //     detect_service_status can fire.
+            //     detect_service_status can fire. No native state — an absent
+            //     container has no observed docker state to quote.
             //   - anything else (daemon unreachable, permission denied, etc.) →
             //     probe failed. Return Unknown so we don't false-page on every
             //     configured docker service when the daemon itself is broken.
             let stderr = String::from_utf8_lossy(&out.stderr);
             if stderr.contains("No such object") || stderr.contains("No such container") {
-                return (ServiceStatus::Down, None);
+                return (ServiceStatus::Down, None, ManagerNative::none());
             }
-            return (ServiceStatus::Unknown, None);
+            return (ServiceStatus::Unknown, None, ManagerNative::none());
         }
-        Err(_) => return (ServiceStatus::Unknown, None),
+        Err(_) => return (ServiceStatus::Unknown, None, ManagerNative::none()),
     };
 
-    // Then try to get health status (only exists if container has HEALTHCHECK)
-    let health = Command::new("docker")
-        .args(["inspect", "--format", "{{.State.Health.Status}}", container])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
+    let (status, native) = classify_docker_state(&state, &health);
+    (status, pid, native)
+}
 
-    let status = match (state.as_str(), health.as_str()) {
+/// Pure classification of an observed docker state + health pair.
+///
+/// Coarse `ServiceStatus` mapping is unchanged from the pre-native-capture
+/// behavior (findings path untouched). The native capture quotes docker's own
+/// vocabulary: `active_state` = `State.Status` (running / exited / paused /
+/// created / restarting / removing / dead), `sub_state` = `State.Health
+/// .Status` when the container declares a HEALTHCHECK (starting / healthy /
+/// unhealthy), else `None`. Docker has no unit-load or enablement concept, so
+/// `load_state` / `unit_file_state` stay `None` — restart policy is declared
+/// config, not observed state, and is not smuggled in as an analog.
+fn classify_docker_state(state: &str, health: &str) -> (ServiceStatus, ManagerNative) {
+    let status = match (state, health) {
         ("running", "healthy") => ServiceStatus::Up,
         ("running", "unhealthy") => ServiceStatus::Degraded,
         ("running", _) => ServiceStatus::Up,
         _ => ServiceStatus::Down,
     };
 
-    (status, pid)
+    let native = if state.is_empty() {
+        // Inspect succeeded but yielded no state token — nothing to quote.
+        ManagerNative::none()
+    } else {
+        ManagerNative {
+            manager: Some("docker".to_string()),
+            active_state: Some(state.to_string()),
+            sub_state: (!health.is_empty()).then(|| health.to_string()),
+            load_state: None,
+            unit_file_state: None,
+        }
+    };
+
+    (status, native)
 }
 
 fn check_pid_file(path: Option<&str>) -> (ServiceStatus, Option<u32>) {
@@ -312,10 +343,66 @@ mod platform_tests {
         let (status, pid, native) = classify_systemd_props(&props);
         assert_eq!(status, ServiceStatus::Up);
         assert_eq!(pid, Some(4242));
+        assert_eq!(native.manager.as_deref(), Some("systemd"));
         assert_eq!(native.active_state.as_deref(), Some("active"));
         assert_eq!(native.sub_state.as_deref(), Some("running"));
         assert_eq!(native.load_state.as_deref(), Some("loaded"));
         assert_eq!(native.unit_file_state.as_deref(), Some("enabled"));
+    }
+
+    #[test]
+    fn systemd_classify_without_active_state_names_no_manager() {
+        // manager is Some iff active_state is Some: an empty `systemctl show`
+        // observed nothing, so it must not testify "systemd saw this."
+        let (_, _, native) = classify_systemd_props(&HashMap::new());
+        assert_eq!(native.manager, None);
+        assert_eq!(native.active_state, None);
+    }
+
+    #[test]
+    fn docker_classify_running_with_healthcheck() {
+        let (status, native) = classify_docker_state("running", "healthy");
+        assert_eq!(status, ServiceStatus::Up);
+        assert_eq!(native.manager.as_deref(), Some("docker"));
+        assert_eq!(native.active_state.as_deref(), Some("running"));
+        assert_eq!(native.sub_state.as_deref(), Some("healthy"));
+        // Docker has no unit-load / enablement concept; absence stays absent.
+        assert_eq!(native.load_state, None);
+        assert_eq!(native.unit_file_state, None);
+    }
+
+    #[test]
+    fn docker_classify_running_without_healthcheck_has_no_sub_state() {
+        let (status, native) = classify_docker_state("running", "");
+        assert_eq!(status, ServiceStatus::Up);
+        assert_eq!(native.active_state.as_deref(), Some("running"));
+        assert_eq!(native.sub_state, None);
+    }
+
+    #[test]
+    fn docker_classify_unhealthy_degrades_but_quotes_native_state_verbatim() {
+        let (status, native) = classify_docker_state("running", "unhealthy");
+        assert_eq!(status, ServiceStatus::Degraded);
+        // The native capture quotes docker verbatim; the coarse degradation
+        // verdict lives on `status` only.
+        assert_eq!(native.active_state.as_deref(), Some("running"));
+        assert_eq!(native.sub_state.as_deref(), Some("unhealthy"));
+    }
+
+    #[test]
+    fn docker_classify_exited_is_down_with_native_state() {
+        let (status, native) = classify_docker_state("exited", "");
+        assert_eq!(status, ServiceStatus::Down);
+        assert_eq!(native.manager.as_deref(), Some("docker"));
+        assert_eq!(native.active_state.as_deref(), Some("exited"));
+    }
+
+    #[test]
+    fn docker_classify_empty_state_yields_no_native_capture() {
+        let (status, native) = classify_docker_state("", "");
+        assert_eq!(status, ServiceStatus::Down);
+        assert_eq!(native.manager, None);
+        assert_eq!(native.active_state, None);
     }
 
     #[test]

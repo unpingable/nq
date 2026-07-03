@@ -183,12 +183,15 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
         }
     }
 
-    // 5c. Persist native systemd service-state observations for the
+    // 5c. Persist native service-manager state observations for the
     // `service_state` witness family (migration 059). The coarse `status`
-    // above feeds findings; the NATIVE state feeds `service_observations`.
-    // `active` is NOT promoted to healthy/recovered/safe here — that boundary
-    // is the evaluator's. Only systemd-collected rows carry `active_state`;
-    // docker is a named follow-on. One row per (host, service) per generation
+    // above feeds findings; the NATIVE state feeds `service_observations`,
+    // in the manager's own vocabulary (systemd `active`, docker `running`).
+    // Neither is promoted to healthy/recovered/safe here — that boundary
+    // is the evaluator's. Rows carry `active_state` only when their manager
+    // was natively queried; a row with native state but no `service_manager`
+    // came over a pre-field wire, which was systemd-only — default it rather
+    // than drop the observation. One row per (host, service) per generation
     // (the UNIQUE index backstops); the idempotent/conflict writer API is for
     // the probe/manual path, not this append. The guard skips preparing the
     // statement when no row carries native state — both an optimization and
@@ -202,15 +205,17 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
             "INSERT INTO service_observations
                 (generation_id, host, service_manager, service_name,
                  active_state, sub_state, load_state, unit_file_state, observed_at)
-             VALUES (?1, ?2, 'systemd', ?3, ?4, ?5, ?6, ?7, ?8)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         )?;
         for ss in &batch.service_sets {
             let observed_at = fmt_ts(&ss.collected_at);
             for row in &ss.rows {
                 if let Some(active_state) = &row.active_state {
+                    let manager = row.service_manager.as_deref().unwrap_or("systemd");
                     ins.execute(rusqlite::params![
                         generation_id,
                         &ss.host,
+                        manager,
                         &row.service,
                         active_state,
                         &row.sub_state,
@@ -2449,6 +2454,7 @@ mod tests {
                         sub_state: None,
                         load_state: None,
                         unit_file_state: None,
+                        service_manager: None,
                     },
                     ServiceRow {
                         service: "svc-b".into(),
@@ -2465,6 +2471,7 @@ mod tests {
                         sub_state: None,
                         load_state: None,
                         unit_file_state: None,
+                        service_manager: None,
                     },
                 ],
             }],
@@ -2528,6 +2535,7 @@ mod tests {
                     sub_state: None,
                     load_state: None,
                     unit_file_state: None,
+                    service_manager: None,
                 }],
             }],
             sqlite_db_sets: vec![],
@@ -2599,6 +2607,7 @@ mod tests {
                     sub_state: Some("running".into()),
                     load_state: Some("loaded".into()),
                     unit_file_state: Some("enabled".into()),
+                    service_manager: Some("systemd".into()),
                 }],
             }],
             sqlite_db_sets: vec![],
@@ -2648,6 +2657,209 @@ mod tests {
         let support = r.supports[0].claim.to_lowercase();
         assert!(!support.contains("healthy"));
         assert!(!support.contains("recovered"));
+    }
+
+    #[test]
+    fn docker_collected_row_feeds_service_observations_in_docker_vocabulary() {
+        // Sibling of the systemd end-to-end above: a docker-collected
+        // ServiceRow carrying native state -> publish 5c writes a
+        // service_observations row under service_manager='docker', quoting
+        // docker's own vocabulary (running/healthy), NOT systemd tokens ->
+        // the evaluator satisfies ServiceState from it at witness scope.
+        let mut db = test_db();
+        let t = now();
+        let batch = Batch {
+            cycle_started_at: t,
+            cycle_completed_at: t,
+            sources_expected: 1,
+            source_runs: vec![SourceRun {
+                source: "box-1".into(),
+                status: SourceStatus::Ok,
+                received_at: t,
+                collected_at: Some(t),
+                duration_ms: Some(10),
+                error_message: None,
+            }],
+            collector_runs: vec![CollectorRun {
+                source: "box-1".into(),
+                collector: CollectorKind::Services,
+                status: CollectorStatus::Ok,
+                collected_at: Some(t),
+                entity_count: Some(1),
+                error_message: None,
+            }],
+            host_rows: vec![],
+            service_sets: vec![ServiceSet {
+                host: "box-1".into(),
+                collected_at: t,
+                rows: vec![ServiceRow {
+                    service: "caddy-proxy".into(),
+                    status: ServiceStatus::Up,
+                    health_detail_json: None,
+                    pid: Some(4242),
+                    uptime_seconds: None,
+                    last_restart: None,
+                    eps: None,
+                    queue_depth: None,
+                    consumer_lag: None,
+                    drop_count: None,
+                    active_state: Some("running".into()),
+                    sub_state: Some("healthy".into()),
+                    // Docker has no unit-load / enablement concept; the
+                    // collector leaves these absent rather than synthesizing
+                    // systemd analogs. The row must persist that absence.
+                    load_state: None,
+                    unit_file_state: None,
+                    service_manager: Some("docker".into()),
+                }],
+            }],
+            sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
+            zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
+            wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
+        };
+        publish_batch(&mut db, &batch).unwrap();
+
+        // 1. The native observation landed under the docker manager, in
+        //    docker vocabulary, with the absent concepts still absent.
+        let (active, sub, load, unit_file): (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = db
+            .conn
+            .query_row(
+                "SELECT active_state, sub_state, load_state, unit_file_state
+                 FROM service_observations
+                 WHERE host='box-1' AND service_manager='docker'
+                   AND service_name='caddy-proxy'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(active, "running");
+        assert_eq!(sub.as_deref(), Some("healthy"));
+        assert_eq!(load, None);
+        assert_eq!(unit_file, None);
+
+        // 2. Nothing leaked into the systemd manager namespace.
+        let systemd_rows: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM service_observations
+                 WHERE host='box-1' AND service_manager='systemd'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(systemd_rows, 0);
+
+        // 3. The evaluator satisfies ServiceState from the docker row, and
+        //    the refusal boundary holds. Docker's OWN vocabulary spells
+        //    'healthy' (State.Health.Status), so — unlike the systemd
+        //    sibling — substring absence cannot police the boundary here.
+        //    What the boundary requires is that the token stays a QUOTED
+        //    manager report ("native state ... (sub=healthy)"), never an
+        //    NQ assertion, and that the constitutional refusals stand.
+        let key = crate::ServiceObservationTuple {
+            host: "box-1",
+            service_manager: "docker",
+            service_name: "caddy-proxy",
+        };
+        let r =
+            crate::evaluate_service_state_preflight_from_conn_at(&db.conn, &key, t).unwrap();
+        assert_eq!(r.verdict, nq_core::preflight::Verdict::AdmissibleWithScope);
+        assert_eq!(r.supports.len(), 1);
+        // The projected witness packet identity rode along (3a wiring).
+        assert!(r.supports[0].witness_packet.is_some());
+        let refusals: String = r
+            .cannot_testify
+            .iter()
+            .map(|c| c.statement.to_lowercase())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(refusals.contains("health"));
+        assert!(refusals.contains("recovery"));
+        let support = r.supports[0].claim.to_lowercase();
+        // The claim ATTRIBUTES the report to docker — a hardcoded systemd
+        // evaluator string would fail here (blind-review finding).
+        assert!(support.starts_with("docker reported"), "{support}");
+        assert!(!support.contains("systemd"), "{support}");
+        assert_eq!(r.supports[0].subject, "box-1/docker:caddy-proxy");
+        // Quoted-report frame present; the health token only in sub= position.
+        assert!(support.contains("native state 'running'"), "{support}");
+        assert!(support.contains("(sub=healthy)"), "{support}");
+        assert!(!support.contains("is healthy"), "{support}");
+        assert!(!support.contains("recovered"), "{support}");
+    }
+
+    #[test]
+    fn pre_field_wire_row_with_native_state_defaults_to_systemd() {
+        // Back-compat: an older witness sends active_state without
+        // service_manager (the wire predates the field). Those wires were
+        // systemd-only; the publish seam defaults the manager instead of
+        // dropping the observation.
+        let mut db = test_db();
+        let t = now();
+        let batch = Batch {
+            cycle_started_at: t,
+            cycle_completed_at: t,
+            sources_expected: 1,
+            source_runs: vec![SourceRun {
+                source: "box-1".into(),
+                status: SourceStatus::Ok,
+                received_at: t,
+                collected_at: Some(t),
+                duration_ms: Some(10),
+                error_message: None,
+            }],
+            collector_runs: vec![],
+            host_rows: vec![],
+            service_sets: vec![ServiceSet {
+                host: "box-1".into(),
+                collected_at: t,
+                rows: vec![ServiceRow {
+                    service: "cron".into(),
+                    status: ServiceStatus::Up,
+                    health_detail_json: None,
+                    pid: None,
+                    uptime_seconds: None,
+                    last_restart: None,
+                    eps: None,
+                    queue_depth: None,
+                    consumer_lag: None,
+                    drop_count: None,
+                    active_state: Some("active".into()),
+                    sub_state: None,
+                    load_state: None,
+                    unit_file_state: None,
+                    service_manager: None,
+                }],
+            }],
+            sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
+            zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
+            wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
+        };
+        publish_batch(&mut db, &batch).unwrap();
+
+        let manager: String = db
+            .conn
+            .query_row(
+                "SELECT service_manager FROM service_observations
+                 WHERE host='box-1' AND service_name='cron'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(manager, "systemd");
     }
 
     #[test]

@@ -309,6 +309,7 @@ async fn pull_one(source: SourceConfig) -> PullResult {
                             sub_state: s.sub_state.clone(),
                             load_state: s.load_state.clone(),
                             unit_file_state: s.unit_file_state.clone(),
+                            service_manager: s.service_manager.clone(),
                         })
                         .collect(),
                 });

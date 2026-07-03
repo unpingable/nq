@@ -1,0 +1,42 @@
+{
+  "kind": "queue-reconciliation + slice3c-close",
+  "at": "2026-07-03T06:59Z",
+  "reconciliation": {
+    "rule": "a probe always wins over a stale claim — three ratified queue slices were stale survey artifacts",
+    "slice1_scrape_target_provenance": "CLOSED already-shipped: migration 058_scrape_target_provenance.sql + publish.rs persist (collision-guarded) + round-trip test scrape_target_provenance_survives_ingest_and_keys_composition + sql_contract columns. The 2026-06-12 audit finding was repaired by the 058 work itself. No code tonight; baseline workspace suite EXIT=0 is the evidence.",
+    "slice2_silence_unification": "PARKED-INADMISSIBLE on operator ruling: witness pair (smart/zfs_witness_silent) shipped the contract 2026-06-12; the four non-witness detectors (stale_host, stale_service, signal_dropout, log_silence) are HELD per DETECTOR_TAXONOMY §2a (operator-ruled 2026-07-01) pending REGISTRY_PROJECTION/OQ3/OQ4 — tagging tonight would launder a missing registry into fake certainty. Policy tripwire honored; zero mutation.",
+    "slice3a_witness_packet_feed": "CLOSED already-shipped (SERVICE_STATE_WITNESS_SUPPORT_CUTOVER, 2026-07-01): service_state.rs:295 stamps packet identity on supports; refusal->exclusion path present.",
+    "slice3b_served_surface_registry": "CLOSED already-shipped (same cutover): served_surface_registry.rs:322 declares the service_state evaluator.",
+    "park_counter_note": "silence-ladder park counter NOT advanced: these are reconciliation closes/holds (clean verdicts), not execution failures"
+  },
+  "slice3c": {
+    "slice": "docker native state capture into service_observations (the one genuinely open service_state obligation)",
+    "dispatch": {
+      "precondition": "schema 059 CHECK already admits 'docker'; evaluator/projection manager-agnostic; collector systemd-only; publish 5c hardcoded 'systemd'",
+      "intended_evidence": "docker rows persist docker-vocabulary native state under service_manager='docker' with NULL load/unit_file; classifier + e2e + back-compat tests; full workspace suite EXIT=0",
+      "stop_condition": "no migration, no scheduler, no host mutation; process variant stays deferred"
+    },
+    "execute": [
+      "wire: ServiceData/ServiceRow + service_manager (serde-default additive on the wire type; ServiceRow is in-process, no serde)",
+      "collector: SystemdNative -> ManagerNative (manager Some iff active_state Some); pure classify_docker_state (State.Status verbatim; Health.Status as sub only when HEALTHCHECK declared; load/unit_file stay None — restart policy is config, not observed state); coarse ServiceStatus mapping unchanged",
+      "publish 5c: manager parameterized; pre-field wires (native state, no manager) default to systemd rather than dropping testimony",
+      "coverage manifest: +service_state_docker_collector implemented; +service_state_process_collector deferred with rationale",
+      "docs: SERVICE_STATE.md breadcrumb updated; FEATURE_HISTORY § SERVICE_STATE_DOCKER_NATIVE_CAPTURE (incl. vocabulary-collision note: docker's own token spells 'healthy'; boundary is structural, not lexical)"
+    ],
+    "evidence_verdict": "PASS — cargo test --workspace --locked EXIT=0 (bare, background task, real exit code), all targets 0 failed; CI floor scripts gap-status/coverage-manifest/witness-boundaries/nq-receipts all EXIT=0",
+    "codex_review": {
+      "invocation": "codex exec gpt-5.5, read-only sandbox, approval=never, diff+design inlined (bwrap sandbox cannot read the repo here)",
+      "findings": [
+        "1 P1 ServiceRow missing serde(default): REFUTED with evidence — ServiceRow derives only Debug,Clone (batch.rs:155), never crosses serde; the wire type ServiceData carries serde(default)",
+        "2 P1 rolling-upgrade namespace corruption (old aggregator + new witness docker rows land as systemd): ACCEPTED as named deploy-ordering constraint in FEATURE_HISTORY — aggregator deploys first; standard canary order already satisfies it",
+        "3 P2 unwrap_or(systemd) masks future collector bugs: ACCEPTED as named transitional risk with retirement condition (tighten once fleet past this commit); the default is what makes new-aggregator+old-witness safe",
+        "4 P2 publish seam doesn't enforce per-manager NULL shape: REJECTED for tonight — verbatim-testimony posture; shape policing is a schema/CHECK policy choice, filed as candidate hardening in FEATURE_HISTORY, not decided overnight",
+        "5 P3 two docker inspects can quote a state/health pair that never coexisted: FIXED — single atomic inspect with {{if .State.Health}} guard (template verified against a live container)",
+        "6 P3 docker e2e never asserts the claim names docker: FIXED — claim must start 'docker reported', not contain 'systemd', subject box-1/docker:caddy-proxy"
+      ],
+      "net": "1 real capture-atomicity fix + 1 test hardening applied; 2 constraints named in the ledger; 1 refuted with evidence; 1 rejected as policy"
+    },
+    "standing_verdict": "PASS — queue slice3c, completeness repair of an already-admitted surface (named deferred obligation of shipped SERVICE_STATE slices); no policy choice taken (the two policy-shaped findings were filed, not decided)"
+  },
+  "next_action": "commit + push checkpoint (operator cleared overnight push), then stretch: blackbox Bucket 1 promotion re-check (provenance blocker was already gone; infra gate no exporter/nq-serve likely still stands — verify, then promote or park with receipt)"
+}
