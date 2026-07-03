@@ -10,6 +10,7 @@ pub mod dns;
 pub mod dns_state_witness_projection;
 pub mod export;
 pub mod finding_meta;
+pub mod frame;
 pub mod import;
 pub mod fleet;
 pub mod liveness;
@@ -102,4 +103,7 @@ pub use service_state::{
 pub use views::{
     host_detail, host_evidence_standing, host_states, overview, HostDetailVm, HostEvidenceStanding,
     HostFreshnessVm, HostStateVm, OverviewVm, HOST_STATE_STALE_THRESHOLD_SECONDS,
+};
+pub use frame::{
+    host_now_frame, ClaimClass, FrameState, HumanNowFrame, OperatorPosture, WitnessBinding,
 };

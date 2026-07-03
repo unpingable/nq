@@ -94,6 +94,7 @@ pub fn router(db: Db) -> Router {
         .route("/api/findings", get(api_findings))
         .route("/api/host/{name}", get(api_host))
         .route("/api/host/{name}/history", get(api_host_history))
+        .route("/api/frame/host/{name}", get(api_frame_host))
         .route("/api/query", get(api_query))
         .route("/api/preflight/disk-state/{host}", get(api_preflight_disk_state))
         .route("/api/preflight/ingest-state", get(api_preflight_ingest_state))
@@ -222,6 +223,30 @@ async fn api_host(State(db): State<Db>, Path(name): Path<String>) -> Json<serde_
                 body["disk_state_preflight"] = p;
             }
             Json(body)
+        }
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+/// Host Human Now Frame as JSON. A derived render artifact (never an evidence
+/// feed): agents/nightshift should read the raw witness/finding surfaces, not
+/// this composed frame. See docs/working/gaps/HUMAN_NOW_FRAME_SCOPE.md.
+async fn api_frame_host(State(db): State<Db>, Path(name): Path<String>) -> Json<serde_json::Value> {
+    let db = db.lock().await;
+    match overview(&db) {
+        Ok(vm) => {
+            let freshness = vm.host_freshness.iter().find(|f| f.host == name);
+            match vm.hosts.iter().find(|h| h.host == name) {
+                Some(h) => {
+                    let now = time::OffsetDateTime::now_utc();
+                    let frame = nq_db::host_now_frame(h, freshness, &vm.warnings, now);
+                    Json(
+                        serde_json::to_value(&frame)
+                            .unwrap_or_else(|e| serde_json::json!({"error": e.to_string()})),
+                    )
+                }
+                None => Json(serde_json::json!({"error": "host not found"})),
+            }
         }
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),
     }
@@ -1269,6 +1294,110 @@ fn render_host_freshness(freshness: Option<&nq_db::HostFreshnessVm>, display_sta
     )
 }
 
+/// Render one Human Now Frame card (Host V0). The two-clock standing reuses
+/// `render_host_freshness` so the frame never re-derives C2 authority — it
+/// composes over it. Stale / unbound states carry a distinct, non-green/red
+/// treatment (the whole point: stale green must not read as healthy green).
+fn render_now_frame_card(
+    frame: &nq_db::HumanNowFrame,
+    freshness: Option<&nq_db::HostFreshnessVm>,
+    display_stale: bool,
+) -> String {
+    use nq_db::FrameState;
+
+    let state_class = match frame.frame_state {
+        FrameState::Coherent => "frame-coherent",
+        FrameState::Settling => "frame-settling",
+        FrameState::Stale => "frame-stale",
+        FrameState::Split => "frame-split",
+        FrameState::Unbound => "frame-unbound",
+        FrameState::Unknown => "frame-unknown",
+    };
+
+    let two_clock = render_host_freshness(freshness, display_stale);
+
+    let skew = frame
+        .witness_skew_s
+        .map(|s| format!("{s}s"))
+        .unwrap_or_else(|| "—".to_string());
+    let freshness_range = match (frame.oldest_relevant_witness_at.is_some(), frame.witness_skew_s) {
+        (true, Some(_)) => {
+            let n = frame.supporting_witnesses.len().max(frame.stale_witnesses.len());
+            format!("{n} witness(es) · skew {skew}")
+        }
+        _ => "no bound witnesses".to_string(),
+    };
+
+    // Why the frame binds or fails to bind — a plain operator-legible line.
+    let why = match frame.frame_state {
+        FrameState::Coherent => {
+            "Binds: host readout is admissible within the binding window.".to_string()
+        }
+        FrameState::Stale => format!(
+            "Does not bind as current: host readout is older than the {}s binding window.",
+            frame.binding_window_s
+        ),
+        FrameState::Unbound => {
+            "Does not bind: no admissible observation timestamp for the host readout.".to_string()
+        }
+        _ => String::new(),
+    };
+    let why_html = if why.is_empty() {
+        String::new()
+    } else {
+        format!("<div class=\"frame-why\">{}</div>", escape_html(&why))
+    };
+
+    let cannot_infer = if frame.cannot_infer.is_empty() {
+        String::new()
+    } else {
+        let items: String = frame
+            .cannot_infer
+            .iter()
+            .map(|c| format!("<li>{}</li>", escape_html(c)))
+            .collect();
+        format!("<div class=\"frame-label\">Cannot infer</div><ul class=\"frame-list\">{items}</ul>")
+    };
+
+    let receipts = if frame.receipt_refs.is_empty() {
+        String::new()
+    } else {
+        let links: String = frame
+            .receipt_refs
+            .iter()
+            .map(|r| {
+                format!(
+                    "<a href=\"{r}\" class=\"frame-receipt\">{r}</a>",
+                    r = escape_html(r)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" · ");
+        format!("<div class=\"frame-label\">Receipts</div><div class=\"frame-receipts\">{links}</div>")
+    };
+
+    format!(
+        "<div class=\"frame-card {state_class}\">\
+           <div class=\"frame-head\">\
+             <span class=\"frame-subject\">{subject}</span>\
+             <span class=\"frame-state\">{state}</span>\
+             <span class=\"frame-posture\">posture: {posture}</span>\
+           </div>\
+           <div class=\"frame-claim\">{claim} <span class=\"frame-class\">[{class}]</span></div>\
+           {two_clock}\
+           <div class=\"frame-meta\">{freshness_range}</div>\
+           {why_html}\
+           {cannot_infer}\
+           {receipts}\
+         </div>",
+        subject = escape_html(&frame.subject_id),
+        state = escape_html(frame.frame_state.label()),
+        posture = escape_html(frame.operator_posture.label()),
+        claim = escape_html(&frame.composed_claim),
+        class = escape_html(frame.claim_class.label()),
+    )
+}
+
 pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm]) -> String {
     let gen_line = match (&vm.generation_id, &vm.generation_status, &vm.generation_age_s) {
         (Some(id), Some(status), Some(age)) => {
@@ -1720,6 +1849,21 @@ pub fn render_overview(vm: &nq_db::OverviewVm, host_states: &[nq_db::HostStateVm
         })
         .collect();
 
+    // Human Now Frame (Host V0): one composed present-tense card per host,
+    // derived from the C2 host standing already joined above. A frame is a
+    // render artifact, not primary evidence. See
+    // docs/working/gaps/HUMAN_NOW_FRAME_SCOPE.md.
+    let frame_now = time::OffsetDateTime::now_utc();
+    let frame_cards: String = vm
+        .hosts
+        .iter()
+        .map(|h| {
+            let freshness = freshness_by_host.get(h.host.as_str()).copied();
+            let frame = nq_db::host_now_frame(h, freshness, &vm.warnings, frame_now);
+            render_now_frame_card(&frame, freshness, h.stale)
+        })
+        .collect();
+
     let db_rows: String = vm
         .sqlite_dbs
         .iter()
@@ -1777,6 +1921,30 @@ body {{ font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; backgro
 .header .gen {{ color: #8b949e; font-size: 13px; }}
 .masthead-summary {{ margin-left: auto; text-align: right; color: #8b949e; font-size: 12px; line-height: 1.5; }}
 .masthead-line {{ white-space: nowrap; }}
+
+/* Human Now Frame cards (Host V0). A frame is a composed render, not evidence;
+   the left border encodes frame state without collapsing to green/red. */
+.frame-note {{ color: #8b949e; font-size: 12px; margin: 4px 0 12px; max-width: 70ch; line-height: 1.5; }}
+.frame-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; margin-bottom: 24px; }}
+.frame-card {{ background: #161b22; border: 1px solid #30363d; border-left-width: 4px; border-radius: 6px; padding: 12px 14px; font-size: 13px; }}
+.frame-coherent {{ border-left-color: #3fb950; }}
+.frame-stale {{ border-left-color: #d29922; }}
+.frame-unbound {{ border-left-color: #484f58; }}
+.frame-settling {{ border-left-color: #58a6ff; }}
+.frame-split {{ border-left-color: #da3633; }}
+.frame-unknown {{ border-left-color: #484f58; }}
+.frame-head {{ display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }}
+.frame-subject {{ color: #f0f6fc; font-weight: 600; font-size: 14px; }}
+.frame-state {{ color: #c9d1d9; font-size: 12px; }}
+.frame-posture {{ margin-left: auto; color: #8b949e; font-size: 11px; }}
+.frame-claim {{ color: #c9d1d9; line-height: 1.5; margin-bottom: 8px; }}
+.frame-class {{ color: #8b949e; font-size: 11px; }}
+.frame-meta {{ color: #8b949e; font-size: 11px; margin: 6px 0; }}
+.frame-why {{ color: #8b949e; font-size: 12px; margin: 6px 0; }}
+.frame-label {{ color: #8b949e; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; margin-top: 8px; }}
+.frame-list {{ margin: 2px 0 0 16px; color: #8b949e; font-size: 12px; }}
+.frame-receipts {{ margin-top: 2px; }}
+.frame-receipt {{ color: #58a6ff; font-size: 11px; }}
 
 .layout {{ display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 48px); }}
 html.sidebar-collapsed .layout {{ grid-template-columns: 36px 1fr; }}
@@ -1925,6 +2093,12 @@ tr.sev-info .sev-dot::after {{ content: '●'; }}
 {meta_section}
 
 {host_state_section}
+
+<h2>Human Now Frames</h2>
+<div class="frame-note">A composed present-tense operational claim per host — a derived render over delayed witnesses, not primary evidence. Stale or unbindable evidence renders as such, never as current health. Every frame drills down to its receipts.</div>
+<div class="frame-grid">
+{frame_cards}
+</div>
 
 <h2>Hosts</h2>
 <table>
