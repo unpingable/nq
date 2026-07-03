@@ -1,0 +1,32 @@
+{
+  "kind": "overnight-mandate-open + slice0-close",
+  "at": "2026-07-03T06:38Z",
+  "mandate": {
+    "source": "operator-approved plan 2026-07-03 (~/.claude/plans/linear-honking-prism.md), ratified via AskUserQuestion",
+    "queue": [
+      "slice0: CI-floor gap-status repair (EVIDENCE_FORGETTING pointer)",
+      "slice1: scrape-target provenance persistence (operator decision: WIRE IT)",
+      "slice2a-2f: SILENCE_UNIFICATION legacy-detector migrations onto shared envelope (additive only)",
+      "slice3a-3c: service_state deferred completeness (witness_packet feed, served_surface_registry, docker native capture)",
+      "stretch: blackbox Bucket 1 probe promotion (only if queue lands green)"
+    ],
+    "not_authorized": "WITNESS_CLAIM_SCOPE migration; C2 dual-marker follow-ons; basis-stale audit; anything Lane B/C; new gap authoring",
+    "review": "codex blind review per code slice (read-only, sources inlined); evidence verdict = bare exit codes; standing verdict = queue match",
+    "push": "ALLOWED (operator cleared overnight 2026-07-03); batch at clean checkpoints only, never mid-slice, never red floor",
+    "forbidden": "deploy, host mutation, SSH writes, new external services",
+    "stop": "silence ladder: same failure twice -> park slice; two consecutive parked slices -> stop loop, morning report"
+  },
+  "slice0": {
+    "slice": "CI-floor gap-status repair",
+    "dispatch": {
+      "precondition": "FEATURE_HISTORY.md § NQ_CLOSE_002_SLICE_A exists (verified, line 64); check_gap_status.sh exit 1 on EVIDENCE_FORGETTING_GAP.md",
+      "intended_evidence": "check_gap_status.sh exit 0",
+      "stop_condition": "one doc file only"
+    },
+    "execute": "EVIDENCE_FORGETTING_GAP.md Slice A paragraph trimmed to a FEATURE_HISTORY § NQ_CLOSE_002_SLICE_A pointer (per the check's own repair guidance); Last updated bumped",
+    "evidence_verdict": "PASS — bash scripts/check_gap_status.sh EXIT=0 (bare, observed)",
+    "codex_review": "SKIPPED with cause: doc-only pointer trim, mechanical acceptance; codex partition covers code-shaped diffs",
+    "standing_verdict": "PASS — queue slice0, doc/code reconciliation class, local-only"
+  },
+  "next_action": "slice1: scrape-target provenance persistence (verify CURRENT_SCHEMA_VERSION before numbering the migration)"
+}
