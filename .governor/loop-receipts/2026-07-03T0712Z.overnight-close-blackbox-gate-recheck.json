@@ -1,0 +1,26 @@
+{
+  "kind": "stretch-park + overnight-close",
+  "at": "2026-07-03T07:12Z",
+  "stretch_blackbox_bucket1": {
+    "intended": "re-check the 2026-06-12 park's three preconditions; promote if all cleared",
+    "recheck": [
+      "nq-gap-provenance-not-persisted: CLEARED — migration 058 + publish persist + round-trip test (reconciled earlier tonight, receipt 2026-07-03T0659Z)",
+      "infra-2 live nq-serve: CLEARED — 127.0.0.1:9848 returns 200 (three-host deploys since the park)",
+      "infra-1 live blackbox_exporter: STILL ABSENT — :9115 no response, no process"
+    ],
+    "outcome": "PARKED on the single remaining gate. Standing up blackbox_exporter is a new service on the host — outside tonight's mandate (no deploy / no host mutation / no new external services). Promotion criteria 2,3,5 need the live exporter; writing configs/harness against absent infra is the belief-by-accretion trap the 2026-06-12 park refused.",
+    "gate_map_delta": "3 blockers -> 1. Next: an operator deploy session (install blackbox_exporter, point nq prometheus_targets at it), then Bucket 1 promotion is mechanical per the catalog's 5-criterion path.",
+    "park_counter_note": "clean park on a named external gate, not an execution failure"
+  },
+  "overnight_summary": {
+    "landed": [
+      "slice0 CI-floor gap-status repair (63eec06)",
+      "slice3c docker native-state capture + blind-review fixes (9f04f7f, pushed)"
+    ],
+    "closed_already_shipped": ["slice1 scrape-target provenance (058)", "slice3a witness_packet feed", "slice3b served_surface_registry"],
+    "parked": ["slice2 SILENCE_UNIFICATION (operator hold, DETECTOR_TAXONOMY §2a)", "stretch blackbox Bucket 1 (exporter deploy gate)"],
+    "verdicts": "all evidence verdicts from bare exit codes; full workspace suite EXIT=0 twice (baseline + post-review); CI floor scripts 4/4 EXIT=0; codex blind review on the one code slice (2 fixes applied, 2 constraints named, 1 refuted, 1 rejected-as-policy)",
+    "pushed": "origin/main == 9f04f7f (operator cleared overnight push)"
+  },
+  "next_action": "loop AUDIT/idle. Operator-gated queue for daylight: blackbox_exporter deploy session; deploy of the docker collector to the fleet (aggregator FIRST per the named ordering constraint); the unselected batches (WITNESS_CLAIM_SCOPE, C2 dual-marker follow-ons, basis-stale audit) remain un-opened."
+}
