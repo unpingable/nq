@@ -1,0 +1,41 @@
+{
+  "schema": "nq.inquiry_profile_catalog.v0",
+  "version": "v0",
+  "profiles": [
+    {
+      "schema": "nq.inquiry_profile.v0",
+      "version": "v0",
+      "profile_id": "bounded_tls_cert",
+      "aliases": ["tls-cert"],
+      "question_kind": "tls_certificate_presentation_and_expiry_horizon",
+      "question": "what certificate did these declared endpoints present, and does it validate within the profile's expiry horizon?",
+      "tls_cert": {
+        "collector": "tls_cert_probe",
+        "declared_targets": [
+          {
+            "target_id": "loopback",
+            "host": "127.0.0.1",
+            "port": 443,
+            "sni": "tls-lab.test"
+          }
+        ],
+        "max_targets": 1,
+        "max_concurrency": 1,
+        "per_target_deadline_ms": 500,
+        "total_deadline_ms": 750,
+        "expiry_horizon_days": 30,
+        "validation_policy": "webpki",
+        "vantage": "test-runner"
+      },
+      "coverage": [
+        "Only the predeclared host:port and SNI are acquired; no target discovery or dependency follow-up is authorized."
+      ],
+      "cannot_testify": [
+        {
+          "kind": "consequence_authority",
+          "statement": "This inquiry authorizes no remediation or broader follow-up acquisition."
+        }
+      ]
+    }
+  ]
+}

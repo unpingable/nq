@@ -11,7 +11,7 @@ use nq_core::inquiry::{
     AdmittedInquiryRequestV0, CandidateInquiryPlanV0, InquiryDisposition,
     InquiryEvidenceCoverageV0, InquiryEvidenceReceiptV0, InquiryFindingStateV0, InquiryReceiptV0,
     InquiryRefusal, InquiryRefusalKindV0, InquirySourceSnapshotV0, InquiryStatusV0,
-    InquiryVersionV0, ResolvedInquiryProfileV0, INQUIRY_RECEIPT_SCHEMA_V0,
+    InquiryQuestionV0, InquiryVersionV0, ResolvedInquiryProfileV0, INQUIRY_RECEIPT_SCHEMA_V0,
 };
 use nq_core::GenerationStatus;
 use rusqlite::{params, Connection, DatabaseName, OptionalExtension};
@@ -35,9 +35,25 @@ pub fn execute_report_inquiry(
     {
         bail!("governed inquiry requires a read-only SQLite connection");
     }
+    if resolved_profile.profile.question_kind != InquiryQuestionV0::FindingOperationalActivity {
+        bail!("nq-db only executes the passive report inquiry");
+    }
 
     let request = AdmittedInquiryRequestV0::admit(plan, resolved_profile)
         .context("admitting governed inquiry request")?;
+    let selector = resolved_profile
+        .profile
+        .selector
+        .as_ref()
+        .context("validated report profile is missing its selector")?;
+    let evidence_limit = resolved_profile
+        .profile
+        .evidence_limit
+        .context("validated report profile is missing its evidence limit")?;
+    let max_snapshot_age_seconds = resolved_profile
+        .profile
+        .max_snapshot_age_seconds
+        .context("validated report profile is missing its snapshot age bound")?;
     let as_of = parse_time("plan.as_of", &request.as_of)?;
     let tx = connection
         .unchecked_transaction()
@@ -49,7 +65,6 @@ pub fn execute_report_inquiry(
     // falling back would launder a transitional latest generation into an
     // apparently-current older answer.
     let snapshot = load_latest_snapshot(&tx)?;
-    let selector = &resolved_profile.profile.selector;
     let finding_state = load_finding_state(&tx, &selector.host, &selector.kind, &selector.subject)?;
     let (evidence_receipts, tail_truncated) = match &snapshot {
         Some(snapshot) => load_evidence_tail(
@@ -58,7 +73,7 @@ pub fn execute_report_inquiry(
             &selector.kind,
             &selector.subject,
             snapshot.generation_id,
-            resolved_profile.profile.evidence_limit,
+            evidence_limit,
         )?,
         None => (Vec::new(), false),
     };
@@ -66,7 +81,7 @@ pub fn execute_report_inquiry(
     let evidence_coverage = InquiryEvidenceCoverageV0 {
         matched_current_rows: u64::from(finding_state.is_some()),
         matched_receipt_rows: evidence_receipts.len() as u64,
-        receipt_limit: resolved_profile.profile.evidence_limit,
+        receipt_limit: evidence_limit,
         receipt_tail_truncated: tail_truncated,
         newest_receipt_generation: evidence_receipts.first().map(|r| r.generation_id),
         oldest_receipt_generation: evidence_receipts.last().map(|r| r.generation_id),
@@ -78,7 +93,7 @@ pub fn execute_report_inquiry(
         finding_state.as_ref(),
         &evidence_receipts,
         as_of,
-        resolved_profile.profile.max_snapshot_age_seconds,
+        max_snapshot_age_seconds,
         &mut cannot_testify,
     )?;
     let status = if disposition == InquiryDisposition::CannotTestify {
@@ -97,6 +112,9 @@ pub fn execute_report_inquiry(
         finding_state,
         evidence_receipts,
         evidence_coverage,
+        witness_plan: None,
+        tls_observations: vec![],
+        acquisition: None,
         coverage: resolved_profile.profile.coverage.clone(),
         cannot_testify,
         acquisition_spend: 0,
@@ -639,6 +657,7 @@ mod tests {
             version: InquiryVersionV0::V0,
             profile: "resolver-tail-active".to_string(),
             as_of: "2026-07-11T12:00:00Z".to_string(),
+            targets: vec![],
         }
     }
 

@@ -6,7 +6,10 @@
 
 use crate::cli::InquireCmd;
 use anyhow::Context;
-use nq_core::inquiry::{CandidateInquiryPlanV0, InquiryProfileCatalogV0, InquiryReceiptV0};
+use nq_core::inquiry::{
+    CandidateInquiryPlanV0, InquiryProfileCatalogV0, InquiryQuestionV0, InquiryReceiptV0,
+    InquiryTlsOutcomeV0, InquiryTlsValidationResultV0, ResolvedInquiryProfileV0,
+};
 use std::fmt::Write as _;
 use std::io::Write as _;
 
@@ -41,9 +44,7 @@ pub fn run(cmd: InquireCmd) -> anyhow::Result<()> {
         .resolve(&plan.profile)
         .with_context(|| format!("resolving inquiry profile selector {:?}", plan.profile))?;
 
-    let db = nq_db::open_ro(&cmd.db)
-        .with_context(|| format!("opening NQ database {} read-only", cmd.db.display()))?;
-    let receipt = nq_db::execute_report_inquiry(db.conn(), &resolved, &plan)?;
+    let receipt = execute_inquiry(&cmd, &resolved, &plan)?;
 
     let mut stdout = std::io::stdout().lock();
     if cmd.format == "json" {
@@ -55,6 +56,27 @@ pub fn run(cmd: InquireCmd) -> anyhow::Result<()> {
         stdout.write_all(render_human(&receipt).as_bytes())?;
     }
     Ok(())
+}
+
+fn execute_inquiry(
+    cmd: &InquireCmd,
+    resolved: &ResolvedInquiryProfileV0,
+    plan: &CandidateInquiryPlanV0,
+) -> anyhow::Result<InquiryReceiptV0> {
+    match resolved.profile.question_kind {
+        InquiryQuestionV0::FindingOperationalActivity => {
+            let db_path = cmd
+                .db
+                .as_ref()
+                .context("passive report inquiry requires --db")?;
+            let db = nq_db::open_ro(db_path)
+                .with_context(|| format!("opening NQ database {} read-only", db_path.display()))?;
+            nq_db::execute_report_inquiry(db.conn(), resolved, plan)
+        }
+        InquiryQuestionV0::TlsCertificatePresentationAndExpiryHorizon => {
+            crate::inquiry::execute_tls_cert_inquiry(resolved, plan)
+        }
+    }
 }
 
 fn render_human(receipt: &InquiryReceiptV0) -> String {
@@ -72,33 +94,28 @@ fn render_human(receipt: &InquiryReceiptV0) -> String {
         ),
         ("request digest", receipt.request.request_digest.clone()),
         ("as of", receipt.request.as_of.clone()),
-        (
-            "finding",
-            format!(
-                "{}/{}/{}",
-                receipt.request.selector.host,
-                receipt.request.selector.kind,
-                receipt.request.selector.subject
-            ),
-        ),
     ];
-    match &receipt.source_snapshot {
-        Some(snapshot) => {
-            rows.push(("source generation", snapshot.generation_id.to_string()));
-            rows.push(("source completed", snapshot.completed_at.clone()));
-            rows.push(("source status", snapshot.status.as_str().to_string()));
-            rows.push((
-                "source summary hash",
-                snapshot
-                    .summary_hash
-                    .clone()
-                    .unwrap_or_else(|| "<unsealed>".into()),
-            ));
+    if let Some(selector) = &receipt.request.selector {
+        rows.push((
+            "finding",
+            format!("{}/{}/{}", selector.host, selector.kind, selector.subject),
+        ));
+        match &receipt.source_snapshot {
+            Some(snapshot) => {
+                rows.push(("source generation", snapshot.generation_id.to_string()));
+                rows.push(("source completed", snapshot.completed_at.clone()));
+                rows.push(("source status", snapshot.status.as_str().to_string()));
+                rows.push((
+                    "source summary hash",
+                    snapshot
+                        .summary_hash
+                        .clone()
+                        .unwrap_or_else(|| "<unsealed>".into()),
+                ));
+            }
+            None => rows.push(("source generation", "<unavailable>".into())),
         }
-        None => rows.push(("source generation", "<unavailable>".into())),
-    }
-    rows.extend([
-        (
+        rows.push((
             "evidence receipts",
             format!(
                 "{}{}",
@@ -109,7 +126,46 @@ fn render_human(receipt: &InquiryReceiptV0) -> String {
                     ""
                 }
             ),
-        ),
+        ));
+    } else {
+        rows.push((
+            "requested targets",
+            receipt.request.requested_targets.len().to_string(),
+        ));
+        rows.push((
+            "admitted targets",
+            receipt.request.admitted_targets.len().to_string(),
+        ));
+        if let Some(witness_plan) = &receipt.witness_plan {
+            rows.push(("collector", "tls_cert_probe".to_string()));
+            rows.push((
+                "expiry horizon days",
+                witness_plan.expiry_horizon_days.to_string(),
+            ));
+            rows.push((
+                "witness plan digest",
+                witness_plan.witness_plan_digest.clone(),
+            ));
+        }
+    }
+    if let Some(acquisition) = &receipt.acquisition {
+        rows.push(("DNS attempts", acquisition.dns_attempts.to_string()));
+        rows.push((
+            "connection attempts",
+            acquisition.connection_attempts.to_string(),
+        ));
+        rows.push((
+            "handshakes attempted",
+            acquisition.handshakes_attempted.to_string(),
+        ));
+        rows.push((
+            "handshakes completed",
+            acquisition.handshakes_completed.to_string(),
+        ));
+        rows.push(("wall spend ms", acquisition.wall_ms.to_string()));
+        rows.push(("work-unit spend", acquisition.work_units.to_string()));
+    }
+    rows.extend([
         ("acquisition spend", receipt.acquisition_spend.to_string()),
         (
             "receipt digest",
@@ -133,6 +189,49 @@ fn render_human(receipt: &InquiryReceiptV0) -> String {
         let _ = writeln!(out, "{label:<label_width$} | {value}");
     }
 
+    if !receipt.tls_observations.is_empty() {
+        out.push_str("\nTLS certificate observations\n");
+        for observation in &receipt.tls_observations {
+            let _ = writeln!(
+                out,
+                "- {} | {} | SNI {} | IP {} | {} | acquired {}",
+                observation.target.target_id,
+                observation.target.endpoint(),
+                observation.target.sni,
+                observation.observed_ip.as_deref().unwrap_or("<none>"),
+                tls_outcome_label(&observation.outcome),
+                observation.acquired_at,
+            );
+            let _ = writeln!(
+                out,
+                "  certificate digest: {}",
+                observation.certificate_digest.as_deref().unwrap_or("<none>")
+            );
+            let _ = writeln!(
+                out,
+                "  chain digest: {}",
+                observation.chain_digest.as_deref().unwrap_or("<none>")
+            );
+            let _ = writeln!(
+                out,
+                "  validity: {} to {} | validation {}",
+                observation.not_before.as_deref().unwrap_or("<unknown>"),
+                observation.not_after.as_deref().unwrap_or("<unknown>"),
+                tls_validation_label(&observation.validation_result),
+            );
+            let _ = writeln!(
+                out,
+                "  spend: DNS {} | connect {} | handshake {}/{} | wall {} ms | work {}",
+                observation.spend.dns_attempts,
+                observation.spend.connection_attempts,
+                observation.spend.handshakes_completed,
+                observation.spend.handshakes_attempted,
+                observation.spend.wall_ms,
+                observation.spend.work_units,
+            );
+        }
+    }
+
     out.push_str("\ncoverage\n");
     for statement in &receipt.coverage {
         let _ = writeln!(out, "- {statement}");
@@ -142,6 +241,33 @@ fn render_human(receipt: &InquiryReceiptV0) -> String {
         let _ = writeln!(out, "- {} | {}", refusal.kind.as_str(), refusal.statement);
     }
     out
+}
+
+fn tls_outcome_label(outcome: &InquiryTlsOutcomeV0) -> &'static str {
+    match outcome {
+        InquiryTlsOutcomeV0::ResolutionFailed => "resolution_failed",
+        InquiryTlsOutcomeV0::ConnectionFailed => "connection_failed",
+        InquiryTlsOutcomeV0::TlsHandshakeFailed => "tls_handshake_failed",
+        InquiryTlsOutcomeV0::NoCertificatePresented => "no_certificate_presented",
+        InquiryTlsOutcomeV0::NameMismatch => "name_mismatch",
+        InquiryTlsOutcomeV0::ChainInvalid => "chain_invalid",
+        InquiryTlsOutcomeV0::ExpiredUnderAcquisitionClock => {
+            "expired_under_acquisition_clock"
+        }
+        InquiryTlsOutcomeV0::ValidNowButExpiresWithinHorizon => {
+            "valid_now_but_expires_within_horizon"
+        }
+        InquiryTlsOutcomeV0::ValidBeyondExpiryHorizon => "valid_beyond_expiry_horizon",
+        InquiryTlsOutcomeV0::AcquisitionBoundRefused => "acquisition_bound_refused",
+    }
+}
+
+fn tls_validation_label(validation: &InquiryTlsValidationResultV0) -> String {
+    match validation {
+        InquiryTlsValidationResultV0::Valid => "valid".to_string(),
+        InquiryTlsValidationResultV0::Invalid { reason } => format!("invalid ({reason})"),
+        InquiryTlsValidationResultV0::NotAttempted => "not_attempted".to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -170,12 +296,14 @@ mod tests {
                 },
                 question_kind: InquiryQuestionV0::FindingOperationalActivity,
                 question: "q".into(),
-                selector: FindingSelectorV0 {
+                selector: Some(FindingSelectorV0 {
                     host: "resolver".into(),
                     kind: "pending_aged_tail".into(),
                     subject: "".into(),
-                },
+                }),
                 as_of: "2001-02-03T04:05:06Z".into(),
+                requested_targets: vec![],
+                admitted_targets: vec![],
                 request_digest: "sha256:r".into(),
             },
             source_snapshot: None,
@@ -189,6 +317,9 @@ mod tests {
                 newest_receipt_generation: None,
                 oldest_receipt_generation: None,
             },
+            witness_plan: None,
+            tls_observations: vec![],
+            acquisition: None,
             coverage: vec!["bounded".into()],
             cannot_testify: vec![],
             acquisition_spend: 0,
@@ -198,5 +329,41 @@ mod tests {
         let b = render_human(&receipt);
         assert_eq!(a, b);
         assert!(a.contains("2001-02-03T04:05:06Z"));
+    }
+
+    #[test]
+    fn active_dispatch_never_opens_even_a_supplied_db_path() {
+        let mut catalog: InquiryProfileCatalogV0 = serde_json::from_str(include_str!(
+            "../../../nq-core/tests/fixtures/tls_cert_probe.profile_catalog.v0.json"
+        ))
+        .unwrap();
+        catalog.profiles[0].tls_cert.as_mut().unwrap().declared_targets[0].host =
+            "fixture.test".into();
+        let resolved = catalog.resolve("tls-cert").unwrap();
+        let plan = CandidateInquiryPlanV0 {
+            schema: nq_core::inquiry::INQUIRY_PLAN_SCHEMA_V0.into(),
+            version: InquiryVersionV0::V0,
+            profile: "tls-cert".into(),
+            as_of: "2026-07-11T12:00:00Z".into(),
+            targets: vec![],
+        };
+        let cmd = InquireCmd {
+            db: Some("/definitely/missing/nq.db".into()),
+            plan: "/unused/plan.json".into(),
+            profile_catalog: "/unused/catalog.json".into(),
+            format: "json".into(),
+        };
+
+        let receipt = execute_inquiry(&cmd, &resolved, &plan).unwrap();
+        assert_eq!(
+            receipt.tls_observations[0].outcome,
+            InquiryTlsOutcomeV0::AcquisitionBoundRefused
+        );
+        let human = render_human(&receipt);
+        assert!(human.contains("DNS attempts"));
+        assert!(human.contains("certificate digest"));
+        assert!(human.contains("chain digest"));
+        assert!(human.contains("validation not_attempted"));
+        assert!(human.contains("wall spend ms"));
     }
 }

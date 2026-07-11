@@ -20,7 +20,7 @@
 //! a typed verdict from the pure core).
 
 use std::io::Write;
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -36,6 +36,18 @@ use crate::tls_cert_probe::{
     TlsCertFacts, TlsCertPolicy, TlsCertProbeReceipt, TlsCertTarget,
 };
 
+/// Instrumentation returned to the governed-inquiry executor in addition to
+/// the established probe receipt. It makes attempted stages and exact raw DER
+/// custody explicit without changing the existing probe wire format.
+pub struct BoundedTlsCertProbeResult {
+    pub receipt: TlsCertProbeReceipt,
+    pub connection_attempted: bool,
+    pub handshake_attempted: bool,
+    pub deadline_exhausted: bool,
+    pub leaf_der_digest: Option<String>,
+    pub chain_der_digest: Option<String>,
+}
+
 /// Probe one TLS surface and return its receipt. Always returns a receipt:
 /// delivery failures (DNS / TCP / handshake) are encoded as facts and turned
 /// into the corresponding negative verdict by the pure core, never lost.
@@ -49,55 +61,116 @@ pub fn probe_tls_cert(
     now: OffsetDateTime,
 ) -> TlsCertProbeReceipt {
     let started = Instant::now();
-    let timeout_ms = timeout.as_millis() as u64;
+    let deadline = started.checked_add(timeout).unwrap_or(started);
+    let timeout_ms = timeout.as_millis().min(u64::MAX as u128) as u64;
 
     // --- DNS ---
-    let addrs: Vec<std::net::SocketAddr> = match (host, port).to_socket_addrs() {
+    let addrs: Vec<SocketAddr> = match (host, port).to_socket_addrs() {
         Ok(it) => it.collect(),
         Err(_) => Vec::new(),
     };
     let dns_answers: Vec<String> = addrs.iter().map(|a| a.ip().to_string()).collect();
 
-    let fail = |delivery: DeliveryBasis, elapsed_ms: Option<u64>| {
-        let facts = TlsCertFacts {
-            delivery,
-            response_horizon: ResponseHorizon { timeout_ms, elapsed_ms },
-            presented_chain: vec![],
-            validation: ChainValidation::NotAttempted,
-        };
-        finish(target, &facts, policy, clock, now)
-    };
-
     let Some(addr) = addrs.first().copied() else {
-        return fail(
+        return failed_receipt(
+            target,
+            policy,
+            clock,
+            now,
             DeliveryBasis { dns_answers, tcp_connected: false, tls_handshake_completed: false },
-            Some(started.elapsed().as_millis() as u64),
+            timeout_ms,
+            started,
         );
     };
 
+    probe_tls_cert_resolved(
+        addr,
+        dns_answers,
+        target,
+        policy,
+        started,
+        deadline,
+        timeout_ms,
+        clock,
+        now,
+    )
+    .receipt
+}
+
+/// Probe one already-resolved TLS surface under one absolute acquisition
+/// deadline. The caller owns the single DNS resolution and selected address;
+/// this function performs at most one TCP connect and one TLS handshake, with
+/// no fallback address or retry. `started` and `deadline` must belong to the
+/// same monotonic-clock acquisition envelope.
+pub fn probe_tls_cert_resolved(
+    addr: SocketAddr,
+    dns_answers: Vec<String>,
+    target: &TlsCertTarget,
+    policy: &TlsCertPolicy,
+    started: Instant,
+    deadline: Instant,
+    declared_timeout_ms: u64,
+    clock: &ClockBasis,
+    now: OffsetDateTime,
+) -> BoundedTlsCertProbeResult {
+    let fail = |delivery: DeliveryBasis| {
+        failed_receipt(target, policy, clock, now, delivery, declared_timeout_ms, started)
+    };
+
     // --- TCP ---
-    let mut sock = match TcpStream::connect_timeout(&addr, timeout) {
+    let Some(connect_timeout) = remaining_until(deadline) else {
+        return BoundedTlsCertProbeResult {
+            receipt: fail(DeliveryBasis {
+                dns_answers,
+                tcp_connected: false,
+                tls_handshake_completed: false,
+            }),
+            connection_attempted: false,
+            handshake_attempted: false,
+            deadline_exhausted: true,
+            leaf_der_digest: None,
+            chain_der_digest: None,
+        };
+    };
+    let mut sock = match TcpStream::connect_timeout(&addr, connect_timeout) {
         Ok(s) => s,
         Err(_) => {
-            return fail(
-                DeliveryBasis { dns_answers, tcp_connected: false, tls_handshake_completed: false },
-                Some(started.elapsed().as_millis() as u64),
-            );
+            return BoundedTlsCertProbeResult {
+                receipt: fail(DeliveryBasis {
+                    dns_answers,
+                    tcp_connected: false,
+                    tls_handshake_completed: false,
+                }),
+                connection_attempted: true,
+                handshake_attempted: false,
+                deadline_exhausted: Instant::now() >= deadline,
+                leaf_der_digest: None,
+                chain_der_digest: None,
+            };
         }
     };
-    let _ = sock.set_read_timeout(Some(timeout));
-    let _ = sock.set_write_timeout(Some(timeout));
 
     // --- TLS handshake (observe-only) ---
-    let chain = match observe_chain(&mut sock, &target.sni) {
+    let chain = match observe_chain(&mut sock, &target.sni, deadline) {
         Ok(c) => c,
         Err(_) => {
-            return fail(
-                DeliveryBasis { dns_answers, tcp_connected: true, tls_handshake_completed: false },
-                Some(started.elapsed().as_millis() as u64),
-            );
+            return BoundedTlsCertProbeResult {
+                receipt: fail(DeliveryBasis {
+                    dns_answers,
+                    tcp_connected: true,
+                    tls_handshake_completed: false,
+                }),
+                connection_attempted: true,
+                handshake_attempted: true,
+                deadline_exhausted: Instant::now() >= deadline,
+                leaf_der_digest: None,
+                chain_der_digest: None,
+            };
         }
     };
+
+    let leaf_der_digest = chain.first().map(|der| digest_der(der));
+    let chain_der_digest = (!chain.is_empty()).then(|| digest_der_parts(&chain));
 
     let presented_chain: Vec<PresentedCert> = chain
         .iter()
@@ -112,13 +185,69 @@ pub fn probe_tls_cert(
     let facts = TlsCertFacts {
         delivery: DeliveryBasis { dns_answers, tcp_connected: true, tls_handshake_completed: true },
         response_horizon: ResponseHorizon {
-            timeout_ms,
-            elapsed_ms: Some(started.elapsed().as_millis() as u64),
+            timeout_ms: declared_timeout_ms,
+            elapsed_ms: Some(elapsed_ms(started)),
         },
         presented_chain,
         validation,
     };
+    BoundedTlsCertProbeResult {
+        receipt: finish(target, &facts, policy, clock, now),
+        connection_attempted: true,
+        handshake_attempted: true,
+        deadline_exhausted: false,
+        leaf_der_digest,
+        chain_der_digest,
+    }
+}
+
+fn digest_der_parts(parts: &[Vec<u8>]) -> String {
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part);
+    }
+    format!("sha256:{}", hex_lower(&hasher.finalize()))
+}
+
+fn digest_der(der: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(der);
+    format!("sha256:{}", hex_lower(&hasher.finalize()))
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn failed_receipt(
+    target: &TlsCertTarget,
+    policy: &TlsCertPolicy,
+    clock: &ClockBasis,
+    now: OffsetDateTime,
+    delivery: DeliveryBasis,
+    timeout_ms: u64,
+    started: Instant,
+) -> TlsCertProbeReceipt {
+    let facts = TlsCertFacts {
+        delivery,
+        response_horizon: ResponseHorizon {
+            timeout_ms,
+            elapsed_ms: Some(elapsed_ms(started)),
+        },
+        presented_chain: vec![],
+        validation: ChainValidation::NotAttempted,
+    };
     finish(target, &facts, policy, clock, now)
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().min(u64::MAX as u128) as u64
+}
+
+fn remaining_until(deadline: Instant) -> Option<Duration> {
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    (!remaining.is_zero()).then_some(remaining)
 }
 
 /// Validate the OBSERVED chain under WebPKI against the bundled
@@ -195,7 +324,11 @@ fn finish(
 /// each certificate the server presented (leaf first). Accept-all is what
 /// lets us observe an expired/untrusted chain instead of having the
 /// handshake abort before we can witness it.
-fn observe_chain(sock: &mut TcpStream, sni: &str) -> anyhow::Result<Vec<Vec<u8>>> {
+fn observe_chain(
+    sock: &mut TcpStream,
+    sni: &str,
+    deadline: Instant,
+) -> anyhow::Result<Vec<Vec<u8>>> {
     use rustls::pki_types::ServerName;
 
     let provider = Arc::new(rustls::crypto::ring::default_provider());
@@ -214,11 +347,28 @@ fn observe_chain(sock: &mut TcpStream, sni: &str) -> anyhow::Result<Vec<Vec<u8>>
     let mut conn = rustls::ClientConnection::new(Arc::new(config), server_name)
         .context("rustls client connection")?;
 
-    // Drive IO until the handshake completes. Capped so a wedged peer cannot
-    // spin forever inside the response horizon.
+    // Drive rustls one socket operation at a time so every blocking read or
+    // write receives a freshly recomputed absolute-deadline remainder.
     let mut rounds = 0;
     while conn.is_handshaking() {
-        conn.complete_io(sock).context("tls handshake io")?;
+        while conn.wants_write() {
+            let remaining = remaining_until(deadline)
+                .ok_or_else(|| anyhow!("TLS handshake acquisition deadline elapsed"))?;
+            sock.set_write_timeout(Some(remaining))
+                .context("set TLS handshake write deadline")?;
+            conn.write_tls(sock).context("tls handshake write")?;
+        }
+        if conn.is_handshaking() {
+            let remaining = remaining_until(deadline)
+                .ok_or_else(|| anyhow!("TLS handshake acquisition deadline elapsed"))?;
+            sock.set_read_timeout(Some(remaining))
+                .context("set TLS handshake read deadline")?;
+            if conn.read_tls(sock).context("tls handshake read")? == 0 {
+                return Err(anyhow!("TLS peer closed during handshake"));
+            }
+            conn.process_new_packets()
+                .context("tls handshake packet processing")?;
+        }
         rounds += 1;
         if rounds > 16 {
             return Err(anyhow!("handshake did not converge"));
@@ -318,6 +468,66 @@ impl rustls::client::danger::ServerCertVerifier for ObserveOnlyVerifier {
 mod tests {
     use super::*;
 
+    #[test]
+    fn resolved_probe_uses_absolute_handshake_deadline_without_retry() {
+        let listener = match std::net::TcpListener::bind("127.0.0.1:0") {
+            Ok(listener) => listener,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+            Err(error) => panic!("bind loopback TLS fixture: {error}"),
+        };
+        let observer = listener.try_clone().unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = observer.accept().unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+            drop(stream);
+        });
+        let target = TlsCertTarget {
+            target: addr.to_string(),
+            sni: "bounded.test".to_string(),
+            vantage: "loopback-test".to_string(),
+        };
+        let policy = TlsCertPolicy {
+            expected_names: vec!["bounded.test".to_string()],
+            warning_threshold_days: 14,
+            validation_policy: crate::tls_cert_probe::ValidationPolicy::Webpki,
+        };
+        let clock = ClockBasis {
+            source: "injected_test_clock".to_string(),
+            ntp_status: "unknown".to_string(),
+        };
+        let started = Instant::now();
+        // Reserve 10 ms of the declared target horizon for caller-side
+        // mapping/sealing, as the governed executor does.
+        let deadline = started.checked_add(Duration::from_millis(15)).unwrap();
+
+        let result = probe_tls_cert_resolved(
+            addr,
+            vec![addr.ip().to_string()],
+            &target,
+            &policy,
+            started,
+            deadline,
+            25,
+            &clock,
+            OffsetDateTime::from_unix_timestamp(0).unwrap(),
+        );
+        let returned_after = started.elapsed();
+        let receipt = result.receipt;
+
+        assert!(result.connection_attempted);
+        assert!(result.handshake_attempted);
+        assert!(result.deadline_exhausted);
+        assert!(receipt.delivery_basis.tcp_connected);
+        assert!(!receipt.delivery_basis.tls_handshake_completed);
+        assert_eq!(receipt.response_horizon.timeout_ms, 25);
+        assert!(receipt.response_horizon.elapsed_ms.unwrap() <= 25);
+        assert!(returned_after < Duration::from_millis(50), "returned after {returned_after:?}");
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(listener.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        server.join().unwrap();
+    }
+
     /// The real nq.neutral.zone leaf (captured 2026-06-19). Parsing is a pure
     /// function of these bytes — the test pins the parser, not liveness.
     const NQ_LEAF_PEM: &str = "-----BEGIN CERTIFICATE-----
@@ -374,10 +584,18 @@ ocyaPWz6N9u7AFEOjxt/pNUTy6rNwi0qmuYoIr3lN2c6oW7bpzOAukKy7VdfNUYT
 
     #[test]
     fn fingerprint_is_colon_hex_sha256() {
-        let c = parse_presented_cert(&nq_leaf_der()).unwrap();
+        let der = nq_leaf_der();
+        let c = parse_presented_cert(&der).unwrap();
         // 32 bytes -> 32 colon-separated hex pairs.
         assert_eq!(c.sha256_fingerprint.split(':').count(), 32);
         assert!(c.sha256_fingerprint.chars().all(|ch| ch.is_ascii_hexdigit() || ch == ':'));
+        assert_eq!(
+            digest_der(&der),
+            format!(
+                "sha256:{}",
+                c.sha256_fingerprint.replace(':', "").to_ascii_lowercase()
+            )
+        );
     }
 
     #[test]

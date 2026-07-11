@@ -6,6 +6,7 @@ mod declared_deny_transport;
 mod gateway_path_probe;
 mod gateway_path_transport;
 mod http;
+mod inquiry;
 mod lease_presence_probe;
 mod lease_presence_transport;
 mod nq_evaluator_probe;
