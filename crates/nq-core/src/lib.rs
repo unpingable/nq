@@ -2,6 +2,7 @@ pub mod batch;
 pub mod claim_registry;
 pub mod config;
 pub mod humanize;
+pub mod inquiry;
 pub mod preflight;
 pub mod receipt;
 pub mod receipt_check;
@@ -21,6 +22,15 @@ pub use config::{
     RetentionConfig, SmartWitnessConfig, SourceConfig, ZfsWitnessConfig,
 };
 pub use humanize::humanize_duration_s;
+pub use inquiry::{
+    resolve_profile, AdmittedInquiryRequestV0, CandidateInquiryPlanV0, FindingSelectorV0,
+    InquiryDisposition, InquiryEvidenceCoverageV0, InquiryEvidenceReceiptV0,
+    InquiryFindingStateV0, InquiryProfileBindingV0, InquiryProfileCatalogV0, InquiryProfileV0,
+    InquiryQuestionV0, InquiryReceiptV0, InquiryRefusal, InquiryRefusalKindV0,
+    InquirySourceSnapshotV0, InquiryStatusV0, InquiryValidationError, InquiryVersionV0,
+    ResolvedInquiryProfileV0, INQUIRY_PLAN_SCHEMA_V0, INQUIRY_PROFILE_CATALOG_SCHEMA_V0,
+    INQUIRY_PROFILE_SCHEMA_V0, INQUIRY_RECEIPT_SCHEMA_V0, INQUIRY_REQUEST_SCHEMA_V0,
+};
 pub use preflight::{
     disk_state_cannot_testify, sqlite_wal_state_cannot_testify, ClaimKind, PreflightCoverage,
     PreflightExclusion, PreflightResult, PreflightSupport, PreflightTarget, Verdict,

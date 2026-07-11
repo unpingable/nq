@@ -1,0 +1,42 @@
+{
+  "schema": "nq.inquiry_profile_catalog.v0",
+  "version": "v0",
+  "profiles": [
+    {
+      "schema": "nq.inquiry_profile.v0",
+      "version": "v0",
+      "profile_id": "resolver_pending_aged_tail",
+      "aliases": [
+        "resolver-pending-aged-tail",
+        "resolver-tail-active"
+      ],
+      "question_kind": "finding_operational_activity",
+      "question": "is the resolver pending-aged tail still operationally active, and what can current evidence not testify about?",
+      "selector": {
+        "host": "resolver",
+        "kind": "pending_aged_tail",
+        "subject": ""
+      },
+      "max_snapshot_age_seconds": 300,
+      "evidence_limit": 32,
+      "coverage": [
+        "Exact-match NQ finding lifecycle state for (resolver, pending_aged_tail, empty subject) at the carried source generation.",
+        "Existing admitted finding-observation receipts for that exact identity, bounded to the newest 32 rows."
+      ],
+      "cannot_testify": [
+        {
+          "kind": "consequence_authority",
+          "statement": "This inquiry does not authorize restart, failover, paging, closure, or any other operational consequence."
+        },
+        {
+          "kind": "future_state",
+          "statement": "The carried snapshot cannot testify that the finding remains active after the frozen as_of time."
+        },
+        {
+          "kind": "root_cause",
+          "statement": "Finding lifecycle and observation receipts do not establish the root cause of the pending-aged tail."
+        }
+      ]
+    }
+  ]
+}

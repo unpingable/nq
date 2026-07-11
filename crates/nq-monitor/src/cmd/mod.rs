@@ -2,6 +2,7 @@ pub mod check;
 pub mod drill;
 pub mod findings;
 pub mod fleet;
+pub mod inquire;
 pub mod liveness;
 pub mod maintenance;
 pub mod preflight;
@@ -22,6 +23,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Command::Serve(cmd) => serve::run(cmd).await,
         Command::Query(cmd) => query::run(cmd),
+        Command::Inquire(cmd) => inquire::run(cmd),
         Command::Check(cmd) => check::run(cmd),
         Command::Sentinel(cmd) => sentinel::run(cmd).await,
         Command::Findings(cmd) => findings::run(cmd),
