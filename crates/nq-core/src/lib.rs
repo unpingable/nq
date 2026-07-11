@@ -23,13 +23,18 @@ pub use config::{
 };
 pub use humanize::humanize_duration_s;
 pub use inquiry::{
-    resolve_profile, AdmittedInquiryRequestV0, CandidateInquiryPlanV0, FindingSelectorV0,
-    InquiryDisposition, InquiryEvidenceCoverageV0, InquiryEvidenceReceiptV0,
-    InquiryFindingStateV0, InquiryProfileBindingV0, InquiryProfileCatalogV0, InquiryProfileV0,
-    InquiryQuestionV0, InquiryReceiptV0, InquiryRefusal, InquiryRefusalKindV0,
-    InquirySourceSnapshotV0, InquiryStatusV0, InquiryValidationError, InquiryVersionV0,
+    resolve_profile, AdmittedInquiryRequestV0, CandidateInquiryPlanV0,
+    FindingSelectorV0, InquiryAcquisitionBoundsV0, InquiryAcquisitionSpendV0,
+    InquiryCollectorV0, InquiryDisposition, InquiryEvidenceCoverageV0,
+    InquiryEvidenceReceiptV0, InquiryFindingStateV0, InquiryProfileBindingV0,
+    InquiryProfileCatalogV0, InquiryProfileV0, InquiryQuestionV0, InquiryReceiptV0,
+    InquiryRefusal, InquiryRefusalKindV0, InquirySourceSnapshotV0, InquiryStatusV0,
+    InquiryTlsCertProfileV0, InquiryTlsObservationV0, InquiryTlsOutcomeV0,
+    InquiryTlsTargetV0, InquiryTlsValidationPolicyV0, InquiryTlsValidationResultV0,
+    InquiryValidationError, InquiryVersionV0, InquiryWitnessPlanV0,
     ResolvedInquiryProfileV0, INQUIRY_PLAN_SCHEMA_V0, INQUIRY_PROFILE_CATALOG_SCHEMA_V0,
     INQUIRY_PROFILE_SCHEMA_V0, INQUIRY_RECEIPT_SCHEMA_V0, INQUIRY_REQUEST_SCHEMA_V0,
+    INQUIRY_WITNESS_PLAN_SCHEMA_V0, TLS_CERT_INQUIRY_QUESTION_V0,
 };
 pub use preflight::{
     disk_state_cannot_testify, sqlite_wal_state_cannot_testify, ClaimKind, PreflightCoverage,

@@ -20,6 +20,9 @@ pub const INQUIRY_PROFILE_SCHEMA_V0: &str = "nq.inquiry_profile.v0";
 pub const INQUIRY_PROFILE_CATALOG_SCHEMA_V0: &str = "nq.inquiry_profile_catalog.v0";
 pub const INQUIRY_REQUEST_SCHEMA_V0: &str = "nq.inquiry_request.v0";
 pub const INQUIRY_RECEIPT_SCHEMA_V0: &str = "nq.inquiry_receipt.v0";
+pub const INQUIRY_WITNESS_PLAN_SCHEMA_V0: &str = "nq.inquiry_witness_plan.v0";
+pub const TLS_CERT_INQUIRY_QUESTION_V0: &str =
+    "what certificate did these declared endpoints present, and does it validate within the profile's expiry horizon?";
 
 /// The only governed-inquiry contract version understood by this slice.
 /// Unknown strings fail serde deserialization rather than being treated as a
@@ -38,11 +41,12 @@ impl InquiryVersionV0 {
     }
 }
 
-/// The single report question implemented by the L0 walking skeleton.
+/// Questions implemented by the governed-inquiry walking skeleton.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InquiryQuestionV0 {
     FindingOperationalActivity,
+    TlsCertificatePresentationAndExpiryHorizon,
 }
 
 /// Closed receipt answer vocabulary.  `CannotTestify` is an answer about the
@@ -53,6 +57,7 @@ pub enum InquiryDisposition {
     OperationallyActive,
     NotOperationallyActive,
     CannotTestify,
+    PerTargetOutcomes,
 }
 
 impl InquiryDisposition {
@@ -61,6 +66,7 @@ impl InquiryDisposition {
             Self::OperationallyActive => "operationally_active",
             Self::NotOperationallyActive => "not_operationally_active",
             Self::CannotTestify => "cannot_testify",
+            Self::PerTargetOutcomes => "per_target_outcomes",
         }
     }
 }
@@ -101,6 +107,10 @@ pub enum InquiryRefusalKindV0 {
     SnapshotIncomplete,
     SnapshotAfterAsOf,
     SnapshotTooOld,
+    AcquisitionBoundCannotBeHonored,
+    ResolutionFailed,
+    ConnectionFailed,
+    TlsHandshakeFailed,
 }
 
 impl InquiryRefusalKindV0 {
@@ -118,6 +128,12 @@ impl InquiryRefusalKindV0 {
             Self::SnapshotIncomplete => "snapshot_incomplete",
             Self::SnapshotAfterAsOf => "snapshot_after_as_of",
             Self::SnapshotTooOld => "snapshot_too_old",
+            Self::AcquisitionBoundCannotBeHonored => {
+                "acquisition_bound_cannot_be_honored"
+            }
+            Self::ResolutionFailed => "resolution_failed",
+            Self::ConnectionFailed => "connection_failed",
+            Self::TlsHandshakeFailed => "tls_handshake_failed",
         }
     }
 }
@@ -138,6 +154,134 @@ pub struct FindingSelectorV0 {
     pub subject: String,
 }
 
+/// Exact, predeclared identity of one active TLS-certificate target.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryTlsTargetV0 {
+    pub target_id: String,
+    pub host: String,
+    pub port: u16,
+    pub sni: String,
+}
+
+impl InquiryTlsTargetV0 {
+    fn validate(&self, field: &str) -> Result<(), InquiryValidationError> {
+        require_nonempty(&format!("{field}.target_id"), &self.target_id)?;
+        require_nonempty(&format!("{field}.host"), &self.host)?;
+        if self.port == 0 {
+            return Err(InquiryValidationError::new(format!(
+                "{field}.port must be greater than zero"
+            )));
+        }
+        require_nonempty(&format!("{field}.sni"), &self.sni)?;
+        Ok(())
+    }
+
+    pub fn endpoint(&self) -> String {
+        if self.host.contains(':') && !self.host.starts_with('[') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+}
+
+/// The only collector admitted to active inquiry V0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InquiryCollectorV0 {
+    TlsCertProbe,
+}
+
+/// Trust universe used by the existing TLS certificate probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InquiryTlsValidationPolicyV0 {
+    Webpki,
+}
+
+/// Content-addressed active acquisition policy. Targets are an allow-list;
+/// selecting the profile never authorizes discovery beyond this list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryTlsCertProfileV0 {
+    pub collector: InquiryCollectorV0,
+    pub declared_targets: Vec<InquiryTlsTargetV0>,
+    pub max_targets: u32,
+    pub max_concurrency: u32,
+    pub per_target_deadline_ms: u64,
+    pub total_deadline_ms: u64,
+    pub expiry_horizon_days: u32,
+    pub validation_policy: InquiryTlsValidationPolicyV0,
+    pub vantage: String,
+}
+
+impl InquiryTlsCertProfileV0 {
+    fn validate(&self) -> Result<(), InquiryValidationError> {
+        if self.declared_targets.is_empty() {
+            return Err(InquiryValidationError::new(
+                "profile.tls_cert.declared_targets must not be empty",
+            ));
+        }
+        if self.max_targets == 0 || self.max_targets > 32 {
+            return Err(InquiryValidationError::new(
+                "profile.tls_cert.max_targets must be in 1..=32",
+            ));
+        }
+        if self.declared_targets.len() > self.max_targets as usize {
+            return Err(InquiryValidationError::new(
+                "profile.tls_cert.declared_targets exceeds max_targets",
+            ));
+        }
+        // V0 is deliberately serial. This is both a fixed low-concurrency
+        // policy and a tractable total-deadline envelope.
+        if self.max_concurrency != 1 {
+            return Err(InquiryValidationError::new(
+                "profile.tls_cert.max_concurrency must be exactly 1 in V0",
+            ));
+        }
+        if self.per_target_deadline_ms < 100 || self.per_target_deadline_ms > 60_000 {
+            return Err(InquiryValidationError::new(
+                "profile.tls_cert.per_target_deadline_ms must be in 100..=60000",
+            ));
+        }
+        if self.total_deadline_ms == 0 || self.total_deadline_ms > 300_000 {
+            return Err(InquiryValidationError::new(
+                "profile.tls_cert.total_deadline_ms must be in 1..=300000",
+            ));
+        }
+        let serial_deadline = self
+            .per_target_deadline_ms
+            .checked_mul(self.declared_targets.len() as u64)
+            .ok_or_else(|| {
+                InquiryValidationError::new("profile.tls_cert deadline envelope overflow")
+            })?;
+        if self.total_deadline_ms < serial_deadline {
+            return Err(InquiryValidationError::new(
+                "profile.tls_cert.total_deadline_ms must cover every declared serial target deadline",
+            ));
+        }
+        if self.expiry_horizon_days == 0 || self.expiry_horizon_days > 3_650 {
+            return Err(InquiryValidationError::new(
+                "profile.tls_cert.expiry_horizon_days must be in 1..=3650",
+            ));
+        }
+        require_nonempty("profile.tls_cert.vantage", &self.vantage)?;
+
+        let mut identities = BTreeSet::new();
+        for target in &self.declared_targets {
+            target.validate("profile.tls_cert.declared_targets[]")?;
+            if !identities.insert(target.target_id.as_str()) {
+                return Err(InquiryValidationError::new(format!(
+                    "duplicate TLS target_id {:?}",
+                    target.target_id
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Candidate request.  `as_of` is mandatory: neither core nor the DB executor
 /// may substitute wall-clock time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,6 +293,11 @@ pub struct CandidateInquiryPlanV0 {
     pub profile: String,
     /// Frozen RFC3339 evaluation time.
     pub as_of: String,
+    /// Optional exact subset of the profile's predeclared active targets.
+    /// Empty means all targets declared by an active profile and is required
+    /// for report-only profiles.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<InquiryTlsTargetV0>,
 }
 
 impl CandidateInquiryPlanV0 {
@@ -161,6 +310,16 @@ impl CandidateInquiryPlanV0 {
         }
         require_nonempty("plan.profile", &self.profile)?;
         parse_rfc3339("plan.as_of", &self.as_of)?;
+        let mut target_ids = BTreeSet::new();
+        for target in &self.targets {
+            target.validate("plan.targets[]")?;
+            if !target_ids.insert(target.target_id.as_str()) {
+                return Err(InquiryValidationError::new(format!(
+                    "duplicate plan target_id {:?}",
+                    target.target_id
+                )));
+            }
+        }
         Ok(())
     }
 }
@@ -178,9 +337,14 @@ pub struct InquiryProfileV0 {
     pub aliases: Vec<String>,
     pub question_kind: InquiryQuestionV0,
     pub question: String,
-    pub selector: FindingSelectorV0,
-    pub max_snapshot_age_seconds: u64,
-    pub evidence_limit: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selector: Option<FindingSelectorV0>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_snapshot_age_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_limit: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_cert: Option<InquiryTlsCertProfileV0>,
     pub coverage: Vec<String>,
     pub cannot_testify: Vec<InquiryRefusal>,
 }
@@ -195,17 +359,71 @@ impl InquiryProfileV0 {
         }
         require_nonempty("profile.profile_id", &self.profile_id)?;
         require_nonempty("profile.question", &self.question)?;
-        require_nonempty("profile.selector.host", &self.selector.host)?;
-        require_nonempty("profile.selector.kind", &self.selector.kind)?;
-        if self.max_snapshot_age_seconds == 0 {
-            return Err(InquiryValidationError::new(
-                "profile.max_snapshot_age_seconds must be greater than zero",
-            ));
-        }
-        if self.evidence_limit == 0 || self.evidence_limit > 1_000 {
-            return Err(InquiryValidationError::new(
-                "profile.evidence_limit must be in 1..=1000",
-            ));
+        match self.question_kind {
+            InquiryQuestionV0::FindingOperationalActivity => {
+                let selector = self.selector.as_ref().ok_or_else(|| {
+                    InquiryValidationError::new(
+                        "report profile requires profile.selector",
+                    )
+                })?;
+                require_nonempty("profile.selector.host", &selector.host)?;
+                require_nonempty("profile.selector.kind", &selector.kind)?;
+                let max_age = self.max_snapshot_age_seconds.ok_or_else(|| {
+                    InquiryValidationError::new(
+                        "report profile requires profile.max_snapshot_age_seconds",
+                    )
+                })?;
+                if max_age == 0 {
+                    return Err(InquiryValidationError::new(
+                        "profile.max_snapshot_age_seconds must be greater than zero",
+                    ));
+                }
+                let evidence_limit = self.evidence_limit.ok_or_else(|| {
+                    InquiryValidationError::new(
+                        "report profile requires profile.evidence_limit",
+                    )
+                })?;
+                if evidence_limit == 0 || evidence_limit > 1_000 {
+                    return Err(InquiryValidationError::new(
+                        "profile.evidence_limit must be in 1..=1000",
+                    ));
+                }
+                if self.tls_cert.is_some() {
+                    return Err(InquiryValidationError::new(
+                        "report profile must not declare profile.tls_cert",
+                    ));
+                }
+            }
+            InquiryQuestionV0::TlsCertificatePresentationAndExpiryHorizon => {
+                if self.question != TLS_CERT_INQUIRY_QUESTION_V0 {
+                    return Err(InquiryValidationError::new(format!(
+                        "TLS certificate profile question must be {:?}",
+                        TLS_CERT_INQUIRY_QUESTION_V0
+                    )));
+                }
+                if self.selector.is_some()
+                    || self.max_snapshot_age_seconds.is_some()
+                    || self.evidence_limit.is_some()
+                {
+                    return Err(InquiryValidationError::new(
+                        "TLS certificate profile must not declare report-only selector or evidence bounds",
+                    ));
+                }
+                self.tls_cert.as_ref().ok_or_else(|| {
+                    InquiryValidationError::new(
+                        "TLS certificate profile requires profile.tls_cert",
+                    )
+                })?.validate()?;
+                if !self
+                    .cannot_testify
+                    .iter()
+                    .any(|r| r.kind == InquiryRefusalKindV0::ConsequenceAuthority)
+                {
+                    return Err(InquiryValidationError::new(
+                        "TLS certificate profile must declare a consequence_authority refusal",
+                    ));
+                }
+            }
         }
         if self.coverage.is_empty() {
             return Err(InquiryValidationError::new(
@@ -269,6 +487,9 @@ impl InquiryProfileV0 {
         normalized.aliases.sort();
         normalized.coverage.sort();
         normalized.cannot_testify.sort();
+        if let Some(tls_cert) = normalized.tls_cert.as_mut() {
+            tls_cert.declared_targets.sort();
+        }
         Ok(normalized)
     }
 
@@ -432,8 +653,13 @@ pub struct AdmittedInquiryRequestV0 {
     pub profile: InquiryProfileBindingV0,
     pub question_kind: InquiryQuestionV0,
     pub question: String,
-    pub selector: FindingSelectorV0,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selector: Option<FindingSelectorV0>,
     pub as_of: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requested_targets: Vec<InquiryTlsTargetV0>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admitted_targets: Vec<InquiryTlsTargetV0>,
     pub request_digest: String,
 }
 
@@ -444,8 +670,13 @@ struct RequestDigestMaterial<'a> {
     profile: &'a InquiryProfileBindingV0,
     question_kind: InquiryQuestionV0,
     question: &'a str,
-    selector: &'a FindingSelectorV0,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selector: Option<&'a FindingSelectorV0>,
     as_of: &'a str,
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    requested_targets: &'a [InquiryTlsTargetV0],
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    admitted_targets: &'a [InquiryTlsTargetV0],
 }
 
 impl AdmittedInquiryRequestV0 {
@@ -483,14 +714,58 @@ impl AdmittedInquiryRequestV0 {
             version: resolved.profile.version,
             profile_digest: resolved.profile_digest.clone(),
         };
+        let (selector, requested_targets, admitted_targets) = match resolved.profile.question_kind {
+            InquiryQuestionV0::FindingOperationalActivity => {
+                if !plan.targets.is_empty() {
+                    return Err(InquiryValidationError::new(
+                        "report inquiry plan must not request active targets",
+                    ));
+                }
+                (resolved.profile.selector.clone(), Vec::new(), Vec::new())
+            }
+            InquiryQuestionV0::TlsCertificatePresentationAndExpiryHorizon => {
+                let tls_cert = resolved.profile.tls_cert.as_ref().ok_or_else(|| {
+                    InquiryValidationError::new("resolved TLS profile has no tls_cert policy")
+                })?;
+                let mut requested = if plan.targets.is_empty() {
+                    tls_cert.declared_targets.clone()
+                } else {
+                    plan.targets.clone()
+                };
+                requested.sort();
+                requested.dedup();
+                if requested.is_empty() {
+                    return Err(InquiryValidationError::new(
+                        "TLS certificate inquiry requires at least one target",
+                    ));
+                }
+                if requested.len() > tls_cert.max_targets as usize {
+                    return Err(InquiryValidationError::new(format!(
+                        "requested {} TLS targets exceeds profile max_targets {}",
+                        requested.len(), tls_cert.max_targets
+                    )));
+                }
+                for target in &requested {
+                    if !tls_cert.declared_targets.contains(target) {
+                        return Err(InquiryValidationError::new(format!(
+                            "TLS target {:?} is not exactly predeclared by the profile",
+                            target.target_id
+                        )));
+                    }
+                }
+                (None, requested.clone(), requested)
+            }
+        };
         let material = RequestDigestMaterial {
             schema: INQUIRY_REQUEST_SCHEMA_V0,
             version: InquiryVersionV0::V0,
             profile: &profile,
             question_kind: resolved.profile.question_kind,
             question: &resolved.profile.question,
-            selector: &resolved.profile.selector,
+            selector: selector.as_ref(),
             as_of: &plan.as_of,
+            requested_targets: &requested_targets,
+            admitted_targets: &admitted_targets,
         };
         let request_digest = digest_jcs(&material)
             .map_err(|e| InquiryValidationError::new(format!("request digest failed: {e}")))?;
@@ -500,8 +775,10 @@ impl AdmittedInquiryRequestV0 {
             profile,
             question_kind: resolved.profile.question_kind,
             question: resolved.profile.question.clone(),
-            selector: resolved.profile.selector.clone(),
+            selector,
             as_of: plan.as_of.clone(),
+            requested_targets,
+            admitted_targets,
             request_digest,
         })
     }
@@ -513,12 +790,22 @@ impl AdmittedInquiryRequestV0 {
             profile: &self.profile,
             question_kind: self.question_kind,
             question: &self.question,
-            selector: &self.selector,
+            selector: self.selector.as_ref(),
             as_of: &self.as_of,
+            requested_targets: &self.requested_targets,
+            admitted_targets: &self.admitted_targets,
         })
     }
 
     pub fn verify_request_digest(&self) -> Result<(), DigestError> {
+        if self.schema != INQUIRY_REQUEST_SCHEMA_V0 {
+            return Err(DigestError {
+                message: format!("unsupported inquiry request schema {:?}", self.schema),
+            });
+        }
+        parse_rfc3339("request.as_of", &self.as_of).map_err(|e| DigestError {
+            message: e.to_string(),
+        })?;
         let computed = self.compute_request_digest()?;
         if computed != self.request_digest {
             return Err(DigestError {
@@ -526,6 +813,399 @@ impl AdmittedInquiryRequestV0 {
                     "inquiry request digest mismatch: declared {}, computed {}",
                     self.request_digest, computed
                 ),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Fully resolved, deterministic execution envelope for the one active
+/// collector. It contains no acquisition clock or live evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryWitnessPlanV0 {
+    pub schema: String,
+    pub version: InquiryVersionV0,
+    pub request_digest: String,
+    pub collector: InquiryCollectorV0,
+    pub targets: Vec<InquiryTlsTargetV0>,
+    pub expiry_horizon_days: u32,
+    pub validation_policy: InquiryTlsValidationPolicyV0,
+    pub vantage: String,
+    pub bounds: InquiryAcquisitionBoundsV0,
+    pub witness_plan_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryAcquisitionBoundsV0 {
+    pub max_targets: u32,
+    pub max_concurrency: u32,
+    pub per_target_deadline_ms: u64,
+    pub total_deadline_ms: u64,
+    pub max_dns_attempts: u32,
+    pub max_connection_attempts: u32,
+    pub max_handshakes_attempted: u32,
+    pub max_bound_checks: u32,
+    pub max_work_units: u64,
+    pub max_redirects: u32,
+    pub max_retries: u32,
+    pub max_aia_fetches: u32,
+    pub max_ocsp_requests: u32,
+    pub max_dependency_recursions: u32,
+}
+
+#[derive(Serialize)]
+struct WitnessPlanDigestMaterial<'a> {
+    schema: &'a str,
+    version: InquiryVersionV0,
+    request_digest: &'a str,
+    collector: InquiryCollectorV0,
+    targets: &'a [InquiryTlsTargetV0],
+    expiry_horizon_days: u32,
+    validation_policy: InquiryTlsValidationPolicyV0,
+    vantage: &'a str,
+    bounds: &'a InquiryAcquisitionBoundsV0,
+}
+
+impl InquiryWitnessPlanV0 {
+    pub fn resolve(
+        request: &AdmittedInquiryRequestV0,
+        resolved: &ResolvedInquiryProfileV0,
+    ) -> Result<Self, InquiryValidationError> {
+        request.verify_request_digest().map_err(|e| {
+            InquiryValidationError::new(format!("request digest verification failed: {e}"))
+        })?;
+        if request.schema != INQUIRY_REQUEST_SCHEMA_V0
+            || request.question_kind
+                != InquiryQuestionV0::TlsCertificatePresentationAndExpiryHorizon
+            || request.question != resolved.profile.question
+            || request.selector.is_some()
+            || request.requested_targets != request.admitted_targets
+        {
+            return Err(InquiryValidationError::new(
+                "admitted request does not match the resolved TLS certificate question",
+            ));
+        }
+        parse_rfc3339("request.as_of", &request.as_of)?;
+        let computed_profile_digest = resolved.profile.profile_digest().map_err(|e| {
+            InquiryValidationError::new(format!("profile digest verification failed: {e}"))
+        })?;
+        if request.profile.profile_id != resolved.profile.profile_id
+            || request.profile.version != resolved.profile.version
+            || request.profile.profile_digest != computed_profile_digest
+            || resolved.profile_digest != computed_profile_digest
+        {
+            return Err(InquiryValidationError::new(
+                "admitted request does not bind the resolved profile",
+            ));
+        }
+        let tls_cert = resolved.profile.tls_cert.as_ref().ok_or_else(|| {
+            InquiryValidationError::new("resolved TLS profile has no tls_cert policy")
+        })?;
+        let mut targets = request.admitted_targets.clone();
+        targets.sort();
+        if targets.is_empty() || targets.len() > tls_cert.max_targets as usize {
+            return Err(InquiryValidationError::new(
+                "admitted TLS targets do not fit the profile target bound",
+            ));
+        }
+        if targets.iter().any(|target| !tls_cert.declared_targets.contains(target)) {
+            return Err(InquiryValidationError::new(
+                "admitted TLS target is not exactly predeclared by the profile",
+            ));
+        }
+        let admitted = targets.len() as u32;
+        let bounds = InquiryAcquisitionBoundsV0 {
+            max_targets: tls_cert.max_targets,
+            max_concurrency: tls_cert.max_concurrency,
+            per_target_deadline_ms: tls_cert.per_target_deadline_ms,
+            total_deadline_ms: tls_cert.total_deadline_ms,
+            max_dns_attempts: admitted,
+            max_connection_attempts: admitted,
+            max_handshakes_attempted: admitted,
+            max_bound_checks: admitted,
+            max_work_units: u64::from(admitted) * 4,
+            max_redirects: 0,
+            max_retries: 0,
+            max_aia_fetches: 0,
+            max_ocsp_requests: 0,
+            max_dependency_recursions: 0,
+        };
+        let material = WitnessPlanDigestMaterial {
+            schema: INQUIRY_WITNESS_PLAN_SCHEMA_V0,
+            version: InquiryVersionV0::V0,
+            request_digest: &request.request_digest,
+            collector: tls_cert.collector,
+            targets: &targets,
+            expiry_horizon_days: tls_cert.expiry_horizon_days,
+            validation_policy: tls_cert.validation_policy,
+            vantage: &tls_cert.vantage,
+            bounds: &bounds,
+        };
+        let witness_plan_digest = digest_jcs(&material).map_err(|e| {
+            InquiryValidationError::new(format!("witness plan digest failed: {e}"))
+        })?;
+        Ok(Self {
+            schema: INQUIRY_WITNESS_PLAN_SCHEMA_V0.to_string(),
+            version: InquiryVersionV0::V0,
+            request_digest: request.request_digest.clone(),
+            collector: tls_cert.collector,
+            targets,
+            expiry_horizon_days: tls_cert.expiry_horizon_days,
+            validation_policy: tls_cert.validation_policy,
+            vantage: tls_cert.vantage.clone(),
+            bounds,
+            witness_plan_digest,
+        })
+    }
+
+    pub fn compute_witness_plan_digest(&self) -> Result<String, DigestError> {
+        digest_jcs(&WitnessPlanDigestMaterial {
+            schema: &self.schema,
+            version: self.version,
+            request_digest: &self.request_digest,
+            collector: self.collector,
+            targets: &self.targets,
+            expiry_horizon_days: self.expiry_horizon_days,
+            validation_policy: self.validation_policy,
+            vantage: &self.vantage,
+            bounds: &self.bounds,
+        })
+    }
+
+    pub fn verify_witness_plan_digest(&self) -> Result<(), DigestError> {
+        let computed = self.compute_witness_plan_digest()?;
+        if computed != self.witness_plan_digest {
+            return Err(DigestError {
+                message: format!(
+                    "inquiry witness plan digest mismatch: declared {}, computed {}",
+                    self.witness_plan_digest, computed
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn verify_envelope(&self) -> Result<(), DigestError> {
+        self.verify_witness_plan_digest()?;
+        let target_count = self.targets.len() as u32;
+        if self.schema != INQUIRY_WITNESS_PLAN_SCHEMA_V0
+            || self.targets.is_empty()
+            || self.bounds.max_targets == 0
+            || self.bounds.max_targets > 32
+            || target_count > self.bounds.max_targets
+            || self.bounds.max_concurrency != 1
+            || self.bounds.per_target_deadline_ms < 100
+            || self.bounds.per_target_deadline_ms > 60_000
+            || self.bounds.total_deadline_ms == 0
+            || self.bounds.total_deadline_ms > 300_000
+            || self.bounds.total_deadline_ms
+                < self
+                    .bounds
+                    .per_target_deadline_ms
+                    .saturating_mul(u64::from(target_count))
+            || self.expiry_horizon_days == 0
+            || self.expiry_horizon_days > 3_650
+            || self.vantage.trim().is_empty()
+            || self.bounds.max_dns_attempts != target_count
+            || self.bounds.max_connection_attempts != target_count
+            || self.bounds.max_handshakes_attempted != target_count
+            || self.bounds.max_bound_checks != target_count
+            || self.bounds.max_work_units != u64::from(target_count) * 4
+            || self.bounds.max_redirects != 0
+            || self.bounds.max_retries != 0
+            || self.bounds.max_aia_fetches != 0
+            || self.bounds.max_ocsp_requests != 0
+            || self.bounds.max_dependency_recursions != 0
+        {
+            return Err(DigestError {
+                message: "inquiry witness plan violates the bounded TLS envelope".to_string(),
+            });
+        }
+        let mut targets = BTreeSet::new();
+        let mut target_ids = BTreeSet::new();
+        for target in &self.targets {
+            target.validate("witness_plan.targets[]").map_err(|e| DigestError {
+                message: e.to_string(),
+            })?;
+            if !targets.insert(target.clone()) || !target_ids.insert(target.target_id.as_str()) {
+                return Err(DigestError {
+                    message: "inquiry witness plan contains a duplicate target".to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, DigestError> {
+        serde_jcs::to_vec(self).map_err(|e| DigestError {
+            message: format!("JCS canonicalization failed: {e}"),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InquiryTlsOutcomeV0 {
+    ResolutionFailed,
+    ConnectionFailed,
+    TlsHandshakeFailed,
+    NoCertificatePresented,
+    NameMismatch,
+    ChainInvalid,
+    ExpiredUnderAcquisitionClock,
+    ValidNowButExpiresWithinHorizon,
+    ValidBeyondExpiryHorizon,
+    AcquisitionBoundRefused,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "result", rename_all = "snake_case")]
+pub enum InquiryTlsValidationResultV0 {
+    Valid,
+    Invalid { reason: String },
+    NotAttempted,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryAcquisitionSpendV0 {
+    pub dns_attempts: u32,
+    pub connection_attempts: u32,
+    pub handshakes_attempted: u32,
+    pub handshakes_completed: u32,
+    pub bound_checks: u32,
+    pub wall_ms: u64,
+    pub work_units: u64,
+}
+
+impl InquiryAcquisitionSpendV0 {
+    pub fn counted_work_units(&self) -> u64 {
+        u64::from(self.dns_attempts)
+            + u64::from(self.connection_attempts)
+            + u64::from(self.handshakes_attempted)
+            + u64::from(self.bound_checks)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryTlsObservationV0 {
+    pub acquired_at: String,
+    pub target: InquiryTlsTargetV0,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub certificate_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain_digest: Option<String>,
+    pub chain_fingerprints: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_after: Option<String>,
+    pub validation_result: InquiryTlsValidationResultV0,
+    pub outcome: InquiryTlsOutcomeV0,
+    pub spend: InquiryAcquisitionSpendV0,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refusals: Vec<InquiryRefusal>,
+}
+
+impl InquiryTlsObservationV0 {
+    fn verify_shape(&self) -> Result<(), DigestError> {
+        if self
+            .certificate_digest
+            .as_deref()
+            .is_some_and(|digest| !is_sha256_digest(digest))
+            || self
+                .chain_digest
+                .as_deref()
+                .is_some_and(|digest| !is_sha256_digest(digest))
+        {
+            return Err(DigestError {
+                message: "TLS observation carries a malformed SHA-256 digest".to_string(),
+            });
+        }
+        let certificate_observed = self.certificate_digest.is_some()
+            && self.chain_digest.is_some()
+            && !self.chain_fingerprints.is_empty()
+            && self.not_before.is_some()
+            && self.not_after.is_some();
+        if let Some(not_before) = &self.not_before {
+            parse_rfc3339("tls_observations[].not_before", not_before).map_err(|e| {
+                DigestError {
+                    message: e.to_string(),
+                }
+            })?;
+        }
+        if let Some(not_after) = &self.not_after {
+            parse_rfc3339("tls_observations[].not_after", not_after).map_err(|e| DigestError {
+                message: e.to_string(),
+            })?;
+        }
+        let completed = self.spend.handshakes_completed == 1;
+        let has_refusal = |kind| self.refusals.iter().any(|r| r.kind == kind);
+        let valid = matches!(self.validation_result, InquiryTlsValidationResultV0::Valid);
+        let invalid = matches!(self.validation_result, InquiryTlsValidationResultV0::Invalid { .. });
+        let not_attempted = matches!(
+            self.validation_result,
+            InquiryTlsValidationResultV0::NotAttempted
+        );
+        let no_certificate_evidence = self.certificate_digest.is_none()
+            && self.chain_digest.is_none()
+            && self.chain_fingerprints.is_empty()
+            && self.not_before.is_none()
+            && self.not_after.is_none();
+        let shape_is_valid = match self.outcome {
+            InquiryTlsOutcomeV0::ResolutionFailed => {
+                self.spend.connection_attempts == 0
+                    && self.spend.handshakes_attempted == 0
+                    && self.observed_ip.is_none()
+                    && no_certificate_evidence
+                    && not_attempted
+                    && has_refusal(InquiryRefusalKindV0::ResolutionFailed)
+            }
+            InquiryTlsOutcomeV0::ConnectionFailed => {
+                self.spend.connection_attempts == 1
+                    && self.spend.handshakes_attempted == 0
+                    && self.observed_ip.is_some()
+                    && no_certificate_evidence
+                    && not_attempted
+                    && has_refusal(InquiryRefusalKindV0::ConnectionFailed)
+            }
+            InquiryTlsOutcomeV0::TlsHandshakeFailed => {
+                self.spend.handshakes_attempted == 1
+                    && !completed
+                    && self.observed_ip.is_some()
+                    && no_certificate_evidence
+                    && not_attempted
+                    && has_refusal(InquiryRefusalKindV0::TlsHandshakeFailed)
+            }
+            InquiryTlsOutcomeV0::NoCertificatePresented => {
+                completed
+                    && !certificate_observed
+                    && self.observed_ip.is_some()
+                    && has_refusal(InquiryRefusalKindV0::EvidenceAbsent)
+            }
+            InquiryTlsOutcomeV0::NameMismatch
+            | InquiryTlsOutcomeV0::ExpiredUnderAcquisitionClock => {
+                completed && certificate_observed && self.observed_ip.is_some() && invalid
+            }
+            InquiryTlsOutcomeV0::ChainInvalid => {
+                completed && certificate_observed && self.observed_ip.is_some() && invalid
+            }
+            InquiryTlsOutcomeV0::ValidNowButExpiresWithinHorizon
+            | InquiryTlsOutcomeV0::ValidBeyondExpiryHorizon => {
+                completed && certificate_observed && self.observed_ip.is_some() && valid
+            }
+            InquiryTlsOutcomeV0::AcquisitionBoundRefused => {
+                has_refusal(InquiryRefusalKindV0::AcquisitionBoundCannotBeHonored)
+            }
+        };
+        if !shape_is_valid {
+            return Err(DigestError {
+                message: "TLS observation outcome contradicts its evidence or refusal".to_string(),
             });
         }
         Ok(())
@@ -618,9 +1298,9 @@ pub struct InquiryEvidenceCoverageV0 {
     pub oldest_receipt_generation: Option<i64>,
 }
 
-/// Canonical governed-inquiry artifact.  It has no `generated_at`: the only
-/// evaluation time is the frozen `request.as_of`, so rendering cannot inject a
-/// second clock into receipt identity.
+/// Canonical governed-inquiry artifact. It has no rendering timestamp:
+/// passive evaluation uses frozen `request.as_of`, while each active
+/// observation carries its own live `acquired_at` evidence clock.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InquiryReceiptV0 {
@@ -633,12 +1313,20 @@ pub struct InquiryReceiptV0 {
     pub finding_state: Option<InquiryFindingStateV0>,
     pub evidence_receipts: Vec<InquiryEvidenceReceiptV0>,
     pub evidence_coverage: InquiryEvidenceCoverageV0,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness_plan: Option<InquiryWitnessPlanV0>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tls_observations: Vec<InquiryTlsObservationV0>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acquisition: Option<InquiryAcquisitionSpendV0>,
     /// Profile-declared scope, carried into the durable receipt.
     pub coverage: Vec<String>,
     /// Profile-declared constitutional refusals plus any deterministic
     /// evidence-specific refusal added by the executor.
     pub cannot_testify: Vec<InquiryRefusal>,
-    /// L0 never acquires new evidence.  This field is required and must be 0.
+    /// Work-unit spend. L0 requires zero; active TLS inquiry requires the
+    /// exact positive sum of bound checks plus every attempted resolution,
+    /// connection, and handshake.
     pub acquisition_spend: u64,
     /// Receipt identity: SHA-256 of JCS bytes with this field omitted.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -653,16 +1341,213 @@ impl InquiryReceiptV0 {
     }
 
     pub fn seal(&mut self) -> Result<(), DigestError> {
-        if self.acquisition_spend != 0 {
+        if self.schema != INQUIRY_RECEIPT_SCHEMA_V0 {
             return Err(DigestError {
-                message: "governed inquiry V0 requires acquisition_spend = 0".to_string(),
+                message: format!("unsupported inquiry receipt schema {:?}", self.schema),
             });
         }
         self.request.verify_request_digest()?;
         self.coverage.sort();
         self.cannot_testify.sort();
         self.cannot_testify.dedup();
+        for observation in &mut self.tls_observations {
+            observation.refusals.sort();
+            observation.refusals.dedup();
+        }
+        self.tls_observations
+            .sort_by(|a, b| a.target.cmp(&b.target));
+        match self.request.question_kind {
+            InquiryQuestionV0::FindingOperationalActivity => self.verify_report_envelope()?,
+            InquiryQuestionV0::TlsCertificatePresentationAndExpiryHorizon => {
+                self.verify_tls_envelope()?
+            }
+        }
         self.receipt_digest = Some(self.compute_receipt_digest()?);
+        Ok(())
+    }
+
+    fn verify_report_envelope(&self) -> Result<(), DigestError> {
+        if self.acquisition_spend != 0
+            || self.acquisition.is_some()
+            || self.witness_plan.is_some()
+            || !self.tls_observations.is_empty()
+        {
+            return Err(DigestError {
+                message: "report inquiry requires zero acquisition and no active payload"
+                    .to_string(),
+            });
+        }
+        if self.request.selector.is_none()
+            || !self.request.requested_targets.is_empty()
+            || !self.request.admitted_targets.is_empty()
+        {
+            return Err(DigestError {
+                message: "report inquiry request has invalid selector/target shape".to_string(),
+            });
+        }
+        if self.disposition == InquiryDisposition::PerTargetOutcomes {
+            return Err(DigestError {
+                message: "report inquiry cannot use per_target_outcomes disposition".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    fn verify_tls_envelope(&self) -> Result<(), DigestError> {
+        if self.disposition != InquiryDisposition::PerTargetOutcomes
+            || self.request.selector.is_some()
+            || self.source_snapshot.is_some()
+            || self.finding_state.is_some()
+            || !self.evidence_receipts.is_empty()
+            || self.evidence_coverage.matched_current_rows != 0
+            || self.evidence_coverage.matched_receipt_rows != 0
+            || self.evidence_coverage.receipt_limit != 0
+            || self.evidence_coverage.receipt_tail_truncated
+            || self.evidence_coverage.newest_receipt_generation.is_some()
+            || self.evidence_coverage.oldest_receipt_generation.is_some()
+        {
+            return Err(DigestError {
+                message: "TLS inquiry must carry only per-target active testimony".to_string(),
+            });
+        }
+        if !self
+            .cannot_testify
+            .iter()
+            .any(|r| r.kind == InquiryRefusalKindV0::ConsequenceAuthority)
+        {
+            return Err(DigestError {
+                message: "TLS inquiry requires a consequence_authority refusal".to_string(),
+            });
+        }
+        let plan = self.witness_plan.as_ref().ok_or_else(|| DigestError {
+            message: "TLS inquiry receipt is missing its witness plan".to_string(),
+        })?;
+        plan.verify_envelope()?;
+        if plan.request_digest != self.request.request_digest
+            || plan.targets != self.request.admitted_targets
+            || self.request.requested_targets != self.request.admitted_targets
+        {
+            return Err(DigestError {
+                message: "TLS inquiry witness plan does not match the admitted request"
+                    .to_string(),
+            });
+        }
+        let acquisition = self.acquisition.as_ref().ok_or_else(|| DigestError {
+            message: "TLS inquiry receipt is missing acquisition accounting".to_string(),
+        })?;
+        if acquisition.work_units == 0
+            || acquisition.work_units != acquisition.counted_work_units()
+            || self.acquisition_spend != acquisition.work_units
+        {
+            return Err(DigestError {
+                message: "TLS inquiry acquisition_spend must be the positive counted work-unit sum"
+                    .to_string(),
+            });
+        }
+        if acquisition.dns_attempts > plan.bounds.max_dns_attempts
+            || acquisition.connection_attempts > plan.bounds.max_connection_attempts
+            || acquisition.handshakes_attempted > plan.bounds.max_handshakes_attempted
+            || acquisition.bound_checks > plan.bounds.max_bound_checks
+            || acquisition.connection_attempts > acquisition.dns_attempts
+            || acquisition.handshakes_attempted > acquisition.connection_attempts
+            || acquisition.handshakes_completed > acquisition.handshakes_attempted
+            || acquisition.work_units > plan.bounds.max_work_units
+            || acquisition.wall_ms > plan.bounds.total_deadline_ms
+        {
+            return Err(DigestError {
+                message: "TLS inquiry acquisition exceeded its resolved bounds".to_string(),
+            });
+        }
+        if self.tls_observations.len() != plan.targets.len() {
+            return Err(DigestError {
+                message: "TLS inquiry requires exactly one observation per admitted target"
+                    .to_string(),
+            });
+        }
+
+        let mut observed_targets = BTreeSet::new();
+        let mut summed = InquiryAcquisitionSpendV0::default();
+        for observation in &self.tls_observations {
+            parse_rfc3339("tls_observations[].acquired_at", &observation.acquired_at).map_err(
+                |e| DigestError {
+                    message: e.to_string(),
+                },
+            )?;
+            observation.verify_shape()?;
+            if !plan.targets.contains(&observation.target)
+                || !observed_targets.insert(observation.target.clone())
+            {
+                return Err(DigestError {
+                    message: "TLS inquiry observation target is undeclared or duplicated"
+                        .to_string(),
+                });
+            }
+            if observation.spend.work_units != observation.spend.counted_work_units()
+                || observation.spend.handshakes_completed
+                    > observation.spend.handshakes_attempted
+                || observation.spend.connection_attempts > observation.spend.dns_attempts
+                || observation.spend.handshakes_attempted
+                    > observation.spend.connection_attempts
+                || observation.spend.dns_attempts > 1
+                || observation.spend.connection_attempts > 1
+                || observation.spend.handshakes_attempted > 1
+                || observation.spend.bound_checks > 1
+                || observation.spend.wall_ms > plan.bounds.per_target_deadline_ms
+            {
+                return Err(DigestError {
+                    message: "TLS target observation exceeded its resolved bounds".to_string(),
+                });
+            }
+            summed.dns_attempts += observation.spend.dns_attempts;
+            summed.connection_attempts += observation.spend.connection_attempts;
+            summed.handshakes_attempted += observation.spend.handshakes_attempted;
+            summed.handshakes_completed += observation.spend.handshakes_completed;
+            summed.bound_checks += observation.spend.bound_checks;
+            summed.wall_ms += observation.spend.wall_ms;
+            summed.work_units += observation.spend.work_units;
+            if observation
+                .refusals
+                .iter()
+                .any(|refusal| !self.cannot_testify.contains(refusal))
+            {
+                return Err(DigestError {
+                    message: "TLS target refusal is missing from receipt cannot_testify"
+                        .to_string(),
+                });
+            }
+        }
+        // Per-target wall times overlap under concurrency; V0 is serial, so
+        // their sum may not exceed aggregate elapsed time.
+        if summed.dns_attempts != acquisition.dns_attempts
+            || summed.connection_attempts != acquisition.connection_attempts
+            || summed.handshakes_attempted != acquisition.handshakes_attempted
+            || summed.handshakes_completed != acquisition.handshakes_completed
+            || summed.bound_checks != acquisition.bound_checks
+            || summed.wall_ms > acquisition.wall_ms
+            || summed.work_units != acquisition.work_units
+        {
+            return Err(DigestError {
+                message: "TLS inquiry aggregate spend does not equal target accounting"
+                    .to_string(),
+            });
+        }
+        let should_refuse = self.tls_observations.iter().any(|observation| {
+            matches!(
+                observation.outcome,
+                InquiryTlsOutcomeV0::ResolutionFailed
+                    | InquiryTlsOutcomeV0::ConnectionFailed
+                    | InquiryTlsOutcomeV0::TlsHandshakeFailed
+                    | InquiryTlsOutcomeV0::NoCertificatePresented
+                    | InquiryTlsOutcomeV0::AcquisitionBoundRefused
+            )
+        });
+        if (should_refuse && self.status != InquiryStatusV0::Refused)
+            || (!should_refuse && self.status != InquiryStatusV0::Answered)
+        {
+            return Err(DigestError {
+                message: "TLS inquiry status contradicts its target outcomes".to_string(),
+            });
+        }
         Ok(())
     }
 
@@ -691,6 +1576,21 @@ fn digest_jcs<T: Serialize>(value: &T) -> Result<String, DigestError> {
         "{DIGEST_ALGORITHM_PREFIX}{}",
         hex::encode(hasher.finalize())
     ))
+}
+
+fn slice_is_empty<T>(value: &[T]) -> bool {
+    value.is_empty()
+}
+
+fn is_sha256_digest(value: &str) -> bool {
+    value
+        .strip_prefix(DIGEST_ALGORITHM_PREFIX)
+        .is_some_and(|hex| {
+            hex.len() == 64
+                && hex
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
 }
 
 fn require_nonempty(field: &str, value: &str) -> Result<(), InquiryValidationError> {
@@ -754,6 +1654,13 @@ impl std::error::Error for InquiryResolutionError {}
 mod tests {
     use super::*;
 
+    const FIRST_CERT_DIGEST: &str =
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    const SECOND_CERT_DIGEST: &str =
+        "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+    const CHAIN_DIGEST: &str =
+        "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
     fn fixture_catalog() -> InquiryProfileCatalogV0 {
         serde_json::from_str(include_str!(
             "../tests/fixtures/resolver_pending_aged_tail.profile_catalog.v0.json"
@@ -767,6 +1674,88 @@ mod tests {
             version: InquiryVersionV0::V0,
             profile: profile.to_string(),
             as_of: "2026-07-11T12:00:00Z".to_string(),
+            targets: vec![],
+        }
+    }
+
+    fn tls_target() -> InquiryTlsTargetV0 {
+        InquiryTlsTargetV0 {
+            target_id: "loopback".into(),
+            host: "127.0.0.1".into(),
+            port: 443,
+            sni: "tls-lab.test".into(),
+        }
+    }
+
+    fn tls_profile() -> InquiryProfileV0 {
+        serde_json::from_str::<InquiryProfileCatalogV0>(include_str!(
+            "../tests/fixtures/tls_cert_probe.profile_catalog.v0.json"
+        ))
+        .unwrap()
+        .profiles
+        .remove(0)
+    }
+
+    fn tls_resolved() -> ResolvedInquiryProfileV0 {
+        let profile = tls_profile().normalized().unwrap();
+        let profile_digest = profile.profile_digest().unwrap();
+        ResolvedInquiryProfileV0 {
+            profile,
+            profile_digest,
+        }
+    }
+
+    fn tls_receipt(acquired_at: &str, certificate_digest: &str) -> InquiryReceiptV0 {
+        let resolved = tls_resolved();
+        let request =
+            AdmittedInquiryRequestV0::admit(&plan("tls-cert"), &resolved).unwrap();
+        let witness_plan = InquiryWitnessPlanV0::resolve(&request, &resolved).unwrap();
+        let spend = InquiryAcquisitionSpendV0 {
+            dns_attempts: 1,
+            connection_attempts: 1,
+            handshakes_attempted: 1,
+            handshakes_completed: 1,
+            bound_checks: 1,
+            wall_ms: 5,
+            work_units: 4,
+        };
+        InquiryReceiptV0 {
+            schema: INQUIRY_RECEIPT_SCHEMA_V0.into(),
+            version: InquiryVersionV0::V0,
+            status: InquiryStatusV0::Answered,
+            disposition: InquiryDisposition::PerTargetOutcomes,
+            request,
+            source_snapshot: None,
+            finding_state: None,
+            evidence_receipts: vec![],
+            evidence_coverage: InquiryEvidenceCoverageV0 {
+                matched_current_rows: 0,
+                matched_receipt_rows: 0,
+                receipt_limit: 0,
+                receipt_tail_truncated: false,
+                newest_receipt_generation: None,
+                oldest_receipt_generation: None,
+            },
+            witness_plan: Some(witness_plan),
+            tls_observations: vec![InquiryTlsObservationV0 {
+                acquired_at: acquired_at.into(),
+                target: tls_target(),
+                observed_ip: Some("127.0.0.1".into()),
+                certificate_digest: Some(certificate_digest.into()),
+                chain_digest: Some(CHAIN_DIGEST.into()),
+                chain_fingerprints: vec![certificate_digest.into()],
+                not_before: Some("2026-01-01T00:00:00Z".into()),
+                not_after: Some("2027-01-01T00:00:00Z".into()),
+                validation_result: InquiryTlsValidationResultV0::Valid,
+                outcome: InquiryTlsOutcomeV0::ValidBeyondExpiryHorizon,
+                spend: spend.clone(),
+                refusals: vec![],
+            }],
+            acquisition: Some(spend),
+            coverage: resolved.profile.coverage.clone(),
+            cannot_testify: resolved.profile.cannot_testify.clone(),
+            acquisition_spend: 4,
+            receipt_digest: None,
         }
     }
 
@@ -854,11 +1843,14 @@ mod tests {
             evidence_coverage: InquiryEvidenceCoverageV0 {
                 matched_current_rows: 0,
                 matched_receipt_rows: 0,
-                receipt_limit: resolved.profile.evidence_limit,
+                receipt_limit: resolved.profile.evidence_limit.unwrap(),
                 receipt_tail_truncated: false,
                 newest_receipt_generation: None,
                 oldest_receipt_generation: None,
             },
+            witness_plan: None,
+            tls_observations: vec![],
+            acquisition: None,
             coverage: resolved.profile.coverage.clone(),
             cannot_testify: resolved.profile.cannot_testify.clone(),
             acquisition_spend: 0,
@@ -891,5 +1883,92 @@ mod tests {
 
         receipt.request.as_of = "2026-07-11T12:00:01Z".into();
         assert!(receipt.seal().is_err());
+    }
+
+    #[test]
+    fn active_plan_and_budgets_are_stable_while_live_receipts_may_change() {
+        let resolved = tls_resolved();
+        let request_a =
+            AdmittedInquiryRequestV0::admit(&plan("bounded_tls_cert"), &resolved).unwrap();
+        let request_b =
+            AdmittedInquiryRequestV0::admit(&plan("tls-cert"), &resolved).unwrap();
+        assert_eq!(request_a, request_b);
+        let witness_a = InquiryWitnessPlanV0::resolve(&request_a, &resolved).unwrap();
+        let witness_b = InquiryWitnessPlanV0::resolve(&request_b, &resolved).unwrap();
+        assert_eq!(witness_a.canonical_bytes().unwrap(), witness_b.canonical_bytes().unwrap());
+        assert_eq!(witness_a.bounds.max_dns_attempts, 1);
+        assert_eq!(witness_a.bounds.max_connection_attempts, 1);
+        assert_eq!(witness_a.bounds.max_handshakes_attempted, 1);
+        assert_eq!(witness_a.bounds.max_bound_checks, 1);
+        assert_eq!(witness_a.bounds.max_work_units, 4);
+        assert_eq!(witness_a.bounds.max_redirects, 0);
+        assert_eq!(witness_a.bounds.max_retries, 0);
+        assert_eq!(witness_a.bounds.max_aia_fetches, 0);
+        assert_eq!(witness_a.bounds.max_ocsp_requests, 0);
+        assert_eq!(witness_a.bounds.max_dependency_recursions, 0);
+
+        let mut first = tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
+        let mut second = tls_receipt("2026-07-11T12:00:02Z", SECOND_CERT_DIGEST);
+        first.seal().unwrap();
+        second.seal().unwrap();
+        assert_ne!(first.canonical_bytes().unwrap(), second.canonical_bytes().unwrap());
+        assert_eq!(first.witness_plan, second.witness_plan);
+        assert!(first.acquisition_spend > 0);
+        assert!(first
+            .cannot_testify
+            .iter()
+            .any(|r| r.kind == InquiryRefusalKindV0::ConsequenceAuthority));
+    }
+
+    #[test]
+    fn active_receipt_refuses_envelope_escape_and_missing_authority_refusal() {
+        let mut too_much = tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
+        too_much.tls_observations[0].spend.handshakes_attempted = 2;
+        too_much.tls_observations[0].spend.work_units = 5;
+        too_much.acquisition.as_mut().unwrap().handshakes_attempted = 2;
+        too_much.acquisition.as_mut().unwrap().work_units = 5;
+        too_much.acquisition_spend = 5;
+        assert!(too_much.seal().is_err());
+
+        let mut no_authority = tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
+        no_authority.cannot_testify.clear();
+        assert!(no_authority.seal().is_err());
+
+        let mut follow_up = tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
+        let witness_plan = follow_up.witness_plan.as_mut().unwrap();
+        witness_plan.bounds.max_retries = 1;
+        witness_plan.witness_plan_digest = witness_plan.compute_witness_plan_digest().unwrap();
+        assert!(follow_up.seal().is_err());
+
+        let mut missing_certificate =
+            tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
+        missing_certificate.tls_observations[0].certificate_digest = None;
+        assert!(missing_certificate.seal().is_err());
+    }
+
+    #[test]
+    fn active_profile_and_target_admission_refuse_scope_escape() {
+        let mut profile = tls_profile();
+        profile.tls_cert.as_mut().unwrap().max_concurrency = 2;
+        assert!(profile.validate().is_err());
+
+        let mut profile = tls_profile();
+        profile.tls_cert.as_mut().unwrap().total_deadline_ms = 100;
+        assert!(profile.validate().is_err());
+
+        let mut profile = tls_profile();
+        profile.cannot_testify.clear();
+        assert!(profile.validate().is_err());
+
+        let mut profile = tls_profile();
+        profile.question = "is TLS healthy?".into();
+        assert!(profile.validate().is_err());
+
+        let resolved = tls_resolved();
+        let mut escaped = plan("tls-cert");
+        let mut target = tls_target();
+        target.port = 8443;
+        escaped.targets = vec![target];
+        assert!(AdmittedInquiryRequestV0::admit(&escaped, &resolved).is_err());
     }
 }

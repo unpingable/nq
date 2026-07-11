@@ -14,9 +14,8 @@ pub enum Command {
     Serve(ServeCmd),
     /// Run a read-only SQL query against the DB
     Query(QueryCmd),
-    /// Ask a deterministic, profile-governed question over existing NQ
-    /// receipt state. Read-only and passive: no probes, collection, migrations,
-    /// or writes. The plan must carry a frozen as_of timestamp.
+    /// Ask a profile-governed question. Report profiles read existing NQ state;
+    /// the bounded TLS-certificate profile acquires only its declared targets.
     Inquire(InquireCmd),
     /// Run all saved checks against the DB and report results
     Check(CheckCmd),
@@ -722,13 +721,13 @@ pub struct QueryCmd {
 
 #[derive(Debug, Args)]
 pub struct InquireCmd {
-    /// Path to the existing NQ database. Opened read-only; this command never
-    /// applies migrations.
+    /// Path to the existing NQ database. Required only by passive report
+    /// profiles, opened read-only, and never consulted by active profiles.
     #[arg(long)]
-    pub db: PathBuf,
+    pub db: Option<PathBuf>,
 
     /// Path to an nq.inquiry_plan.v0 JSON document. The plan supplies the
-    /// profile selector and frozen as_of time; wall-clock defaults are refused.
+    /// profile selector, frozen as_of time, and optional exact target subset.
     #[arg(long)]
     pub plan: PathBuf,
 
@@ -1101,7 +1100,7 @@ mod tests {
     }
 
     #[test]
-    fn inquire_requires_explicit_plan_catalog_and_read_only_db_target() {
+    fn inquire_accepts_explicit_passive_db_target() {
         let cli = Cli::try_parse_from([
             "nq",
             "inquire",
@@ -1117,10 +1116,33 @@ mod tests {
         .expect("nq inquire arguments must parse");
         match cli.command {
             Command::Inquire(cmd) => {
-                assert_eq!(cmd.db, PathBuf::from("/tmp/nq.db"));
+                assert_eq!(cmd.db, Some(PathBuf::from("/tmp/nq.db")));
                 assert_eq!(cmd.plan, PathBuf::from("/tmp/plan.v0.json"));
                 assert_eq!(cmd.profile_catalog, PathBuf::from("/tmp/profiles.v0.json"));
                 assert_eq!(cmd.format, "json");
+            }
+            other => panic!("expected Inquire, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inquire_allows_active_profile_without_db_target() {
+        let cli = Cli::try_parse_from([
+            "nq",
+            "inquire",
+            "--plan",
+            "/tmp/plan.v0.json",
+            "--profile-catalog",
+            "/tmp/profiles.v0.json",
+            "--format",
+            "json",
+        ])
+        .expect("active nq inquire arguments must parse without --db");
+        match cli.command {
+            Command::Inquire(cmd) => {
+                assert_eq!(cmd.db, None);
+                assert_eq!(cmd.plan, PathBuf::from("/tmp/plan.v0.json"));
+                assert_eq!(cmd.profile_catalog, PathBuf::from("/tmp/profiles.v0.json"));
             }
             other => panic!("expected Inquire, got {other:?}"),
         }
