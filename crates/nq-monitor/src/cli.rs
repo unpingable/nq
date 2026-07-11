@@ -14,6 +14,10 @@ pub enum Command {
     Serve(ServeCmd),
     /// Run a read-only SQL query against the DB
     Query(QueryCmd),
+    /// Ask a deterministic, profile-governed question over existing NQ
+    /// receipt state. Read-only and passive: no probes, collection, migrations,
+    /// or writes. The plan must carry a frozen as_of timestamp.
+    Inquire(InquireCmd),
     /// Run all saved checks against the DB and report results
     Check(CheckCmd),
     /// Run the liveness sentinel — watches NQ's liveness artifact and
@@ -717,6 +721,28 @@ pub struct QueryCmd {
 }
 
 #[derive(Debug, Args)]
+pub struct InquireCmd {
+    /// Path to the existing NQ database. Opened read-only; this command never
+    /// applies migrations.
+    #[arg(long)]
+    pub db: PathBuf,
+
+    /// Path to an nq.inquiry_plan.v0 JSON document. The plan supplies the
+    /// profile selector and frozen as_of time; wall-clock defaults are refused.
+    #[arg(long)]
+    pub plan: PathBuf,
+
+    /// Path to an nq.inquiry_profile_catalog.v0 JSON document. Alias
+    /// resolution occurs in core after the whole catalog is loaded.
+    #[arg(long = "profile-catalog")]
+    pub profile_catalog: PathBuf,
+
+    /// Output format: human (operator table) or json (JCS canonical receipt).
+    #[arg(long, short, default_value = "human")]
+    pub format: String,
+}
+
+#[derive(Debug, Args)]
 pub struct CheckCmd {
     /// Path to the nq database
     #[arg(long)]
@@ -1072,5 +1098,31 @@ mod tests {
             msg.contains("--query-type") || msg.contains("unexpected"),
             "error must name the unexpected flag: {msg}"
         );
+    }
+
+    #[test]
+    fn inquire_requires_explicit_plan_catalog_and_read_only_db_target() {
+        let cli = Cli::try_parse_from([
+            "nq",
+            "inquire",
+            "--db",
+            "/tmp/nq.db",
+            "--plan",
+            "/tmp/plan.v0.json",
+            "--profile-catalog",
+            "/tmp/profiles.v0.json",
+            "--format",
+            "json",
+        ])
+        .expect("nq inquire arguments must parse");
+        match cli.command {
+            Command::Inquire(cmd) => {
+                assert_eq!(cmd.db, PathBuf::from("/tmp/nq.db"));
+                assert_eq!(cmd.plan, PathBuf::from("/tmp/plan.v0.json"));
+                assert_eq!(cmd.profile_catalog, PathBuf::from("/tmp/profiles.v0.json"));
+                assert_eq!(cmd.format, "json");
+            }
+            other => panic!("expected Inquire, got {other:?}"),
+        }
     }
 }
