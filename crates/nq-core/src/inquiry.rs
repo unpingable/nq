@@ -15,6 +15,15 @@
 //! target identities; it does not deform that contract to mirror the scratch
 //! representation. Findings and rationale remain structurally outside the
 //! authorization predicate.
+//!
+//! GI-003's `findings_cannot_fund_successor_inquiry` prohibition and this
+//! module's [`EscalationRequestCandidateV0`] compose at the standing boundary:
+//! findings may ask for a successor envelope, but only outer standing may mint
+//! it.  The candidate is the lawful request lane left open by that prohibition,
+//! never an authorization input.  `Calculi.Scratch.InquiryRatchet` at
+//! skunkworks `d0dbe26` calls the outer paid bridge `SuccessorGrant`; that
+//! scratch-tier shape is cited as evidence, not used to pin NQ's wire
+//! vocabulary.
 
 use crate::status::GenerationStatus;
 use crate::witness::{DigestError, DIGEST_ALGORITHM_PREFIX};
@@ -31,6 +40,8 @@ pub const INQUIRY_PROFILE_CATALOG_SCHEMA_V0: &str = "nq.inquiry_profile_catalog.
 pub const INQUIRY_REQUEST_SCHEMA_V0: &str = "nq.inquiry_request.v0";
 pub const INQUIRY_RECEIPT_SCHEMA_V0: &str = "nq.inquiry_receipt.v0";
 pub const INQUIRY_WITNESS_PLAN_SCHEMA_V0: &str = "nq.inquiry_witness_plan.v0";
+pub const INQUIRY_PREFLIGHT_SCHEMA_V0: &str = "nq.inquiry_preflight.v0";
+pub const INQUIRY_ESCALATION_REQUEST_SCHEMA_V0: &str = "nq.inquiry_escalation_request.v0";
 pub const INQUIRY_GRANT_SCHEMA_V0: &str = "nq.inquiry_grant.v0";
 pub const INQUIRY_POSITION_SCHEMA_V0: &str = "nq.inquiry_position.v0";
 pub const INQUIRY_TRANSITION_REQUEST_SCHEMA_V0: &str = "nq.inquiry_transition_request.v0";
@@ -38,6 +49,12 @@ pub const AUTHORIZED_INQUIRY_TRANSITION_SCHEMA_V0: &str = "nq.authorized_inquiry
 pub const INQUIRY_TRANSITION_REFUSAL_SCHEMA_V0: &str = "nq.inquiry_transition_refusal.v0";
 pub const TLS_CERT_INQUIRY_QUESTION_V0: &str =
     "what certificate did these declared endpoints present, and does it validate within the profile's expiry horizon?";
+
+/// Inspection depth for an L0 report over already-recorded testimony.
+pub const INQUIRY_REPORT_DEPTH_V0: u32 = 0;
+
+/// Inspection depth for an L1 bounded active survey.
+pub const INQUIRY_SURVEY_DEPTH_V0: u32 = 1;
 
 /// The only governed-inquiry contract version understood by this slice.
 /// Unknown strings fail serde deserialization rather than being treated as a
@@ -1103,6 +1120,598 @@ impl InquiryAcquisitionSpendV0 {
             + u64::from(self.connection_attempts)
             + u64::from(self.handshakes_attempted)
             + u64::from(self.bound_checks)
+    }
+}
+
+/// The grant-shaped minimum an outer standing layer would have to mint for a
+/// rendered inquiry.  This is testimony about requirements, not a grant, and
+/// deliberately has no conversion into [`InquiryGrantV0`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryGrantRequirementsV0 {
+    pub admitted_scope: BTreeSet<InquiryTlsTargetV0>,
+    pub max_depth: u32,
+    pub total_acquisition_envelope: InquiryAcquisitionSpendV0,
+    pub permitted_witness_classes: BTreeSet<InquiryCollectorV0>,
+}
+
+impl InquiryGrantRequirementsV0 {
+    pub fn validate(&self) -> Result<(), InquiryValidationError> {
+        validate_ratchet_scope("grant_requirements.admitted_scope", &self.admitted_scope)
+    }
+}
+
+/// Closed list of questions an inquiry preflight cannot answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InquiryPreflightCannotTestifyKindV0 {
+    Authorization,
+    Execution,
+    GrantExistence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryPreflightCannotTestifyV0 {
+    pub kind: InquiryPreflightCannotTestifyKindV0,
+    pub statement: String,
+}
+
+/// Pure rendering of the exact envelope an admitted inquiry would use.  It
+/// contains zero actual spend and cannot create or discover standing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryPreflightV0 {
+    pub schema: String,
+    pub version: InquiryVersionV0,
+    pub profile: InquiryProfileBindingV0,
+    pub question_kind: InquiryQuestionV0,
+    pub as_of: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selector: Option<FindingSelectorV0>,
+    pub request_digest: String,
+    pub declared_targets: BTreeSet<InquiryTlsTargetV0>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness_class: Option<InquiryCollectorV0>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness_plan_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<InquiryAcquisitionBoundsV0>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expiry_horizon_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_policy: Option<InquiryTlsValidationPolicyV0>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vantage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_snapshot_age_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_limit: Option<u32>,
+    /// Pointwise upper bound on what later execution may spend.
+    pub acquisition_envelope: InquiryAcquisitionSpendV0,
+    /// Preflight itself is pure, so every actual-spend counter is zero.
+    pub acquisition_spend: InquiryAcquisitionSpendV0,
+    pub grant_requirements: InquiryGrantRequirementsV0,
+    pub cannot_testify: Vec<InquiryPreflightCannotTestifyV0>,
+    pub preflight_digest: String,
+}
+
+#[derive(Serialize)]
+struct InquiryPreflightDigestMaterial<'a> {
+    schema: &'a str,
+    version: InquiryVersionV0,
+    profile: &'a InquiryProfileBindingV0,
+    question_kind: InquiryQuestionV0,
+    as_of: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selector: Option<&'a FindingSelectorV0>,
+    request_digest: &'a str,
+    declared_targets: &'a BTreeSet<InquiryTlsTargetV0>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    witness_class: Option<InquiryCollectorV0>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    witness_plan_digest: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bounds: Option<&'a InquiryAcquisitionBoundsV0>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expiry_horizon_days: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validation_policy: Option<InquiryTlsValidationPolicyV0>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vantage: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_snapshot_age_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evidence_limit: Option<u32>,
+    acquisition_envelope: &'a InquiryAcquisitionSpendV0,
+    acquisition_spend: &'a InquiryAcquisitionSpendV0,
+    grant_requirements: &'a InquiryGrantRequirementsV0,
+    cannot_testify: &'a [InquiryPreflightCannotTestifyV0],
+}
+
+impl InquiryPreflightV0 {
+    /// Resolve the already-admitted request into testimony without opening a
+    /// database or invoking any collector.  Active profiles reuse the exact
+    /// witness-plan resolver used by execution; report profiles stop at L0.
+    pub fn render(
+        plan: &CandidateInquiryPlanV0,
+        resolved: &ResolvedInquiryProfileV0,
+    ) -> Result<Self, InquiryValidationError> {
+        let request = AdmittedInquiryRequestV0::admit(plan, resolved)?;
+        let (
+            declared_targets,
+            witness_class,
+            witness_plan_digest,
+            bounds,
+            expiry_horizon_days,
+            validation_policy,
+            vantage,
+            max_snapshot_age_seconds,
+            evidence_limit,
+            acquisition_envelope,
+            max_depth,
+        ) = match request.question_kind {
+            InquiryQuestionV0::FindingOperationalActivity => (
+                BTreeSet::new(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                resolved.profile.max_snapshot_age_seconds,
+                resolved.profile.evidence_limit,
+                InquiryAcquisitionSpendV0::default(),
+                INQUIRY_REPORT_DEPTH_V0,
+            ),
+            InquiryQuestionV0::TlsCertificatePresentationAndExpiryHorizon => {
+                let witness_plan = InquiryWitnessPlanV0::resolve(&request, resolved)?;
+                let acquisition_envelope = acquisition_envelope_from_bounds(&witness_plan.bounds);
+                (
+                    witness_plan.targets.iter().cloned().collect(),
+                    Some(witness_plan.collector),
+                    Some(witness_plan.witness_plan_digest.clone()),
+                    Some(witness_plan.bounds.clone()),
+                    Some(witness_plan.expiry_horizon_days),
+                    Some(witness_plan.validation_policy),
+                    Some(witness_plan.vantage.clone()),
+                    None,
+                    None,
+                    acquisition_envelope,
+                    INQUIRY_SURVEY_DEPTH_V0,
+                )
+            }
+        };
+        let permitted_witness_classes = witness_class.into_iter().collect();
+        let grant_requirements = InquiryGrantRequirementsV0 {
+            admitted_scope: declared_targets.clone(),
+            max_depth,
+            total_acquisition_envelope: acquisition_envelope.clone(),
+            permitted_witness_classes,
+        };
+        let mut preflight = Self {
+            schema: INQUIRY_PREFLIGHT_SCHEMA_V0.to_string(),
+            version: InquiryVersionV0::V0,
+            profile: request.profile,
+            question_kind: request.question_kind,
+            as_of: request.as_of,
+            selector: request.selector,
+            request_digest: request.request_digest,
+            declared_targets,
+            witness_class,
+            witness_plan_digest,
+            bounds,
+            expiry_horizon_days,
+            validation_policy,
+            vantage,
+            max_snapshot_age_seconds,
+            evidence_limit,
+            acquisition_envelope,
+            acquisition_spend: InquiryAcquisitionSpendV0::default(),
+            grant_requirements,
+            cannot_testify: inquiry_preflight_cannot_testify(),
+            preflight_digest: String::new(),
+        };
+        preflight.preflight_digest = preflight.compute_preflight_digest().map_err(|e| {
+            InquiryValidationError::new(format!("inquiry preflight digest failed: {e}"))
+        })?;
+        preflight.validate()?;
+        Ok(preflight)
+    }
+
+    pub fn validate(&self) -> Result<(), InquiryValidationError> {
+        if self.schema != INQUIRY_PREFLIGHT_SCHEMA_V0 {
+            return Err(InquiryValidationError::new(format!(
+                "unsupported inquiry preflight schema {:?}; expected {:?}",
+                self.schema, INQUIRY_PREFLIGHT_SCHEMA_V0
+            )));
+        }
+        require_nonempty("preflight.profile.profile_id", &self.profile.profile_id)?;
+        parse_rfc3339("preflight.as_of", &self.as_of)?;
+        if !is_sha256_digest(&self.profile.profile_digest)
+            || !is_sha256_digest(&self.request_digest)
+            || !is_sha256_digest(&self.preflight_digest)
+            || self
+                .witness_plan_digest
+                .as_deref()
+                .is_some_and(|digest| !is_sha256_digest(digest))
+        {
+            return Err(InquiryValidationError::new(
+                "inquiry preflight bindings must be canonical SHA-256 digests",
+            ));
+        }
+        validate_ratchet_scope("preflight.declared_targets", &self.declared_targets)?;
+        self.grant_requirements.validate()?;
+        if self.acquisition_spend != InquiryAcquisitionSpendV0::default() {
+            return Err(InquiryValidationError::new(
+                "inquiry preflight acquisition_spend must be zero",
+            ));
+        }
+        if self.grant_requirements.admitted_scope != self.declared_targets
+            || self.grant_requirements.total_acquisition_envelope != self.acquisition_envelope
+        {
+            return Err(InquiryValidationError::new(
+                "inquiry preflight grant requirements do not cover its rendered envelope",
+            ));
+        }
+        let expected_witness_classes: BTreeSet<_> = self.witness_class.into_iter().collect();
+        if self.grant_requirements.permitted_witness_classes != expected_witness_classes {
+            return Err(InquiryValidationError::new(
+                "inquiry preflight grant requirements do not name its witness class",
+            ));
+        }
+        if self.cannot_testify != inquiry_preflight_cannot_testify() {
+            return Err(InquiryValidationError::new(
+                "inquiry preflight must refuse authorization, execution, and grant-existence testimony",
+            ));
+        }
+
+        match self.question_kind {
+            InquiryQuestionV0::FindingOperationalActivity => {
+                let selector = self.selector.as_ref().ok_or_else(|| {
+                    InquiryValidationError::new("report inquiry preflight is missing its selector")
+                })?;
+                require_nonempty("preflight.selector.host", &selector.host)?;
+                require_nonempty("preflight.selector.kind", &selector.kind)?;
+                if !self.declared_targets.is_empty()
+                    || self.witness_class.is_some()
+                    || self.witness_plan_digest.is_some()
+                    || self.bounds.is_some()
+                    || self.expiry_horizon_days.is_some()
+                    || self.validation_policy.is_some()
+                    || self.vantage.is_some()
+                    || self.max_snapshot_age_seconds.is_none_or(|value| value == 0)
+                    || self.evidence_limit.is_none_or(|value| value == 0)
+                    || self.acquisition_envelope != InquiryAcquisitionSpendV0::default()
+                    || self.grant_requirements.max_depth != INQUIRY_REPORT_DEPTH_V0
+                {
+                    return Err(InquiryValidationError::new(
+                        "report inquiry preflight has an invalid L0 envelope",
+                    ));
+                }
+            }
+            InquiryQuestionV0::TlsCertificatePresentationAndExpiryHorizon => {
+                let bounds = self.bounds.as_ref().ok_or_else(|| {
+                    InquiryValidationError::new("active inquiry preflight is missing bounds")
+                })?;
+                let target_count = self.declared_targets.len() as u32;
+                if self.selector.is_some()
+                    || self.declared_targets.is_empty()
+                    || self.witness_class.is_none()
+                    || self.witness_plan_digest.is_none()
+                    || self.expiry_horizon_days.is_none()
+                    || self.validation_policy.is_none()
+                    || self.vantage.as_deref().is_none_or(str::is_empty)
+                    || self.max_snapshot_age_seconds.is_some()
+                    || self.evidence_limit.is_some()
+                    || bounds.max_targets == 0
+                    || target_count > bounds.max_targets
+                    || bounds.max_concurrency != 1
+                    || bounds.per_target_deadline_ms < 100
+                    || bounds.per_target_deadline_ms > 60_000
+                    || bounds.total_deadline_ms == 0
+                    || bounds.total_deadline_ms > 300_000
+                    || bounds.total_deadline_ms
+                        < bounds
+                            .per_target_deadline_ms
+                            .saturating_mul(u64::from(target_count))
+                    || self
+                        .expiry_horizon_days
+                        .is_none_or(|days| days == 0 || days > 3_650)
+                    || bounds.max_dns_attempts != target_count
+                    || bounds.max_connection_attempts != target_count
+                    || bounds.max_handshakes_attempted != target_count
+                    || bounds.max_bound_checks != target_count
+                    || bounds.max_work_units != u64::from(target_count) * 4
+                    || bounds.max_redirects != 0
+                    || bounds.max_retries != 0
+                    || bounds.max_aia_fetches != 0
+                    || bounds.max_ocsp_requests != 0
+                    || bounds.max_dependency_recursions != 0
+                    || self.acquisition_envelope != acquisition_envelope_from_bounds(bounds)
+                    || self.grant_requirements.max_depth != INQUIRY_SURVEY_DEPTH_V0
+                {
+                    return Err(InquiryValidationError::new(
+                        "active inquiry preflight has an invalid L1 envelope",
+                    ));
+                }
+            }
+        }
+
+        let computed = self.compute_preflight_digest().map_err(|e| {
+            InquiryValidationError::new(format!("inquiry preflight digest failed: {e}"))
+        })?;
+        if computed != self.preflight_digest {
+            return Err(InquiryValidationError::new(format!(
+                "inquiry preflight digest mismatch: declared {}, computed {}",
+                self.preflight_digest, computed
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn compute_preflight_digest(&self) -> Result<String, DigestError> {
+        digest_jcs(&InquiryPreflightDigestMaterial {
+            schema: &self.schema,
+            version: self.version,
+            profile: &self.profile,
+            question_kind: self.question_kind,
+            as_of: &self.as_of,
+            selector: self.selector.as_ref(),
+            request_digest: &self.request_digest,
+            declared_targets: &self.declared_targets,
+            witness_class: self.witness_class,
+            witness_plan_digest: self.witness_plan_digest.as_deref(),
+            bounds: self.bounds.as_ref(),
+            expiry_horizon_days: self.expiry_horizon_days,
+            validation_policy: self.validation_policy,
+            vantage: self.vantage.as_deref(),
+            max_snapshot_age_seconds: self.max_snapshot_age_seconds,
+            evidence_limit: self.evidence_limit,
+            acquisition_envelope: &self.acquisition_envelope,
+            acquisition_spend: &self.acquisition_spend,
+            grant_requirements: &self.grant_requirements,
+            cannot_testify: &self.cannot_testify,
+        })
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, DigestError> {
+        self.validate().map_err(|e| DigestError {
+            message: e.to_string(),
+        })?;
+        serde_jcs::to_vec(self).map_err(|e| DigestError {
+            message: format!("JCS canonicalization failed: {e}"),
+        })
+    }
+
+    pub fn canonical_json(&self) -> Result<String, DigestError> {
+        String::from_utf8(self.canonical_bytes()?).map_err(|e| DigestError {
+            message: format!("JCS emitted non-UTF-8 JSON: {e}"),
+        })
+    }
+}
+
+fn acquisition_envelope_from_bounds(
+    bounds: &InquiryAcquisitionBoundsV0,
+) -> InquiryAcquisitionSpendV0 {
+    InquiryAcquisitionSpendV0 {
+        dns_attempts: bounds.max_dns_attempts,
+        connection_attempts: bounds.max_connection_attempts,
+        handshakes_attempted: bounds.max_handshakes_attempted,
+        handshakes_completed: bounds.max_handshakes_attempted,
+        bound_checks: bounds.max_bound_checks,
+        wall_ms: bounds.total_deadline_ms,
+        work_units: bounds.max_work_units,
+    }
+}
+
+fn inquiry_preflight_cannot_testify() -> Vec<InquiryPreflightCannotTestifyV0> {
+    vec![
+        InquiryPreflightCannotTestifyV0 {
+            kind: InquiryPreflightCannotTestifyKindV0::Authorization,
+            statement: "preflight authorizes nothing".to_string(),
+        },
+        InquiryPreflightCannotTestifyV0 {
+            kind: InquiryPreflightCannotTestifyKindV0::Execution,
+            statement: "preflight executes nothing".to_string(),
+        },
+        InquiryPreflightCannotTestifyV0 {
+            kind: InquiryPreflightCannotTestifyKindV0::GrantExistence,
+            statement: "preflight does not evaluate whether any inquiry grant exists".to_string(),
+        },
+    ]
+}
+
+/// Exact identity of an observation cited by an escalation request.  The
+/// source receipt digest namespaces either identity back to its sealed receipt.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InquiryObservationIdentityV0 {
+    EvidenceReceipt {
+        observation_id: i64,
+        generation_id: i64,
+        finding_key: String,
+    },
+    TlsObservation {
+        target: InquiryTlsTargetV0,
+        acquired_at: String,
+    },
+}
+
+impl InquiryObservationIdentityV0 {
+    fn validate(&self) -> Result<(), InquiryValidationError> {
+        match self {
+            Self::EvidenceReceipt {
+                observation_id,
+                generation_id,
+                finding_key,
+            } => {
+                if *observation_id <= 0 || *generation_id <= 0 {
+                    return Err(InquiryValidationError::new(
+                        "cited evidence observation ids must be positive",
+                    ));
+                }
+                require_nonempty("candidate.cited_observations[].finding_key", finding_key)
+            }
+            Self::TlsObservation {
+                target,
+                acquired_at,
+            } => {
+                target.validate("candidate.cited_observations[].target")?;
+                parse_rfc3339("candidate.cited_observations[].acquired_at", acquired_at)?;
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Annotation-only request addressed to the outer standing boundary.  It
+/// binds why a successor envelope was requested but carries no authority and
+/// is absent from every grant-admission and transition-authorization API.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EscalationRequestCandidateV0 {
+    pub schema: String,
+    pub version: InquiryVersionV0,
+    pub source_receipt_digest: String,
+    pub cited_findings: BTreeSet<FindingSelectorV0>,
+    pub cited_observations: BTreeSet<InquiryObservationIdentityV0>,
+    pub requested_scope: BTreeSet<InquiryTlsTargetV0>,
+    pub requested_depth: u32,
+    pub requested_acquisition_envelope: InquiryAcquisitionSpendV0,
+    pub requested_witness_classes: BTreeSet<InquiryCollectorV0>,
+    pub escalation_request_digest: String,
+}
+
+#[derive(Serialize)]
+struct EscalationRequestDigestMaterial<'a> {
+    schema: &'a str,
+    version: InquiryVersionV0,
+    source_receipt_digest: &'a str,
+    cited_findings: &'a BTreeSet<FindingSelectorV0>,
+    cited_observations: &'a BTreeSet<InquiryObservationIdentityV0>,
+    requested_scope: &'a BTreeSet<InquiryTlsTargetV0>,
+    requested_depth: u32,
+    requested_acquisition_envelope: &'a InquiryAcquisitionSpendV0,
+    requested_witness_classes: &'a BTreeSet<InquiryCollectorV0>,
+}
+
+impl EscalationRequestCandidateV0 {
+    #[allow(clippy::too_many_arguments)]
+    pub fn bind(
+        source_receipt: &InquiryReceiptV0,
+        cited_findings: BTreeSet<FindingSelectorV0>,
+        cited_observations: BTreeSet<InquiryObservationIdentityV0>,
+        requested_scope: BTreeSet<InquiryTlsTargetV0>,
+        requested_depth: u32,
+        requested_acquisition_envelope: InquiryAcquisitionSpendV0,
+        requested_witness_classes: BTreeSet<InquiryCollectorV0>,
+    ) -> Result<Self, InquiryValidationError> {
+        if source_receipt.schema != INQUIRY_RECEIPT_SCHEMA_V0 {
+            return Err(InquiryValidationError::new(
+                "escalation source must be an nq.inquiry_receipt.v0 artifact",
+            ));
+        }
+        let source_receipt_digest = source_receipt.receipt_digest.clone().ok_or_else(|| {
+            InquiryValidationError::new("escalation source receipt must be sealed")
+        })?;
+        let computed_source_digest = source_receipt.compute_receipt_digest().map_err(|e| {
+            InquiryValidationError::new(format!("source receipt digest failed: {e}"))
+        })?;
+        if source_receipt_digest != computed_source_digest {
+            return Err(InquiryValidationError::new(
+                "escalation source receipt digest does not match its testimony",
+            ));
+        }
+        let mut candidate = Self {
+            schema: INQUIRY_ESCALATION_REQUEST_SCHEMA_V0.to_string(),
+            version: InquiryVersionV0::V0,
+            source_receipt_digest,
+            cited_findings,
+            cited_observations,
+            requested_scope,
+            requested_depth,
+            requested_acquisition_envelope,
+            requested_witness_classes,
+            escalation_request_digest: String::new(),
+        };
+        candidate.escalation_request_digest =
+            candidate.compute_escalation_request_digest().map_err(|e| {
+                InquiryValidationError::new(format!(
+                    "inquiry escalation request digest failed: {e}"
+                ))
+            })?;
+        candidate.validate()?;
+        Ok(candidate)
+    }
+
+    pub fn validate(&self) -> Result<(), InquiryValidationError> {
+        if self.schema != INQUIRY_ESCALATION_REQUEST_SCHEMA_V0 {
+            return Err(InquiryValidationError::new(format!(
+                "unsupported inquiry escalation request schema {:?}; expected {:?}",
+                self.schema, INQUIRY_ESCALATION_REQUEST_SCHEMA_V0
+            )));
+        }
+        if !is_sha256_digest(&self.source_receipt_digest)
+            || !is_sha256_digest(&self.escalation_request_digest)
+        {
+            return Err(InquiryValidationError::new(
+                "inquiry escalation request bindings must be canonical SHA-256 digests",
+            ));
+        }
+        if self.cited_findings.is_empty() && self.cited_observations.is_empty() {
+            return Err(InquiryValidationError::new(
+                "inquiry escalation request must cite a finding or observation",
+            ));
+        }
+        for finding in &self.cited_findings {
+            require_nonempty("candidate.cited_findings[].host", &finding.host)?;
+            require_nonempty("candidate.cited_findings[].kind", &finding.kind)?;
+        }
+        for observation in &self.cited_observations {
+            observation.validate()?;
+        }
+        validate_ratchet_scope("candidate.requested_scope", &self.requested_scope)?;
+
+        let computed = self.compute_escalation_request_digest().map_err(|e| {
+            InquiryValidationError::new(format!("inquiry escalation request digest failed: {e}"))
+        })?;
+        if computed != self.escalation_request_digest {
+            return Err(InquiryValidationError::new(format!(
+                "inquiry escalation request digest mismatch: declared {}, computed {}",
+                self.escalation_request_digest, computed
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn compute_escalation_request_digest(&self) -> Result<String, DigestError> {
+        digest_jcs(&EscalationRequestDigestMaterial {
+            schema: &self.schema,
+            version: self.version,
+            source_receipt_digest: &self.source_receipt_digest,
+            cited_findings: &self.cited_findings,
+            cited_observations: &self.cited_observations,
+            requested_scope: &self.requested_scope,
+            requested_depth: self.requested_depth,
+            requested_acquisition_envelope: &self.requested_acquisition_envelope,
+            requested_witness_classes: &self.requested_witness_classes,
+        })
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, DigestError> {
+        self.validate().map_err(|e| DigestError {
+            message: e.to_string(),
+        })?;
+        serde_jcs::to_vec(self).map_err(|e| DigestError {
+            message: format!("JCS canonicalization failed: {e}"),
+        })
+    }
+
+    pub fn canonical_json(&self) -> Result<String, DigestError> {
+        String::from_utf8(self.canonical_bytes()?).map_err(|e| DigestError {
+            message: format!("JCS emitted non-UTF-8 JSON: {e}"),
+        })
     }
 }
 
@@ -2397,6 +3006,140 @@ mod tests {
         assert!(AdmittedInquiryRequestV0::admit(&escaped, &resolved).is_err());
     }
 
+    #[test]
+    fn preflight_is_deterministic() {
+        let request_file = br#"{
+            "schema":"nq.inquiry_plan.v0",
+            "version":"v0",
+            "profile":"tls-cert",
+            "as_of":"2026-07-11T12:00:00Z"
+        }"#;
+        let first_plan: CandidateInquiryPlanV0 = serde_json::from_slice(request_file).unwrap();
+        let second_plan: CandidateInquiryPlanV0 = serde_json::from_slice(request_file).unwrap();
+        let resolved = tls_resolved();
+
+        let first = InquiryPreflightV0::render(&first_plan, &resolved).unwrap();
+        let second = InquiryPreflightV0::render(&second_plan, &resolved).unwrap();
+
+        assert_eq!(
+            first.canonical_bytes().unwrap(),
+            second.canonical_bytes().unwrap()
+        );
+        assert_eq!(first.preflight_digest, second.preflight_digest);
+        assert_eq!(
+            first.preflight_digest,
+            first.compute_preflight_digest().unwrap()
+        );
+    }
+
+    #[test]
+    fn preflight_renders_grant_requirements() {
+        let resolved = tls_resolved();
+        let preflight = InquiryPreflightV0::render(&plan("tls-cert"), &resolved).unwrap();
+        let bounds = preflight.bounds.as_ref().unwrap();
+
+        assert_eq!(preflight.schema, INQUIRY_PREFLIGHT_SCHEMA_V0);
+        assert_eq!(preflight.profile.version, InquiryVersionV0::V0);
+        assert_eq!(preflight.profile.profile_digest, resolved.profile_digest);
+        assert!(is_sha256_digest(&preflight.request_digest));
+        assert_eq!(
+            preflight.declared_targets,
+            std::iter::once(tls_target()).collect()
+        );
+        assert_eq!(
+            preflight.witness_class,
+            Some(InquiryCollectorV0::TlsCertProbe)
+        );
+        assert_eq!(bounds.max_targets, 1);
+        assert_eq!(bounds.max_concurrency, 1);
+        assert_eq!(bounds.per_target_deadline_ms, 500);
+        assert_eq!(bounds.total_deadline_ms, 750);
+        assert_eq!(preflight.expiry_horizon_days, Some(30));
+        assert_eq!(preflight.acquisition_envelope.dns_attempts, 1);
+        assert_eq!(preflight.acquisition_envelope.connection_attempts, 1);
+        assert_eq!(preflight.acquisition_envelope.handshakes_attempted, 1);
+        assert_eq!(preflight.acquisition_envelope.handshakes_completed, 1);
+        assert_eq!(preflight.acquisition_envelope.bound_checks, 1);
+        assert_eq!(preflight.acquisition_envelope.wall_ms, 750);
+        assert_eq!(preflight.acquisition_envelope.work_units, 4);
+        assert_eq!(
+            preflight.grant_requirements.admitted_scope,
+            preflight.declared_targets
+        );
+        assert_eq!(
+            preflight.grant_requirements.max_depth,
+            INQUIRY_SURVEY_DEPTH_V0
+        );
+        assert_eq!(
+            preflight.grant_requirements.total_acquisition_envelope,
+            preflight.acquisition_envelope
+        );
+        assert_eq!(
+            preflight.grant_requirements.permitted_witness_classes,
+            std::iter::once(InquiryCollectorV0::TlsCertProbe).collect()
+        );
+    }
+
+    #[test]
+    fn preflight_grant_requirements_admit_under_matching_grant() {
+        let resolved = tls_resolved();
+        let preflight = InquiryPreflightV0::render(&plan("tls-cert"), &resolved).unwrap();
+        let requirements = &preflight.grant_requirements;
+        let grant = InquiryGrantV0 {
+            schema: INQUIRY_GRANT_SCHEMA_V0.to_string(),
+            version: InquiryVersionV0::V0,
+            admitted_scope: requirements.admitted_scope.clone(),
+            max_depth: requirements.max_depth,
+            total_acquisition_envelope: requirements.total_acquisition_envelope.clone(),
+            permitted_witness_classes: requirements.permitted_witness_classes.clone(),
+        };
+        let position = InquiryPositionV0 {
+            schema: INQUIRY_POSITION_SCHEMA_V0.to_string(),
+            version: InquiryVersionV0::V0,
+            scope: preflight.declared_targets.clone(),
+            depth: requirements.max_depth,
+            remaining_acquisition_envelope: preflight.acquisition_envelope.clone(),
+        };
+
+        admit_initial_position(&grant, &position).unwrap();
+        assert!(grant
+            .permitted_witness_classes
+            .contains(&preflight.witness_class.unwrap()));
+    }
+
+    #[test]
+    fn preflight_does_not_authorize() {
+        let active = InquiryPreflightV0::render(&plan("tls-cert"), &tls_resolved()).unwrap();
+        let kinds: BTreeSet<_> = active
+            .cannot_testify
+            .iter()
+            .map(|limitation| limitation.kind)
+            .collect();
+
+        assert_eq!(
+            kinds,
+            [
+                InquiryPreflightCannotTestifyKindV0::Authorization,
+                InquiryPreflightCannotTestifyKindV0::Execution,
+                InquiryPreflightCannotTestifyKindV0::GrantExistence,
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert!(active
+            .cannot_testify
+            .iter()
+            .any(|entry| entry.statement.contains("authorizes nothing")));
+        assert!(active
+            .cannot_testify
+            .iter()
+            .any(|entry| entry.statement.contains("executes nothing")));
+        assert!(active
+            .cannot_testify
+            .iter()
+            .any(|entry| entry.statement.contains("grant exists")));
+    }
+
     fn ratchet_target(target_id: &str) -> InquiryTlsTargetV0 {
         InquiryTlsTargetV0 {
             target_id: target_id.to_string(),
@@ -2448,6 +3191,124 @@ mod tests {
             depth,
             remaining_acquisition_envelope: remaining,
         }
+    }
+
+    fn escalation_candidate(source_receipt: &InquiryReceiptV0) -> EscalationRequestCandidateV0 {
+        EscalationRequestCandidateV0::bind(
+            source_receipt,
+            std::iter::once(FindingSelectorV0 {
+                host: "resolver".into(),
+                kind: "pending_aged_tail".into(),
+                subject: "".into(),
+            })
+            .collect(),
+            std::iter::once(InquiryObservationIdentityV0::TlsObservation {
+                target: tls_target(),
+                acquired_at: "2026-07-11T12:00:01Z".into(),
+            })
+            .collect(),
+            ratchet_scope(&["alpha", "beta"]),
+            2,
+            ratchet_spend(10),
+            std::iter::once(InquiryCollectorV0::TlsCertProbe).collect(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn escalation_candidate_binds_provenance() {
+        let mut source = tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
+        source.seal().unwrap();
+        let candidate = escalation_candidate(&source);
+
+        assert_eq!(
+            candidate.source_receipt_digest,
+            source.receipt_digest.unwrap()
+        );
+        assert_eq!(candidate.cited_findings.len(), 1);
+        assert_eq!(candidate.cited_observations.len(), 1);
+        assert_eq!(candidate.requested_scope, ratchet_scope(&["alpha", "beta"]));
+        assert_eq!(candidate.requested_depth, 2);
+        assert_eq!(candidate.requested_acquisition_envelope, ratchet_spend(10));
+        assert_eq!(
+            candidate.requested_witness_classes,
+            std::iter::once(InquiryCollectorV0::TlsCertProbe).collect()
+        );
+        assert_eq!(
+            candidate.escalation_request_digest,
+            candidate.compute_escalation_request_digest().unwrap()
+        );
+        assert_eq!(
+            candidate.canonical_bytes().unwrap(),
+            candidate.clone().canonical_bytes().unwrap()
+        );
+    }
+
+    #[test]
+    fn escalation_candidate_is_annotation_only() {
+        let grant = ratchet_grant(&["alpha", "beta"]);
+        let current = ratchet_position(&["alpha", "beta"], 1, ratchet_spend(5));
+        let requested = ratchet_position(&["alpha"], 2, ratchet_spend(5));
+        let authorize: fn(
+            &InquiryGrantV0,
+            &InquiryPositionV0,
+            &InquiryPositionV0,
+        )
+            -> Result<AuthorizedInquiryTransitionV0, InquiryTransitionRefusalV0> =
+            authorize_same_grant_transition;
+        let admit: fn(&InquiryGrantV0, &InquiryPositionV0) -> Result<(), InquiryValidationError> =
+            admit_initial_position;
+        let grant_digest_before = grant.grant_digest().unwrap();
+        let mut source = tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
+        source.seal().unwrap();
+
+        let _candidate = escalation_candidate(&source);
+
+        assert_eq!(grant.grant_digest().unwrap(), grant_digest_before);
+        assert!(authorize(&grant, &current, &requested).is_ok());
+        assert!(admit(&grant, &requested).is_ok());
+    }
+
+    #[test]
+    fn escalation_candidate_unknown_schema_is_refused() {
+        let mut source = tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
+        source.seal().unwrap();
+        let mut candidate = escalation_candidate(&source);
+        candidate.schema = "nq.inquiry_escalation_request.v999".into();
+
+        assert!(candidate.validate().is_err());
+        assert!(candidate.canonical_bytes().is_err());
+    }
+
+    #[test]
+    fn escalation_candidate_duplicate_targets_normalized_before_digesting() {
+        let mut source = tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
+        source.seal().unwrap();
+        let candidate = escalation_candidate(&source);
+        let mut duplicated = serde_json::to_value(&candidate).unwrap();
+        let requested_scope = duplicated
+            .get_mut("requested_scope")
+            .unwrap()
+            .as_array_mut()
+            .unwrap();
+        let duplicate = requested_scope[0].clone();
+        requested_scope.push(duplicate);
+
+        let normalized: EscalationRequestCandidateV0 = serde_json::from_value(duplicated).unwrap();
+
+        normalized.validate().unwrap();
+        assert_eq!(
+            normalized.requested_scope.len(),
+            candidate.requested_scope.len()
+        );
+        assert_eq!(
+            normalized.escalation_request_digest,
+            candidate.escalation_request_digest
+        );
+        assert_eq!(
+            normalized.canonical_bytes().unwrap(),
+            candidate.canonical_bytes().unwrap()
+        );
     }
 
     #[test]

@@ -736,7 +736,12 @@ pub struct InquireCmd {
     #[arg(long = "profile-catalog")]
     pub profile_catalog: PathBuf,
 
-    /// Output format: human (operator table) or json (JCS canonical receipt).
+    /// Render the admitted inquiry envelope and exit without opening a
+    /// database or dispatching active acquisition.
+    #[arg(long)]
+    pub preflight: bool,
+
+    /// Output format: human (operator table) or json (JCS canonical artifact).
     #[arg(long, short, default_value = "human")]
     pub format: String,
 }
@@ -1057,12 +1062,19 @@ mod tests {
     #[test]
     fn probe_dns_accepts_type_flag_matching_wire_vocabulary() {
         let cli = Cli::try_parse_from([
-            "nq", "probe", "dns",
-            "--db", "/tmp/x.db",
-            "--vantage", "sushi-k",
-            "--resolver", "8.8.8.8",
-            "--name", "nq.neutral.zone",
-            "--type", "AAAA",
+            "nq",
+            "probe",
+            "dns",
+            "--db",
+            "/tmp/x.db",
+            "--vantage",
+            "sushi-k",
+            "--resolver",
+            "8.8.8.8",
+            "--name",
+            "nq.neutral.zone",
+            "--type",
+            "AAAA",
         ])
         .expect("--type must parse");
         match cli.command {
@@ -1084,12 +1096,19 @@ mod tests {
     #[test]
     fn probe_dns_rejects_query_type_legacy_flag() {
         let err = Cli::try_parse_from([
-            "nq", "probe", "dns",
-            "--db", "/tmp/x.db",
-            "--vantage", "v",
-            "--resolver", "8.8.8.8",
-            "--name", "example.com",
-            "--query-type", "A",
+            "nq",
+            "probe",
+            "dns",
+            "--db",
+            "/tmp/x.db",
+            "--vantage",
+            "v",
+            "--resolver",
+            "8.8.8.8",
+            "--name",
+            "example.com",
+            "--query-type",
+            "A",
         ])
         .expect_err("--query-type must be rejected");
         let msg = err.to_string();
@@ -1119,6 +1138,7 @@ mod tests {
                 assert_eq!(cmd.db, Some(PathBuf::from("/tmp/nq.db")));
                 assert_eq!(cmd.plan, PathBuf::from("/tmp/plan.v0.json"));
                 assert_eq!(cmd.profile_catalog, PathBuf::from("/tmp/profiles.v0.json"));
+                assert!(!cmd.preflight);
                 assert_eq!(cmd.format, "json");
             }
             other => panic!("expected Inquire, got {other:?}"),
@@ -1143,6 +1163,30 @@ mod tests {
                 assert_eq!(cmd.db, None);
                 assert_eq!(cmd.plan, PathBuf::from("/tmp/plan.v0.json"));
                 assert_eq!(cmd.profile_catalog, PathBuf::from("/tmp/profiles.v0.json"));
+                assert!(!cmd.preflight);
+            }
+            other => panic!("expected Inquire, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inquire_accepts_preflight_mode_with_a_db_target() {
+        let cli = Cli::try_parse_from([
+            "nq",
+            "inquire",
+            "--db",
+            "/definitely/missing/nq.db",
+            "--plan",
+            "/tmp/plan.v0.json",
+            "--profile-catalog",
+            "/tmp/profiles.v0.json",
+            "--preflight",
+        ])
+        .expect("nq inquire --preflight arguments must parse");
+        match cli.command {
+            Command::Inquire(cmd) => {
+                assert!(cmd.preflight);
+                assert_eq!(cmd.db, Some(PathBuf::from("/definitely/missing/nq.db")));
             }
             other => panic!("expected Inquire, got {other:?}"),
         }
