@@ -727,7 +727,9 @@ pub struct InquireCmd {
     pub db: Option<PathBuf>,
 
     /// Path to an nq.inquiry_plan.v0 JSON document. The plan supplies the
-    /// profile selector, frozen as_of time, and optional exact target subset.
+    /// profile selector, as_of intake, and optional exact target subset. L0
+    /// report operators may write "latest"; execution freezes it to the newest
+    /// generation's completed_at inside the inquiry read snapshot.
     #[arg(long)]
     pub plan: PathBuf,
 

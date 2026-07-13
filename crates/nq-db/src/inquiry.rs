@@ -9,12 +9,12 @@
 use anyhow::{bail, Context};
 use nq_core::inquiry::{
     AdmittedInquiryRequestV0, CandidateInquiryPlanV0, InquiryDisposition,
-    InquiryEvidenceCoverageV0, InquiryEvidenceReceiptV0, InquiryFindingStateV0, InquiryReceiptV0,
-    InquiryRefusal, InquiryRefusalKindV0, InquirySourceSnapshotV0, InquiryStatusV0,
-    InquiryQuestionV0, InquiryVersionV0, ResolvedInquiryProfileV0, INQUIRY_RECEIPT_SCHEMA_V0,
+    InquiryEvidenceCoverageV0, InquiryEvidenceReceiptV0, InquiryFindingStateV0, InquiryQuestionV0,
+    InquiryReceiptV0, InquiryRefusal, InquiryRefusalKindV0, InquirySourceSnapshotV0,
+    InquiryStatusV0, InquiryVersionV0, ResolvedInquiryProfileV0, INQUIRY_RECEIPT_SCHEMA_V0,
 };
 use nq_core::GenerationStatus;
-use rusqlite::{params, Connection, DatabaseName, OptionalExtension};
+use rusqlite::{params, Connection, DatabaseName, OptionalExtension, Transaction};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
@@ -29,6 +29,69 @@ pub fn execute_report_inquiry(
     resolved_profile: &ResolvedInquiryProfileV0,
     plan: &CandidateInquiryPlanV0,
 ) -> anyhow::Result<InquiryReceiptV0> {
+    validate_report_executor(connection, resolved_profile)?;
+
+    let request = AdmittedInquiryRequestV0::admit(plan, resolved_profile)
+        .context("admitting governed inquiry request")?;
+    let as_of = parse_time("plan.as_of", &request.as_of)?;
+    let tx = connection
+        .unchecked_transaction()
+        .context("starting explicit read-only inquiry transaction")?;
+
+    // This MUST be the first read in the transaction.  NQ's generation row,
+    // lifecycle update, and summary seal are separate transactions.  We keep
+    // the newest row even when summary_hash is NULL and refuse it below;
+    // falling back would launder a transitional latest generation into an
+    // apparently-current older answer.
+    let snapshot = load_latest_snapshot(&tx)?;
+    execute_report_inquiry_in_snapshot(tx, resolved_profile, request, as_of, snapshot)
+}
+
+/// Resolve operator-side `latest` syntax and execute an L0 report inquiry in
+/// one SQLite read snapshot.
+///
+/// The resolver receives the actual newest generation selected by the first
+/// read of the executor's deferred transaction. It must return the ordinary,
+/// concrete core plan to admit; this function additionally checks that the
+/// plan copied `completed_at` byte-for-byte before continuing in that same
+/// transaction.
+pub fn execute_latest_report_inquiry<F>(
+    connection: &Connection,
+    resolved_profile: &ResolvedInquiryProfileV0,
+    resolve_plan: F,
+) -> anyhow::Result<InquiryReceiptV0>
+where
+    F: FnOnce(&InquirySourceSnapshotV0) -> anyhow::Result<CandidateInquiryPlanV0>,
+{
+    validate_report_executor(connection, resolved_profile)?;
+    let tx = connection
+        .unchecked_transaction()
+        .context("starting explicit read-only inquiry transaction")?;
+
+    // This is the first read in latest mode and pins every read below.
+    let snapshot = load_latest_snapshot(&tx)?;
+    let source = snapshot
+        .as_ref()
+        .context("cannot resolve latest inquiry: the source database has no generations")?;
+    let plan = resolve_plan(source).context("resolving latest into a concrete inquiry plan")?;
+    if plan.as_of != source.completed_at {
+        bail!(
+            "latest inquiry resolved as_of {:?}, expected newest generation completed_at {:?}",
+            plan.as_of,
+            source.completed_at
+        );
+    }
+    let request = AdmittedInquiryRequestV0::admit(&plan, resolved_profile)
+        .context("admitting latest-resolved governed inquiry request")?;
+    let as_of = parse_time("plan.as_of", &request.as_of)?;
+
+    execute_report_inquiry_in_snapshot(tx, resolved_profile, request, as_of, snapshot)
+}
+
+fn validate_report_executor(
+    connection: &Connection,
+    resolved_profile: &ResolvedInquiryProfileV0,
+) -> anyhow::Result<()> {
     if !connection
         .is_readonly(DatabaseName::Main)
         .context("checking inquiry database open mode")?
@@ -38,9 +101,16 @@ pub fn execute_report_inquiry(
     if resolved_profile.profile.question_kind != InquiryQuestionV0::FindingOperationalActivity {
         bail!("nq-db only executes the passive report inquiry");
     }
+    Ok(())
+}
 
-    let request = AdmittedInquiryRequestV0::admit(plan, resolved_profile)
-        .context("admitting governed inquiry request")?;
+fn execute_report_inquiry_in_snapshot(
+    tx: Transaction<'_>,
+    resolved_profile: &ResolvedInquiryProfileV0,
+    request: AdmittedInquiryRequestV0,
+    as_of: OffsetDateTime,
+    snapshot: Option<InquirySourceSnapshotV0>,
+) -> anyhow::Result<InquiryReceiptV0> {
     let selector = resolved_profile
         .profile
         .selector
@@ -54,17 +124,6 @@ pub fn execute_report_inquiry(
         .profile
         .max_snapshot_age_seconds
         .context("validated report profile is missing its snapshot age bound")?;
-    let as_of = parse_time("plan.as_of", &request.as_of)?;
-    let tx = connection
-        .unchecked_transaction()
-        .context("starting explicit read-only inquiry transaction")?;
-
-    // This MUST be the first read in the transaction.  NQ's generation row,
-    // lifecycle update, and summary seal are separate transactions.  We keep
-    // the newest row even when summary_hash is NULL and refuse it below;
-    // falling back would launder a transitional latest generation into an
-    // apparently-current older answer.
-    let snapshot = load_latest_snapshot(&tx)?;
     let finding_state = load_finding_state(&tx, &selector.host, &selector.kind, &selector.subject)?;
     let (evidence_receipts, tail_truncated) = match &snapshot {
         Some(snapshot) => load_evidence_tail(
@@ -661,6 +720,19 @@ mod tests {
         }
     }
 
+    fn latest_plan(snapshot: &InquirySourceSnapshotV0) -> anyhow::Result<CandidateInquiryPlanV0> {
+        let mut plan = plan();
+        plan.as_of = snapshot.completed_at.clone();
+        Ok(plan)
+    }
+
+    fn execute_latest(
+        connection: &Connection,
+        resolved: &ResolvedInquiryProfileV0,
+    ) -> anyhow::Result<InquiryReceiptV0> {
+        execute_latest_report_inquiry(connection, resolved, latest_plan)
+    }
+
     fn migrated_db() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("inquiry.db");
@@ -724,6 +796,78 @@ mod tests {
                          'observed', 'live', 'resolver-source', 'resolver-witness',
                          3, '2026-07-11T11:59:00Z', 'observed')",
                 [],
+            )
+            .unwrap();
+    }
+
+    fn insert_generation(
+        db: &crate::WriteDb,
+        generation_id: i64,
+        completed_at: &str,
+        status: &str,
+        summary_hash: Option<&str>,
+        sources_ok: i64,
+        sources_failed: i64,
+    ) {
+        db.conn()
+            .execute(
+                "INSERT INTO generations
+                   (generation_id, started_at, completed_at, status,
+                    sources_expected, sources_ok, sources_failed, duration_ms,
+                    summary_hash, findings_observed, detectors_run, findings_suppressed)
+                 VALUES (?1, ?2, ?2, ?3, 1, ?4, ?5, 10, ?6, 1, 1, 0)",
+                params![
+                    generation_id,
+                    completed_at,
+                    status,
+                    sources_ok,
+                    sources_failed,
+                    summary_hash
+                ],
+            )
+            .unwrap();
+    }
+
+    fn insert_active_generation(db: &crate::WriteDb, generation_id: i64, completed_at: &str) {
+        let summary_hash = format!("sealed-{generation_id}");
+        insert_generation(
+            db,
+            generation_id,
+            completed_at,
+            "complete",
+            Some(&summary_hash),
+            1,
+            0,
+        );
+        db.conn()
+            .execute(
+                "INSERT INTO finding_observations
+                   (generation_id, finding_key, scope, detector_id, host, subject,
+                    domain, severity, value, message, finding_class, rule_hash,
+                    observed_at, basis_source_id, basis_witness_id)
+                 VALUES (?1, 'local/resolver/pending_aged_tail/', 'local',
+                         'pending_aged_tail', 'resolver', '', 'Δh', 'warning',
+                         ?1, ?2, 'signal', 'rule:v0', ?3, 'resolver-source',
+                         'resolver-witness')",
+                params![
+                    generation_id,
+                    format!("receipt-{generation_id}"),
+                    completed_at
+                ],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "UPDATE warning_state
+                 SET last_seen_gen = ?1,
+                     last_seen_at = ?2,
+                     consecutive_gens = consecutive_gens + 1,
+                     last_basis_generation = ?1,
+                     basis_state_at = ?2
+                 WHERE host = 'resolver'
+                   AND kind = 'pending_aged_tail'
+                   AND subject = ''",
+                params![generation_id, completed_at],
             )
             .unwrap();
     }
@@ -823,5 +967,219 @@ mod tests {
             .cannot_testify
             .iter()
             .any(|r| r.kind == InquiryRefusalKindV0::SnapshotAfterAsOf));
+    }
+
+    #[test]
+    fn latest_resolves_to_newest_generation_completed_at() {
+        let (_dir, path) = migrated_db();
+        seed_active(&path);
+        let db = open_ro(&path).unwrap();
+        let resolved = catalog().resolve("resolver-tail-active").unwrap();
+
+        let receipt = execute_latest(db.conn(), &resolved).unwrap();
+        let snapshot = receipt.source_snapshot.as_ref().unwrap();
+
+        assert_eq!(snapshot.generation_id, 3);
+        assert_eq!(receipt.request.as_of, "2026-07-11T11:59:00Z");
+        assert_eq!(receipt.request.as_of, snapshot.completed_at);
+        assert!(parse_time("request.as_of", &receipt.request.as_of).is_ok());
+    }
+
+    #[test]
+    fn latest_resolution_and_execution_share_one_snapshot() {
+        let (_dir, path) = migrated_db();
+        seed_active(&path);
+        let writer = open_rw(&path).unwrap();
+        let reader = open_ro(&path).unwrap();
+        let resolved = catalog().resolve("resolver-tail-active").unwrap();
+
+        let receipt = execute_latest_report_inquiry(reader.conn(), &resolved, |snapshot| {
+            let concrete = latest_plan(snapshot)?;
+            insert_generation(
+                &writer,
+                4,
+                "2026-07-11T12:00:00Z",
+                "complete",
+                Some("sealed-4"),
+                1,
+                0,
+            );
+            Ok(concrete)
+        })
+        .unwrap();
+
+        let newest: i64 = writer
+            .conn()
+            .query_row("SELECT MAX(generation_id) FROM generations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(newest, 4);
+        assert_eq!(receipt.request.as_of, "2026-07-11T11:59:00Z");
+        assert_eq!(receipt.source_snapshot.as_ref().unwrap().generation_id, 3);
+        assert_eq!(receipt.evidence_receipts[0].generation_id, 3);
+
+        let next = execute_latest(reader.conn(), &resolved).unwrap();
+        assert_eq!(next.request.as_of, "2026-07-11T12:00:00Z");
+        assert_eq!(next.source_snapshot.as_ref().unwrap().generation_id, 4);
+    }
+
+    #[test]
+    fn latest_unsealed_generation_refused_no_fallback() {
+        let (_dir, path) = migrated_db();
+        seed_active(&path);
+        let writer = open_rw(&path).unwrap();
+        insert_generation(&writer, 4, "2026-07-11T11:59:30Z", "complete", None, 1, 0);
+        drop(writer);
+        let reader = open_ro(&path).unwrap();
+        let resolved = catalog().resolve("resolver_pending_aged_tail").unwrap();
+
+        let receipt = execute_latest(reader.conn(), &resolved).unwrap();
+
+        assert_eq!(receipt.status, InquiryStatusV0::Refused);
+        assert_eq!(receipt.request.as_of, "2026-07-11T11:59:30Z");
+        assert_eq!(receipt.source_snapshot.as_ref().unwrap().generation_id, 4);
+        assert!(receipt
+            .cannot_testify
+            .iter()
+            .any(|r| r.kind == InquiryRefusalKindV0::SnapshotUnsealed));
+    }
+
+    #[test]
+    fn latest_incomplete_generation_refused_no_fallback() {
+        let (_dir, path) = migrated_db();
+        seed_active(&path);
+        let writer = open_rw(&path).unwrap();
+        insert_generation(
+            &writer,
+            4,
+            "2026-07-11T11:59:40Z",
+            "partial",
+            Some("sealed-partial-4"),
+            0,
+            1,
+        );
+        drop(writer);
+        let reader = open_ro(&path).unwrap();
+        let resolved = catalog().resolve("resolver_pending_aged_tail").unwrap();
+
+        let receipt = execute_latest(reader.conn(), &resolved).unwrap();
+
+        assert_eq!(receipt.status, InquiryStatusV0::Refused);
+        assert_eq!(receipt.request.as_of, "2026-07-11T11:59:40Z");
+        assert_eq!(receipt.source_snapshot.as_ref().unwrap().generation_id, 4);
+        assert!(receipt
+            .cannot_testify
+            .iter()
+            .any(|r| r.kind == InquiryRefusalKindV0::SnapshotIncomplete));
+    }
+
+    #[test]
+    fn explicit_as_of_behavior_unchanged() {
+        let (_dir, path) = migrated_db();
+        seed_active(&path);
+        let db = open_ro(&path).unwrap();
+        let resolved = catalog().resolve("resolver-tail-active").unwrap();
+
+        let first = execute_report_inquiry(db.conn(), &resolved, &plan()).unwrap();
+        let second = execute_report_inquiry(db.conn(), &resolved, &plan()).unwrap();
+
+        assert_eq!(first.request.as_of, "2026-07-11T12:00:00Z");
+        assert_eq!(first.source_snapshot.as_ref().unwrap().generation_id, 3);
+        assert_eq!(first.status, InquiryStatusV0::Answered);
+        assert_eq!(
+            first.canonical_bytes().unwrap(),
+            second.canonical_bytes().unwrap()
+        );
+        assert_eq!(first.request.request_digest, second.request.request_digest);
+        assert_eq!(first.receipt_digest, second.receipt_digest);
+    }
+
+    #[test]
+    fn latest_receipt_contains_only_concrete_rfc3339() {
+        let (_dir, path) = migrated_db();
+        seed_active(&path);
+        let db = open_ro(&path).unwrap();
+        let resolved = catalog().resolve("resolver-tail-active").unwrap();
+
+        let receipt = execute_latest(db.conn(), &resolved).unwrap();
+        let request_bytes = serde_jcs::to_vec(&receipt.request).unwrap();
+        let receipt_bytes = receipt.canonical_bytes().unwrap();
+
+        assert!(!String::from_utf8(request_bytes).unwrap().contains("latest"));
+        assert!(!String::from_utf8(receipt_bytes).unwrap().contains("latest"));
+        assert!(parse_time("request.as_of", &receipt.request.as_of).is_ok());
+        assert_eq!(
+            receipt.request.as_of,
+            receipt.source_snapshot.as_ref().unwrap().completed_at
+        );
+    }
+
+    #[test]
+    fn same_snapshot_same_plan_identical_receipt_bytes() {
+        let (_dir, path) = migrated_db();
+        seed_active(&path);
+        let db = open_ro(&path).unwrap();
+        let resolved = catalog().resolve("resolver-tail-active").unwrap();
+
+        let first = execute_latest(db.conn(), &resolved).unwrap();
+        let second = execute_latest(db.conn(), &resolved).unwrap();
+
+        assert_eq!(first.request.request_digest, second.request.request_digest);
+        assert_eq!(first.receipt_digest, second.receipt_digest);
+        assert_eq!(
+            first.canonical_bytes().unwrap(),
+            second.canonical_bytes().unwrap()
+        );
+    }
+
+    #[test]
+    fn newer_generation_changes_resolution_is_new_evidence() {
+        let (_dir, path) = migrated_db();
+        seed_active(&path);
+        let reader = open_ro(&path).unwrap();
+        let resolved = catalog().resolve("resolver-tail-active").unwrap();
+
+        let first = execute_latest(reader.conn(), &resolved).unwrap();
+        let writer = open_rw(&path).unwrap();
+        insert_active_generation(&writer, 4, "2026-07-11T12:00:00Z");
+        drop(writer);
+        let second = execute_latest(reader.conn(), &resolved).unwrap();
+
+        assert_eq!(first.status, InquiryStatusV0::Answered);
+        assert_eq!(second.status, InquiryStatusV0::Answered);
+        assert_eq!(first.source_snapshot.as_ref().unwrap().generation_id, 3);
+        assert_eq!(second.source_snapshot.as_ref().unwrap().generation_id, 4);
+        assert_eq!(
+            first.request.as_of,
+            first.source_snapshot.as_ref().unwrap().completed_at
+        );
+        assert_eq!(
+            second.request.as_of,
+            second.source_snapshot.as_ref().unwrap().completed_at
+        );
+        assert_ne!(first.request.request_digest, second.request.request_digest);
+        assert_ne!(first.receipt_digest, second.receipt_digest);
+        assert_ne!(
+            first.canonical_bytes().unwrap(),
+            second.canonical_bytes().unwrap()
+        );
+    }
+
+    #[test]
+    fn resolving_latest_is_not_acquisition() {
+        let (_dir, path) = migrated_db();
+        seed_active(&path);
+        let db = open_ro(&path).unwrap();
+        let resolved = catalog().resolve("resolver-tail-active").unwrap();
+        let before_changes = db.conn().changes();
+
+        let receipt = execute_latest(db.conn(), &resolved).unwrap();
+
+        assert_eq!(receipt.acquisition_spend, 0);
+        assert!(receipt.acquisition.is_none());
+        assert!(receipt.witness_plan.is_none());
+        assert!(receipt.tls_observations.is_empty());
+        assert_eq!(db.conn().changes(), before_changes);
     }
 }

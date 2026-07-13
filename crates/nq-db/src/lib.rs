@@ -45,7 +45,7 @@ pub use import::{
     ingest_finding_import, FindingImportManifest, ImportedFinding, ImportedFindingIdentity,
     IngestConfig, IngestResult, IMPORT_CONTRACT_VERSION, IMPORT_SCHEMA_ID, MIN_SCHEMA_FOR_IMPORT,
 };
-pub use inquiry::execute_report_inquiry;
+pub use inquiry::{execute_latest_report_inquiry, execute_report_inquiry};
 pub use detect::{ActionBias, DetectorConfig, FailureClass, Finding, FindingDiagnosis, ServiceImpact, Stability};
 pub use fleet::{
     load_manifest, FleetManifest, FleetManifestError, SupportTier, TargetClass, TargetDeclaration,

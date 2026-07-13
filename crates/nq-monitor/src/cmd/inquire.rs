@@ -7,12 +7,170 @@
 use crate::cli::InquireCmd;
 use anyhow::Context;
 use nq_core::inquiry::{
-    CandidateInquiryPlanV0, InquiryCollectorV0, InquiryPreflightV0, InquiryProfileCatalogV0,
-    InquiryQuestionV0, InquiryReceiptV0, InquiryTlsOutcomeV0, InquiryTlsValidationPolicyV0,
-    InquiryTlsValidationResultV0, ResolvedInquiryProfileV0,
+    CandidateInquiryPlanV0, FindingSelectorV0, InquiryAcquisitionSpendV0, InquiryCollectorV0,
+    InquiryPreflightV0, InquiryProfileBindingV0, InquiryProfileCatalogV0, InquiryQuestionV0,
+    InquiryReceiptV0, InquiryRefusal, InquiryTlsOutcomeV0, InquiryTlsTargetV0,
+    InquiryTlsValidationPolicyV0, InquiryTlsValidationResultV0, InquiryVersionV0,
+    ResolvedInquiryProfileV0, INQUIRY_PLAN_SCHEMA_V0, INQUIRY_REPORT_DEPTH_V0,
 };
+use serde::{Deserialize, Serialize};
+use std::error::Error;
 use std::fmt::Write as _;
 use std::io::Write as _;
+
+#[derive(Debug, Deserialize)]
+struct OperatorAsOfProbe {
+    as_of: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OperatorLatestAsOf {
+    Latest,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OperatorLatestInquiryPlanV0 {
+    schema: String,
+    version: InquiryVersionV0,
+    profile: String,
+    #[serde(rename = "as_of")]
+    _as_of: OperatorLatestAsOf,
+    #[serde(default)]
+    targets: Vec<InquiryTlsTargetV0>,
+}
+
+impl OperatorLatestInquiryPlanV0 {
+    fn validate_report_shape(&self, resolved: &ResolvedInquiryProfileV0) -> anyhow::Result<()> {
+        if self.schema != INQUIRY_PLAN_SCHEMA_V0 {
+            anyhow::bail!(
+                "unsupported plan schema {:?}; expected {:?}",
+                self.schema,
+                INQUIRY_PLAN_SCHEMA_V0
+            );
+        }
+        if self.profile != resolved.profile.profile_id
+            && !resolved
+                .profile
+                .aliases
+                .iter()
+                .any(|alias| alias == &self.profile)
+        {
+            anyhow::bail!(
+                "plan profile selector {:?} does not name resolved profile {}@{}",
+                self.profile,
+                resolved.profile.profile_id,
+                resolved.profile.version.as_str()
+            );
+        }
+        if !self.targets.is_empty() {
+            anyhow::bail!("report inquiry plan must not select active targets");
+        }
+        Ok(())
+    }
+
+    fn resolve(&self, completed_at: &str) -> CandidateInquiryPlanV0 {
+        CandidateInquiryPlanV0 {
+            schema: self.schema.clone(),
+            version: self.version,
+            profile: self.profile.clone(),
+            as_of: completed_at.to_string(),
+            targets: self.targets.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum OperatorInquiryPlanV0 {
+    Concrete(CandidateInquiryPlanV0),
+    Latest(OperatorLatestInquiryPlanV0),
+}
+
+impl OperatorInquiryPlanV0 {
+    fn profile(&self) -> &str {
+        match self {
+            Self::Concrete(plan) => &plan.profile,
+            Self::Latest(plan) => &plan.profile,
+        }
+    }
+}
+
+fn parse_operator_plan(bytes: &[u8]) -> serde_json::Result<OperatorInquiryPlanV0> {
+    let probe: OperatorAsOfProbe = serde_json::from_slice(bytes)?;
+    if probe.as_of == "latest" {
+        serde_json::from_slice(bytes).map(OperatorInquiryPlanV0::Latest)
+    } else {
+        serde_json::from_slice(bytes).map(OperatorInquiryPlanV0::Concrete)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LatestAsOfRefusal {
+    ActiveProfile,
+}
+
+impl std::fmt::Display for LatestAsOfRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ActiveProfile => write!(
+                formatter,
+                "as_of latest is only available for L0 report inquiries; active profiles cannot open an NQ database to resolve it"
+            ),
+        }
+    }
+}
+
+impl Error for LatestAsOfRefusal {}
+
+#[derive(Debug, Serialize)]
+struct UnresolvedLatestPreflightV0 {
+    mode: &'static str,
+    as_of: &'static str,
+    resolution: &'static str,
+    profile: InquiryProfileBindingV0,
+    question_kind: InquiryQuestionV0,
+    selector: FindingSelectorV0,
+    max_snapshot_age_seconds: u64,
+    evidence_limit: u32,
+    inspection_depth: u32,
+    acquisition_spend: InquiryAcquisitionSpendV0,
+    coverage: Vec<String>,
+    cannot_testify: Vec<InquiryRefusal>,
+}
+
+impl UnresolvedLatestPreflightV0 {
+    fn render(resolved: &ResolvedInquiryProfileV0) -> anyhow::Result<Self> {
+        Ok(Self {
+            mode: "unresolved_by_design",
+            as_of: "latest",
+            resolution: "resolves to the newest generation inside the execution snapshot",
+            profile: InquiryProfileBindingV0 {
+                profile_id: resolved.profile.profile_id.clone(),
+                version: resolved.profile.version,
+                profile_digest: resolved.profile_digest.clone(),
+            },
+            question_kind: resolved.profile.question_kind,
+            selector: resolved
+                .profile
+                .selector
+                .clone()
+                .context("validated report profile is missing its selector")?,
+            max_snapshot_age_seconds: resolved
+                .profile
+                .max_snapshot_age_seconds
+                .context("validated report profile is missing its snapshot age bound")?,
+            evidence_limit: resolved
+                .profile
+                .evidence_limit
+                .context("validated report profile is missing its evidence limit")?,
+            inspection_depth: INQUIRY_REPORT_DEPTH_V0,
+            acquisition_spend: InquiryAcquisitionSpendV0::default(),
+            coverage: resolved.profile.coverage.clone(),
+            cannot_testify: resolved.profile.cannot_testify.clone(),
+        })
+    }
+}
 
 pub fn run(cmd: InquireCmd) -> anyhow::Result<()> {
     match cmd.format.as_str() {
@@ -24,9 +182,11 @@ pub fn run(cmd: InquireCmd) -> anyhow::Result<()> {
     // sees an already-loaded catalog and resolves without filesystem order.
     let plan_bytes = std::fs::read(&cmd.plan)
         .with_context(|| format!("reading inquiry plan {}", cmd.plan.display()))?;
-    let plan: CandidateInquiryPlanV0 = serde_json::from_slice(&plan_bytes)
+    let plan = parse_operator_plan(&plan_bytes)
         .with_context(|| format!("parsing {} as nq.inquiry_plan.v0", cmd.plan.display()))?;
-    plan.validate().context("validating inquiry plan")?;
+    if let OperatorInquiryPlanV0::Concrete(plan) = &plan {
+        plan.validate().context("validating inquiry plan")?;
+    }
 
     let catalog_bytes = std::fs::read(&cmd.profile_catalog).with_context(|| {
         format!(
@@ -42,10 +202,17 @@ pub fn run(cmd: InquireCmd) -> anyhow::Result<()> {
             )
         })?;
     let resolved = catalog
-        .resolve(&plan.profile)
-        .with_context(|| format!("resolving inquiry profile selector {:?}", plan.profile))?;
+        .resolve(plan.profile())
+        .with_context(|| format!("resolving inquiry profile selector {:?}", plan.profile()))?;
 
-    let artifact = prepare_inquiry(&cmd, &resolved, &plan, execute_inquiry)?;
+    let artifact = match &plan {
+        OperatorInquiryPlanV0::Concrete(plan) => {
+            prepare_inquiry(&cmd, &resolved, plan, execute_inquiry)?
+        }
+        OperatorInquiryPlanV0::Latest(plan) => {
+            prepare_latest_inquiry(&cmd, &resolved, plan, execute_latest_inquiry)?
+        }
+    };
 
     let mut stdout = std::io::stdout().lock();
     match (cmd.format.as_str(), artifact) {
@@ -55,11 +222,17 @@ pub fn run(cmd: InquireCmd) -> anyhow::Result<()> {
             // part of the canonical JSON document, so do not add one.
             stdout.write_all(&preflight.canonical_bytes()?)?;
         }
+        ("json", InquiryArtifact::UnresolvedLatestPreflight(preflight)) => {
+            stdout.write_all(&serde_json::to_vec(&preflight)?)?;
+        }
         ("json", InquiryArtifact::Receipt(receipt)) => {
             stdout.write_all(&receipt.canonical_bytes()?)?;
         }
         ("human", InquiryArtifact::Preflight(preflight)) => {
             stdout.write_all(render_preflight_human(&preflight).as_bytes())?;
+        }
+        ("human", InquiryArtifact::UnresolvedLatestPreflight(preflight)) => {
+            stdout.write_all(render_unresolved_latest_preflight_human(&preflight).as_bytes())?;
         }
         ("human", InquiryArtifact::Receipt(receipt)) => {
             stdout.write_all(render_human(&receipt).as_bytes())?;
@@ -69,8 +242,10 @@ pub fn run(cmd: InquireCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
 enum InquiryArtifact {
     Preflight(InquiryPreflightV0),
+    UnresolvedLatestPreflight(UnresolvedLatestPreflightV0),
     Receipt(InquiryReceiptV0),
 }
 
@@ -95,6 +270,31 @@ where
     Ok(InquiryArtifact::Receipt(execute(cmd, resolved, plan)?))
 }
 
+fn prepare_latest_inquiry<F>(
+    cmd: &InquireCmd,
+    resolved: &ResolvedInquiryProfileV0,
+    plan: &OperatorLatestInquiryPlanV0,
+    execute: F,
+) -> anyhow::Result<InquiryArtifact>
+where
+    F: FnOnce(
+        &InquireCmd,
+        &ResolvedInquiryProfileV0,
+        &OperatorLatestInquiryPlanV0,
+    ) -> anyhow::Result<InquiryReceiptV0>,
+{
+    if resolved.profile.question_kind != InquiryQuestionV0::FindingOperationalActivity {
+        return Err(anyhow::Error::new(LatestAsOfRefusal::ActiveProfile));
+    }
+    plan.validate_report_shape(resolved)?;
+    if cmd.preflight {
+        return Ok(InquiryArtifact::UnresolvedLatestPreflight(
+            UnresolvedLatestPreflightV0::render(resolved)?,
+        ));
+    }
+    Ok(InquiryArtifact::Receipt(execute(cmd, resolved, plan)?))
+}
+
 fn execute_inquiry(
     cmd: &InquireCmd,
     resolved: &ResolvedInquiryProfileV0,
@@ -114,6 +314,25 @@ fn execute_inquiry(
             crate::inquiry::execute_tls_cert_inquiry(resolved, plan)
         }
     }
+}
+
+fn execute_latest_inquiry(
+    cmd: &InquireCmd,
+    resolved: &ResolvedInquiryProfileV0,
+    plan: &OperatorLatestInquiryPlanV0,
+) -> anyhow::Result<InquiryReceiptV0> {
+    if resolved.profile.question_kind != InquiryQuestionV0::FindingOperationalActivity {
+        return Err(anyhow::Error::new(LatestAsOfRefusal::ActiveProfile));
+    }
+    let db_path = cmd
+        .db
+        .as_ref()
+        .context("passive report inquiry requires --db")?;
+    let db = nq_db::open_ro(db_path)
+        .with_context(|| format!("opening NQ database {} read-only", db_path.display()))?;
+    nq_db::execute_latest_report_inquiry(db.conn(), resolved, |snapshot| {
+        Ok(plan.resolve(&snapshot.completed_at))
+    })
 }
 
 fn render_human(receipt: &InquiryReceiptV0) -> String {
@@ -442,6 +661,63 @@ fn render_preflight_human(preflight: &InquiryPreflightV0) -> String {
     out
 }
 
+fn render_unresolved_latest_preflight_human(preflight: &UnresolvedLatestPreflightV0) -> String {
+    let rows = vec![
+        ("artifact", "operator inquiry preflight".to_string()),
+        ("mode", preflight.mode.to_string()),
+        ("profile", preflight.profile.profile_id.clone()),
+        (
+            "profile version",
+            preflight.profile.version.as_str().to_string(),
+        ),
+        ("profile digest", preflight.profile.profile_digest.clone()),
+        (
+            "as of",
+            format!("{} — {}", preflight.as_of, preflight.resolution),
+        ),
+        ("inspection depth", preflight.inspection_depth.to_string()),
+        (
+            "finding",
+            format!(
+                "{}/{}/{}",
+                preflight.selector.host, preflight.selector.kind, preflight.selector.subject
+            ),
+        ),
+        (
+            "max snapshot age seconds",
+            preflight.max_snapshot_age_seconds.to_string(),
+        ),
+        ("evidence limit", preflight.evidence_limit.to_string()),
+        (
+            "preflight work-unit spend",
+            preflight.acquisition_spend.work_units.to_string(),
+        ),
+    ];
+
+    let label_width = rows
+        .iter()
+        .map(|(label, _)| label.len())
+        .max()
+        .unwrap_or(0)
+        .max("field".len());
+    let mut out = String::new();
+    let _ = writeln!(out, "{:<label_width$} | value", "field");
+    let _ = writeln!(out, "{}-+-{}", "-".repeat(label_width), "-".repeat(72));
+    for (label, value) in rows {
+        let _ = writeln!(out, "{label:<label_width$} | {value}");
+    }
+
+    out.push_str("\ncoverage\n");
+    for statement in &preflight.coverage {
+        let _ = writeln!(out, "- {statement}");
+    }
+    out.push_str("\ncannot testify\n");
+    for refusal in &preflight.cannot_testify {
+        let _ = writeln!(out, "- {} | {}", refusal.kind.as_str(), refusal.statement);
+    }
+    out
+}
+
 fn collector_label(collector: InquiryCollectorV0) -> &'static str {
     match collector {
         InquiryCollectorV0::TlsCertProbe => "tls_cert_probe",
@@ -645,5 +921,81 @@ mod tests {
         );
         assert!(render_preflight_human(&active).contains("SNI tls-lab.test"));
         assert!(render_preflight_human(&passive).contains("max snapshot age seconds"));
+    }
+
+    #[test]
+    fn latest_refused_for_active_profiles() {
+        let catalog: InquiryProfileCatalogV0 = serde_json::from_str(include_str!(
+            "../../../nq-core/tests/fixtures/tls_cert_probe.profile_catalog.v0.json"
+        ))
+        .unwrap();
+        let resolved = catalog.resolve("tls-cert").unwrap();
+        let latest = OperatorLatestInquiryPlanV0 {
+            schema: nq_core::inquiry::INQUIRY_PLAN_SCHEMA_V0.into(),
+            version: InquiryVersionV0::V0,
+            profile: "tls-cert".into(),
+            _as_of: OperatorLatestAsOf::Latest,
+            targets: vec![],
+        };
+        let cmd = InquireCmd {
+            db: Some("/definitely/missing/nq.db".into()),
+            plan: "/unused/plan.json".into(),
+            profile_catalog: "/unused/catalog.json".into(),
+            preflight: false,
+            format: "json".into(),
+        };
+
+        let error = prepare_latest_inquiry(&cmd, &resolved, &latest, |_, _, _| {
+            panic!("active latest reached database or acquisition dispatch")
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error.downcast_ref::<LatestAsOfRefusal>(),
+            Some(&LatestAsOfRefusal::ActiveProfile)
+        );
+    }
+
+    #[test]
+    fn preflight_latest_mode_stays_db_free() {
+        let catalog: InquiryProfileCatalogV0 = serde_json::from_str(include_str!(
+            "../../../nq-core/tests/fixtures/resolver_pending_aged_tail.profile_catalog.v0.json"
+        ))
+        .unwrap();
+        let resolved = catalog.resolve("resolver-tail-active").unwrap();
+        let latest = OperatorLatestInquiryPlanV0 {
+            schema: nq_core::inquiry::INQUIRY_PLAN_SCHEMA_V0.into(),
+            version: InquiryVersionV0::V0,
+            profile: "resolver-tail-active".into(),
+            _as_of: OperatorLatestAsOf::Latest,
+            targets: vec![],
+        };
+        let cmd = InquireCmd {
+            db: Some("/definitely/missing/nq.db".into()),
+            plan: "/unused/plan.json".into(),
+            profile_catalog: "/unused/catalog.json".into(),
+            preflight: true,
+            format: "human".into(),
+        };
+
+        let artifact = prepare_latest_inquiry(&cmd, &resolved, &latest, |_, _, _| {
+            panic!("latest preflight opened the supplied database")
+        })
+        .unwrap();
+        let InquiryArtifact::UnresolvedLatestPreflight(preflight) = artifact else {
+            panic!("latest preflight returned a concrete artifact")
+        };
+
+        assert_eq!(
+            preflight.acquisition_spend,
+            nq_core::inquiry::InquiryAcquisitionSpendV0::default()
+        );
+        let human = render_unresolved_latest_preflight_human(&preflight);
+        assert!(human
+            .contains("latest — resolves to the newest generation inside the execution snapshot"));
+        let json = serde_json::to_string(&preflight).unwrap();
+        assert!(json.contains("\"as_of\":\"latest\""));
+        assert!(!json.contains("request_digest"));
+        assert!(!json.contains("preflight_digest"));
     }
 }
