@@ -17,6 +17,9 @@ pub enum Command {
     /// Ask a profile-governed question. Report profiles read existing NQ state;
     /// the bounded TLS-certificate profile acquires only its declared targets.
     Inquire(InquireCmd),
+    /// Explicitly emit an annotation-only escalation request from an existing
+    /// sealed inquiry receipt. This does not execute an inquiry or alter a grant.
+    EmitEscalation(EmitEscalationCmd),
     /// Run all saved checks against the DB and report results
     Check(CheckCmd),
     /// Run the liveness sentinel — watches NQ's liveness artifact and
@@ -726,6 +729,11 @@ pub struct InquireCmd {
     #[arg(long)]
     pub db: Option<PathBuf>,
 
+    /// Path to an nq.inquiry_grant.v0 JSON document. Required at execution
+    /// time for active profiles and not applicable to passive report profiles.
+    #[arg(long)]
+    pub grant: Option<PathBuf>,
+
     /// Path to an nq.inquiry_plan.v0 JSON document. The plan supplies the
     /// profile selector, as_of intake, and optional exact target subset. L0
     /// report operators may write "latest"; execution freezes it to the newest
@@ -746,6 +754,18 @@ pub struct InquireCmd {
     /// Output format: human (operator table) or json (JCS canonical artifact).
     #[arg(long, short, default_value = "human")]
     pub format: String,
+}
+
+#[derive(Debug, Args)]
+pub struct EmitEscalationCmd {
+    /// Path to a sealed nq.inquiry_receipt.v0 JSON document.
+    #[arg(long)]
+    pub receipt: PathBuf,
+
+    /// Path to the operator's requested successor envelope and receipt-local
+    /// citations. The emitted candidate is written as canonical JSON to stdout.
+    #[arg(long = "requested-envelope")]
+    pub requested_envelope: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -1138,6 +1158,7 @@ mod tests {
         match cli.command {
             Command::Inquire(cmd) => {
                 assert_eq!(cmd.db, Some(PathBuf::from("/tmp/nq.db")));
+                assert_eq!(cmd.grant, None);
                 assert_eq!(cmd.plan, PathBuf::from("/tmp/plan.v0.json"));
                 assert_eq!(cmd.profile_catalog, PathBuf::from("/tmp/profiles.v0.json"));
                 assert!(!cmd.preflight);
@@ -1156,6 +1177,8 @@ mod tests {
             "/tmp/plan.v0.json",
             "--profile-catalog",
             "/tmp/profiles.v0.json",
+            "--grant",
+            "/tmp/grant.v0.json",
             "--format",
             "json",
         ])
@@ -1163,6 +1186,7 @@ mod tests {
         match cli.command {
             Command::Inquire(cmd) => {
                 assert_eq!(cmd.db, None);
+                assert_eq!(cmd.grant, Some(PathBuf::from("/tmp/grant.v0.json")));
                 assert_eq!(cmd.plan, PathBuf::from("/tmp/plan.v0.json"));
                 assert_eq!(cmd.profile_catalog, PathBuf::from("/tmp/profiles.v0.json"));
                 assert!(!cmd.preflight);
@@ -1189,8 +1213,32 @@ mod tests {
             Command::Inquire(cmd) => {
                 assert!(cmd.preflight);
                 assert_eq!(cmd.db, Some(PathBuf::from("/definitely/missing/nq.db")));
+                assert_eq!(cmd.grant, None);
             }
             other => panic!("expected Inquire, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn emit_escalation_accepts_explicit_artifact_paths() {
+        let cli = Cli::try_parse_from([
+            "nq",
+            "emit-escalation",
+            "--receipt",
+            "/tmp/receipt.v0.json",
+            "--requested-envelope",
+            "/tmp/successor.v0.json",
+        ])
+        .expect("nq emit-escalation arguments must parse");
+        match cli.command {
+            Command::EmitEscalation(cmd) => {
+                assert_eq!(cmd.receipt, PathBuf::from("/tmp/receipt.v0.json"));
+                assert_eq!(
+                    cmd.requested_envelope,
+                    PathBuf::from("/tmp/successor.v0.json")
+                );
+            }
+            other => panic!("expected EmitEscalation, got {other:?}"),
         }
     }
 }

@@ -1,5 +1,6 @@
 pub mod check;
 pub mod drill;
+pub mod emit_escalation;
 pub mod findings;
 pub mod fleet;
 pub mod inquire;
@@ -24,6 +25,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Serve(cmd) => serve::run(cmd).await,
         Command::Query(cmd) => query::run(cmd),
         Command::Inquire(cmd) => inquire::run(cmd),
+        Command::EmitEscalation(cmd) => emit_escalation::run(cmd),
         Command::Check(cmd) => check::run(cmd),
         Command::Sentinel(cmd) => sentinel::run(cmd).await,
         Command::Findings(cmd) => findings::run(cmd),

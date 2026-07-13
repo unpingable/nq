@@ -10,11 +10,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context};
 use nq_core::inquiry::{
-    AdmittedInquiryRequestV0, CandidateInquiryPlanV0, InquiryAcquisitionSpendV0,
-    InquiryDisposition, InquiryEvidenceCoverageV0, InquiryReceiptV0, InquiryRefusal,
-    InquiryRefusalKindV0, InquiryStatusV0, InquiryTlsObservationV0, InquiryTlsOutcomeV0,
-    InquiryTlsTargetV0, InquiryTlsValidationPolicyV0, InquiryTlsValidationResultV0,
-    InquiryVersionV0, InquiryWitnessPlanV0, ResolvedInquiryProfileV0, INQUIRY_RECEIPT_SCHEMA_V0,
+    admit_initial_position, AdmittedInquiryRequestV0, CandidateInquiryPlanV0,
+    InquiryAcquisitionSpendV0, InquiryDisposition, InquiryEvidenceCoverageV0, InquiryGrantV0,
+    InquiryPositionV0, InquiryPreflightV0, InquiryReceiptV0, InquiryRefusal, InquiryRefusalKindV0,
+    InquiryStatusV0, InquiryTlsObservationV0, InquiryTlsOutcomeV0, InquiryTlsTargetV0,
+    InquiryTlsValidationPolicyV0, InquiryTlsValidationResultV0, InquiryVersionV0,
+    InquiryWitnessPlanV0, ResolvedInquiryProfileV0, INQUIRY_POSITION_SCHEMA_V0,
+    INQUIRY_RECEIPT_SCHEMA_V0,
 };
 use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
@@ -36,13 +38,15 @@ enum Resolution {
 pub fn execute_tls_cert_inquiry(
     resolved_profile: &ResolvedInquiryProfileV0,
     plan: &CandidateInquiryPlanV0,
+    grant: &InquiryGrantV0,
 ) -> anyhow::Result<InquiryReceiptV0> {
-    execute_tls_cert_inquiry_with(resolved_profile, plan, execute_target)
+    execute_tls_cert_inquiry_with(resolved_profile, plan, grant, execute_target)
 }
 
 fn execute_tls_cert_inquiry_with<F>(
     resolved_profile: &ResolvedInquiryProfileV0,
     plan: &CandidateInquiryPlanV0,
+    grant: &InquiryGrantV0,
     mut acquire_target: F,
 ) -> anyhow::Result<InquiryReceiptV0>
 where
@@ -60,6 +64,49 @@ where
     if witness_plan.validation_policy != InquiryTlsValidationPolicyV0::Webpki {
         bail!("active inquiry V0 only executes WebPKI validation");
     }
+    let preflight = InquiryPreflightV0::render(plan, resolved_profile)
+        .context("rendering active inquiry grant requirements")?;
+    let position = InquiryPositionV0 {
+        schema: INQUIRY_POSITION_SCHEMA_V0.to_string(),
+        version: InquiryVersionV0::V0,
+        scope: preflight.grant_requirements.admitted_scope,
+        depth: preflight.grant_requirements.max_depth,
+        remaining_acquisition_envelope: preflight.grant_requirements.total_acquisition_envelope,
+    };
+    if let Err(error) = admit_initial_position(grant, &position) {
+        let refusal = grant_admission_refusal(&error.to_string());
+        let valid_grant = (refusal.kind != InquiryRefusalKindV0::GrantMalformed).then_some(grant);
+        return seal_pre_acquisition_refusal(
+            resolved_profile,
+            request,
+            witness_plan,
+            refusal,
+            valid_grant,
+        );
+    }
+    if !grant
+        .permitted_witness_classes
+        .contains(&witness_plan.collector)
+    {
+        let collector = witness_plan.collector;
+        return seal_pre_acquisition_refusal(
+            resolved_profile,
+            request,
+            witness_plan,
+            InquiryRefusal {
+                kind: InquiryRefusalKindV0::GrantWitnessClassNotPermitted,
+                statement: format!(
+                    "grant permitted_witness_classes does not include {:?}",
+                    collector
+                ),
+            },
+            Some(grant),
+        );
+    }
+    let grant_digest = grant
+        .grant_digest()
+        .context("digesting admitted active inquiry grant")?;
+    let authorized_acquisition_envelope = grant.total_acquisition_envelope.clone();
 
     let overall_started = Instant::now();
     let overall_deadline = overall_started
@@ -118,6 +165,7 @@ where
         InquiryStatusV0::Answered
     };
 
+    let observed_acquisition_spend = acquisition.clone();
     let mut receipt = InquiryReceiptV0 {
         schema: INQUIRY_RECEIPT_SCHEMA_V0.to_string(),
         version: InquiryVersionV0::V0,
@@ -139,12 +187,99 @@ where
         tls_observations: observations,
         acquisition_spend: acquisition.work_units,
         acquisition: Some(acquisition),
+        grant_digest: Some(grant_digest),
+        authorized_acquisition_envelope: Some(authorized_acquisition_envelope),
+        observed_acquisition_spend: Some(observed_acquisition_spend),
         coverage: resolved_profile.profile.coverage.clone(),
         cannot_testify,
         receipt_digest: None,
     };
     receipt.seal().context("sealing active inquiry receipt")?;
     Ok(receipt)
+}
+
+pub fn refuse_tls_cert_inquiry_before_acquisition(
+    resolved_profile: &ResolvedInquiryProfileV0,
+    plan: &CandidateInquiryPlanV0,
+    refusal: InquiryRefusal,
+) -> anyhow::Result<InquiryReceiptV0> {
+    let request = AdmittedInquiryRequestV0::admit(plan, resolved_profile)
+        .context("admitting refused active inquiry request")?;
+    let witness_plan = InquiryWitnessPlanV0::resolve(&request, resolved_profile)
+        .context("resolving refused active inquiry witness plan")?;
+    seal_pre_acquisition_refusal(resolved_profile, request, witness_plan, refusal, None)
+}
+
+fn seal_pre_acquisition_refusal(
+    resolved_profile: &ResolvedInquiryProfileV0,
+    request: AdmittedInquiryRequestV0,
+    witness_plan: InquiryWitnessPlanV0,
+    refusal: InquiryRefusal,
+    grant: Option<&InquiryGrantV0>,
+) -> anyhow::Result<InquiryReceiptV0> {
+    let acquisition = InquiryAcquisitionSpendV0::default();
+    let (grant_digest, authorized_acquisition_envelope, observed_acquisition_spend) = match grant {
+        Some(grant) => (
+            Some(
+                grant
+                    .grant_digest()
+                    .context("digesting refused active inquiry grant")?,
+            ),
+            Some(grant.total_acquisition_envelope.clone()),
+            Some(acquisition.clone()),
+        ),
+        None => (None, None, None),
+    };
+    let mut cannot_testify = resolved_profile.profile.cannot_testify.clone();
+    cannot_testify.push(refusal);
+    let mut receipt = InquiryReceiptV0 {
+        schema: INQUIRY_RECEIPT_SCHEMA_V0.to_string(),
+        version: InquiryVersionV0::V0,
+        status: InquiryStatusV0::Refused,
+        disposition: InquiryDisposition::CannotTestify,
+        request,
+        source_snapshot: None,
+        finding_state: None,
+        evidence_receipts: vec![],
+        evidence_coverage: InquiryEvidenceCoverageV0 {
+            matched_current_rows: 0,
+            matched_receipt_rows: 0,
+            receipt_limit: 0,
+            receipt_tail_truncated: false,
+            newest_receipt_generation: None,
+            oldest_receipt_generation: None,
+        },
+        witness_plan: Some(witness_plan),
+        tls_observations: vec![],
+        acquisition: Some(acquisition),
+        grant_digest,
+        authorized_acquisition_envelope,
+        observed_acquisition_spend,
+        coverage: resolved_profile.profile.coverage.clone(),
+        cannot_testify,
+        acquisition_spend: 0,
+        receipt_digest: None,
+    };
+    receipt
+        .seal()
+        .context("sealing pre-acquisition inquiry refusal")?;
+    Ok(receipt)
+}
+
+fn grant_admission_refusal(error: &str) -> InquiryRefusal {
+    let kind = if error.contains("position scope") {
+        InquiryRefusalKindV0::GrantScopeInsufficient
+    } else if error.contains("position depth") {
+        InquiryRefusalKindV0::GrantDepthInsufficient
+    } else if error.contains("remaining acquisition") {
+        InquiryRefusalKindV0::GrantAcquisitionEnvelopeInsufficient
+    } else {
+        InquiryRefusalKindV0::GrantMalformed
+    };
+    InquiryRefusal {
+        kind,
+        statement: error.to_string(),
+    }
 }
 
 fn execute_target(
@@ -506,7 +641,8 @@ mod tests {
     };
     use nq_core::inquiry::{
         InquiryCollectorV0, InquiryProfileV0, InquiryQuestionV0, InquiryTlsCertProfileV0,
-        INQUIRY_PLAN_SCHEMA_V0, INQUIRY_PROFILE_SCHEMA_V0, TLS_CERT_INQUIRY_QUESTION_V0,
+        INQUIRY_GRANT_SCHEMA_V0, INQUIRY_PLAN_SCHEMA_V0, INQUIRY_PROFILE_SCHEMA_V0,
+        TLS_CERT_INQUIRY_QUESTION_V0,
     };
 
     fn resolved_profile(target: InquiryTlsTargetV0) -> ResolvedInquiryProfileV0 {
@@ -544,8 +680,131 @@ mod tests {
         }
     }
 
+    fn covering_grant(
+        resolved: &ResolvedInquiryProfileV0,
+        plan: &CandidateInquiryPlanV0,
+    ) -> InquiryGrantV0 {
+        let requirements = InquiryPreflightV0::render(plan, resolved)
+            .unwrap()
+            .grant_requirements;
+        InquiryGrantV0 {
+            schema: INQUIRY_GRANT_SCHEMA_V0.into(),
+            version: InquiryVersionV0::V0,
+            admitted_scope: requirements.admitted_scope,
+            max_depth: requirements.max_depth,
+            total_acquisition_envelope: requirements.total_acquisition_envelope,
+            permitted_witness_classes: requirements.permitted_witness_classes,
+        }
+    }
+
+    fn assert_pointwise_at_most(
+        observed: &InquiryAcquisitionSpendV0,
+        authorized: &InquiryAcquisitionSpendV0,
+    ) {
+        assert!(observed.dns_attempts <= authorized.dns_attempts);
+        assert!(observed.connection_attempts <= authorized.connection_attempts);
+        assert!(observed.handshakes_attempted <= authorized.handshakes_attempted);
+        assert!(observed.handshakes_completed <= authorized.handshakes_completed);
+        assert!(observed.bound_checks <= authorized.bound_checks);
+        assert!(observed.wall_ms <= authorized.wall_ms);
+        assert!(observed.work_units <= authorized.work_units);
+    }
+
+    fn offline_resolution_refusal(
+        target: &InquiryTlsTargetV0,
+        _witness_plan: &InquiryWitnessPlanV0,
+        _deadline: Instant,
+        receipt_refusals: &mut Vec<InquiryRefusal>,
+    ) -> InquiryTlsObservationV0 {
+        let refusal = target_refusal(
+            target,
+            InquiryRefusalKindV0::ResolutionFailed,
+            "injected offline resolution refusal",
+        );
+        receipt_refusals.push(refusal.clone());
+        InquiryTlsObservationV0 {
+            acquired_at: "2026-07-11T12:00:01Z".into(),
+            target: target.clone(),
+            observed_ip: None,
+            certificate_digest: None,
+            chain_digest: None,
+            chain_fingerprints: vec![],
+            not_before: None,
+            not_after: None,
+            validation_result: InquiryTlsValidationResultV0::NotAttempted,
+            outcome: InquiryTlsOutcomeV0::ResolutionFailed,
+            spend: InquiryAcquisitionSpendV0 {
+                dns_attempts: 1,
+                connection_attempts: 0,
+                handshakes_attempted: 0,
+                handshakes_completed: 0,
+                bound_checks: 1,
+                wall_ms: 0,
+                work_units: 2,
+            },
+            refusals: vec![refusal],
+        }
+    }
+
     #[test]
-    fn execution_aggregation_stays_inside_resolved_envelope_without_network() {
+    fn grant_must_cover_admitted_plan() {
+        let target = InquiryTlsTargetV0 {
+            target_id: "loopback".into(),
+            host: "127.0.0.1".into(),
+            port: 443,
+            sni: "tls-lab.test".into(),
+        };
+        let resolved = resolved_profile(target);
+        let plan = CandidateInquiryPlanV0 {
+            schema: INQUIRY_PLAN_SCHEMA_V0.into(),
+            version: InquiryVersionV0::V0,
+            profile: "loopback_tls".into(),
+            as_of: "2026-07-11T12:00:00Z".into(),
+            targets: vec![],
+        };
+        let grant = covering_grant(&resolved, &plan);
+
+        let mut scope = grant.clone();
+        scope.admitted_scope.clear();
+        let mut depth = grant.clone();
+        depth.max_depth = 0;
+        let mut witness = grant.clone();
+        witness.permitted_witness_classes.clear();
+        let mut spend = grant.clone();
+        spend.total_acquisition_envelope.dns_attempts = 0;
+
+        for (candidate, expected, dimension) in [
+            (scope, InquiryRefusalKindV0::GrantScopeInsufficient, "scope"),
+            (depth, InquiryRefusalKindV0::GrantDepthInsufficient, "depth"),
+            (
+                witness,
+                InquiryRefusalKindV0::GrantWitnessClassNotPermitted,
+                "TlsCertProbe",
+            ),
+            (
+                spend,
+                InquiryRefusalKindV0::GrantAcquisitionEnvelopeInsufficient,
+                "dns_attempts",
+            ),
+        ] {
+            let receipt =
+                execute_tls_cert_inquiry_with(&resolved, &plan, &candidate, |_, _, _, _| {
+                    panic!("grant denial dispatched acquisition")
+                })
+                .unwrap();
+            let refusal = receipt
+                .cannot_testify
+                .iter()
+                .find(|refusal| refusal.kind == expected)
+                .expect("dimension-specific grant refusal");
+            assert!(refusal.statement.contains(dimension));
+            assert_eq!(receipt.status, InquiryStatusV0::Refused);
+            assert_eq!(receipt.disposition, InquiryDisposition::CannotTestify);
+        }
+    }
+
+    #[test]
+    fn grant_covered_execution_proceeds_and_receipt_binds_grant() {
         let target = InquiryTlsTargetV0 {
             target_id: "fixture".into(),
             host: "127.0.0.1".into(),
@@ -560,42 +819,11 @@ mod tests {
             as_of: "2026-07-11T12:00:00Z".into(),
             targets: vec![],
         };
+        let grant = covering_grant(&resolved, &plan);
 
-        let receipt = execute_tls_cert_inquiry_with(
-            &resolved,
-            &plan,
-            |target, _witness_plan, _deadline, receipt_refusals| {
-                let refusal = target_refusal(
-                    target,
-                    InquiryRefusalKindV0::ResolutionFailed,
-                    "injected offline resolution refusal",
-                );
-                receipt_refusals.push(refusal.clone());
-                InquiryTlsObservationV0 {
-                    acquired_at: "2026-07-11T12:00:01Z".into(),
-                    target: target.clone(),
-                    observed_ip: None,
-                    certificate_digest: None,
-                    chain_digest: None,
-                    chain_fingerprints: vec![],
-                    not_before: None,
-                    not_after: None,
-                    validation_result: InquiryTlsValidationResultV0::NotAttempted,
-                    outcome: InquiryTlsOutcomeV0::ResolutionFailed,
-                    spend: InquiryAcquisitionSpendV0 {
-                        dns_attempts: 1,
-                        connection_attempts: 0,
-                        handshakes_attempted: 0,
-                        handshakes_completed: 0,
-                        bound_checks: 1,
-                        wall_ms: 0,
-                        work_units: 2,
-                    },
-                    refusals: vec![refusal],
-                }
-            },
-        )
-        .unwrap();
+        let receipt =
+            execute_tls_cert_inquiry_with(&resolved, &plan, &grant, offline_resolution_refusal)
+                .unwrap();
         let witness_plan = receipt.witness_plan.as_ref().unwrap();
         let acquisition = receipt.acquisition.as_ref().unwrap();
         assert_eq!(receipt.request.requested_targets, vec![target.clone()]);
@@ -617,6 +845,76 @@ mod tests {
             .cannot_testify
             .iter()
             .any(|r| r.kind == InquiryRefusalKindV0::ConsequenceAuthority));
+        assert_eq!(receipt.grant_digest, Some(grant.grant_digest().unwrap()));
+        assert_eq!(
+            receipt.authorized_acquisition_envelope,
+            Some(grant.total_acquisition_envelope.clone())
+        );
+        assert_eq!(
+            receipt.observed_acquisition_spend.as_ref(),
+            Some(acquisition)
+        );
+    }
+
+    #[test]
+    fn observed_spend_within_authorized_envelope() {
+        let target = InquiryTlsTargetV0 {
+            target_id: "loopback".into(),
+            host: "127.0.0.1".into(),
+            port: 443,
+            sni: "tls-lab.test".into(),
+        };
+        let resolved = resolved_profile(target);
+        let plan = CandidateInquiryPlanV0 {
+            schema: INQUIRY_PLAN_SCHEMA_V0.into(),
+            version: InquiryVersionV0::V0,
+            profile: "loopback_tls".into(),
+            as_of: "2026-07-11T12:00:00Z".into(),
+            targets: vec![],
+        };
+        let grant = covering_grant(&resolved, &plan);
+        let receipt =
+            execute_tls_cert_inquiry_with(&resolved, &plan, &grant, offline_resolution_refusal)
+                .unwrap();
+        assert_pointwise_at_most(
+            receipt.observed_acquisition_spend.as_ref().unwrap(),
+            receipt.authorized_acquisition_envelope.as_ref().unwrap(),
+        );
+    }
+
+    #[test]
+    fn loopback_grant_denial_is_cheap() {
+        use std::cell::Cell;
+
+        let target = InquiryTlsTargetV0 {
+            target_id: "loopback".into(),
+            host: "127.0.0.1".into(),
+            port: 443,
+            sni: "tls-lab.test".into(),
+        };
+        let resolved = resolved_profile(target);
+        let plan = CandidateInquiryPlanV0 {
+            schema: INQUIRY_PLAN_SCHEMA_V0.into(),
+            version: InquiryVersionV0::V0,
+            profile: "loopback_tls".into(),
+            as_of: "2026-07-11T12:00:00Z".into(),
+            targets: vec![],
+        };
+        let mut grant = covering_grant(&resolved, &plan);
+        grant.total_acquisition_envelope.connection_attempts = 0;
+        let dispatches = Cell::new(0);
+        let receipt = execute_tls_cert_inquiry_with(&resolved, &plan, &grant, |_, _, _, _| {
+            dispatches.set(dispatches.get() + 1);
+            panic!("insufficient loopback grant reached socket acquisition")
+        })
+        .unwrap();
+
+        assert_eq!(dispatches.get(), 0);
+        assert_eq!(
+            receipt.acquisition,
+            Some(InquiryAcquisitionSpendV0::default())
+        );
+        assert!(receipt.tls_observations.is_empty());
     }
 
     #[test]
@@ -635,8 +933,9 @@ mod tests {
             as_of: "2026-07-11T12:00:00Z".into(),
             targets: vec![],
         };
+        let grant = covering_grant(&resolved, &plan);
 
-        let receipt = execute_tls_cert_inquiry(&resolved, &plan).unwrap();
+        let receipt = execute_tls_cert_inquiry(&resolved, &plan, &grant).unwrap();
         let observation = &receipt.tls_observations[0];
         assert_eq!(
             observation.outcome,

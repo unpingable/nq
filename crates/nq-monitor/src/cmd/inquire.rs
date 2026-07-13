@@ -7,11 +7,13 @@
 use crate::cli::InquireCmd;
 use anyhow::Context;
 use nq_core::inquiry::{
-    CandidateInquiryPlanV0, FindingSelectorV0, InquiryAcquisitionSpendV0, InquiryCollectorV0,
+    AdmittedInquiryRequestV0, CandidateInquiryPlanV0, FindingSelectorV0, InquiryAcquisitionSpendV0,
+    InquiryCollectorV0, InquiryDisposition, InquiryEvidenceCoverageV0, InquiryGrantV0,
     InquiryPreflightV0, InquiryProfileBindingV0, InquiryProfileCatalogV0, InquiryQuestionV0,
-    InquiryReceiptV0, InquiryRefusal, InquiryTlsOutcomeV0, InquiryTlsTargetV0,
-    InquiryTlsValidationPolicyV0, InquiryTlsValidationResultV0, InquiryVersionV0,
-    ResolvedInquiryProfileV0, INQUIRY_PLAN_SCHEMA_V0, INQUIRY_REPORT_DEPTH_V0,
+    InquiryReceiptV0, InquiryRefusal, InquiryRefusalKindV0, InquiryStatusV0, InquiryTlsOutcomeV0,
+    InquiryTlsTargetV0, InquiryTlsValidationPolicyV0, InquiryTlsValidationResultV0,
+    InquiryVersionV0, ResolvedInquiryProfileV0, INQUIRY_PLAN_SCHEMA_V0, INQUIRY_RECEIPT_SCHEMA_V0,
+    INQUIRY_REPORT_DEPTH_V0,
 };
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -108,6 +110,7 @@ fn parse_operator_plan(bytes: &[u8]) -> serde_json::Result<OperatorInquiryPlanV0
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LatestAsOfRefusal {
     ActiveProfile,
+    GrantNotApplicableToPassiveInquiry,
 }
 
 impl std::fmt::Display for LatestAsOfRefusal {
@@ -116,6 +119,9 @@ impl std::fmt::Display for LatestAsOfRefusal {
             Self::ActiveProfile => write!(
                 formatter,
                 "as_of latest is only available for L0 report inquiries; active profiles cannot open an NQ database to resolve it"
+            ),
+            Self::GrantNotApplicableToPassiveInquiry => formatter.write_str(
+                InquiryRefusalKindV0::GrantNotApplicableToPassiveInquiry.as_str(),
             ),
         }
     }
@@ -262,6 +268,13 @@ where
         &CandidateInquiryPlanV0,
     ) -> anyhow::Result<InquiryReceiptV0>,
 {
+    if resolved.profile.question_kind == InquiryQuestionV0::FindingOperationalActivity
+        && cmd.grant.is_some()
+    {
+        return Ok(InquiryArtifact::Receipt(refuse_passive_grant_invocation(
+            resolved, plan,
+        )?));
+    }
     if cmd.preflight {
         return Ok(InquiryArtifact::Preflight(InquiryPreflightV0::render(
             plan, resolved,
@@ -287,6 +300,11 @@ where
         return Err(anyhow::Error::new(LatestAsOfRefusal::ActiveProfile));
     }
     plan.validate_report_shape(resolved)?;
+    if cmd.grant.is_some() {
+        return Err(anyhow::Error::new(
+            LatestAsOfRefusal::GrantNotApplicableToPassiveInquiry,
+        ));
+    }
     if cmd.preflight {
         return Ok(InquiryArtifact::UnresolvedLatestPreflight(
             UnresolvedLatestPreflightV0::render(resolved)?,
@@ -300,8 +318,32 @@ fn execute_inquiry(
     resolved: &ResolvedInquiryProfileV0,
     plan: &CandidateInquiryPlanV0,
 ) -> anyhow::Result<InquiryReceiptV0> {
+    execute_inquiry_with(
+        cmd,
+        resolved,
+        plan,
+        crate::inquiry::execute_tls_cert_inquiry,
+    )
+}
+
+fn execute_inquiry_with<F>(
+    cmd: &InquireCmd,
+    resolved: &ResolvedInquiryProfileV0,
+    plan: &CandidateInquiryPlanV0,
+    execute_active: F,
+) -> anyhow::Result<InquiryReceiptV0>
+where
+    F: FnOnce(
+        &ResolvedInquiryProfileV0,
+        &CandidateInquiryPlanV0,
+        &InquiryGrantV0,
+    ) -> anyhow::Result<InquiryReceiptV0>,
+{
     match resolved.profile.question_kind {
         InquiryQuestionV0::FindingOperationalActivity => {
+            if cmd.grant.is_some() {
+                return refuse_passive_grant_invocation(resolved, plan);
+            }
             let db_path = cmd
                 .db
                 .as_ref()
@@ -311,9 +353,106 @@ fn execute_inquiry(
             nq_db::execute_report_inquiry(db.conn(), resolved, plan)
         }
         InquiryQuestionV0::TlsCertificatePresentationAndExpiryHorizon => {
-            crate::inquiry::execute_tls_cert_inquiry(resolved, plan)
+            let Some(grant_path) = &cmd.grant else {
+                return crate::inquiry::refuse_tls_cert_inquiry_before_acquisition(
+                    resolved,
+                    plan,
+                    InquiryRefusal {
+                        kind: InquiryRefusalKindV0::GrantRequired,
+                        statement: "active inquiry execution requires --grant".to_string(),
+                    },
+                );
+            };
+            let grant_bytes = match std::fs::read(grant_path) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    return crate::inquiry::refuse_tls_cert_inquiry_before_acquisition(
+                        resolved,
+                        plan,
+                        InquiryRefusal {
+                            kind: InquiryRefusalKindV0::GrantMalformed,
+                            statement: format!(
+                                "reading inquiry grant {} failed: {error}",
+                                grant_path.display()
+                            ),
+                        },
+                    )
+                }
+            };
+            let grant: InquiryGrantV0 = match serde_json::from_slice(&grant_bytes) {
+                Ok(grant) => grant,
+                Err(error) => {
+                    return crate::inquiry::refuse_tls_cert_inquiry_before_acquisition(
+                        resolved,
+                        plan,
+                        InquiryRefusal {
+                            kind: InquiryRefusalKindV0::GrantMalformed,
+                            statement: format!(
+                                "parsing {} as nq.inquiry_grant.v0 failed: {error}",
+                                grant_path.display()
+                            ),
+                        },
+                    )
+                }
+            };
+            if let Err(error) = grant.validate() {
+                return crate::inquiry::refuse_tls_cert_inquiry_before_acquisition(
+                    resolved,
+                    plan,
+                    InquiryRefusal {
+                        kind: InquiryRefusalKindV0::GrantMalformed,
+                        statement: format!("invalid nq.inquiry_grant.v0: {error}"),
+                    },
+                );
+            }
+            execute_active(resolved, plan, &grant)
         }
     }
+}
+
+fn refuse_passive_grant_invocation(
+    resolved: &ResolvedInquiryProfileV0,
+    plan: &CandidateInquiryPlanV0,
+) -> anyhow::Result<InquiryReceiptV0> {
+    let request = AdmittedInquiryRequestV0::admit(plan, resolved)
+        .context("admitting refused passive inquiry request")?;
+    let mut cannot_testify = resolved.profile.cannot_testify.clone();
+    cannot_testify.push(InquiryRefusal {
+        kind: InquiryRefusalKindV0::GrantNotApplicableToPassiveInquiry,
+        statement: "an inquiry grant is not applicable to a passive L0 report inquiry".to_string(),
+    });
+    let mut receipt = InquiryReceiptV0 {
+        schema: INQUIRY_RECEIPT_SCHEMA_V0.to_string(),
+        version: InquiryVersionV0::V0,
+        status: InquiryStatusV0::Refused,
+        disposition: InquiryDisposition::CannotTestify,
+        request,
+        source_snapshot: None,
+        finding_state: None,
+        evidence_receipts: vec![],
+        evidence_coverage: InquiryEvidenceCoverageV0 {
+            matched_current_rows: 0,
+            matched_receipt_rows: 0,
+            receipt_limit: resolved.profile.evidence_limit.unwrap_or(0),
+            receipt_tail_truncated: false,
+            newest_receipt_generation: None,
+            oldest_receipt_generation: None,
+        },
+        witness_plan: None,
+        tls_observations: vec![],
+        acquisition: None,
+        grant_digest: None,
+        authorized_acquisition_envelope: None,
+        observed_acquisition_spend: None,
+        coverage: resolved.profile.coverage.clone(),
+        cannot_testify,
+        acquisition_spend: 0,
+        receipt_digest: None,
+    };
+    receipt
+        .seal()
+        .context("sealing passive inquiry grant refusal")?;
+    Ok(receipt)
 }
 
 fn execute_latest_inquiry(
@@ -761,8 +900,60 @@ mod tests {
     use nq_core::inquiry::{
         AdmittedInquiryRequestV0, FindingSelectorV0, InquiryDisposition, InquiryEvidenceCoverageV0,
         InquiryProfileBindingV0, InquiryQuestionV0, InquiryStatusV0, InquiryVersionV0,
-        INQUIRY_RECEIPT_SCHEMA_V0, INQUIRY_REQUEST_SCHEMA_V0,
+        INQUIRY_GRANT_SCHEMA_V0, INQUIRY_RECEIPT_SCHEMA_V0, INQUIRY_REQUEST_SCHEMA_V0,
     };
+
+    fn active_grant(
+        resolved: &ResolvedInquiryProfileV0,
+        plan: &CandidateInquiryPlanV0,
+    ) -> InquiryGrantV0 {
+        let requirements = InquiryPreflightV0::render(plan, resolved)
+            .unwrap()
+            .grant_requirements;
+        InquiryGrantV0 {
+            schema: INQUIRY_GRANT_SCHEMA_V0.into(),
+            version: InquiryVersionV0::V0,
+            admitted_scope: requirements.admitted_scope,
+            max_depth: requirements.max_depth,
+            total_acquisition_envelope: requirements.total_acquisition_envelope,
+            permitted_witness_classes: requirements.permitted_witness_classes,
+        }
+    }
+
+    fn active_fixture() -> (ResolvedInquiryProfileV0, CandidateInquiryPlanV0) {
+        let catalog: InquiryProfileCatalogV0 = serde_json::from_str(include_str!(
+            "../../../nq-core/tests/fixtures/tls_cert_probe.profile_catalog.v0.json"
+        ))
+        .unwrap();
+        let resolved = catalog.resolve("tls-cert").unwrap();
+        let plan = CandidateInquiryPlanV0 {
+            schema: nq_core::inquiry::INQUIRY_PLAN_SCHEMA_V0.into(),
+            version: InquiryVersionV0::V0,
+            profile: "tls-cert".into(),
+            as_of: "2026-07-11T12:00:00Z".into(),
+            targets: vec![],
+        };
+        (resolved, plan)
+    }
+
+    fn inquire_cmd(grant: Option<std::path::PathBuf>) -> InquireCmd {
+        InquireCmd {
+            db: Some("/definitely/missing/nq.db".into()),
+            grant,
+            plan: "/unused/plan.json".into(),
+            profile_catalog: "/unused/catalog.json".into(),
+            preflight: false,
+            format: "json".into(),
+        }
+    }
+
+    fn missing_grant_receipt() -> InquiryReceiptV0 {
+        let (resolved, plan) = active_fixture();
+        execute_inquiry_with(&inquire_cmd(None), &resolved, &plan, |_, _, _| {
+            panic!("missing grant dispatched active acquisition")
+        })
+        .unwrap()
+    }
 
     #[test]
     fn human_render_uses_only_receipt_times() {
@@ -805,6 +996,9 @@ mod tests {
             witness_plan: None,
             tls_observations: vec![],
             acquisition: None,
+            grant_digest: None,
+            authorized_acquisition_envelope: None,
+            observed_acquisition_spend: None,
             coverage: vec!["bounded".into()],
             cannot_testify: vec![],
             acquisition_spend: 0,
@@ -818,16 +1012,10 @@ mod tests {
 
     #[test]
     fn active_dispatch_never_opens_even_a_supplied_db_path() {
-        let mut catalog: InquiryProfileCatalogV0 = serde_json::from_str(include_str!(
+        let catalog: InquiryProfileCatalogV0 = serde_json::from_str(include_str!(
             "../../../nq-core/tests/fixtures/tls_cert_probe.profile_catalog.v0.json"
         ))
         .unwrap();
-        catalog.profiles[0]
-            .tls_cert
-            .as_mut()
-            .unwrap()
-            .declared_targets[0]
-            .host = "fixture.test".into();
         let resolved = catalog.resolve("tls-cert").unwrap();
         let plan = CandidateInquiryPlanV0 {
             schema: nq_core::inquiry::INQUIRY_PLAN_SCHEMA_V0.into(),
@@ -836,31 +1024,189 @@ mod tests {
             as_of: "2026-07-11T12:00:00Z".into(),
             targets: vec![],
         };
+        let grant = active_grant(&resolved, &plan);
+        let directory = tempfile::tempdir().unwrap();
+        let grant_path = directory.path().join("grant.json");
+        std::fs::write(&grant_path, grant.canonical_bytes().unwrap()).unwrap();
         let cmd = InquireCmd {
             db: Some("/definitely/missing/nq.db".into()),
+            grant: Some(grant_path),
             plan: "/unused/plan.json".into(),
             profile_catalog: "/unused/catalog.json".into(),
             preflight: false,
             format: "json".into(),
         };
 
-        let receipt = execute_inquiry(&cmd, &resolved, &plan).unwrap();
-        assert_eq!(
-            receipt.tls_observations[0].outcome,
-            InquiryTlsOutcomeV0::AcquisitionBoundRefused
-        );
+        let receipt = execute_inquiry_with(&cmd, &resolved, &plan, |resolved, plan, grant| {
+            let mut insufficient = grant.clone();
+            insufficient.total_acquisition_envelope.dns_attempts = 0;
+            crate::inquiry::execute_tls_cert_inquiry(resolved, plan, &insufficient)
+        })
+        .unwrap();
+        assert!(receipt.tls_observations.is_empty());
+        assert_eq!(receipt.acquisition_spend, 0);
         let human = render_human(&receipt);
         assert!(human.contains("DNS attempts"));
-        assert!(human.contains("certificate digest"));
-        assert!(human.contains("chain digest"));
-        assert!(human.contains("validation not_attempted"));
         assert!(human.contains("wall spend ms"));
+    }
+
+    #[test]
+    fn active_execution_without_grant_refused_before_any_acquisition() {
+        let receipt = missing_grant_receipt();
+        assert_eq!(receipt.status, InquiryStatusV0::Refused);
+        assert_eq!(receipt.disposition, InquiryDisposition::CannotTestify);
+        assert!(receipt.receipt_digest.is_some());
+        assert!(receipt
+            .cannot_testify
+            .iter()
+            .any(|refusal| refusal.kind == InquiryRefusalKindV0::GrantRequired));
+        assert!(receipt.tls_observations.is_empty());
+    }
+
+    #[test]
+    fn malformed_grant_refused_before_acquisition() {
+        let (resolved, plan) = active_fixture();
+        let directory = tempfile::tempdir().unwrap();
+        let grant_path = directory.path().join("grant.json");
+        std::fs::write(&grant_path, b"{not an inquiry grant").unwrap();
+        let receipt = execute_inquiry_with(
+            &inquire_cmd(Some(grant_path)),
+            &resolved,
+            &plan,
+            |_, _, _| panic!("malformed grant dispatched active acquisition"),
+        )
+        .unwrap();
+
+        assert!(receipt
+            .cannot_testify
+            .iter()
+            .any(|refusal| refusal.kind == InquiryRefusalKindV0::GrantMalformed));
+        assert_eq!(
+            receipt.acquisition,
+            Some(InquiryAcquisitionSpendV0::default())
+        );
+        assert!(receipt.receipt_digest.is_some());
+    }
+
+    #[test]
+    fn denial_spend_zero_across_every_counter() {
+        let receipt = missing_grant_receipt();
+        let spend = receipt.acquisition.as_ref().unwrap();
+        assert_eq!(spend.dns_attempts, 0);
+        assert_eq!(spend.connection_attempts, 0);
+        assert_eq!(spend.handshakes_attempted, 0);
+        assert_eq!(spend.handshakes_completed, 0);
+        assert_eq!(spend.bound_checks, 0);
+        assert_eq!(spend.wall_ms, 0);
+        assert_eq!(spend.work_units, 0);
+        assert_eq!(receipt.acquisition_spend, 0);
+    }
+
+    #[test]
+    fn passive_grant_supplied_is_typed_refusal() {
+        let catalog: InquiryProfileCatalogV0 = serde_json::from_str(include_str!(
+            "../../../nq-core/tests/fixtures/resolver_pending_aged_tail.profile_catalog.v0.json"
+        ))
+        .unwrap();
+        let resolved = catalog.resolve("resolver-tail-active").unwrap();
+        let plan = CandidateInquiryPlanV0 {
+            schema: nq_core::inquiry::INQUIRY_PLAN_SCHEMA_V0.into(),
+            version: InquiryVersionV0::V0,
+            profile: "resolver-tail-active".into(),
+            as_of: "2026-07-11T12:00:00Z".into(),
+            targets: vec![],
+        };
+        let cmd = inquire_cmd(Some("/must/not/be/read/grant.json".into()));
+        let artifact = prepare_inquiry(&cmd, &resolved, &plan, |_, _, _| {
+            panic!("passive grant refusal opened the database")
+        })
+        .unwrap();
+        let InquiryArtifact::Receipt(receipt) = artifact else {
+            panic!("passive grant supplied did not emit a refusal receipt")
+        };
+        let refusal = receipt
+            .cannot_testify
+            .iter()
+            .find(|refusal| {
+                refusal.kind == InquiryRefusalKindV0::GrantNotApplicableToPassiveInquiry
+            })
+            .unwrap();
+        assert_eq!(
+            refusal.kind.as_str(),
+            "grant_not_applicable_to_passive_inquiry"
+        );
+        assert_eq!(receipt.acquisition_spend, 0);
+        assert!(receipt.grant_digest.is_none());
+        assert!(receipt.authorized_acquisition_envelope.is_none());
+        assert!(receipt.observed_acquisition_spend.is_none());
+        assert!(receipt.receipt_digest.is_some());
+    }
+
+    #[test]
+    fn passive_report_remains_grantless() {
+        let catalog: InquiryProfileCatalogV0 = serde_json::from_str(include_str!(
+            "../../../nq-core/tests/fixtures/resolver_pending_aged_tail.profile_catalog.v0.json"
+        ))
+        .unwrap();
+        let resolved = catalog.resolve("resolver-tail-active").unwrap();
+        let plan = CandidateInquiryPlanV0 {
+            schema: nq_core::inquiry::INQUIRY_PLAN_SCHEMA_V0.into(),
+            version: InquiryVersionV0::V0,
+            profile: "resolver-tail-active".into(),
+            as_of: "2026-07-11T12:00:00Z".into(),
+            targets: vec![],
+        };
+        let artifact =
+            prepare_inquiry(&inquire_cmd(None), &resolved, &plan, |_, resolved, plan| {
+                let request = AdmittedInquiryRequestV0::admit(plan, resolved).unwrap();
+                let mut receipt = InquiryReceiptV0 {
+                    schema: INQUIRY_RECEIPT_SCHEMA_V0.into(),
+                    version: InquiryVersionV0::V0,
+                    status: InquiryStatusV0::Refused,
+                    disposition: InquiryDisposition::CannotTestify,
+                    request,
+                    source_snapshot: None,
+                    finding_state: None,
+                    evidence_receipts: vec![],
+                    evidence_coverage: InquiryEvidenceCoverageV0 {
+                        matched_current_rows: 0,
+                        matched_receipt_rows: 0,
+                        receipt_limit: resolved.profile.evidence_limit.unwrap(),
+                        receipt_tail_truncated: false,
+                        newest_receipt_generation: None,
+                        oldest_receipt_generation: None,
+                    },
+                    witness_plan: None,
+                    tls_observations: vec![],
+                    acquisition: None,
+                    grant_digest: None,
+                    authorized_acquisition_envelope: None,
+                    observed_acquisition_spend: None,
+                    coverage: resolved.profile.coverage.clone(),
+                    cannot_testify: resolved.profile.cannot_testify.clone(),
+                    acquisition_spend: 0,
+                    receipt_digest: None,
+                };
+                receipt.seal().unwrap();
+                Ok(receipt)
+            })
+            .unwrap();
+        let InquiryArtifact::Receipt(receipt) = artifact else {
+            panic!("grantless passive execution did not return a receipt")
+        };
+        let bytes = receipt.canonical_bytes().unwrap();
+        let json = std::str::from_utf8(&bytes).unwrap();
+        assert!(!json.contains("grant_digest"));
+        assert!(!json.contains("authorized_acquisition_envelope"));
+        assert!(!json.contains("observed_acquisition_spend"));
+        assert_eq!(receipt.acquisition_spend, 0);
     }
 
     #[test]
     fn preflight_spends_nothing() {
         let cmd = InquireCmd {
             db: Some("/definitely/missing/nq.db".into()),
+            grant: None,
             plan: "/unused/plan.json".into(),
             profile_catalog: "/unused/catalog.json".into(),
             preflight: true,
@@ -939,6 +1285,7 @@ mod tests {
         };
         let cmd = InquireCmd {
             db: Some("/definitely/missing/nq.db".into()),
+            grant: None,
             plan: "/unused/plan.json".into(),
             profile_catalog: "/unused/catalog.json".into(),
             preflight: false,
@@ -972,6 +1319,7 @@ mod tests {
         };
         let cmd = InquireCmd {
             db: Some("/definitely/missing/nq.db".into()),
+            grant: None,
             plan: "/unused/plan.json".into(),
             profile_catalog: "/unused/catalog.json".into(),
             preflight: true,
@@ -997,5 +1345,42 @@ mod tests {
         assert!(json.contains("\"as_of\":\"latest\""));
         assert!(!json.contains("request_digest"));
         assert!(!json.contains("preflight_digest"));
+    }
+
+    #[test]
+    fn passive_latest_grant_supplied_is_typed_refusal() {
+        let catalog: InquiryProfileCatalogV0 = serde_json::from_str(include_str!(
+            "../../../nq-core/tests/fixtures/resolver_pending_aged_tail.profile_catalog.v0.json"
+        ))
+        .unwrap();
+        let resolved = catalog.resolve("resolver-tail-active").unwrap();
+        let latest = OperatorLatestInquiryPlanV0 {
+            schema: nq_core::inquiry::INQUIRY_PLAN_SCHEMA_V0.into(),
+            version: InquiryVersionV0::V0,
+            profile: "resolver-tail-active".into(),
+            _as_of: OperatorLatestAsOf::Latest,
+            targets: vec![],
+        };
+        let cmd = InquireCmd {
+            db: Some("/definitely/missing/nq.db".into()),
+            grant: Some("/must/not/be/read/grant.json".into()),
+            plan: "/unused/plan.json".into(),
+            profile_catalog: "/unused/catalog.json".into(),
+            preflight: false,
+            format: "json".into(),
+        };
+
+        let error = prepare_latest_inquiry(&cmd, &resolved, &latest, |_, _, _| {
+            panic!("passive latest grant refusal opened the database")
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<LatestAsOfRefusal>(),
+            Some(&LatestAsOfRefusal::GrantNotApplicableToPassiveInquiry)
+        );
+        assert_eq!(
+            error.to_string(),
+            InquiryRefusalKindV0::GrantNotApplicableToPassiveInquiry.as_str()
+        );
     }
 }

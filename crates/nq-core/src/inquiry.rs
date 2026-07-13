@@ -143,6 +143,13 @@ pub enum InquiryRefusalKindV0 {
     ResolutionFailed,
     ConnectionFailed,
     TlsHandshakeFailed,
+    GrantRequired,
+    GrantMalformed,
+    GrantScopeInsufficient,
+    GrantDepthInsufficient,
+    GrantAcquisitionEnvelopeInsufficient,
+    GrantWitnessClassNotPermitted,
+    GrantNotApplicableToPassiveInquiry,
 }
 
 impl InquiryRefusalKindV0 {
@@ -164,6 +171,13 @@ impl InquiryRefusalKindV0 {
             Self::ResolutionFailed => "resolution_failed",
             Self::ConnectionFailed => "connection_failed",
             Self::TlsHandshakeFailed => "tls_handshake_failed",
+            Self::GrantRequired => "grant_required",
+            Self::GrantMalformed => "grant_malformed",
+            Self::GrantScopeInsufficient => "grant_scope_insufficient",
+            Self::GrantDepthInsufficient => "grant_depth_insufficient",
+            Self::GrantAcquisitionEnvelopeInsufficient => "grant_acquisition_envelope_insufficient",
+            Self::GrantWitnessClassNotPermitted => "grant_witness_class_not_permitted",
+            Self::GrantNotApplicableToPassiveInquiry => "grant_not_applicable_to_passive_inquiry",
         }
     }
 }
@@ -1964,13 +1978,13 @@ pub fn admit_initial_position(
             "initial inquiry position depth exceeds grant.max_depth",
         ));
     }
-    if !spend_is_pointwise_at_most(
+    if let Some(dimension) = first_spend_dimension_over_limit(
         &position.remaining_acquisition_envelope,
         &grant.total_acquisition_envelope,
     ) {
-        return Err(InquiryValidationError::new(
-            "initial inquiry position remaining acquisition exceeds the grant envelope",
-        ));
+        return Err(InquiryValidationError::new(format!(
+            "initial inquiry position remaining acquisition {dimension} exceeds the grant envelope"
+        )));
     }
     Ok(())
 }
@@ -2092,13 +2106,30 @@ fn spend_is_pointwise_at_most(
     candidate: &InquiryAcquisitionSpendV0,
     limit: &InquiryAcquisitionSpendV0,
 ) -> bool {
-    candidate.dns_attempts <= limit.dns_attempts
-        && candidate.connection_attempts <= limit.connection_attempts
-        && candidate.handshakes_attempted <= limit.handshakes_attempted
-        && candidate.handshakes_completed <= limit.handshakes_completed
-        && candidate.bound_checks <= limit.bound_checks
-        && candidate.wall_ms <= limit.wall_ms
-        && candidate.work_units <= limit.work_units
+    first_spend_dimension_over_limit(candidate, limit).is_none()
+}
+
+fn first_spend_dimension_over_limit(
+    candidate: &InquiryAcquisitionSpendV0,
+    limit: &InquiryAcquisitionSpendV0,
+) -> Option<&'static str> {
+    if candidate.dns_attempts > limit.dns_attempts {
+        Some("dns_attempts")
+    } else if candidate.connection_attempts > limit.connection_attempts {
+        Some("connection_attempts")
+    } else if candidate.handshakes_attempted > limit.handshakes_attempted {
+        Some("handshakes_attempted")
+    } else if candidate.handshakes_completed > limit.handshakes_completed {
+        Some("handshakes_completed")
+    } else if candidate.bound_checks > limit.bound_checks {
+        Some("bound_checks")
+    } else if candidate.wall_ms > limit.wall_ms {
+        Some("wall_ms")
+    } else if candidate.work_units > limit.work_units {
+        Some("work_units")
+    } else {
+        None
+    }
 }
 
 fn validate_transition_binding_digests(
@@ -2354,6 +2385,12 @@ pub struct InquiryReceiptV0 {
     pub tls_observations: Vec<InquiryTlsObservationV0>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acquisition: Option<InquiryAcquisitionSpendV0>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorized_acquisition_envelope: Option<InquiryAcquisitionSpendV0>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_acquisition_spend: Option<InquiryAcquisitionSpendV0>,
     /// Profile-declared scope, carried into the durable receipt.
     pub coverage: Vec<String>,
     /// Profile-declared constitutional refusals plus any deterministic
@@ -2366,6 +2403,12 @@ pub struct InquiryReceiptV0 {
     /// Receipt identity: SHA-256 of JCS bytes with this field omitted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub receipt_digest: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InquiryTlsEnvelopeShape {
+    CompletedPerTargetOutcomes,
+    PreAcquisitionGrantRefusal,
 }
 
 impl InquiryReceiptV0 {
@@ -2406,6 +2449,9 @@ impl InquiryReceiptV0 {
             || self.acquisition.is_some()
             || self.witness_plan.is_some()
             || !self.tls_observations.is_empty()
+            || self.grant_digest.is_some()
+            || self.authorized_acquisition_envelope.is_some()
+            || self.observed_acquisition_spend.is_some()
         {
             return Err(DigestError {
                 message: "report inquiry requires zero acquisition and no active payload"
@@ -2429,8 +2475,7 @@ impl InquiryReceiptV0 {
     }
 
     fn verify_tls_envelope(&self) -> Result<(), DigestError> {
-        if self.disposition != InquiryDisposition::PerTargetOutcomes
-            || self.request.selector.is_some()
+        if self.request.selector.is_some()
             || self.source_snapshot.is_some()
             || self.finding_state.is_some()
             || !self.evidence_receipts.is_empty()
@@ -2469,6 +2514,12 @@ impl InquiryReceiptV0 {
         let acquisition = self.acquisition.as_ref().ok_or_else(|| DigestError {
             message: "TLS inquiry receipt is missing acquisition accounting".to_string(),
         })?;
+        match self.tls_envelope_shape()? {
+            InquiryTlsEnvelopeShape::CompletedPerTargetOutcomes => {}
+            InquiryTlsEnvelopeShape::PreAcquisitionGrantRefusal => {
+                return self.verify_pre_acquisition_grant_refusal(acquisition);
+            }
+        }
         if acquisition.work_units == 0
             || acquisition.work_units != acquisition.counted_work_units()
             || self.acquisition_spend != acquisition.work_units
@@ -2579,7 +2630,104 @@ impl InquiryReceiptV0 {
                 message: "TLS inquiry status contradicts its target outcomes".to_string(),
             });
         }
-        Ok(())
+        self.verify_grant_binding(acquisition)
+    }
+
+    fn tls_envelope_shape(&self) -> Result<InquiryTlsEnvelopeShape, DigestError> {
+        let has_grant_refusal = self.cannot_testify.iter().any(|refusal| {
+            matches!(
+                refusal.kind,
+                InquiryRefusalKindV0::GrantRequired
+                    | InquiryRefusalKindV0::GrantMalformed
+                    | InquiryRefusalKindV0::GrantScopeInsufficient
+                    | InquiryRefusalKindV0::GrantDepthInsufficient
+                    | InquiryRefusalKindV0::GrantAcquisitionEnvelopeInsufficient
+                    | InquiryRefusalKindV0::GrantWitnessClassNotPermitted
+            )
+        });
+        match (self.disposition, self.status, has_grant_refusal) {
+            (InquiryDisposition::PerTargetOutcomes, _, _) => {
+                Ok(InquiryTlsEnvelopeShape::CompletedPerTargetOutcomes)
+            }
+            (InquiryDisposition::CannotTestify, InquiryStatusV0::Refused, true) => {
+                Ok(InquiryTlsEnvelopeShape::PreAcquisitionGrantRefusal)
+            }
+            _ => Err(DigestError {
+                message: "TLS inquiry envelope is neither completed per-target outcomes nor a pre-acquisition grant refusal".to_string(),
+            }),
+        }
+    }
+
+    fn verify_pre_acquisition_grant_refusal(
+        &self,
+        acquisition: &InquiryAcquisitionSpendV0,
+    ) -> Result<(), DigestError> {
+        if !self.tls_observations.is_empty()
+            || self.acquisition_spend != 0
+            || acquisition != &InquiryAcquisitionSpendV0::default()
+        {
+            return Err(DigestError {
+                message:
+                    "pre-acquisition grant refusal requires zero spend and no per-target testimony"
+                        .to_string(),
+            });
+        }
+        let has_no_usable_grant = self.cannot_testify.iter().any(|refusal| {
+            matches!(
+                refusal.kind,
+                InquiryRefusalKindV0::GrantRequired | InquiryRefusalKindV0::GrantMalformed
+            )
+        });
+        if has_no_usable_grant
+            && (self.grant_digest.is_some()
+                || self.authorized_acquisition_envelope.is_some()
+                || self.observed_acquisition_spend.is_some())
+        {
+            return Err(DigestError {
+                message: "missing or malformed grant refusal cannot carry a grant binding"
+                    .to_string(),
+            });
+        }
+        self.verify_grant_binding(acquisition)
+    }
+
+    fn verify_grant_binding(
+        &self,
+        acquisition: &InquiryAcquisitionSpendV0,
+    ) -> Result<(), DigestError> {
+        match (
+            &self.grant_digest,
+            &self.authorized_acquisition_envelope,
+            &self.observed_acquisition_spend,
+        ) {
+            (None, None, None) => Ok(()),
+            (Some(grant_digest), Some(authorized), Some(observed)) => {
+                if !is_sha256_digest(grant_digest) {
+                    return Err(DigestError {
+                        message: "inquiry receipt grant_digest must be a canonical SHA-256 digest"
+                            .to_string(),
+                    });
+                }
+                if observed != acquisition {
+                    return Err(DigestError {
+                        message:
+                            "inquiry receipt observed spend does not match acquisition accounting"
+                                .to_string(),
+                    });
+                }
+                if !spend_is_pointwise_at_most(observed, authorized) {
+                    return Err(DigestError {
+                        message: "inquiry receipt observed spend exceeds its authorized envelope"
+                            .to_string(),
+                    });
+                }
+                Ok(())
+            }
+            _ => Err(DigestError {
+                message: "inquiry receipt grant binding must be wholly present or wholly absent"
+                    .to_string(),
+            }),
+        }
     }
 
     /// JCS bytes for machine output.  Callers must use this instead of
@@ -2782,11 +2930,42 @@ mod tests {
                 refusals: vec![],
             }],
             acquisition: Some(spend),
+            grant_digest: None,
+            authorized_acquisition_envelope: None,
+            observed_acquisition_spend: None,
             coverage: resolved.profile.coverage.clone(),
             cannot_testify: resolved.profile.cannot_testify.clone(),
             acquisition_spend: 4,
             receipt_digest: None,
         }
+    }
+
+    fn grant_refusal_receipt(kind: InquiryRefusalKindV0) -> InquiryReceiptV0 {
+        let mut receipt = tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
+        receipt.status = InquiryStatusV0::Refused;
+        receipt.disposition = InquiryDisposition::CannotTestify;
+        receipt.tls_observations.clear();
+        receipt.acquisition = Some(InquiryAcquisitionSpendV0::default());
+        receipt.acquisition_spend = 0;
+        receipt.cannot_testify.push(InquiryRefusal {
+            kind,
+            statement: "grant refused before acquisition".into(),
+        });
+        receipt
+    }
+
+    fn bind_attempted_grant(receipt: &mut InquiryReceiptV0) {
+        receipt.grant_digest = Some(FIRST_CERT_DIGEST.into());
+        receipt.authorized_acquisition_envelope = Some(InquiryAcquisitionSpendV0 {
+            dns_attempts: 1,
+            connection_attempts: 1,
+            handshakes_attempted: 1,
+            handshakes_completed: 1,
+            bound_checks: 1,
+            wall_ms: 750,
+            work_units: 4,
+        });
+        receipt.observed_acquisition_spend = Some(InquiryAcquisitionSpendV0::default());
     }
 
     #[test]
@@ -2881,6 +3060,9 @@ mod tests {
             witness_plan: None,
             tls_observations: vec![],
             acquisition: None,
+            grant_digest: None,
+            authorized_acquisition_envelope: None,
+            observed_acquisition_spend: None,
             coverage: resolved.profile.coverage.clone(),
             cannot_testify: resolved.profile.cannot_testify.clone(),
             acquisition_spend: 0,
@@ -2978,6 +3160,132 @@ mod tests {
         let mut missing_certificate = tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
         missing_certificate.tls_observations[0].certificate_digest = None;
         assert!(missing_certificate.seal().is_err());
+    }
+
+    #[test]
+    fn grant_refusal_tls_envelope_is_valid() {
+        for kind in [
+            InquiryRefusalKindV0::GrantRequired,
+            InquiryRefusalKindV0::GrantMalformed,
+        ] {
+            let mut receipt = grant_refusal_receipt(kind);
+            receipt.seal().unwrap();
+        }
+
+        let mut unbound = grant_refusal_receipt(InquiryRefusalKindV0::GrantScopeInsufficient);
+        unbound.seal().unwrap();
+
+        for kind in [
+            InquiryRefusalKindV0::GrantScopeInsufficient,
+            InquiryRefusalKindV0::GrantDepthInsufficient,
+            InquiryRefusalKindV0::GrantAcquisitionEnvelopeInsufficient,
+            InquiryRefusalKindV0::GrantWitnessClassNotPermitted,
+        ] {
+            let mut receipt = grant_refusal_receipt(kind);
+            bind_attempted_grant(&mut receipt);
+            receipt.seal().unwrap();
+        }
+
+        for kind in [
+            InquiryRefusalKindV0::GrantRequired,
+            InquiryRefusalKindV0::GrantMalformed,
+        ] {
+            let mut receipt = grant_refusal_receipt(kind);
+            bind_attempted_grant(&mut receipt);
+            assert!(receipt.seal().is_err());
+        }
+    }
+
+    #[test]
+    fn grant_refusal_with_nonzero_spend_is_rejected() {
+        let nonzero_spends = [
+            InquiryAcquisitionSpendV0 {
+                dns_attempts: 1,
+                ..InquiryAcquisitionSpendV0::default()
+            },
+            InquiryAcquisitionSpendV0 {
+                connection_attempts: 1,
+                ..InquiryAcquisitionSpendV0::default()
+            },
+            InquiryAcquisitionSpendV0 {
+                handshakes_attempted: 1,
+                ..InquiryAcquisitionSpendV0::default()
+            },
+            InquiryAcquisitionSpendV0 {
+                handshakes_completed: 1,
+                ..InquiryAcquisitionSpendV0::default()
+            },
+            InquiryAcquisitionSpendV0 {
+                bound_checks: 1,
+                ..InquiryAcquisitionSpendV0::default()
+            },
+            InquiryAcquisitionSpendV0 {
+                wall_ms: 1,
+                ..InquiryAcquisitionSpendV0::default()
+            },
+            InquiryAcquisitionSpendV0 {
+                work_units: 1,
+                ..InquiryAcquisitionSpendV0::default()
+            },
+        ];
+        for spend in nonzero_spends {
+            let mut receipt = grant_refusal_receipt(InquiryRefusalKindV0::GrantRequired);
+            receipt.acquisition = Some(spend);
+            assert!(receipt.seal().is_err());
+        }
+
+        let mut receipt = grant_refusal_receipt(InquiryRefusalKindV0::GrantRequired);
+        receipt.acquisition_spend = 1;
+        assert!(receipt.seal().is_err());
+
+        let mut receipt = grant_refusal_receipt(InquiryRefusalKindV0::GrantScopeInsufficient);
+        bind_attempted_grant(&mut receipt);
+        receipt.observed_acquisition_spend.as_mut().unwrap().wall_ms = 1;
+        assert!(receipt.seal().is_err());
+    }
+
+    #[test]
+    fn grant_refusal_with_target_outcomes_is_rejected() {
+        let mut completed = tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
+        let observation = completed.tls_observations.pop().unwrap();
+        let mut receipt = grant_refusal_receipt(InquiryRefusalKindV0::GrantRequired);
+        receipt.tls_observations.push(observation);
+        assert!(receipt.seal().is_err());
+    }
+
+    #[test]
+    fn unrelated_disposition_with_tls_envelope_is_rejected() {
+        for disposition in [
+            InquiryDisposition::OperationallyActive,
+            InquiryDisposition::NotOperationallyActive,
+            InquiryDisposition::PerTargetOutcomes,
+        ] {
+            let mut receipt = grant_refusal_receipt(InquiryRefusalKindV0::GrantRequired);
+            receipt.disposition = disposition;
+            assert!(receipt.seal().is_err());
+        }
+
+        let mut passive_only =
+            grant_refusal_receipt(InquiryRefusalKindV0::GrantNotApplicableToPassiveInquiry);
+        assert!(passive_only.seal().is_err());
+    }
+
+    #[test]
+    fn per_target_receipt_still_requires_per_target_outcomes() {
+        for disposition in [
+            InquiryDisposition::OperationallyActive,
+            InquiryDisposition::NotOperationallyActive,
+            InquiryDisposition::CannotTestify,
+        ] {
+            let mut receipt = tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
+            receipt.status = InquiryStatusV0::Refused;
+            receipt.disposition = disposition;
+            receipt.cannot_testify.push(InquiryRefusal {
+                kind: InquiryRefusalKindV0::GrantRequired,
+                statement: "grant refusal cannot relabel target testimony".into(),
+            });
+            assert!(receipt.seal().is_err());
+        }
     }
 
     #[test]
