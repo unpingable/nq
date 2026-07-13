@@ -14,6 +14,12 @@
     { "name": "nginx", "check_type": "docker" }
   ],
 
+  "_sqlite_wal_targets_comment": "Optional but recommended. Activates the stat-only SQLite WAL probe: per target per cycle it stats the db/wal/shm trio and reads /proc/locks to set pinned_reader_present (the checkpoint-pin signal a mtime-based detector misses). Declare every production SQLite writer AND nq's own db_path (self-coverage — a WAL pin on nq.db is otherwise invisible to nq). The probe never opens the DB, so a self-target cannot pin nq.db. Symlinked handles are canonicalized to find sidecars. Empty/omitted = probe inert. /proc/locks enrichment defaults on (sqlite_wal_proc_locks_enabled).",
+  "sqlite_wal_targets": [
+    { "db_file_path": "/var/lib/myapp/data.sqlite" },
+    { "db_file_path": "/opt/nq/nq.db" }
+  ],
+
   "prometheus_targets": [
     { "name": "node", "url": "http://127.0.0.1:9100/metrics" }
   ],
