@@ -5,6 +5,16 @@
 //! profile catalogs, resolves aliases to one content-addressed profile, and
 //! seals inquiry receipts with the same JCS + SHA-256 convention used by
 //! [`crate::receipt::Receipt`] and [`crate::witness::WitnessPacket`].
+//!
+//! The same-grant escalation ratchet is the Rust bridge for the axiom-free law
+//! frozen in `Calculi.Scratch.InquiryRatchet` at skunkworks commit `d0dbe26`.
+//! That upstream specimen is explicitly scratch-tier: it proves roster
+//! narrowing with `List.Sublist`, which conservatively rejects reorderings and
+//! is therefore not identical to mathematical set inclusion.  The Rust
+//! contract implements the intended set-shaped law over exact, predeclared
+//! target identities; it does not deform that contract to mirror the scratch
+//! representation. Findings and rationale remain structurally outside the
+//! authorization predicate.
 
 use crate::status::GenerationStatus;
 use crate::witness::{DigestError, DIGEST_ALGORITHM_PREFIX};
@@ -21,6 +31,11 @@ pub const INQUIRY_PROFILE_CATALOG_SCHEMA_V0: &str = "nq.inquiry_profile_catalog.
 pub const INQUIRY_REQUEST_SCHEMA_V0: &str = "nq.inquiry_request.v0";
 pub const INQUIRY_RECEIPT_SCHEMA_V0: &str = "nq.inquiry_receipt.v0";
 pub const INQUIRY_WITNESS_PLAN_SCHEMA_V0: &str = "nq.inquiry_witness_plan.v0";
+pub const INQUIRY_GRANT_SCHEMA_V0: &str = "nq.inquiry_grant.v0";
+pub const INQUIRY_POSITION_SCHEMA_V0: &str = "nq.inquiry_position.v0";
+pub const INQUIRY_TRANSITION_REQUEST_SCHEMA_V0: &str = "nq.inquiry_transition_request.v0";
+pub const AUTHORIZED_INQUIRY_TRANSITION_SCHEMA_V0: &str = "nq.authorized_inquiry_transition.v0";
+pub const INQUIRY_TRANSITION_REFUSAL_SCHEMA_V0: &str = "nq.inquiry_transition_refusal.v0";
 pub const TLS_CERT_INQUIRY_QUESTION_V0: &str =
     "what certificate did these declared endpoints present, and does it validate within the profile's expiry horizon?";
 
@@ -128,9 +143,7 @@ impl InquiryRefusalKindV0 {
             Self::SnapshotIncomplete => "snapshot_incomplete",
             Self::SnapshotAfterAsOf => "snapshot_after_as_of",
             Self::SnapshotTooOld => "snapshot_too_old",
-            Self::AcquisitionBoundCannotBeHonored => {
-                "acquisition_bound_cannot_be_honored"
-            }
+            Self::AcquisitionBoundCannotBeHonored => "acquisition_bound_cannot_be_honored",
             Self::ResolutionFailed => "resolution_failed",
             Self::ConnectionFailed => "connection_failed",
             Self::TlsHandshakeFailed => "tls_handshake_failed",
@@ -362,9 +375,7 @@ impl InquiryProfileV0 {
         match self.question_kind {
             InquiryQuestionV0::FindingOperationalActivity => {
                 let selector = self.selector.as_ref().ok_or_else(|| {
-                    InquiryValidationError::new(
-                        "report profile requires profile.selector",
-                    )
+                    InquiryValidationError::new("report profile requires profile.selector")
                 })?;
                 require_nonempty("profile.selector.host", &selector.host)?;
                 require_nonempty("profile.selector.kind", &selector.kind)?;
@@ -379,9 +390,7 @@ impl InquiryProfileV0 {
                     ));
                 }
                 let evidence_limit = self.evidence_limit.ok_or_else(|| {
-                    InquiryValidationError::new(
-                        "report profile requires profile.evidence_limit",
-                    )
+                    InquiryValidationError::new("report profile requires profile.evidence_limit")
                 })?;
                 if evidence_limit == 0 || evidence_limit > 1_000 {
                     return Err(InquiryValidationError::new(
@@ -409,11 +418,14 @@ impl InquiryProfileV0 {
                         "TLS certificate profile must not declare report-only selector or evidence bounds",
                     ));
                 }
-                self.tls_cert.as_ref().ok_or_else(|| {
-                    InquiryValidationError::new(
-                        "TLS certificate profile requires profile.tls_cert",
-                    )
-                })?.validate()?;
+                self.tls_cert
+                    .as_ref()
+                    .ok_or_else(|| {
+                        InquiryValidationError::new(
+                            "TLS certificate profile requires profile.tls_cert",
+                        )
+                    })?
+                    .validate()?;
                 if !self
                     .cannot_testify
                     .iter()
@@ -742,7 +754,8 @@ impl AdmittedInquiryRequestV0 {
                 if requested.len() > tls_cert.max_targets as usize {
                     return Err(InquiryValidationError::new(format!(
                         "requested {} TLS targets exceeds profile max_targets {}",
-                        requested.len(), tls_cert.max_targets
+                        requested.len(),
+                        tls_cert.max_targets
                     )));
                 }
                 for target in &requested {
@@ -910,7 +923,10 @@ impl InquiryWitnessPlanV0 {
                 "admitted TLS targets do not fit the profile target bound",
             ));
         }
-        if targets.iter().any(|target| !tls_cert.declared_targets.contains(target)) {
+        if targets
+            .iter()
+            .any(|target| !tls_cert.declared_targets.contains(target))
+        {
             return Err(InquiryValidationError::new(
                 "admitted TLS target is not exactly predeclared by the profile",
             ));
@@ -943,9 +959,8 @@ impl InquiryWitnessPlanV0 {
             vantage: &tls_cert.vantage,
             bounds: &bounds,
         };
-        let witness_plan_digest = digest_jcs(&material).map_err(|e| {
-            InquiryValidationError::new(format!("witness plan digest failed: {e}"))
-        })?;
+        let witness_plan_digest = digest_jcs(&material)
+            .map_err(|e| InquiryValidationError::new(format!("witness plan digest failed: {e}")))?;
         Ok(Self {
             schema: INQUIRY_WITNESS_PLAN_SCHEMA_V0.to_string(),
             version: InquiryVersionV0::V0,
@@ -1026,9 +1041,11 @@ impl InquiryWitnessPlanV0 {
         let mut targets = BTreeSet::new();
         let mut target_ids = BTreeSet::new();
         for target in &self.targets {
-            target.validate("witness_plan.targets[]").map_err(|e| DigestError {
-                message: e.to_string(),
-            })?;
+            target
+                .validate("witness_plan.targets[]")
+                .map_err(|e| DigestError {
+                    message: e.to_string(),
+                })?;
             if !targets.insert(target.clone()) || !target_ids.insert(target.target_id.as_str()) {
                 return Err(DigestError {
                     message: "inquiry witness plan contains a duplicate target".to_string(),
@@ -1089,6 +1106,412 @@ impl InquiryAcquisitionSpendV0 {
     }
 }
 
+/// Standing admitted by an outer authority.  This type does not mint that
+/// standing; it only carries the immutable envelope consumed by the ratchet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryGrantV0 {
+    pub schema: String,
+    pub version: InquiryVersionV0,
+    pub admitted_scope: BTreeSet<InquiryTlsTargetV0>,
+    pub max_depth: u32,
+    pub total_acquisition_envelope: InquiryAcquisitionSpendV0,
+    pub permitted_witness_classes: BTreeSet<InquiryCollectorV0>,
+}
+
+impl InquiryGrantV0 {
+    pub fn validate(&self) -> Result<(), InquiryValidationError> {
+        if self.schema != INQUIRY_GRANT_SCHEMA_V0 {
+            return Err(InquiryValidationError::new(format!(
+                "unsupported inquiry grant schema {:?}; expected {:?}",
+                self.schema, INQUIRY_GRANT_SCHEMA_V0
+            )));
+        }
+        validate_ratchet_scope("grant.admitted_scope", &self.admitted_scope)
+    }
+
+    pub fn grant_digest(&self) -> Result<String, DigestError> {
+        self.validate().map_err(|e| DigestError {
+            message: e.to_string(),
+        })?;
+        digest_jcs(self)
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, DigestError> {
+        self.validate().map_err(|e| DigestError {
+            message: e.to_string(),
+        })?;
+        serde_jcs::to_vec(self).map_err(|e| DigestError {
+            message: format!("JCS canonicalization failed: {e}"),
+        })
+    }
+}
+
+/// One point in the consumption of an [`InquiryGrantV0`].  Greater numeric
+/// depth means deeper inquiry; acquisition counters are remaining envelope,
+/// so smaller values mean spend-down progress.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryPositionV0 {
+    pub schema: String,
+    pub version: InquiryVersionV0,
+    pub scope: BTreeSet<InquiryTlsTargetV0>,
+    pub depth: u32,
+    pub remaining_acquisition_envelope: InquiryAcquisitionSpendV0,
+}
+
+impl InquiryPositionV0 {
+    pub fn validate(&self) -> Result<(), InquiryValidationError> {
+        if self.schema != INQUIRY_POSITION_SCHEMA_V0 {
+            return Err(InquiryValidationError::new(format!(
+                "unsupported inquiry position schema {:?}; expected {:?}",
+                self.schema, INQUIRY_POSITION_SCHEMA_V0
+            )));
+        }
+        validate_ratchet_scope("position.scope", &self.scope)
+    }
+
+    pub fn position_digest(&self) -> Result<String, DigestError> {
+        self.validate().map_err(|e| DigestError {
+            message: e.to_string(),
+        })?;
+        digest_jcs(self)
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, DigestError> {
+        self.validate().map_err(|e| DigestError {
+            message: e.to_string(),
+        })?;
+        serde_jcs::to_vec(self).map_err(|e| DigestError {
+            message: format!("JCS canonicalization failed: {e}"),
+        })
+    }
+}
+
+/// Adjacent candidate artifact for a proposed next position.  Authorization
+/// deliberately does not consume this extensible artifact: the trusted
+/// predicate sees only the grant and the two positions, so annotations cannot
+/// become authority inputs later by being added here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryTransitionRequestV0 {
+    pub schema: String,
+    pub version: InquiryVersionV0,
+    pub grant_digest: String,
+    pub requested_position: InquiryPositionV0,
+}
+
+impl InquiryTransitionRequestV0 {
+    pub fn bind(
+        grant: &InquiryGrantV0,
+        requested_position: &InquiryPositionV0,
+    ) -> Result<Self, InquiryValidationError> {
+        grant.validate()?;
+        requested_position.validate()?;
+        let grant_digest = grant.grant_digest().map_err(|e| {
+            InquiryValidationError::new(format!("inquiry grant digest failed: {e}"))
+        })?;
+        Ok(Self {
+            schema: INQUIRY_TRANSITION_REQUEST_SCHEMA_V0.to_string(),
+            version: InquiryVersionV0::V0,
+            grant_digest,
+            requested_position: requested_position.clone(),
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), InquiryValidationError> {
+        if self.schema != INQUIRY_TRANSITION_REQUEST_SCHEMA_V0 {
+            return Err(InquiryValidationError::new(format!(
+                "unsupported inquiry transition request schema {:?}; expected {:?}",
+                self.schema, INQUIRY_TRANSITION_REQUEST_SCHEMA_V0
+            )));
+        }
+        if !is_sha256_digest(&self.grant_digest) {
+            return Err(InquiryValidationError::new(
+                "transition request grant_digest must be a canonical SHA-256 digest",
+            ));
+        }
+        self.requested_position.validate()
+    }
+
+    pub fn request_digest(&self) -> Result<String, DigestError> {
+        self.validate().map_err(|e| DigestError {
+            message: e.to_string(),
+        })?;
+        digest_jcs(self)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InquiryTransitionAdmissionResultV0 {
+    Authorized,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InquiryTransitionRefusalKindV0 {
+    InvalidGrant,
+    InvalidCurrentPosition,
+    InvalidRequestedPosition,
+    CurrentPositionOutsideGrant,
+    RequestedScopeOutsideGrant,
+    DepthExceedsGrant,
+    RequestedAcquisitionEnvelopeExceedsGrant,
+    ScopeWidening,
+    DepthRegression,
+    AcquisitionSpendReplenished,
+    DepthIncreaseRequiresStrictScopeNarrowing,
+    NoProgress,
+}
+
+/// Successful same-grant admission receipt.  On success the requested
+/// position is the admitted after-position.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorizedInquiryTransitionV0 {
+    pub schema: String,
+    pub version: InquiryVersionV0,
+    pub grant_digest: String,
+    pub before_position_digest: String,
+    pub requested_position_digest: String,
+    pub result: InquiryTransitionAdmissionResultV0,
+}
+
+impl AuthorizedInquiryTransitionV0 {
+    pub fn validate(&self) -> Result<(), InquiryValidationError> {
+        if self.schema != AUTHORIZED_INQUIRY_TRANSITION_SCHEMA_V0 {
+            return Err(InquiryValidationError::new(format!(
+                "unsupported authorized inquiry transition schema {:?}; expected {:?}",
+                self.schema, AUTHORIZED_INQUIRY_TRANSITION_SCHEMA_V0
+            )));
+        }
+        validate_transition_binding_digests(
+            &self.grant_digest,
+            &self.before_position_digest,
+            &self.requested_position_digest,
+        )
+    }
+
+    pub fn receipt_digest(&self) -> Result<String, DigestError> {
+        self.validate().map_err(|e| DigestError {
+            message: e.to_string(),
+        })?;
+        digest_jcs(self)
+    }
+}
+
+/// Typed same-grant refusal.  This family is intentionally separate from
+/// [`InquiryRefusalKindV0`], whose variants describe evidentiary testimony.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryTransitionRefusalV0 {
+    pub schema: String,
+    pub version: InquiryVersionV0,
+    pub grant_digest: String,
+    pub before_position_digest: String,
+    pub requested_position_digest: String,
+    pub kind: InquiryTransitionRefusalKindV0,
+}
+
+impl InquiryTransitionRefusalV0 {
+    pub fn validate(&self) -> Result<(), InquiryValidationError> {
+        if self.schema != INQUIRY_TRANSITION_REFUSAL_SCHEMA_V0 {
+            return Err(InquiryValidationError::new(format!(
+                "unsupported inquiry transition refusal schema {:?}; expected {:?}",
+                self.schema, INQUIRY_TRANSITION_REFUSAL_SCHEMA_V0
+            )));
+        }
+        validate_transition_binding_digests(
+            &self.grant_digest,
+            &self.before_position_digest,
+            &self.requested_position_digest,
+        )
+    }
+
+    pub fn receipt_digest(&self) -> Result<String, DigestError> {
+        self.validate().map_err(|e| DigestError {
+            message: e.to_string(),
+        })?;
+        digest_jcs(self)
+    }
+}
+
+/// Admit a position under newly supplied standing.  This performs containment
+/// only; it does not disguise a grant change as a same-grant transition.
+pub fn admit_initial_position(
+    grant: &InquiryGrantV0,
+    position: &InquiryPositionV0,
+) -> Result<(), InquiryValidationError> {
+    grant.validate()?;
+    position.validate()?;
+    if !position.scope.is_subset(&grant.admitted_scope) {
+        return Err(InquiryValidationError::new(
+            "initial inquiry position scope is outside the grant",
+        ));
+    }
+    if position.depth > grant.max_depth {
+        return Err(InquiryValidationError::new(
+            "initial inquiry position depth exceeds grant.max_depth",
+        ));
+    }
+    if !spend_is_pointwise_at_most(
+        &position.remaining_acquisition_envelope,
+        &grant.total_acquisition_envelope,
+    ) {
+        return Err(InquiryValidationError::new(
+            "initial inquiry position remaining acquisition exceeds the grant envelope",
+        ));
+    }
+    Ok(())
+}
+
+/// Apply the same-grant escalation ratchet.  Its complete authorization input
+/// is visible in this signature: no finding, rationale, or expected-gain value
+/// can fund a transition.
+pub fn authorize_same_grant_transition(
+    grant: &InquiryGrantV0,
+    current_position: &InquiryPositionV0,
+    requested_position: &InquiryPositionV0,
+) -> Result<AuthorizedInquiryTransitionV0, InquiryTransitionRefusalV0> {
+    // These structures contain only integer, string, enum, and ordered-set
+    // fields, all of which are infallibly representable by serde_jcs.  Raw
+    // digests are taken before validation so even malformed-schema refusals
+    // remain bound to the exact proposed artifacts.
+    let grant_digest = ratchet_artifact_digest(grant);
+    let before_position_digest = ratchet_artifact_digest(current_position);
+    let requested_position_digest = ratchet_artifact_digest(requested_position);
+    let refuse = |kind| InquiryTransitionRefusalV0 {
+        schema: INQUIRY_TRANSITION_REFUSAL_SCHEMA_V0.to_string(),
+        version: InquiryVersionV0::V0,
+        grant_digest: grant_digest.clone(),
+        before_position_digest: before_position_digest.clone(),
+        requested_position_digest: requested_position_digest.clone(),
+        kind,
+    };
+
+    if grant.validate().is_err() {
+        return Err(refuse(InquiryTransitionRefusalKindV0::InvalidGrant));
+    }
+    if current_position.validate().is_err() {
+        return Err(refuse(
+            InquiryTransitionRefusalKindV0::InvalidCurrentPosition,
+        ));
+    }
+    if requested_position.validate().is_err() {
+        return Err(refuse(
+            InquiryTransitionRefusalKindV0::InvalidRequestedPosition,
+        ));
+    }
+    if admit_initial_position(grant, current_position).is_err() {
+        return Err(refuse(
+            InquiryTransitionRefusalKindV0::CurrentPositionOutsideGrant,
+        ));
+    }
+    if !requested_position.scope.is_subset(&grant.admitted_scope) {
+        return Err(refuse(
+            InquiryTransitionRefusalKindV0::RequestedScopeOutsideGrant,
+        ));
+    }
+    if requested_position.depth > grant.max_depth {
+        return Err(refuse(InquiryTransitionRefusalKindV0::DepthExceedsGrant));
+    }
+    if !spend_is_pointwise_at_most(
+        &requested_position.remaining_acquisition_envelope,
+        &grant.total_acquisition_envelope,
+    ) {
+        return Err(refuse(
+            InquiryTransitionRefusalKindV0::RequestedAcquisitionEnvelopeExceedsGrant,
+        ));
+    }
+    if !requested_position.scope.is_subset(&current_position.scope) {
+        return Err(refuse(InquiryTransitionRefusalKindV0::ScopeWidening));
+    }
+    if requested_position.depth < current_position.depth {
+        return Err(refuse(InquiryTransitionRefusalKindV0::DepthRegression));
+    }
+    if !spend_is_pointwise_at_most(
+        &requested_position.remaining_acquisition_envelope,
+        &current_position.remaining_acquisition_envelope,
+    ) {
+        return Err(refuse(
+            InquiryTransitionRefusalKindV0::AcquisitionSpendReplenished,
+        ));
+    }
+
+    let scope_strictly_narrowed = requested_position.scope != current_position.scope;
+    let depth_increased = requested_position.depth > current_position.depth;
+    let spend_decreased = requested_position.remaining_acquisition_envelope
+        != current_position.remaining_acquisition_envelope;
+    if depth_increased && !scope_strictly_narrowed {
+        return Err(refuse(
+            InquiryTransitionRefusalKindV0::DepthIncreaseRequiresStrictScopeNarrowing,
+        ));
+    }
+    if !scope_strictly_narrowed && !depth_increased && !spend_decreased {
+        return Err(refuse(InquiryTransitionRefusalKindV0::NoProgress));
+    }
+
+    Ok(AuthorizedInquiryTransitionV0 {
+        schema: AUTHORIZED_INQUIRY_TRANSITION_SCHEMA_V0.to_string(),
+        version: InquiryVersionV0::V0,
+        grant_digest,
+        before_position_digest,
+        requested_position_digest,
+        result: InquiryTransitionAdmissionResultV0::Authorized,
+    })
+}
+
+fn validate_ratchet_scope(
+    field: &str,
+    scope: &BTreeSet<InquiryTlsTargetV0>,
+) -> Result<(), InquiryValidationError> {
+    let mut target_ids = BTreeSet::new();
+    for target in scope {
+        target.validate(&format!("{field}[]"))?;
+        if !target_ids.insert(target.target_id.as_str()) {
+            return Err(InquiryValidationError::new(format!(
+                "duplicate {field} target_id {:?}",
+                target.target_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn spend_is_pointwise_at_most(
+    candidate: &InquiryAcquisitionSpendV0,
+    limit: &InquiryAcquisitionSpendV0,
+) -> bool {
+    candidate.dns_attempts <= limit.dns_attempts
+        && candidate.connection_attempts <= limit.connection_attempts
+        && candidate.handshakes_attempted <= limit.handshakes_attempted
+        && candidate.handshakes_completed <= limit.handshakes_completed
+        && candidate.bound_checks <= limit.bound_checks
+        && candidate.wall_ms <= limit.wall_ms
+        && candidate.work_units <= limit.work_units
+}
+
+fn validate_transition_binding_digests(
+    grant_digest: &str,
+    before_position_digest: &str,
+    requested_position_digest: &str,
+) -> Result<(), InquiryValidationError> {
+    if !is_sha256_digest(grant_digest)
+        || !is_sha256_digest(before_position_digest)
+        || !is_sha256_digest(requested_position_digest)
+    {
+        return Err(InquiryValidationError::new(
+            "transition bindings must be canonical SHA-256 digests",
+        ));
+    }
+    Ok(())
+}
+
+fn ratchet_artifact_digest<T: Serialize>(value: &T) -> String {
+    digest_jcs(value).expect("ratchet artifact fields are always representable in JCS")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InquiryTlsObservationV0 {
@@ -1147,7 +1570,10 @@ impl InquiryTlsObservationV0 {
         let completed = self.spend.handshakes_completed == 1;
         let has_refusal = |kind| self.refusals.iter().any(|r| r.kind == kind);
         let valid = matches!(self.validation_result, InquiryTlsValidationResultV0::Valid);
-        let invalid = matches!(self.validation_result, InquiryTlsValidationResultV0::Invalid { .. });
+        let invalid = matches!(
+            self.validation_result,
+            InquiryTlsValidationResultV0::Invalid { .. }
+        );
         let not_attempted = matches!(
             self.validation_result,
             InquiryTlsValidationResultV0::NotAttempted
@@ -1428,8 +1854,7 @@ impl InquiryReceiptV0 {
             || self.request.requested_targets != self.request.admitted_targets
         {
             return Err(DigestError {
-                message: "TLS inquiry witness plan does not match the admitted request"
-                    .to_string(),
+                message: "TLS inquiry witness plan does not match the admitted request".to_string(),
             });
         }
         let acquisition = self.acquisition.as_ref().ok_or_else(|| DigestError {
@@ -1483,11 +1908,9 @@ impl InquiryReceiptV0 {
                 });
             }
             if observation.spend.work_units != observation.spend.counted_work_units()
-                || observation.spend.handshakes_completed
-                    > observation.spend.handshakes_attempted
+                || observation.spend.handshakes_completed > observation.spend.handshakes_attempted
                 || observation.spend.connection_attempts > observation.spend.dns_attempts
-                || observation.spend.handshakes_attempted
-                    > observation.spend.connection_attempts
+                || observation.spend.handshakes_attempted > observation.spend.connection_attempts
                 || observation.spend.dns_attempts > 1
                 || observation.spend.connection_attempts > 1
                 || observation.spend.handshakes_attempted > 1
@@ -1527,8 +1950,7 @@ impl InquiryReceiptV0 {
             || summed.work_units != acquisition.work_units
         {
             return Err(DigestError {
-                message: "TLS inquiry aggregate spend does not equal target accounting"
-                    .to_string(),
+                message: "TLS inquiry aggregate spend does not equal target accounting".to_string(),
             });
         }
         let should_refuse = self.tls_observations.iter().any(|observation| {
@@ -1707,8 +2129,7 @@ mod tests {
 
     fn tls_receipt(acquired_at: &str, certificate_digest: &str) -> InquiryReceiptV0 {
         let resolved = tls_resolved();
-        let request =
-            AdmittedInquiryRequestV0::admit(&plan("tls-cert"), &resolved).unwrap();
+        let request = AdmittedInquiryRequestV0::admit(&plan("tls-cert"), &resolved).unwrap();
         let witness_plan = InquiryWitnessPlanV0::resolve(&request, &resolved).unwrap();
         let spend = InquiryAcquisitionSpendV0 {
             dns_attempts: 1,
@@ -1890,12 +2311,14 @@ mod tests {
         let resolved = tls_resolved();
         let request_a =
             AdmittedInquiryRequestV0::admit(&plan("bounded_tls_cert"), &resolved).unwrap();
-        let request_b =
-            AdmittedInquiryRequestV0::admit(&plan("tls-cert"), &resolved).unwrap();
+        let request_b = AdmittedInquiryRequestV0::admit(&plan("tls-cert"), &resolved).unwrap();
         assert_eq!(request_a, request_b);
         let witness_a = InquiryWitnessPlanV0::resolve(&request_a, &resolved).unwrap();
         let witness_b = InquiryWitnessPlanV0::resolve(&request_b, &resolved).unwrap();
-        assert_eq!(witness_a.canonical_bytes().unwrap(), witness_b.canonical_bytes().unwrap());
+        assert_eq!(
+            witness_a.canonical_bytes().unwrap(),
+            witness_b.canonical_bytes().unwrap()
+        );
         assert_eq!(witness_a.bounds.max_dns_attempts, 1);
         assert_eq!(witness_a.bounds.max_connection_attempts, 1);
         assert_eq!(witness_a.bounds.max_handshakes_attempted, 1);
@@ -1911,7 +2334,10 @@ mod tests {
         let mut second = tls_receipt("2026-07-11T12:00:02Z", SECOND_CERT_DIGEST);
         first.seal().unwrap();
         second.seal().unwrap();
-        assert_ne!(first.canonical_bytes().unwrap(), second.canonical_bytes().unwrap());
+        assert_ne!(
+            first.canonical_bytes().unwrap(),
+            second.canonical_bytes().unwrap()
+        );
         assert_eq!(first.witness_plan, second.witness_plan);
         assert!(first.acquisition_spend > 0);
         assert!(first
@@ -1940,8 +2366,7 @@ mod tests {
         witness_plan.witness_plan_digest = witness_plan.compute_witness_plan_digest().unwrap();
         assert!(follow_up.seal().is_err());
 
-        let mut missing_certificate =
-            tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
+        let mut missing_certificate = tls_receipt("2026-07-11T12:00:01Z", FIRST_CERT_DIGEST);
         missing_certificate.tls_observations[0].certificate_digest = None;
         assert!(missing_certificate.seal().is_err());
     }
@@ -1970,5 +2395,322 @@ mod tests {
         target.port = 8443;
         escaped.targets = vec![target];
         assert!(AdmittedInquiryRequestV0::admit(&escaped, &resolved).is_err());
+    }
+
+    fn ratchet_target(target_id: &str) -> InquiryTlsTargetV0 {
+        InquiryTlsTargetV0 {
+            target_id: target_id.to_string(),
+            host: format!("{target_id}.example.test"),
+            port: 443,
+            sni: format!("{target_id}.example.test"),
+        }
+    }
+
+    fn ratchet_scope(target_ids: &[&str]) -> BTreeSet<InquiryTlsTargetV0> {
+        target_ids
+            .iter()
+            .map(|target_id| ratchet_target(target_id))
+            .collect()
+    }
+
+    fn ratchet_spend(value: u32) -> InquiryAcquisitionSpendV0 {
+        InquiryAcquisitionSpendV0 {
+            dns_attempts: value,
+            connection_attempts: value,
+            handshakes_attempted: value,
+            handshakes_completed: value,
+            bound_checks: value,
+            wall_ms: u64::from(value),
+            work_units: u64::from(value),
+        }
+    }
+
+    fn ratchet_grant(target_ids: &[&str]) -> InquiryGrantV0 {
+        InquiryGrantV0 {
+            schema: INQUIRY_GRANT_SCHEMA_V0.to_string(),
+            version: InquiryVersionV0::V0,
+            admitted_scope: ratchet_scope(target_ids),
+            max_depth: 3,
+            total_acquisition_envelope: ratchet_spend(10),
+            permitted_witness_classes: std::iter::once(InquiryCollectorV0::TlsCertProbe).collect(),
+        }
+    }
+
+    fn ratchet_position(
+        target_ids: &[&str],
+        depth: u32,
+        remaining: InquiryAcquisitionSpendV0,
+    ) -> InquiryPositionV0 {
+        InquiryPositionV0 {
+            schema: INQUIRY_POSITION_SCHEMA_V0.to_string(),
+            version: InquiryVersionV0::V0,
+            scope: ratchet_scope(target_ids),
+            depth,
+            remaining_acquisition_envelope: remaining,
+        }
+    }
+
+    #[test]
+    fn same_grant_scope_cannot_widen() {
+        let grant = ratchet_grant(&["alpha", "beta"]);
+        let current = ratchet_position(&["alpha"], 1, ratchet_spend(5));
+        let requested = ratchet_position(&["alpha", "beta"], 1, ratchet_spend(5));
+
+        let refusal = authorize_same_grant_transition(&grant, &current, &requested).unwrap_err();
+        assert_eq!(refusal.kind, InquiryTransitionRefusalKindV0::ScopeWidening);
+    }
+
+    #[test]
+    fn same_cardinality_scope_swap_is_refused() {
+        let grant = ratchet_grant(&["alpha", "beta"]);
+        let current = ratchet_position(&["alpha"], 1, ratchet_spend(5));
+        let requested = ratchet_position(&["beta"], 1, ratchet_spend(5));
+
+        let refusal = authorize_same_grant_transition(&grant, &current, &requested).unwrap_err();
+        assert_eq!(refusal.kind, InquiryTransitionRefusalKindV0::ScopeWidening);
+    }
+
+    #[test]
+    fn same_grant_spend_cannot_replenish() {
+        let grant = ratchet_grant(&["alpha"]);
+        let current = ratchet_position(&["alpha"], 1, ratchet_spend(5));
+
+        for counter in 0..7 {
+            let mut requested = current.clone();
+            match counter {
+                0 => requested.remaining_acquisition_envelope.dns_attempts = 6,
+                1 => requested.remaining_acquisition_envelope.connection_attempts = 6,
+                2 => {
+                    requested
+                        .remaining_acquisition_envelope
+                        .handshakes_attempted = 6
+                }
+                3 => {
+                    requested
+                        .remaining_acquisition_envelope
+                        .handshakes_completed = 6
+                }
+                4 => requested.remaining_acquisition_envelope.bound_checks = 6,
+                5 => requested.remaining_acquisition_envelope.wall_ms = 6,
+                6 => requested.remaining_acquisition_envelope.work_units = 6,
+                _ => unreachable!(),
+            }
+            let refusal =
+                authorize_same_grant_transition(&grant, &current, &requested).unwrap_err();
+            assert_eq!(
+                refusal.kind,
+                InquiryTransitionRefusalKindV0::AcquisitionSpendReplenished,
+                "counter {counter} replenished"
+            );
+        }
+    }
+
+    #[test]
+    fn same_grant_depth_cannot_exceed_grant() {
+        let grant = ratchet_grant(&["alpha", "beta"]);
+        let current = ratchet_position(&["alpha", "beta"], 1, ratchet_spend(5));
+        let requested = ratchet_position(&["alpha"], 4, ratchet_spend(5));
+
+        let refusal = authorize_same_grant_transition(&grant, &current, &requested).unwrap_err();
+        assert_eq!(
+            refusal.kind,
+            InquiryTransitionRefusalKindV0::DepthExceedsGrant
+        );
+    }
+
+    #[test]
+    fn depth_increase_requires_strict_scope_narrowing() {
+        let grant = ratchet_grant(&["alpha"]);
+        let current = ratchet_position(&["alpha"], 1, ratchet_spend(5));
+        let requested = ratchet_position(&["alpha"], 2, ratchet_spend(5));
+
+        let refusal = authorize_same_grant_transition(&grant, &current, &requested).unwrap_err();
+        assert_eq!(
+            refusal.kind,
+            InquiryTransitionRefusalKindV0::DepthIncreaseRequiresStrictScopeNarrowing
+        );
+    }
+
+    #[test]
+    fn noop_is_not_an_escalation() {
+        let grant = ratchet_grant(&["alpha"]);
+        let current = ratchet_position(&["alpha"], 1, ratchet_spend(5));
+
+        let refusal = authorize_same_grant_transition(&grant, &current, &current).unwrap_err();
+        assert_eq!(refusal.kind, InquiryTransitionRefusalKindV0::NoProgress);
+    }
+
+    #[test]
+    fn narrowing_and_deepening_can_be_admitted() {
+        let grant = ratchet_grant(&["alpha", "beta"]);
+        let current = ratchet_position(&["alpha", "beta"], 1, ratchet_spend(5));
+        let requested = ratchet_position(&["alpha"], 2, ratchet_spend(5));
+
+        let receipt = authorize_same_grant_transition(&grant, &current, &requested).unwrap();
+        assert_eq!(
+            receipt.result,
+            InquiryTransitionAdmissionResultV0::Authorized
+        );
+    }
+
+    #[test]
+    fn spend_only_progress_can_be_admitted() {
+        let grant = ratchet_grant(&["alpha"]);
+        let current = ratchet_position(&["alpha"], 1, ratchet_spend(5));
+        let mut requested = current.clone();
+        requested.remaining_acquisition_envelope.work_units -= 1;
+
+        let receipt = authorize_same_grant_transition(&grant, &current, &requested).unwrap();
+        assert_eq!(
+            receipt.result,
+            InquiryTransitionAdmissionResultV0::Authorized
+        );
+    }
+
+    #[test]
+    fn fresh_grant_can_admit_previously_refused_scope() {
+        let first_grant = ratchet_grant(&["alpha"]);
+        let current = ratchet_position(&["alpha"], 1, ratchet_spend(5));
+        let broader = ratchet_position(&["alpha", "beta"], 1, ratchet_spend(5));
+        assert!(authorize_same_grant_transition(&first_grant, &current, &broader).is_err());
+
+        let fresh_grant = ratchet_grant(&["alpha", "beta"]);
+        admit_initial_position(&fresh_grant, &broader).unwrap();
+    }
+
+    #[test]
+    fn findings_are_not_authorization_inputs() {
+        let grant = ratchet_grant(&["alpha", "beta"]);
+        let current = ratchet_position(&["alpha", "beta"], 1, ratchet_spend(5));
+        let requested = ratchet_position(&["alpha"], 2, ratchet_spend(5));
+        let authorize: fn(
+            &InquiryGrantV0,
+            &InquiryPositionV0,
+            &InquiryPositionV0,
+        )
+            -> Result<AuthorizedInquiryTransitionV0, InquiryTransitionRefusalV0> =
+            authorize_same_grant_transition;
+
+        let candidate = InquiryTransitionRequestV0::bind(&grant, &requested).unwrap();
+        assert_eq!(candidate.grant_digest, grant.grant_digest().unwrap());
+        assert_eq!(candidate.requested_position, requested);
+        assert!(authorize(&grant, &current, &candidate.requested_position).is_ok());
+    }
+
+    #[test]
+    fn canonical_grant_and_position_digest_stability() {
+        let grant = ratchet_grant(&["beta", "alpha"]);
+        let reordered_grant = ratchet_grant(&["alpha", "beta"]);
+        assert_eq!(
+            grant.grant_digest().unwrap(),
+            reordered_grant.grant_digest().unwrap()
+        );
+
+        let position = ratchet_position(&["beta", "alpha"], 1, ratchet_spend(5));
+        let reordered_position = ratchet_position(&["alpha", "beta"], 1, ratchet_spend(5));
+        assert_eq!(
+            position.position_digest().unwrap(),
+            reordered_position.position_digest().unwrap()
+        );
+    }
+
+    #[test]
+    fn unknown_ratchet_schema_is_refused() {
+        let grant = ratchet_grant(&["alpha", "beta"]);
+        let current = ratchet_position(&["alpha", "beta"], 1, ratchet_spend(5));
+        let requested = ratchet_position(&["alpha"], 1, ratchet_spend(4));
+
+        let mut unknown_grant = grant.clone();
+        unknown_grant.schema = "nq.inquiry_grant.v999".to_string();
+        assert!(unknown_grant.validate().is_err());
+        assert_eq!(
+            authorize_same_grant_transition(&unknown_grant, &current, &requested)
+                .unwrap_err()
+                .kind,
+            InquiryTransitionRefusalKindV0::InvalidGrant
+        );
+
+        let mut unknown_current = current.clone();
+        unknown_current.schema = "nq.inquiry_position.v999".to_string();
+        assert_eq!(
+            authorize_same_grant_transition(&grant, &unknown_current, &requested)
+                .unwrap_err()
+                .kind,
+            InquiryTransitionRefusalKindV0::InvalidCurrentPosition
+        );
+
+        let mut unknown_requested = requested;
+        unknown_requested.schema = "nq.inquiry_position.v999".to_string();
+        assert_eq!(
+            authorize_same_grant_transition(&grant, &current, &unknown_requested)
+                .unwrap_err()
+                .kind,
+            InquiryTransitionRefusalKindV0::InvalidRequestedPosition
+        );
+    }
+
+    #[test]
+    fn duplicate_targets_are_normalized_before_digesting() {
+        let target = ratchet_target("alpha");
+        let duplicated = serde_json::json!({
+            "schema": INQUIRY_GRANT_SCHEMA_V0,
+            "version": "v0",
+            "admitted_scope": [target.clone(), target],
+            "max_depth": 3,
+            "total_acquisition_envelope": ratchet_spend(10),
+            "permitted_witness_classes": ["tls_cert_probe"]
+        });
+        let normalized: InquiryGrantV0 = serde_json::from_value(duplicated).unwrap();
+        let single = ratchet_grant(&["alpha"]);
+
+        assert_eq!(normalized.admitted_scope.len(), 1);
+        assert_eq!(
+            normalized.grant_digest().unwrap(),
+            single.grant_digest().unwrap()
+        );
+    }
+
+    #[test]
+    fn transition_receipt_binds_before_after_grant_and_result() {
+        let grant = ratchet_grant(&["alpha", "beta"]);
+        let current = ratchet_position(&["alpha", "beta"], 1, ratchet_spend(5));
+        let admitted = ratchet_position(&["alpha"], 2, ratchet_spend(5));
+        let authorized = authorize_same_grant_transition(&grant, &current, &admitted).unwrap();
+
+        assert_eq!(authorized.grant_digest, grant.grant_digest().unwrap());
+        assert_eq!(
+            authorized.before_position_digest,
+            current.position_digest().unwrap()
+        );
+        assert_eq!(
+            authorized.requested_position_digest,
+            admitted.position_digest().unwrap()
+        );
+        assert_eq!(
+            authorized.result,
+            InquiryTransitionAdmissionResultV0::Authorized
+        );
+        assert_eq!(
+            authorized.receipt_digest().unwrap(),
+            authorized.clone().receipt_digest().unwrap()
+        );
+
+        let refused = ratchet_position(&["beta"], 1, ratchet_spend(5));
+        let refusal = authorize_same_grant_transition(&grant, &admitted, &refused).unwrap_err();
+        assert_eq!(refusal.grant_digest, grant.grant_digest().unwrap());
+        assert_eq!(
+            refusal.before_position_digest,
+            admitted.position_digest().unwrap()
+        );
+        assert_eq!(
+            refusal.requested_position_digest,
+            refused.position_digest().unwrap()
+        );
+        assert_eq!(refusal.kind, InquiryTransitionRefusalKindV0::ScopeWidening);
+
+        let refusal_digest = refusal.receipt_digest().unwrap();
+        let mut different_result = refusal;
+        different_result.kind = InquiryTransitionRefusalKindV0::NoProgress;
+        assert_ne!(refusal_digest, different_result.receipt_digest().unwrap());
     }
 }

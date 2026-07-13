@@ -17,33 +17,36 @@ pub use batch::{
     Batch, CollectorRun, HostRow, MetricRow, MetricSet, ServiceRow, ServiceSet, SmartWitnessRow,
     SourceRun, SqliteDbRow, SqliteDbSet, ZfsWitnessRow,
 };
+pub use claim_registry::{
+    evaluate, ClaimEntry, ClaimRegistry, CompositeClaim, LeafClaim, LeafCondition, NonMintableClaim,
+};
 pub use config::{
     Config, DetectorThresholds, DiskBudgetConfig, EscalationThresholds, PublisherConfig,
     RetentionConfig, SmartWitnessConfig, SourceConfig, ZfsWitnessConfig,
 };
 pub use humanize::humanize_duration_s;
 pub use inquiry::{
-    resolve_profile, AdmittedInquiryRequestV0, CandidateInquiryPlanV0,
-    FindingSelectorV0, InquiryAcquisitionBoundsV0, InquiryAcquisitionSpendV0,
-    InquiryCollectorV0, InquiryDisposition, InquiryEvidenceCoverageV0,
-    InquiryEvidenceReceiptV0, InquiryFindingStateV0, InquiryProfileBindingV0,
-    InquiryProfileCatalogV0, InquiryProfileV0, InquiryQuestionV0, InquiryReceiptV0,
-    InquiryRefusal, InquiryRefusalKindV0, InquirySourceSnapshotV0, InquiryStatusV0,
-    InquiryTlsCertProfileV0, InquiryTlsObservationV0, InquiryTlsOutcomeV0,
-    InquiryTlsTargetV0, InquiryTlsValidationPolicyV0, InquiryTlsValidationResultV0,
-    InquiryValidationError, InquiryVersionV0, InquiryWitnessPlanV0,
-    ResolvedInquiryProfileV0, INQUIRY_PLAN_SCHEMA_V0, INQUIRY_PROFILE_CATALOG_SCHEMA_V0,
-    INQUIRY_PROFILE_SCHEMA_V0, INQUIRY_RECEIPT_SCHEMA_V0, INQUIRY_REQUEST_SCHEMA_V0,
-    INQUIRY_WITNESS_PLAN_SCHEMA_V0, TLS_CERT_INQUIRY_QUESTION_V0,
+    admit_initial_position, authorize_same_grant_transition, resolve_profile,
+    AdmittedInquiryRequestV0, AuthorizedInquiryTransitionV0, CandidateInquiryPlanV0,
+    FindingSelectorV0, InquiryAcquisitionBoundsV0, InquiryAcquisitionSpendV0, InquiryCollectorV0,
+    InquiryDisposition, InquiryEvidenceCoverageV0, InquiryEvidenceReceiptV0, InquiryFindingStateV0,
+    InquiryGrantV0, InquiryPositionV0, InquiryProfileBindingV0, InquiryProfileCatalogV0,
+    InquiryProfileV0, InquiryQuestionV0, InquiryReceiptV0, InquiryRefusal, InquiryRefusalKindV0,
+    InquirySourceSnapshotV0, InquiryStatusV0, InquiryTlsCertProfileV0, InquiryTlsObservationV0,
+    InquiryTlsOutcomeV0, InquiryTlsTargetV0, InquiryTlsValidationPolicyV0,
+    InquiryTlsValidationResultV0, InquiryTransitionAdmissionResultV0,
+    InquiryTransitionRefusalKindV0, InquiryTransitionRefusalV0, InquiryTransitionRequestV0,
+    InquiryValidationError, InquiryVersionV0, InquiryWitnessPlanV0, ResolvedInquiryProfileV0,
+    AUTHORIZED_INQUIRY_TRANSITION_SCHEMA_V0, INQUIRY_GRANT_SCHEMA_V0, INQUIRY_PLAN_SCHEMA_V0,
+    INQUIRY_POSITION_SCHEMA_V0, INQUIRY_PROFILE_CATALOG_SCHEMA_V0, INQUIRY_PROFILE_SCHEMA_V0,
+    INQUIRY_RECEIPT_SCHEMA_V0, INQUIRY_REQUEST_SCHEMA_V0, INQUIRY_TRANSITION_REFUSAL_SCHEMA_V0,
+    INQUIRY_TRANSITION_REQUEST_SCHEMA_V0, INQUIRY_WITNESS_PLAN_SCHEMA_V0,
+    TLS_CERT_INQUIRY_QUESTION_V0,
 };
 pub use preflight::{
     disk_state_cannot_testify, sqlite_wal_state_cannot_testify, ClaimKind, PreflightCoverage,
     PreflightExclusion, PreflightResult, PreflightSupport, PreflightTarget, Verdict,
     PREFLIGHT_CONTRACT_VERSION, PREFLIGHT_DISK_STATE_SCHEMA, PREFLIGHT_SQLITE_WAL_STATE_SCHEMA,
-};
-pub use claim_registry::{
-    evaluate, ClaimEntry, ClaimRegistry, CompositeClaim, LeafClaim, LeafCondition,
-    NonMintableClaim,
 };
 pub use receipt::{NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef, RECEIPT_SCHEMA};
 pub use render::{render_human, render_json, render_jsonl, render_markdown};
