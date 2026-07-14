@@ -2,11 +2,12 @@
 
 > **A signal is not yet evidence. Evidence is not yet a claim. A claim is not yet authority.**
 
-NQ is not a monitoring system. It is not an alerting layer. It is not a
-dashboard with better opinions.
+NQ's claim-verification subsystem is not a monitoring or alerting path. The
+product also ships an operational monitor, dashboard, and notification engine;
+this note explains the narrower layer that constrains what evidence may mean.
 
-Monitoring systems produce observations. NQ asks what those observations are
-allowed to support.
+The monitoring surface produces and retains observations. Claim verification
+asks what those observations are allowed to support.
 
 That distinction matters because operational systems constantly promote signals
 through a chain of increasingly consequential roles:
@@ -44,7 +45,7 @@ the admissibility problem predates agents. Human-operated systems have always
 laundered observations into authority through dashboards, alerts, incident
 channels, postmortems, runbooks, and policy changes.
 
-NQ does not replace observability. It cross-examines it.
+Claim verification does not replace observability. It cross-examines it.
 
 A monitoring system can say:
 
@@ -58,8 +59,8 @@ NQ asks:
 what does the needle have standing to mean?
 ```
 
-That is the core distinction. Observability produces witnesses. NQ governs the
-claims made from witness testimony.
+That is the core distinction. Observability produces witnesses. NQ's
+claim-verification subsystem bounds the claims made from witness testimony.
 
 ## Related
 

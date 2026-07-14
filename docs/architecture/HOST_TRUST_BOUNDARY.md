@@ -1,51 +1,60 @@
-# Host-Trust Boundary
+# Host-trust boundary
 
-**Status:** doctrine — names a structural limit NQ does not pretend to overcome. Doc-only by design; it stays one paragraph until the threat model changes (see below).
-**Sibling of:** [`CLAIM_CUSTODY.md`](CLAIM_CUSTODY.md) (names which layer NQ lives in), [`SCOPE_AND_WITNESS_MODEL.md`](SCOPE_AND_WITNESS_MODEL.md) (witness positions and their Δo cells).
-**Last updated:** 2026-06-12
+**Status:** as-built security boundary.
 
-## The boundary
+> NQ trusts the host on which a local witness runs. Its structural integrity
+> checks begin after collection; they do not authenticate the collector or
+> defeat root compromise, kernel compromise, a malicious local operator, or an
+> actor who can rewrite and reseal artifacts.
 
-> **NQ's local witness trusts the host on which it runs. Tamper-evidence begins after collection; it does not defeat root compromise, kernel compromise, or malicious local operators. Cross-host witness absence and hostile-host assurance are separate, higher-rung problems.**
+## What is inside the trusted base
 
-That paragraph is the entire constitutional statement. Everything below is framing for why it stays one paragraph.
+- The host kernel, `/proc`, filesystem, service manager, sockets, and helper
+  commands seen by `nq-witness` are assumed to report honestly enough for the
+  deployment's purpose.
+- The monitor database, configuration, and binaries are assumed not to be
+  replaced by an actor with equivalent local privilege.
+- The network path to a remote witness must be protected by deployment
+  controls. The built-in HTTP service provides neither TLS nor client
+  authentication.
 
-## What this admits
+An actor with root, kernel, or operator-equivalent access can fabricate source
+observations, modify the database, replace binaries, or rewrite both an
+artifact and its checksum. Those changes can propagate to findings, exports,
+and receipts. NQ has no in-process mechanism that makes a compromised host
+testify honestly.
 
-- The host is part of NQ's trusted computing base by **architectural assumption**, not by audit.
-- An attacker with root, kernel, or operator-equivalent access to the host can lie to NQ. The lie can propagate through every downstream surface — findings, exports, federation, receipts — and NQ has no in-process defense against it.
-- "Tamper-evidence" in NQ means: *given an honest host, downstream consumers can detect modification of records between collection and export.* It does **not** mean: *records survive a compromised host.*
-- The witness's own blind spot — it cannot fully witness the integrity of the box it runs inside — is **structurally unsolvable from within the box** and stays so. An external vantage (a second witness on another host) is the topology answer to that blind spot, not a cryptographic one.
+## What the integrity fields establish
 
-## What this rejects
+- A receipt `content_hash` checks whether its canonical body matches the
+  checksum stored inside it.
+- A `WitnessRef.digest` can identify the exact portable packet envelope that a
+  receipt references when the packet is retained.
+- Generation summary hashes provide change detection for their bounded stored
+  content; they are not cryptographic host attestation.
 
-NQ deliberately does **not** reach for the following, because the threat model above does not earn them:
+These checks detect corruption and edits that were not resealed. They do not
+identify who produced an artifact, prove that an observation was truthful, or
+prevent an actor who controls the artifact from computing a new matching hash.
 
-- **Hash-chain maximalism on the local store.** An attacker who can modify rows can modify the chain.
-- **Cryptographic operator identity on attestations.** `operator_id: "local"` is the default; strong cross-machine identity is a federation-altitude problem.
-- **Tamper-proof tombstones.** Deletion receipts are durable records *under the host-trust assumption*, not signed receipts *against* the host.
-- **"Cross-host attestation" framed as a fix for local trust.** Cross-host attestation solves a *different* problem (witnessing a witness's absence), not local compromise.
+## Deployment consequences
 
-> **Anything more becomes crypto cosplay.**
+- Run NQ under a dedicated unprivileged account and keep binaries and configs
+  root-owned.
+- Bind same-host services to loopback. For remote witnesses, use a private or
+  VPN interface and firewall the endpoint to the monitor.
+- Keep backups and long-lived receipt/packet artifacts in storage the NQ
+  service account cannot rewrite.
+- Treat Docker-socket access, privileged SMART/ZFS helpers, broad journal
+  access, and writable application directories as explicit trust expansions.
 
-## What changes if the threat model changes
+If hostile-host assurance, non-repudiable operator identity, or multi-tenant
+isolation is required, add controls outside the current NQ boundary: hardware-
+or platform-backed identity, authenticated transport, signatures, and an
+independently administered log or artifact store. A second host can provide a
+different vantage and detect absence or disagreement, but it does not repair a
+compromised first host's local testimony.
 
-This boundary is doc-only **only because** NQ today runs on hosts the operator owns and trusts. If NQ ever runs where:
-
-- the host is not trusted (managed / hosted NQ),
-- operator identity must be non-repudiable across machines, or
-- multi-tenant isolation requires per-tenant tamper-evidence,
-
-then this boundary becomes load-bearing and the doc-only stance promotes to a real spec. The adjacent surfaces that future would need — a per-write signing surface bound to a hardware key, an external-attestor protocol, a tamper-evident log structure that survives partial host compromise, and the federation contract's evolution from comparison-only to cross-host verifiable testimony — are **named, not built, not authorized**. They are listed so the current narrowness is understood as deliberate, not as amnesia.
-
-## Where this binds
-
-Other NQ surfaces that touch tamper-evidence, receipt durability, or operator identity inherit this paragraph rather than restating it:
-
-- Deletion receipts / tombstones (evidence-retention policy) are tamper-evident only against an honest host.
-- Operator attestations carry `operator_id: "local"` by default for the same reason.
-- The federation contract stays read-only-upward and comparison-only; it does not convert child testimony into verified parent observation across a trust boundary this paragraph does not cross.
-
----
-
-*Provenance: operator's pinned paragraph, 2026-06-10. Published 2026-06-12 as NQ-CLOSE-003 (closure stack). Design record: [`../working/gaps/HOST_TRUST_BOUNDARY.md`](../working/gaps/HOST_TRUST_BOUNDARY.md).*
+See [Production Deployment](../operator/deployment.md) for concrete service and
+network guidance, [Scope and Witness Model](SCOPE_AND_WITNESS_MODEL.md) for
+vantage semantics, and [Claim Custody](CLAIM_CUSTODY.md) for receipt limits.

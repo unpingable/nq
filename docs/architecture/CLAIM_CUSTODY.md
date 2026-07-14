@@ -1,13 +1,13 @@
 # Claim Custody
 
-**Status:** doctrine — names the category Phase 2 of the receipt machinery establishes. Pins the boundary between observation, claim, and authority so future surfaces stay honest about which one they live in.
-**Last updated:** 2026-05-24
+**Status:** doctrine for NQ's claim-verification subsystem. Pins the boundary between observation, claim, and authority so future surfaces stay honest about which one they live in.
+**Last updated:** 2026-07-14
 
 ## Category
 
-NQ is **claim custody for operational systems**.
+NQ's claim-verification subsystem is **claim custody for operational systems**.
 
-It is not monitoring. It is not alerting. It is not authorization. Those are adjacent layers, and NQ sits between them:
+This subsystem is not monitoring, alerting, or authorization. Those are adjacent responsibilities. The NQ product also ships a diagnostic monitor and notification engine; this document describes the narrower witness → claim → receipt path inside that product:
 
 ```text
 observability substrate         ←  Prometheus / journald / SMART / etc.
@@ -16,7 +16,7 @@ witness packets                 ←  nq.witness.v1
         ↓
 claim preflight                 ←  evaluator
         ↓
-receipt                         ←  nq.receipt.v1 (sealed, anchored)
+receipt                         ←  nq.receipt.v1 (sealed, self-hashed)
         ↓
 check / replay                  ←  nq-monitor receipt check, nq-monitor receipt replay
         ↓
@@ -41,16 +41,16 @@ NQ moves the discipline out of human heads and into a kernel:
 
 - Witnesses observe; they do not claim.
 - Evaluators classify witness testimony against pre-declared claim kinds.
-- The receipt records exactly which testimony was admitted, which was refused, and which conclusions remain `cannot_testify`.
-- `check` and `replay` make the receipt a structured artifact that can defend itself later.
+- The receipt records the applicable packet references, supported and `not_verified` claims, evaluator status, and any `cannot_testify` conclusions. Track B currently includes every subject-matching packet reference, so the witness list alone does not say which packet contributed support; there is no separate refused-witness list.
+- `check` and `replay` let a consumer inspect structural consistency and, where supported, reproduce the decision from retained inputs.
 
-The result: a claim cannot survive merely because it was emitted in the right shape. It carries anchors (1a–1c), it can be verified for tamper-evidence (1d), and (for Track B today) it can be replayed against its supporting material (1e). The conditions under which the claim was made are preserved.
+The result: a claim cannot survive merely because it was emitted in the right shape. A receipt can carry exact witness digests and an evaluator binding, its structural self-hash can be checked, and replayable evaluators can be rerun against retained supporting material. The conditions under which the claim was made are preserved. The self-hash is not a signature: an actor who can rewrite and reseal the artifact can recompute it, so adversarial custody still needs an independently controlled store or signing layer.
 
 > NQ externalizes the claim discipline.
 
 ## What the chain prevents
 
-The pattern NQ exists to refuse is documented in `CLAIM_PREFLIGHT.md`:
+The pattern NQ exists to refuse is:
 
 ```text
 success_observation  →  safety_inference  →  authorization_inference
@@ -70,25 +70,24 @@ A naive read of "did this alert lie?" collapses three different questions:
 
 | Question | Answered by |
 |---|---|
-| Has the receipt been tampered with? | `nq-monitor receipt check` |
+| Does the receipt match its stored structural self-hash and references? | `nq-monitor receipt check` |
 | Does the original decision reproduce from supplied packets? | `nq-monitor receipt replay` |
 | Is the claim still true in the world *right now*? | A fresh preflight (`nq-monitor verify` / preflight HTTP route) |
 
-Each has a separate command, a separate exit code, and a separate failure mode. Operators (and automations) that need to reason about old receipts can address the right question without conflating it with the other two.
+Each has a separate command or result axis and its own failure modes; process exit codes can overlap. Operators and automations that need to reason about old receipts can address the right question without conflating it with the other two.
 
 ### Service changed vs witness changed vs evaluator changed vs receipt corrupted vs custody lost
 
 The same compound question shows up at higher altitude during incident review. *"The dashboard is different today"* collapses at least five distinct causes:
 
-| Cause | What replay/check sees |
+| Possible explanation | What replay/check can establish |
 |---|---|
-| The underlying service actually changed state. | Replay returns OK; freshness Stale; current preflight differs. |
-| The witness produced different testimony for the same world state. | Replay returns OK on old packets; current preflight differs. |
+| The underlying service changed, or a current witness now reports differently. | Old packets may replay OK while a fresh evaluation differs. These tools do not identify which real-world explanation caused the difference. |
 | The evaluator changed behavior. | Old receipt structurally valid; replay under new version → `UNSUPPORTED_VERSION` or `MISMATCH`. |
-| The receipt was corrupted in storage. | `BROKEN_CONTENT_HASH` (exit 2). |
+| The receipt body was corrupted or edited without resealing. | `BROKEN_CONTENT_HASH` (exit 2). |
 | Witness packet custody was lost. | `MISSING_WITNESS_MATERIAL`. |
 
-These are five different operational situations with five different responses. Collapsing them into one verdict ("the alert lied," "the system is broken," "the data is wrong") is how incident reviews drift into folklore. Claim custody makes the distinctions inspectable.
+These are different operational situations with different responses. Collapsing them into one verdict ("the alert lied," "the system is broken," "the data is wrong") is how incident reviews drift into folklore. Claim custody makes several distinctions inspectable and leaves the remaining causal ambiguity explicit.
 
 ### Action taken vs condition resolved
 
@@ -100,30 +99,30 @@ Rolled back deploy →  incident fixed
 Traffic drained   →  capacity healthy
 ```
 
-NQ's claim discipline refuses those promotions at the preflight layer. A receipt can record:
+NQ's claim discipline refuses those promotions at the preflight layer. Conceptually, a bounded result can record:
 
 ```text
 supported:    process_restarted
 not_verified: service_recovered (insufficient_coverage: external_success_probe)
 ```
 
-Replay later can reproduce that exact distinction. The postmortem now has a structured record of what was actually demonstrated vs. what was assumed. Closures stop being declarative.
+For a registered replayable claim, replay can later reproduce that distinction. The snippet illustrates the boundary; `process_restarted` and `service_recovered` are not claims in the current public catalog. The postmortem gains a structured record of what was demonstrated versus assumed.
 
 ## What replay buys
 
-Concretely, once `receipt replay` exists:
+Concretely, receipt replay provides:
 
-1. **Receipts become audit objects.** A receipt before 1d/1e was a structured JSON blob with the testimony NQ admitted at minting time. After 1d/1e, it can answer: what claim was evaluated, which packets supported it, which evaluator version made the call, does rerunning that evaluator over those packets produce the same verdict, and if not, why not.
+1. **Receipts become audit objects.** A receipt can answer what claim was evaluated, which applicable packets were referenced, which claims were supported or not verified, which evaluator version made the call, whether a compatible replayable evaluator reaches the same decision, and which compared fields differ when it does not.
 
-2. **The failure-mode taxonomy becomes a public surface.** Forged / stale / missing material / unsupported / mismatch / not applicable — six distinct shapes, all structured outputs. Operators stop having to reverse-engineer which one of those applies in any given case.
+2. **The failure-mode taxonomy becomes a public surface.** Checksum mismatch, stale horizon, missing material, unsupported evaluator, semantic mismatch, and not-applicable are distinct structured outputs.
 
-3. **CI receipts have teeth.** "I verified this was docs-only" stops being a log line and becomes a receipt the auditor can replay. The agent's claim can be made to defend itself or fail loudly.
+3. **CI receipts become inspectable.** "I verified this was docs-only" can become a receipt an auditor rechecks against independently retained packets instead of an unstructured log line.
 
-4. **Evaluator drift is detectable.** When evaluator logic changes between releases, old receipts can be replayed and the resulting `MISMATCH` (or `UNSUPPORTED_VERSION`) tells you the *decision procedure* changed, not just the world. That distinction is normally invisible in monitoring stacks; with replay, it is a typed result.
+4. **Evaluator compatibility is visible.** A version mismatch is refused explicitly. A semantic `MISMATCH` shows that the retained inputs and current compatible evaluator do not reproduce the recorded decision; its field diff aids investigation but does not identify the cause by itself.
 
-5. **Packet custody becomes operational pressure.** A digest tells you what a packet *would* match; replay needs the packet itself. The moment replay exists, the question *"where are the packets?"* becomes load-bearing. Receipt bundles, evidence archives, witness retention policies — all of these are future pressure that comes from this slice. They are not in scope of Slice 1e; they are the gravity Slice 1e creates.
+5. **Packet custody becomes operational pressure.** A digest tells you what a packet *would* match; replay needs the packet itself. The question *"where are the packets?"* becomes load-bearing. Receipt bundles, evidence archives, and retention policies are possible future responses, not features implied by the current command.
 
-6. **"I don't know" becomes a first-class output.** `cannot replay: missing witness material`, `cannot replay: Track A`, `cannot replay: unsupported evaluator version` — these are structured verdicts, not failures. Automation that needs to *refuse to act on stale evidence* can read those verdicts and refuse correctly. That is the difference between safe automation and confidently-wrong automation.
+6. **"I don't know" becomes a first-class output.** Missing witness material, operational replay not-applicable, and unsupported evaluator version are distinct statuses. Automation that needs to refuse to act on insufficiently inspectable evidence can read those statuses explicitly.
 
 > A digest proves what would match. Replay proves you still have enough to explain the decision.
 
@@ -131,11 +130,11 @@ Concretely, once `receipt replay` exists:
 
 Five exclusions, all load-bearing because each one is a category error someone will eventually try to make:
 
-1. **NQ is not monitoring.** It does not scrape. It does not poll. It does not draw dashboards. (`nq-monitor serve`'s web UI is a *consumer* of NQ's own outputs, not a monitoring surface in its own right. The witness producers — Prometheus, journald, SMART tooling — are upstream substrate.)
-2. **NQ is not alerting.** Receipt emission is not an alert. The notification engine that fires on finding escalation is a separate concern wired into `nq-monitor serve`; it is not the receipt machinery.
-3. **NQ is not authorization.** A receipt — even an `OK` receipt that replays cleanly — does not authorize a merge, a deploy, a restart, or an incident closure. NQ tells systems what they are *allowed to honestly claim*. Whether to act on a claim is downstream. See `feedback_knob_facing` doctrine.
+1. **Claim verification is not monitoring.** It evaluates bounded evidence supplied by a caller or already present in the monitor. Collection, polling, finding lifecycle, and the dashboard belong to NQ's operational-monitoring surface.
+2. **A receipt is not an alert.** The notification engine that fires on finding state is a separate concern wired into `nq-monitor serve`; it is not receipt machinery.
+3. **NQ is not authorization.** A receipt—even an `OK` receipt that replays cleanly—does not authorize a merge, deploy, restart, or incident closure. NQ tells systems what the available evidence supports. Whether to act is downstream.
 4. **NQ is not an oracle.** Replay reproduces a decision from inputs; it does not pronounce truth about the world.
-5. **NQ is not a replacement for runbooks, dashboards, or alertmanagers.** It sits underneath all three as the integrity layer. Operators still need their dashboards. They just have a structured artifact below the dashboard that says what they were allowed to claim from the picture.
+5. **Claim verification does not replace runbooks, dashboards, or alert managers.** It gives those consumers a structured artifact that states what the retained evidence supports and refuses.
 
 These exclusions are doctrinal. They survive any future v1. Treating any of them as "extending NQ" is the failure shape the discipline exists to prevent.
 
@@ -156,33 +155,33 @@ This boundary is the single most likely category error future surfaces will try 
 
 ## Where the next pressure lands
 
-Slice 1e is the first slice that demands packet custody actually exists somewhere. Today operators supply packets manually (e.g., in CI, where they live in `$CI_ARTIFACTS` for as long as the job artifact retention says). That is fine for the slice that just shipped; it would be inadequate for richer custody surfaces.
+Replay requires packet custody somewhere. Today operators supply packets manually—for example, CI artifacts retained alongside the receipt. That is enough for a bounded command invocation but may be inadequate for a long-lived audit policy.
 
 The pressure map (none of these are committed-to in scope; named here so the discipline is visible):
 
 - **Receipt bundles.** A directory or archive containing a receipt plus all the witness packets it cites, so replay can run from a single artifact. The shape is straightforward; the discipline question is what "bundle" means for receipts that span multiple subjects or evaluators.
-- **Packet retention.** The aggregator already retains finding history; witness-packet retention is a separate, currently-unaddressed question. `EVIDENCE_RETIREMENT_GAP` already names some of this surface.
+- **Packet retention.** The aggregator retains finding history, but it does not provide a general witness-packet archive for receipt replay.
 - **Cross-host attestation.** A second NQ instance verifying receipts from a first is a different problem from running `check`/`replay` locally. Discipline question: how does the verifier obtain the witness packets it doesn't itself hold?
 - **Incident bundles.** A future `nq-monitor bundle` shape would package a receipt + packets + replay report + freshness verdict for postmortem use. The shape is straightforward; the discipline question is what counts as "the incident" relative to one receipt.
-- **Receipt diff.** A future `nq-monitor receipt diff` would tell you whether the world changed, the evaluator changed, or the policy changed between two receipts of similar shape. This is what makes evaluator drift visible across time. Currently doable by reading both receipts; a verb would make it a first-class operation.
+- **Receipt diff.** A future diff could surface changed artifact fields, packet references, or evaluator bindings. It could not by itself attribute those changes to the world, witness, evaluator, or policy.
 
-These are pressure, not scope. None of them is in flight. The right move when any of them comes up is the same posture every other Slice 1 question got: a design preflight first, then a bounded commit, then the next slice.
+These are pressure, not scope. None is promised by the current architecture; each requires a forcing case and its own design decision.
 
 ## Slogans
 
 The doctrinal lines are quoted across this document and `docs/operator/RECEIPTS.md`. Pinning them in one place so they don't drift in restatement:
 
-> A stale receipt is not a forged receipt. A forged receipt is not a stale receipt.
+> A stale receipt is not structurally broken.
 
-The four-way distinction the failure taxonomy enforces. *Don't collapse them.*
+Freshness and structural consistency are separate axes.
 
 > An unanchored receipt is not a broken receipt.
 
-Pre-1b receipts (and any future path that doesn't seal) have no integrity claim to violate. Absence of `content_hash` is not corruption; it is unauditability.
+An unsealed receipt (and any path that does not populate `content_hash`) has no structural self-hash to violate. Absence of `content_hash` is not corruption; it means that particular check is unavailable.
 
-> Replay failure is not forgery. Replay success is not fresh authorization.
+> Replay mismatch is not proof of forgery. Replay success is not fresh authorization.
 
-Replay is reproduction, not ratification. A failed replay can mean missing material, an unsupported version, or genuine forgery — it does not mean only the last one. A successful replay does not renew freshness or authorize action.
+Replay is reproduction, not ratification. A non-OK result can mean missing material, an unsupported version, non-applicability, structural failure, or semantic mismatch. A successful replay does not renew freshness or authorize action.
 
 > A digest proves what would match. Replay proves you still have enough to explain the decision.
 
@@ -202,11 +201,9 @@ The engineer-shaped sticky handle. Tells you what kind of tool this is in a sent
 
 ## See also
 
-- [`PATH_TO_1_0.md`](../working/decisions/PATH_TO_1_0.md) — Slice 1a/1b/1c/1d/1e scope and ordering; Phase 2 complete.
 - [`RECEIPT_REPLAY.md`](RECEIPT_REPLAY.md) — semantics pin for `nq-monitor receipt check` and `nq-monitor receipt replay`.
 - [`SHARED_SPINE.md`](SHARED_SPINE.md) — the witness → claim → receipt pipeline.
-- [`SPINE_AND_ROADMAP.md`](SPINE_AND_ROADMAP.md) — the five-layer spine and roadmap phases.
+- [`SPINE_AND_ROADMAP.md`](SPINE_AND_ROADMAP.md) — the claim-verification spine and evolution rules.
 - [`../operator/RECEIPTS.md`](../operator/RECEIPTS.md) — operator-facing receipt guide.
-- [`../working/decisions/CLAIM_PREFLIGHT.md`](../working/decisions/CLAIM_PREFLIGHT.md) — preflight doctrine and the laundering-pattern refusal.
-- [`../operator/CLAIM_CATALOG.md`](../operator/CLAIM_CATALOG.md) — every shipped claim and what it refuses.
+- [`../operator/CLAIM_CATALOG.md`](../operator/CLAIM_CATALOG.md) — public claim surfaces and what they refuse.
 - [`../operator/REFUSAL_EXAMPLES.md`](../operator/REFUSAL_EXAMPLES.md) — worked refusal examples.

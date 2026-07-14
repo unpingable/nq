@@ -32,29 +32,34 @@ into four [failure domains](failure-domains.md):
 - **Δo — missing**: signals that were present have stopped arriving
 - **Δs — skewed**: data is arriving but is corrupt or internally inconsistent
 - **Δg — unstable**: substrate under pressure (disk, memory, WAL, services)
-- **Δh — drifting**: within spec now, trending toward failure
+- **Δh — degrading**: change, oscillation, or deterioration is itself evidence
 
-A finding carries explicit state on three orthogonal axes:
+A finding carries several orthogonal fields. These are examples; the
+[Operator Glossary](GLOSSARY.md) is the authoritative vocabulary reference.
 
-| Axis | Values |
+| Field | Current values |
 |---|---|
-| condition | clear / pending / open |
-| stability | stable |
-| visibility | observed / suppressed |
+| `condition_state` (finding export) | `open`, `clear`, `suppressed` |
+| `stability` | `new`, `stable`, `flickering`, `recovering` |
+| `visibility_state` | `observed`, `suppressed` |
+| `basis_state` | `live`, `stale`, `retired`, `invalidated`, `unknown` |
+| `service_impact` | `none_current`, `degraded`, `immediate_risk` |
+| `action_bias` | `watch`, `investigate_business_hours`, `investigate_now`, `intervene_soon`, `intervene_now` |
 
-The visibility axis is where metric-alerting stacks often lose
-operational meaning. When a host stops reporting, NQ does not silently
-drop its child findings — they remain in the database with
-`visibility=suppressed`, holding their last-known state, folded under
+The visibility field is where metric-alerting stacks often lose operational
+meaning. When a host stops reporting, NQ does not silently drop its child
+findings — they remain in the database with
+`visibility_state=suppressed`, holding their last-known state, folded under
 the unreachable parent. Loss of observability reduces confidence; it
 does not fabricate health.
 
-The core model separates condition from visibility; that is the
-load-bearing distinction.
+The core model separates condition, visibility, evidence currency, present
+impact, and recommended response. Unknown or suppressed evidence is never
+healthy merely because a child alert stopped firing.
 
 ## How they compose
 
-NQ is **Prom-compatible at the edge.** Its publisher scrapes any
+NQ is **Prom-compatible at the edge.** `nq-witness` scrapes any
 Prometheus-compatible `/metrics` endpoint, so existing exporters
 (node_exporter, postgres_exporter, blackbox_exporter, etc.) remain useful
 without modification. See [integrations](integrations.md) for the setup.
@@ -64,13 +69,13 @@ A common arrangement:
 - Prometheus continues scraping exporters and serving Grafana
 - NQ also scrapes the same exporters (or a subset)
 - Prometheus answers *"what is this number, over time?"*
-- NQ answers *"what kind of operational claim can this signal support
-  right now, given everything else we can and can't see?"*
+- NQ classifies threshold, change, disappearance, and signal-quality findings
+  while preserving whether the source is still observable.
 
-You do not have to migrate anything to start. Point an NQ publisher at
-the same `/metrics` endpoints, point an aggregator at the publisher, and
-you have a second view that classifies failure shape rather than counting
-threshold crossings.
+You do not have to migrate anything to start. Point `nq-witness` at the same
+`/metrics` endpoints, point `nq-monitor` at the witness, and
+you have a second view that does not stop at a value, change, or threshold
+crossing: it classifies the failure shape and keeps evidence loss explicit.
 
 ## Where NQ changes the incident
 
@@ -106,13 +111,14 @@ preserve the operational meaning those systems often lose.
 
 ## The line, plainly
 
-> NQ does not ask whether a metric changed. It asks what operational
-> claim the available testimony can still support.
+> NQ does not stop at whether a metric changed. It asks what kind of failure
+> the change, threshold, absence, or untrustworthy signal represents—and
+> whether the evidence is still visible.
 
 That is the difference. Everything else in this document is a consequence
 of it.
 
-## Exporters as witnesses (forward note)
+## Exporters as bounded evidence
 
 A subsection that becomes load-bearing once NQ has more than one Prom-backed
 witness feeding the same finding. Prometheus exporters are best read as
@@ -138,17 +144,9 @@ When adding or consuming a Prom exporter, it is worth informally documenting:
 - how freshness is established
 - what silence means: no data, no scrape, no sample, no target, or no testimony
 
-This is orientation discipline, not schema. NQ does not yet implement a full
-witness-composition profile; until it does, Prom-backed findings should be
-read with the conservative assumption that exporter outputs are weak testimony
-whose composition has not been fully qualified.
-
-Related theory lives upstream in
-`papers/working/primitives/witness-invariance-composition.md`, with formal
-vocabulary in `lean/LeanProofs/Admissibility/WitnessInvariance.lean`. See also
-[`DURABLE_ARTIFACT_SUBSTRATE_GAP`](../working/gaps/DURABLE_ARTIFACT_SUBSTRATE_GAP.md)
-§Upstream theory note.
-
-Marked constraint, not yet doctrine:
+NQ does not currently implement generic witness voting or an independence
+model for exporters. Prom-backed findings therefore retain the conservative
+scope of their configured scrape path and the explicit detector that consumed
+them.
 
 > A finding is not more qualified than the composition rule that minted it.

@@ -1,178 +1,146 @@
-# Failure Domains
+# Failure domains
 
-NQ organizes operational findings into four failure domains. Each domain
-represents a distinct way a system can fail, not just a threshold breach.
+NQ classifies findings by the broad kind of wrong an operator needs to
+investigate. The four domains are not severities and are not ordered by
+importance. See the [Operator Glossary](GLOSSARY.md) for the complete set of
+finding-state axes and their exact values.
 
-Understanding which domain a finding belongs to changes what you investigate.
+The detector examples below are representative, not an exhaustive inventory.
+Collector-specific findings use the same domains.
 
----
+## `Δo` — missing
 
-## Δo — missing
+**Operator label:** missing
 
-**The system can't see something it should.**
+**Question:** What stopped reporting, and when?
 
-Signals that were present have stopped arriving. Data is absent, not wrong.
+Expected testimony has stopped arriving or cannot be observed. Absence is the
+fact; it must not be read as a clean result.
 
-| Detector | Fires when |
+| Representative finding | Fires when |
 |---|---|
-| `stale_host` | Host metrics haven't updated in 3+ generations |
-| `stale_service` | Service data hasn't updated in 3+ generations |
-| `signal_dropout` | A service or metric that was consistently present has vanished |
+| `stale_host` | Host observations are more than the configured number of generations behind. |
+| `stale_service` | Service observations are more than the configured number of generations behind. |
+| `signal_dropout` | A previously consistent service or metric series vanishes. |
+| `log_silence` | A normally active log source goes quiet. |
+| `zfs_witness_silent`, `smart_witness_silent` | A storage witness can no longer testify. |
 
-**What to investigate**: Is the publisher running? Is the service still
-deployed? Did a config change remove a scrape target? Network partition?
+Start with the collection process, service deployment, network path,
+permissions, and recent scrape-target changes. When a parent such as
+`stale_host` opens, NQ can preserve child findings as
+`visibility_state=suppressed` rather than pretending they cleared.
 
-**The key question**: what stopped reporting, and when?
+## `Δs` — skewed
 
----
+**Operator label:** skewed
 
-## Δs — skewed
+**Question:** The data is present, but can it be trusted?
 
-**The system can see, but what it sees is wrong.**
+Testimony is arriving but is corrupt, contradictory, malformed, or otherwise
+unreliable.
 
-Data is arriving but it's corrupt, impossible, or internally inconsistent.
-
-| Detector | Fires when |
+| Representative finding | Fires when |
 |---|---|
-| `metric_signal` | A Prometheus metric reports NaN or Infinity |
-| `source_error` | Publisher returned an error or malformed response |
+| `metric_signal` | A Prometheus-compatible metric reports NaN or infinity. |
+| `source_error` | A source pull fails or returns unusable data. |
+| `error_shift` | Log error output moves sharply away from its baseline. |
+| `check_error` | A saved SQL check cannot execute, so its target is unobserved. |
 
-**What to investigate**: Is the exporter healthy? Did a dependency fail
-upstream of the metric? Is there a clock skew or serialization bug?
+Start with exporter and collector health, parsing, upstream dependencies,
+clock behavior, and recent configuration changes.
 
-**The key question**: the data is present but can you trust it?
+## `Δg` — unstable
 
----
+**Operator label:** unstable
 
-## Δg — unstable
+**Question:** What part of the substrate is outside its operating envelope?
 
-**The system is under pressure or breaching operational bounds.**
+The substrate is observable, but it is under pressure or outside an
+operational bound.
 
-Something is measurably wrong with the substrate — disk, memory, database
-internals, service health. The system is present and reporting truthfully,
-but what it's reporting is bad.
-
-| Detector | Fires when |
+| Representative finding | Default condition |
 |---|---|
-| `disk_pressure` | Disk usage > 90% |
-| `mem_pressure` | Memory usage > 85% |
-| `wal_bloat` | SQLite WAL > 5% of database size (or > 256MB on small DBs) |
-| `freelist_bloat` | SQLite freelist > 20% of database size (or > 1GB) |
-| `service_status` | A service is down or degraded |
+| `disk_pressure` | Disk use is above 90%. |
+| `mem_pressure` | Memory use is above 85%. |
+| `wal_bloat` | WAL is above the configured database-relative threshold, or is above the absolute floor on a small database. |
+| `pinned_wal` | WAL is above its floor, the WAL file is newer, and the main database mtime stayed old—the bounded shape of a possible checkpoint pin. |
+| `freelist_bloat` | Reclaimable space exceeds **both** the percentage threshold and the absolute-size floor. |
+| `service_status` | A directly observed service is down, degraded, or in another unexpected state. |
 
-Thresholds are relative where possible. A 256MB WAL on a 54GB database is
-0.5% — not a problem. The same WAL on a 500MB database is 50% — very much
-a problem. NQ calibrates to context.
+Defaults are starting points, not universal capacity policy. Thresholds that
+are configurable should be tuned in the monitor configuration. For example,
+the default `freelist_bloat` gate requires both more than 20% reclaimable and
+more than 1024 MB reclaimable; either condition alone is deliberately
+insufficient.
 
-**What to investigate**: Resource exhaustion? Runaway process? Missing
-maintenance (VACUUM, checkpoint)? Capacity planning?
+Start with resource exhaustion, contention, checkpointing or compaction,
+runaway processes, service dependencies, and capacity planning.
 
-**The key question**: what is under strain, and is it getting worse?
+## `Δh` — degrading
 
----
+**Operator label:** degrading
 
-## Δh — degrading
+**Question:** What changed, is it repeating, and what margin was lost?
 
-**The system is getting worse over time.**
+Change over time, oscillation, or deterioration is itself the finding. Many of
+these findings need history or a previous observation; storage-witness
+findings can also use explicit counter increases, wear, state changes, or lost
+redundancy as deterioration evidence.
 
-This is not a snapshot problem — it's a trend. Something that was fine
-yesterday is worse today and will be worse tomorrow. Δh findings require
-history to detect; they don't fire until NQ has enough generations to
-establish a baseline.
-
-| Detector | Fires when |
+| Representative finding | Fires when |
 |---|---|
-| `resource_drift` | CPU/memory/disk trending above trailing average |
-| `service_flap` | Service state changed 3+ times in 12 generations |
-| `scrape_regime_shift` | Metric series count spiked or collapsed |
+| `resource_drift` | Disk, memory, or CPU moves materially above its trailing baseline. |
+| `service_flap` | Service state repeatedly changes in the recent window. |
+| new-series `scrape_regime_shift` | The active metric-series population grows sharply. A vanished-series burst uses `Δo` because expected signal disappeared. |
+| `zfs_error_count_increased` | ZFS vdev error counters rise between observations. |
+| `smart_reallocated_sectors_rising` | A drive's reallocated-sector counter rises. |
 
-**What to investigate**: What changed? New deployment? Traffic pattern shift?
-Slow leak (memory, disk, connections)? Configuration drift?
+Start with deployments and configuration changes, growth rate, repeated
+restarts, wear and error-counter trajectories, and loss of redundancy.
 
-**The key question**: is this getting worse, and at what rate?
+## Domain, severity, and response are separate
 
----
+`domain` answers what kind of failure to investigate. Native `severity`
+usually ranks persistence across collection generations. `service_impact`
+records present consequence, and `action_bias` recommends a response posture.
 
-## Severity escalation
+For example, a `freelist_bloat` finding can remain `Δg`/unstable, become
+`severity=critical` after long persistence, still have
+`service_impact=none_current`, and recommend
+`action_bias=investigate_business_hours`. None of those fields overrides the
+others.
 
-Domain and severity are orthogonal axes, not a single ladder.
+With the default native escalation thresholds:
 
-**Domain** answers: what kind of failure is this? (static, per-generation)
-**Severity** answers: how persistent is this? (temporal, across generations)
+| Severity | Consecutive generations |
+|---|---|
+| `info` | 1–30 |
+| `warning` | 31–180 |
+| `critical` | 181+ |
 
-A finding can be Δs/skewed at `info` (just appeared) or Δs/skewed at
-`critical` (persisted for hours). The domain didn't change — the
-operator's urgency did.
+Those boundaries use strict greater-than comparisons and are configurable.
+They are generation counts, not guaranteed wall-clock durations. A directly
+observed down/failed/dead `service_status` incident is the narrow exception:
+it is floored at `warning` immediately. Imported findings carry their
+producer-declared severity.
 
-This distinction matters because the static failure taxonomy does not
-include a path from every domain to every other domain. A skewed signal
-(Δs) does not *become* hysteresis (Δh) through the taxonomy graph. But a
-skewed signal that persists for 3 hours *does* demand escalated attention
-through the temporal persistence machinery. These are different claims
-carried by different systems.
+See [Severity and persistence](GLOSSARY.md#severity-and-persistence-severity)
+and [Why NQ Uses Failure Domains Instead of Priority](../theory/domains-not-priority.md)
+before deriving routing policy.
 
-All findings start at `info` and escalate based on persistence:
+## Query by domain
 
-| Severity | Meaning | Default timing |
-|---|---|---|
-| `info` | New finding, not yet persistent | < 30 consecutive generations |
-| `warning` | Finding has persisted | 30+ generations (~30 min at 60s interval) |
-| `critical` | Finding is entrenched | 180+ generations (~3 hours) |
-
-Escalation timings are configurable in the aggregator config:
-
-```json
-{
-  "escalation": {
-    "warn_after_gens": 30,
-    "critical_after_gens": 180
-  }
-}
-```
-
-A finding that clears and reappears resets its consecutive generation count.
-This prevents flapping findings from escalating.
-
-Escalation does not imply a taxonomy transition. A finding stays in its
-original domain regardless of how long it persists. The domain tells you
-*what to investigate*. The severity tells you *how urgently*.
-
----
-
-## Why domains matter
-
-Traditional monitoring asks: **is this above threshold?**
-
-NQ asks: **what kind of failure is this?**
-
-The answer changes triage:
-
-- A **missing** signal means you investigate connectivity and deployment.
-- A **skewed** signal means you investigate data integrity upstream.
-- An **unstable** substrate means you investigate resources and maintenance.
-- A **degrading** trend means you investigate what changed and when.
-
-Four different investigations. One dashboard would show them all as "red."
-
----
-
-## Domain tags in SQL
-
-Every finding carries its domain tag. Query by domain:
+The Greek codes are the SQLite vocabulary; the English labels are the
+operator-facing vocabulary.
 
 ```sql
--- All missing-type findings
-SELECT * FROM v_warnings WHERE domain = 'Δo'
+-- Current missing-observable findings
+SELECT *
+FROM v_warnings
+WHERE domain = 'Δo';
 
--- All degrading trends
-SELECT * FROM v_warnings WHERE domain = 'Δh'
-
--- Count findings by domain
-SELECT domain, COUNT(*) FROM v_warnings GROUP BY domain
+-- Current finding count by failure mode
+SELECT domain, COUNT(*) AS findings
+FROM v_warnings
+GROUP BY domain;
 ```
-
-## Internal vs external labels
-
-The Greek letters (Δo, Δs, Δg, Δh) are the internal schema vocabulary.
-The human labels (missing, skewed, unstable, degrading) appear in the UI
-and notifications. Both refer to the same concept.

@@ -1,10 +1,14 @@
 [Unit]
-Description=nq publisher (serves GET /state)
-After=network.target
+Description=NQ witness publisher (serves GET /state)
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/opt/nq/nq publish -c /opt/nq/publisher.json
+User=nq
+Group=nq
+UMask=0027
+ExecStart=/usr/local/bin/nq-witness --config /etc/nq/publisher.json
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

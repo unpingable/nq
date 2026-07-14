@@ -6,13 +6,15 @@ Where to start, by what you're trying to do.
 
 Start at `operator/` — install, run, read findings, interpret receipts.
 
-- [`operator/quickstart.md`](operator/quickstart.md) — monitoring a host in 5 minutes
+- [`operator/quickstart.md`](operator/quickstart.md) — unprivileged single-host trial, verified end to end
+- [`operator/deployment.md`](operator/deployment.md) — production systemd, multi-host security, backup, and upgrade
 - [`operator/OPERATOR_GUIDE.md`](operator/OPERATOR_GUIDE.md) — install, deploy, configure, troubleshoot
-- [`operator/CLAIM_CATALOG.md`](operator/CLAIM_CATALOG.md) — every shipped claim and what it refuses
+- [`operator/GLOSSARY.md`](operator/GLOSSARY.md) — authoritative finding and state vocabulary
+- [`operator/CLAIM_CATALOG.md`](operator/CLAIM_CATALOG.md) — public claims, required evidence, and refusals
 - [`operator/RECEIPTS.md`](operator/RECEIPTS.md) — `nq-monitor receipt check` and `receipt replay` with worked examples
 - [`operator/REFUSAL_EXAMPLES.md`](operator/REFUSAL_EXAMPLES.md) — when NQ declines and why
 - [`operator/VERDICTS.md`](operator/VERDICTS.md) — the eight verdicts
-- [`operator/failure-domains.md`](operator/failure-domains.md) — the four domains and every detector
+- [`operator/failure-domains.md`](operator/failure-domains.md) — the four domains and representative detector families
 - [`operator/integrations.md`](operator/integrations.md) — Prometheus, Telegraf, systemd, Docker, webhooks
 - [`operator/sql-cookbook.md`](operator/sql-cookbook.md) — ready-to-use queries
 - [`operator/incident-replays.md`](operator/incident-replays.md) — three scenarios end-to-end
@@ -25,7 +27,7 @@ Start at `operator/` — install, run, read findings, interpret receipts.
 Start at `architecture/` for current design, then `theory/` for why-it's-this-shape.
 
 - [`architecture/OVERVIEW.md`](architecture/OVERVIEW.md) — as-built architecture
-- [`architecture/SPINE_AND_ROADMAP.md`](architecture/SPINE_AND_ROADMAP.md) — the five-layer claim-preflight spine + roadmap phases
+- [`architecture/SPINE_AND_ROADMAP.md`](architecture/SPINE_AND_ROADMAP.md) — the claim-verification spine and evolution rules
 - [`architecture/SHARED_SPINE.md`](architecture/SHARED_SPINE.md) — the witness → claim → receipt pipeline
 - [`architecture/CLAIM_CUSTODY.md`](architecture/CLAIM_CUSTODY.md) — what claim custody means and why
 - [`architecture/RECEIPT_REPLAY.md`](architecture/RECEIPT_REPLAY.md) — receipt-check / receipt-replay semantics
@@ -47,7 +49,7 @@ Read the architecture set above first. Then:
 
 - [`working/decisions/`](working/decisions/) — non-binding design records, candidate doctrine, working notes
 - [`working/decisions/preflights/`](working/decisions/preflights/) — per-slice design preflights (cutovers, kind introductions)
-- [`working/gaps/`](working/gaps/) — open design questions and candidate-ratified gap specs (50+ entries)
+- [`working/gaps/`](working/gaps/) — open design questions and candidate-ratified gap specs
 - [`working/coverage/`](working/coverage/) — substrate-corpus mapping, coverage-recognition vocabulary
 
 ## Naming convention

@@ -1,8 +1,8 @@
 {
-  "_comment": "Template for nq-serve.service. Each host customizes locally; live configs live outside the repo (gitignored). See README and AGENTS.md.",
+  "_comment": "Template for nq-serve.service. Install as /etc/nq/aggregator.json and customize sources before starting the service.",
 
   "interval_s": 60,
-  "db_path": "/opt/nq/nq.db",
+  "db_path": "/var/lib/nq/nq.db",
   "bind_addr": "127.0.0.1:9848",
 
   "sources": [
@@ -18,19 +18,16 @@
     "prune_every_n_cycles": 60
   },
 
-  "disk_budget": {
-    "db_max_size_mb": 200,
-    "warn_at_pct": 80
-  },
-
-  "_notifications_comment": "Optional. Channels: discord, slack, file. min_severity: info | warning | critical. Empty channels list disables outbound notifications without removing the block.",
+  "_notifications_comment": "Optional. Channels: discord, slack, webhook. min_severity: info | warning | critical. Empty channels disables outbound notifications. Set external_url when enabling channels so finding links use the operator-facing dashboard URL.",
   "notifications": {
     "channels": [],
-    "min_severity": "warning"
+    "min_severity": "warning",
+    "external_url": "http://127.0.0.1:9848"
   },
 
-  "_liveness_comment": "Optional. Path NQ writes its sentinel-readable liveness artifact to. Consumers (Night Shift, oncall sentinel) tail this file out-of-band.",
+  "_liveness_comment": "Optional. nq-monitor writes this artifact after each successful observation publish. It is a loop-checkpoint signal, not proof every follow-on detector, lifecycle, notification, seal, or self-probe step succeeded. The service user must be able to write its parent directory.",
   "liveness": {
-    "path": "/opt/nq/liveness.json"
+    "path": "/var/lib/nq/liveness.json",
+    "instance_id": "nq-central"
   }
 }

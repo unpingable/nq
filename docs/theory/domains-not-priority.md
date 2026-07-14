@@ -1,5 +1,9 @@
 # Why NQ Uses Failure Domains Instead of Priority
 
+For the exact, current values of every finding-state field, use the
+[Operator Glossary](../operator/GLOSSARY.md). This note explains one design
+choice: why `domain` remains separate from routing priority.
+
 Most monitoring systems make **priority** the first-class concept.
 Something crosses a threshold, gets labeled P1/P2/P3 or critical/warning/info,
 and enters a queue.
@@ -17,14 +21,19 @@ preserve that distinction at the point where most systems flatten it away.
 
 ## Severity still exists
 
-Findings escalate from `info` to `warning` to `critical` based on
-persistence. Notifications route accordingly. But severity in NQ is not the
-whole story and not the primary ontology.
+Native findings normally escalate from `info` to `warning` to `critical`
+based on consecutive observed generations. There are narrow exceptions, such
+as the immediate `warning` floor for a directly observed down service, and
+imported findings carry producer-declared severity. Notification policy can
+filter on severity, but severity is not the whole story.
 
-- **Severity** answers: how entrenched is this?
+- **Severity** answers: how far has this finding moved through NQ's severity
+  policy, usually by persistence?
 - **Failure domain** answers: what mode of failure are we in?
+- **Action bias** answers: what response posture does the detector recommend?
 
-Different questions.
+These are different questions. `severity=critical` does not by itself mean
+"page now"; that posture is `action_bias=intervene_now`.
 
 ## The axes NQ keeps separate
 
@@ -34,10 +43,15 @@ keeps them separate longer:
 | Axis | Question |
 |---|---|
 | **Domain** | What kind of failure is this? |
-| **Severity** | How bad is it now? |
-| **Persistence** | Is it transient or entrenched? |
-| **Scope** | What object or fleet slice is affected? |
-| **Evidence** | Do we have trustworthy state, or is the signal itself suspect? |
+| **Failure class** | What structural shape does it have? |
+| **Severity** | How far through severity policy has it moved? |
+| **Stability** | Is its presence new, consistent, flickering, or recovering? |
+| **State kind** | Is it an incident, degradation, maintenance item, or information? |
+| **Service impact** | What observable consequence exists now? |
+| **Action bias** | What response posture is recommended? |
+| **Work state** | What has an operator recorded about handling it? |
+| **Visibility** | Can NQ currently observe it? |
+| **Basis** | Is its supporting evidence live, stale, retired, invalidated, or unknown? |
 
 ## Why this matters for triage
 
@@ -55,16 +69,20 @@ which lane you are in.
 NQ does not reject routing or escalation. It just refuses to treat them
 as the primary truth.
 
-- NQ preserves **what kind of wrong** this is
-- Operators or downstream integrations derive **how loud to make it**
-- If you need a `P1/P2/P3` for PagerDuty or Jira, compute it from
-  domain + severity + persistence at export time
+- NQ preserves **what kind of wrong** this is.
+- NQ also exposes present impact, persistence-derived severity, recommended
+  response, observability, and evidence currency as distinct fields.
+- Operators or downstream integrations derive **how loud to make it** from
+  the fields appropriate to local policy. A priority projection will usually
+  consider at least `service_impact`, `action_bias`, `severity`, and evidence
+  currency rather than domain alone.
 
 Priority is queue policy. Failure domain is diagnosis.
 
 ## Short version
 
-Traditional monitoring asks: **how urgent is this?**
-NQ asks: **what kind of failure is this?**
+Traditional priority-first monitoring asks: **how urgent is this?**
+NQ first asks: **what kind of failure is this?**
 
-Urgency still matters. It is just not treated as the primary fact.
+Urgency still matters. It is represented separately instead of being inferred
+from the failure domain.

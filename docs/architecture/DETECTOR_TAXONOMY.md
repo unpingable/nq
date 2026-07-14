@@ -1,297 +1,127 @@
-# Detector Taxonomy
+# Detector taxonomy
 
-**Status:** working taxonomy — back-filled 2026-04-27 after the SMART Phase 2 detector family landed and made the gaps in our coverage legible.
-**Purpose:** give NQ a stable vocabulary for detector families without collapsing cross-cutting axes (severity, state kind, directness, basis, maintenance) into the taxonomy itself.
+This is an as-built reference for operators reading findings and contributors
+adding detectors. The authoritative built-in detector runner is
+[`run_all`](../../crates/nq-db/src/detect.rs) in `nq-db`; it evaluates the
+latest committed generation and returns the findings that are present now.
 
-## Why this exists
+A detector family names the **system question being asked**. It is an
+organizational aid, not a stored finding field. The stored axes—`domain`,
+`failure_class`, `severity`, `state_kind`, `service_impact`, `action_bias`,
+and lifecycle state—remain independent. See the
+[Operator Glossary](../operator/GLOSSARY.md) for their exact meanings and
+[Failure Domains](../operator/failure-domains.md) for the four domain codes.
 
-NQ has accumulated detectors organically through forcing cases. A taxonomy backfilled at this point answers two questions at once:
+## Shipped families
 
-1. What system question does each detector ask?
-2. Which buckets does NQ have shallow or empty coverage in?
+The examples are representative rather than a release inventory. A detector
+belongs with the family that best states an operator's first question when it
+fires, even when its collector name suggests a different grouping.
 
-This taxonomy is **not** the failure-domain Δ-codes (`Δo`/`Δs`/`Δg`/`Δh` — see [`failure-domains.md`](../operator/failure-domains.md)). The Δ-codes are the operator-facing failure surface; this taxonomy is the *kind of question* a detector poses to the system. They are orthogonal — a detector has both a Δ-code and a taxonomy bucket.
-
-This taxonomy answers:
-
-- what kind of system question a detector is asking
-- which neighboring detector families it belongs with
-- where NQ has gaps worth filling
-
-This taxonomy does **not** answer:
-
-- severity
-- directness (`direct`/`derived`/`temporal`/`aggregate`)
-- basis or completeness
-- maintenance coverage
-- routing or page policy
-
-Those are orthogonal axes (see §Cross-cutting axes below).
-
-## Core rule
-
-A detector family names the **question being asked about the system**, not the eventual notification posture. If a detector's *name* encodes severity or routing, it's wrong.
-
-## Taxonomy buckets
-
-### 1. Resource / saturation
-
-**Question:** can the object still breathe?
-
-NQ today: `disk_pressure`, `memory_pressure`, `resource_drift` (host metrics).
-
-Common follow-ups not yet built: `cpu_busy`, `cpu_steal_high`, `swap_activity_high`, `disk_inodes_low`, `disk_latency_high`, `disk_queue_depth_high`, `net_packet_loss`.
-
-Typical shape: direct or thresholded-direct; noisy without duration/magnitude gates.
-
-### 2. Liveness / reachability
-
-**Question:** is it there right now?
-
-NQ today: `stale_host`, `stale_service`, `service_down`, `signal_dropout`, `log_silence`, `zfs_witness_silent`, `smart_witness_silent`.
-
-This is where **down is down**. Direct present-tense findings live here. `service_down` is the pure case. The other six are **silence-shaped** — they answer "did this thing go quiet?" — and collapse into three mechanism shapes (age-threshold, presence-delta, baseline-collapse) that share an operator-facing concept but not a SQL pattern. See the silence sub-taxonomy below and [`gaps/SILENCE_UNIFICATION_GAP.md`](../working/gaps/SILENCE_UNIFICATION_GAP.md).
-
-#### 2a. Silence sub-taxonomy (SILENCE_UNIFICATION — contract V1 shipped, partial)
-
-Silence is a **positive finding class, not the absence of findings**: NQ observed that something stopped reporting, and that absence is itself evidence (distinct from a coverage gap, which is "we failed to observe" — bucket 9). All six emit `FailureClass::Silence`, but historically each reinvented the contract for the same question.
-
-SILENCE_UNIFICATION defines a shared contract every silence finding carries, regardless of mechanism, so consumers (CLI export, dashboard, Night Shift) iterate over silence findings without parsing `kind` strings:
-
-```text
-silence_scope:      host | service | source | witness | series | log_source | extraction
-silence_basis:      age_threshold | presence_delta | baseline_collapse
-silence_duration_s: how long the object has been silent
-silence_expected:   none | maintenance | intended_liveness   (bridge to MAINTENANCE / REGISTRY_PROJECTION)
-```
-
-The **mechanism is not the contract** — three implementation shapes stay distinct in SQL while sharing the operator-facing fields:
-
-| Mechanism (`silence_basis`) | Predicate | Detectors |
+| Family | Operator question | Representative finding kinds |
 |---|---|---|
-| `age_threshold` | last evidence older than threshold | `stale_host`, `stale_service`, `zfs_witness_silent`, `smart_witness_silent` |
-| `presence_delta` | existed in recent history, absent in current | `signal_dropout` |
-| `baseline_collapse` | was producing nonzero output, now zero | `log_silence` |
-
-**Shipped (V1, 2026-06-12):** the two witness detectors — `smart_witness_silent` + `zfs_witness_silent` — carry the full contract, **derived at the persist seam** (`publish.rs`) from existing finding fields; `detect.rs` is untouched, so detector semantics are structurally unaffected (OQ1 resolved as "documented finding-meta fields," not a `Finding` struct field). `extraction_stale` (DURABLE_ARTIFACT_SUBSTRATE V1) also composes onto the contract. Consumers must read a missing `silence` block as **"not yet unified," not "not silence."**
-
-##### Silence doctrine — the knife (operator-ruled 2026-07-01)
-
-Silence is a **positive finding under a contract**, not an inference from missing data:
-
-> A silence finding testifies: **"I stopped hearing X under expected-hearing contract Y."**
-> It does NOT testify that the condition X reported on is gone, changed, or resolved.
-
-The name is not the contract — a detector is admissible to the silence bucket only once it can name its *expected-hearing contract* (which producer, at what expected cadence/scope). Absent that, it is silence-shaped vibes, not a silence finding.
-
-What silence is **not** — four things it is routinely confused with, kept distinct on purpose:
-
-```text
-silence ≠ absence               (a NULL/empty row is not a finding; bucket 9 coverage-gap is "we failed to observe")
-silence ≠ retirement            (retired/invalidated/superseded evidence is a lifecycle verb, not a liveness fact)
-silence ≠ inventory disappearance (an object leaving a known set is a registry/intended-set question, bucket 8)
-silence  = expected testimony did not arrive, under a declared expectation contract
-```
-
-This is the **precursor knife for EVIDENCE_RETIREMENT** — retirement needs the same three-way cut so "not heard from" is never laundered into "no longer valid":
-
-```text
-not heard from   → silence / liveness / expected-testimony failure        (bucket 2)
-no longer valid  → retired / invalidated / superseded evidence            (lifecycle)
-not in inventory → registry / intended-set / projection question          (bucket 8)
-```
-
-##### Held detectors (NON-authorizing — do not tag pending REGISTRY_PROJECTION)
-
-The four non-witness detectors emit `FailureClass::Silence` today but do **not** carry the contract fields, and MUST NOT be tagged until the gate below clears. Tagging them now would turn a missing registry into fake certainty with a nicer enum.
-
-```text
-stale_host:     HOLD — may become intended-liveness (bucket 8) once REGISTRY_PROJECTION defines the expected host set.
-stale_service:  HOLD — may become intended-liveness (bucket 8) once REGISTRY_PROJECTION defines the expected service set.
-signal_dropout: HOLD — unresolved silence vs inventory disappearance; requires known-set (intended-set) semantics.
-log_silence:    HOLD — silence-shaped, but must name its expected producer/scope (its contract) before bucket admission.
-```
-
-Gate: an OQ3/OQ4 operator ruling, or REGISTRY_PROJECTION landing (whichever forces the bucket assignment first). Until then the witness pair + `extraction_stale` are the only contract-carrying silence findings.
-
-**Witness-silence is parent-node evidence, not a peer alert.** Under TESTIMONY_DEPENDENCY_GAP, `*_witness_silent` detects that *a producer of other findings has stopped testifying* and promotes to a `node_unobservable` parent that suppresses the descendants the witness produced (one parent alert, not N peer alerts). The detector stays — kind string and mechanism preserved — but its role on the alerting surface changes. This is why these two straddle bucket 2 and bucket 9 (see §9).
-
-Full spec + acceptance: [`gaps/SILENCE_UNIFICATION_GAP.md`](../working/gaps/SILENCE_UNIFICATION_GAP.md); landed-work record: [`decisions/FEATURE_HISTORY.md` § SILENCE_UNIFICATION V1](../working/decisions/FEATURE_HISTORY.md).
-
-### 3. Functional correctness
-
-**Question:** is it doing the right thing, not merely running?
-
-NQ today: `error_shift`, `scrape_regime_shift`, `smart_status_lies`, `metric_nan`, `source_error`, `check_failed`.
-
-Typical shape: derived from current evidence; often contradiction-oriented (`smart_status_lies` is the canonical example — drive self-reports OK while raw counters disagree).
-
-### 4. Progress / flow
-
-**Question:** is work actually moving?
-
-**NQ today: nothing.** ServiceRow carries `eps`, `queue_depth`, `consumer_lag`, `drop_count` fields, but no detector consumes them. The "up but doing nothing" family is a real gap.
-
-Plausible follow-ups: `queue_backlog_high`, `queue_age_high`, `cursor_stalled`, `consumer_lag_high`, `publish_gap`, `no_forward_progress`. `pinned_wal` (currently in bucket 6) has a progress flavor — "writes happening but main DB not incorporating" is fundamentally a progress question wearing a substrate hat.
-
-### 5. Dependency / path health
-
-**Question:** is this object locally okay but blocked by something else?
-
-**NQ today: nothing first-class.** `service_status` distinguishes "container absent" from "daemon unreachable" (a dependency-shaped split, commit ffcd3b8) but doesn't generalize.
-
-Plausible follow-ups: `upstream_unreachable`, `downstream_blocked`, `db_dependency_down`, `dns_resolution_failed`, `auth_provider_unreachable`, `filesystem_readonly`, `mount_missing`.
-
-### 6. Data substrate / storage state
-
-**Question:** is the substrate accumulating debt or violating expectations?
-
-NQ today: `wal_bloat`, `pinned_wal`, `freelist_bloat`.
-
-Plausible follow-ups: `checkpoint_lag`, `retention_debt`, `replication_lag`, `index_drift`, `schema_mismatch`, `compaction_overdue`, `write_tx_stalled`. `WRITE_TX_INSTRUMENTATION_GAP` is specced.
-
-### 7. Device / hardware health
-
-**Question:** is the underlying device reporting meaningful trouble?
-
-NQ today: `zfs_pool_degraded`, `zfs_vdev_faulted`, `zfs_error_count_increased`, `zfs_scrub_overdue`, `smart_uncorrected_errors_nonzero`, `smart_nvme_percentage_used`, `smart_nvme_available_spare_low`, `smart_nvme_critical_warning_set`, `smart_reallocated_sectors_rising`, `smart_temperature_high`.
-
-Note: `smart_status_lies` belongs to bucket 3 (correctness) despite being SMART-flavored — it asks "is the self-report consistent with the counters," not "is the device in trouble." The contradiction itself is the finding.
-
-### 8. Intended liveness / configuration / inventory
-
-**Question:** was this object supposed to exist and be live?
-
-**NQ today: nothing.** Discovery proposes; nothing yet confers liveness against a declared baseline. This is the registry-projection gap (`project_registry_projection.md`, `feedback_query_workflow.md`).
-
-Plausible follow-ups: `expected_object_missing`, `unexpected_object_present`, `retired_object_reporting`, `active_object_silent`, `declared_vs_observed_mismatch`, `config_drift`, `unblessed_discovery_present`. `EVIDENCE_RETIREMENT_GAP` lays groundwork.
-
-### 9. Observer / evidence quality
-
-**Question:** do we actually know enough to trust this conclusion?
-
-NQ today: partial — coverage tags (`can_testify` / `cannot_testify`) gate witness-domain detectors, and `basis_state` annotates findings. No detector yet that fires *on* coverage gaps.
-
-`zfs_witness_silent` and `smart_witness_silent` straddle this bucket and bucket 2 — chosen as bucket 2 because the operator-facing question is "is the witness reporting" (presence-shaped), but they could equally be observer-quality findings.
-
-Plausible follow-ups: `collector_partial`, `coverage_gap`, `insufficient_history`, `basis_stale`, `basis_retired`, `cannot_testify_required_field`, `observation_path_broken`. `COMPLETENESS_PROPAGATION_GAP` and `CANNOT_TESTIFY_STATUS` are specced.
-
-### 10. Temporal behavior
-
-**Question:** what is the time-shape of the problem?
-
-NQ today: `service_flap` (direct), and the regime-features layer (persistent/recovering/oscillating, plus DurabilityDegrading hint for ZFS) which annotates *other* findings rather than firing as its own detector.
-
-Plausible follow-ups as first-class detectors: `flapping`, `flickering`, `worsening`, `recurrent_after_repair`, `chronic_stable`, `bounded_unstable`. The split between detector-shaped temporal facts and annotations-on-other-findings is unsettled — see `project_flap_layer_split.md`.
-
-### 11. Maintenance / declared exception envelope
-
-**Question:** is the current disturbance expected under a declared maintenance window?
-
-**NQ today: nothing.** Spec exists at `docs/working/gaps/MAINTENANCE_DECLARATION_GAP.md`; forcing case is real (labelwatch-claude vacuum).
-
-Plausible follow-ups: `maintenance_covered`, `maintenance_out_of_envelope`, `maintenance_overrun`, `expected_silence`, `expected_restart`. Critical invariant: this is **not** truth suppression — findings stay visible under annotation, and overrun becomes its own fact.
-
-### 12. Human / workflow state
-
-**Question:** has the human side gone stale?
-
-**NQ today: nothing.** This is Night Shift / downstream territory; NQ exposes the substrate (find­ing lifecycle, ack flags) but does not fire detectors here.
-
-Plausible follow-ups: `ack_overdue`, `reack_overdue`, `handoff_missing`, `owner_missing`, `blocked_too_long`, `escalation_stalled`. Likely belongs across the NQ → Night Shift bridge once that surface stabilizes.
-
-## Cross-cutting axes
-
-These are **not** taxonomy buckets. They cut across buckets and must remain orthogonal.
-
-### `state_kind`
-- `incident`
-- `degradation`
-- `maintenance`
-- `informational`
-- `legacy_unclassified` (migration crutch — see `project_legacy_unclassified_hygiene.md`)
-
-### `directness_class` (deferred — see `project_alerting_directness.md`)
-- `direct`
-- `derived`
-- `temporal`
-- `aggregate`
-- `unknown`
-
-### Coverage / decision completeness
-- `complete`
-- `provisional`
-- `informative_only` (see `COMPLETENESS_PROPAGATION_GAP`)
-
-### `basis_state`
-- `live`
-- `stale`
-- `retired`
-- `invalidated`
-- `unknown` (see `EVIDENCE_RETIREMENT_GAP`)
-
-### `maintenance_state`
-- `none`
-- `covered`
-- `out_of_envelope`
-- `overrun`
-- `late` (see `MAINTENANCE_DECLARATION_GAP`)
-
-## Placement rules
-
-1. A detector belongs to the bucket that best names its **system question**.
-2. If a detector needs history to exist, that does not automatically make it bucket 10 — only if the *question itself* is temporal.
-3. If a detector is about expected/declared behavior (bucket 11), do not collapse it into liveness (bucket 2).
-4. If a detector is about whether NQ knows enough (bucket 9), it belongs there even if the downstream symptom is silence.
-5. Cross-cutting axes must not be smuggled into taxonomy bucket names.
-6. A detector with two plausible buckets goes in the one that names the **operator's first question** when it fires. (`smart_status_lies` → correctness, not hardware: the operator's first question is "what's contradicting what," not "is this drive failing.")
-
-## Coverage map
-
-| Bucket | NQ coverage | Notes |
-|--------|-------------|-------|
-| 1. Resource | partial | host metrics yes; net/inodes/latency no |
-| 2. Liveness | strong | service_down + six-detector silence family; SILENCE_UNIFICATION contract V1 on 2 witness detectors (§2a), 4 deferred (OQ3/OQ4) |
-| 3. Correctness | partial | error_shift, regime_shift, smart_status_lies |
-| 4. Progress | **gap** | queue/lag fields collected, no detector |
-| 5. Dependency | **gap** | docker absent-vs-unreachable split is the only example |
-| 6. Data substrate | strong | three SQLite detectors |
-| 7. Hardware | strong | four ZFS + six SMART |
-| 8. Intended liveness | **gap** | registry projection deferred |
-| 9. Evidence quality | partial via gating | no first-class detector that fires *on* coverage |
-| 10. Temporal | partial | service_flap + regime features as annotations |
-| 11. Maintenance | **gap** | spec only, no detectors |
-| 12. Workflow | **gap** | Night Shift territory |
-
-The four full gaps (4/5/8/11) and the workflow stub (12) are roughly the surface area where NQ would have to grow next. Three of them have specs already; bucket 4 (progress) and bucket 5 (dependency) do not.
+| Resource pressure | Is a finite resource approaching an operating limit? | `disk_pressure`, `mem_pressure`, `zfs_pool_capacity_pressure` |
+| Presence and liveness | Did an expected host, service, metric series, or log stream stop appearing? | `stale_host`, `stale_service`, `signal_dropout`, `log_silence` |
+| Availability and current state | Is the observed object in an operational state now? | `service_status`, `zfs_pool_suspended`, `zfs_vdev_faulted` |
+| Evidence integrity | Did collection fail, become malformed, or contradict itself? | `source_error`, `metric_signal`, `smart_status_lies`, `check_error` |
+| Accumulation and housekeeping | Is operational debt building faster than it is retired? | `wal_bloat`, `pinned_wal`, `freelist_bloat`, `zfs_scrub_overdue` |
+| Change and temporal behavior | Is change, oscillation, or deterioration itself the problem? | `resource_drift`, `service_flap`, `scrape_regime_shift`, `error_shift`, `zfs_error_count_increased`, `smart_reallocated_sectors_rising` |
+| Device condition | Is storage hardware reporting wear, lost redundancy, errors, or distress? | ZFS pool/vdev findings and SMART wear, spare, temperature, and error findings |
+| Evidence standing | Can a producer still supply admissible evidence for its descendants? | `zfs_witness_silent`, `smart_witness_silent`, paired `node_unobservable` parents |
+| Operator-defined assertion | Does a saved read-only query satisfy its declared result contract? | `check_failed`; `check_error` when the assertion cannot be evaluated |
+
+Collector families do not override the question rule. For example,
+`smart_status_lies` is evidence integrity, not generic hardware health;
+`zfs_pool_capacity_pressure` is resource pressure; and a rising device counter
+is temporal even though it comes from SMART or ZFS.
+
+## Silence and lost observability
+
+Silence is a positive finding: NQ observed that expected testimony stopped
+arriving. It is not a clean result and does not prove the observed substrate
+recovered.
+
+Keep these cases separate:
+
+- `stale_*`, `signal_dropout`, and `log_silence` report an arrival or presence
+  failure.
+- `*_witness_silent` reports loss of a witness evidence path. Each such
+  finding also emits a `node_unobservable` row as the canonical parent-shaped
+  representation. The witness-silence masking rule preserves dependent
+  findings as visibility-suppressed instead of falsely clearing them.
+- `basis_state=retired` or `invalidated` is an evidence-lifecycle decision,
+  not silence.
+- An object absent from intended inventory is a configuration question; NQ
+  must not infer that intent from missing telemetry alone.
+
+Witness-domain detectors are coverage-gated. If a witness cannot testify to a
+required field, the dependent detector stays silent; that silence means "not
+evaluated," not "healthy."
+
+## Threshold ownership
+
+Detector logic is Rust, not YAML or SQL policy. Only fields exposed under the
+monitor configuration's `detectors` object are operator-configurable detector
+predicates. Their defaults come from
+[`DetectorThresholds`](../../crates/nq-core/src/config.rs).
+
+| Configuration field | Default | Predicate controlled |
+|---|---:|---|
+| `wal_pct_threshold` | `5.0` | Relative WAL-to-database percentage; `wal_bloat` uses a strict greater-than comparison. |
+| `wal_abs_floor_mb` | `256.0` | Alternate absolute WAL gate for small databases. |
+| `wal_small_db_mb` | `5120.0` | Defines the small-database branch of the WAL predicate. |
+| `freelist_pct_threshold` | `20.0` | Percentage side of `freelist_bloat`; both percentage and absolute gates must pass. |
+| `freelist_abs_floor_mb` | `1024.0` | Absolute reclaimable-space side of `freelist_bloat`. |
+| `stale_generations` | `2` | `stale_host` and `stale_service` fire when generations behind is greater than this value. |
+| `pinned_wal_floor_mb` | `256.0` | Minimum WAL size for `pinned_wal`. |
+| `pinned_wal_stall_seconds` | `21600` | Minimum main-database mtime age for `pinned_wal`; the WAL must also be newer than the main file. |
+
+Other built-in predicate values are fixed code policy. Representative examples
+include host disk and memory pressure gates, recent-history windows for drift
+and flapping, the ZFS witness freshness and pool-capacity gates, and SMART
+wear, spare, and class-specific temperature gates. Their source of truth is
+the constants and SQL predicates beside each detector in
+[`detect.rs`](../../crates/nq-db/src/detect.rs). Changing one requires a code
+change and detector tests; adding an undocumented configuration key has no
+effect.
+
+Saved-query checks are the deliberate exception: their mode, threshold, and
+column are stored with the saved query. They are operator-defined assertions,
+not global built-in threshold overrides.
+
+Severity escalation is also separate from detector predicates.
+`escalation.warn_after_gens` and `escalation.critical_after_gens` configure how
+persistent native findings move through `info`, `warning`, and `critical`;
+they do not change whether a detector fires. See
+[Severity and persistence](../operator/GLOSSARY.md#severity-and-persistence-severity).
+
+## Contributor rules
+
+When adding or changing a detector:
+
+1. State the operator question and place the detector in the family that best
+   matches it. Do not encode pager policy or severity in the family name.
+2. Assign `domain` and `failure_class` independently. Domain is the broad kind
+   of wrong; failure class is the structural shape.
+3. Declare `state_kind`, `service_impact`, and `action_bias` at emission time.
+   Do not infer them later from prose or severity.
+4. Gate witness-derived conclusions on explicit `can_testify` coverage. Missing
+   evidence must never become a healthy conclusion.
+5. Keep current-state, edge-triggered, and history-dependent predicates
+   distinct. A nonzero counter and a counter that just rose are different
+   claims.
+6. Put a deployment-specific threshold in `DetectorThresholds`; otherwise
+   treat the value as reviewed code policy and test the boundary explicitly.
+7. Preserve finding identity semantics (`scope`, host, kind, subject) so a
+   rule change does not accidentally merge unrelated operator work.
+
+Findings can also enter through import, declaration hygiene, or producer
+coverage contracts. Those emitters use the same finding-state vocabulary but
+are not part of the built-in `run_all` detector inventory.
 
 ## Non-goals
 
-- no global urgency score
-- no confidence score
-- no routing policy encoded as taxonomy
-- no claim that every detector must fit perfectly forever
-- no attempt to collapse all failure semantics into one tree
-
-## Open questions
-
-1. Should bucket 9 (evidence quality) mostly *annotate* findings rather than emit first-class detectors? Today it does the former via coverage gates and `basis_state`; first-class observer findings would need a clear surface.
-2. Should `*_witness_silent` detectors live in bucket 2 (their direct present-tense shape) or bucket 9 (their meta-evidential nature)? Currently bucket 2 by operator question.
-3. Once registry/intended-liveness lands (bucket 8), do `stale_*` detectors get reclassified or stay as liveness?
-4. Does NQ want bucket-specific default render treatment, or is this purely organizational?
-5. The five-detector silence family is structurally identical — does unification break the per-source semantics or strengthen them? (See `project_silence_unification_candidate.md`.)
-
-## Compact version
-
-- Can it breathe? — resource
-- Is it there? — liveness
-- Is it right? — correctness
-- Is it moving? — progress
-- Is something else blocking it? — dependency
-- Is the substrate sane? — data
-- Is the device sane? — hardware
-- Was it supposed to be here? — intended-liveness
-- Do we know enough? — evidence quality
-- What is the time-shape? — temporal
-- Is this expected right now? — maintenance
-- Who is on the hook? — workflow
+This taxonomy does not define priority, routing, confidence, authorization, or
+a roadmap of detectors NQ ought to add. Operators should route using the
+actual finding axes and local policy, not the family name or Greek domain code
+alone.

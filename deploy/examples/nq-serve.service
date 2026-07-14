@@ -1,11 +1,15 @@
 [Unit]
-Description=nq aggregator + web UI
-After=network.target nq-publish.service
-Wants=nq-publish.service
+Description=NQ monitor aggregator and web UI
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/opt/nq/nq serve -c /opt/nq/aggregator.json
+User=nq
+Group=nq
+UMask=0027
+WorkingDirectory=/var/lib/nq
+ExecStart=/usr/local/bin/nq-monitor serve --config /etc/nq/aggregator.json
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

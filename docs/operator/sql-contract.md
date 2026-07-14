@@ -16,8 +16,8 @@ examples. This file is the boundary.
 ### 1. Public contract views
 
 Column-stable. Additive columns are non-breaking; removals, renames, or
-semantic reversals are announced in
-[FEATURE_HISTORY.md](../working/decisions/FEATURE_HISTORY.md).
+semantic reversals are announced in the
+[changelog](../../CHANGELOG.md).
 
 Operators, dashboards, exporters, and external consumers may query these.
 
@@ -47,20 +47,20 @@ that exists only to support implementation or debugging is still internal.
 |---|---|---|
 | `v_hosts` | Current host state with staleness | Stable contract begins at the date of this document. |
 | `v_services` | Current service status with staleness | Stable contract begins at the date of this document. |
-| `v_sqlite_dbs` | SQLite DB health with relative metrics | Stable contract begins at the date of this document. |
+| `v_sqlite_dbs` | SQLite file/WAL metadata and relative size metrics; it does not imply an integrity check | Stable contract begins at the date of this document. |
 | `v_sources` | Publisher connectivity status | Stable contract begins at the date of this document. |
 | `v_metrics` | Current Prometheus metrics via series dictionary | Stable contract begins at the date of this document. |
 
 ### Public, evolving
 
 Additive columns are allowed without notice. Removal, rename, or semantic
-reversal requires a `FEATURE_HISTORY.md` entry.
+reversal requires a changelog entry.
 
 | View | Description | Stability claim |
 |---|---|---|
 | `v_warnings` | Read surface for active findings, joined with diagnosis / class / stability / maintenance fields | Public evolving as of contract declaration. Historically reshaped; future compatibility claim begins here. |
 | `v_host_state` | Dominance projection: per-host operational summary with folded counts | Public evolving. Columns grow as new failure-class / action-bias / regime fields land. |
-| `v_admissibility` | Per-finding admissibility envelope resolved through testimony ancestry | Public evolving. Canonical read-side surface for the testimony-dependency machinery. |
+| `v_admissibility` | Per-`(host, kind, subject)` admissibility and suppression cause | Public evolving. Canonical read-side surface for the testimony-dependency machinery. It does not expose an encoded `finding_key`. |
 
 ### Public, domain-specific
 
@@ -90,7 +90,7 @@ Querying is permitted. Dependency is not promised.
 | `collector_runs` | Collector success/failure rates |
 | `source_runs` | Per-publisher connectivity history |
 | `series` | Series dictionary — cardinality and metric inventory |
-| `metric_history_policy` | Configuration table for which metrics get historied |
+| `metric_history_policy` | Inspect the built-in metric-history selection. The SQL console and `nq-monitor query` are read-only, and this release has no supported runtime policy-mutation command. |
 
 ### `warning_state` special caveat
 
@@ -114,7 +114,7 @@ dashboards, exporters, or query API callers.
 | `services_current` | Backing table for `v_services`. Query the view. |
 | `monitored_dbs_current` | Backing table for `v_sqlite_dbs`. Query the view. |
 | `metrics_current` | Backing table for `v_metrics`. Query the view. |
-| `finding_observations` | Writer-side observation log. Forbidden as a UI / query-path read source per [EVIDENCE_LAYER_GAP](../working/gaps/EVIDENCE_LAYER_GAP.md). |
+| `finding_observations` | Writer-side observation log. UI and durable query consumers must use supported projections instead. |
 | `notification_state` | Notification-pipeline lifecycle state. |
 | `notification_history` | Notification-pipeline lifecycle history. |
 | `v_log_observations` | Internal derived view. May exist to support implementation or debugging; not part of the operator SQL contract. |
@@ -140,7 +140,7 @@ internal tables stay internal.
 ## Adding to the contract
 
 Promoting a table to a view, or an evolving view to a stable view,
-requires a `FEATURE_HISTORY.md` entry stating the change and the date the
+requires a changelog entry stating the change and the date the
 new stability claim begins. Removing a view from the contract requires
 the same.
 

@@ -1,235 +1,133 @@
-# Scope and Witness Model
+# Scope, Vantage, and Witness Model
 
-NQ-specific operating doctrine for what NQ is allowed to observe, from where, and where its findings stop. Terse on purpose. Companion to `MIGRATION_DISCIPLINE.md`.
+**Status:** as-built architecture reference. This page defines where NQ observes, what its evidence can support, and how those boundaries appear on the current wire surfaces.
 
-**Last updated:** 2026-04-28
+NQ records bounded observations. It does not turn one observation into a claim about an entire service, network, or organization. Operators and contributors should keep five related concepts separate:
 
-## Purpose
+| Concept | Meaning in NQ |
+|---|---|
+| **Collection scope** | The configured hosts, services, files, endpoints, and helper targets that NQ attempts to observe. |
+| **Vantage** | The machine and access path from which an observation was made. |
+| **Witness position** | The stack layer to which an `nq.witness.v1` observation is anchored. |
+| **Coverage** | What evidence was obtained, what failed or was unavailable, and what the observation cannot establish. |
+| **Claim scope** | The exact subject and bounded statement an evaluator is asked to assess. |
 
-NQ is a monitoring witness system. This doc pins what that means in practice — what's in scope, what witness positions are recognized, and where NQ's job ends and downstream governance begins.
+These are not interchangeable. A Prometheus scrape can be in collection scope but fail from its configured vantage. A successful systemd query can establish manager state without establishing user-visible health. A fresh packet can still have narrow coverage.
 
-The model exists because absent it, two failure modes recur:
+## Operational monitoring scope
 
-1. **Scope gatekeeping** — treating classical monitoring axes (CPU/memory/network) as speculative expansion rather than core. Wastes triage cycles arguing whether a detector family belongs in NQ at all.
-2. **Boundary drift** — NQ findings that encode governance outcomes ("this is fine," "ignore this") rather than emitting state legible enough for downstream consumers to govern. Collapses the AG/NQ boundary in the wrong direction.
+`nq-witness` runs collectors at the observed host. `nq-monitor serve` pulls each configured witness, stores its observations and source outcome, and evaluates findings from committed current state and history.
 
-## Core scope
+The shipped witness can collect:
 
-NQ observes **substrate health, application testimony and platform-mediated reality**. Classical monitoring scope is core, not speculative.
+| Family | Bounded observation |
+|---|---|
+| Host | CPU load, memory availability and pressure, root-filesystem capacity, uptime, kernel version, and boot identity. |
+| Services | systemd unit, Docker container, or PID-file state from the local service-management path. |
+| SQLite | File, header, freelist, and WAL metadata for explicitly configured database paths; optional WAL process-lock evidence for declared targets. |
+| Metrics | Prometheus exposition samples fetched from configured URLs. |
+| Logs | Bounded journald or file windows, including source activity and silence evidence. |
+| Storage helpers | Optional ZFS and SMART reports from configured helper programs. |
+| Witness self-observation | File identity, size, timestamp, and content hash for the running witness binary or an explicitly configured binary path. |
 
-```
-substrate:
-  cpu
-  memory
-  disk_storage
-  network
+The monitor separately writes its liveness artifact and runs bounded self-observation and evaluator probes. Configuration defines the concrete deployment scope. NQ does not auto-discover an authoritative service inventory, infer every user journey, or claim that an unconfigured target is healthy. The source code and configuration types remain the detailed collector inventory; this page describes their common boundary.
 
-semantic_context:
-  application_internal
-  application_external
-  platform_internal
-  platform_external
-```
+## Two different witness wires
 
-Disk/storage arrived first through SQLite observatory, ZFS witness and SMART work because the forcing cases landed there. CPU, memory and network are delayed inevitabilities, not category extensions. The right gate is build order, cost and evidentiary shape — not scope legitimacy.
+NQ currently has two similarly named but distinct wire surfaces:
 
-What's *not* in default scope:
-
-- **CI/CD systems.** Adjacent. Has admissibility problems, but is release-governance until/unless a concrete detector family makes build/deploy state operationally observable as live system reality.
-- **Other constellation domains** (auth, incident response, scheduler-as-such). Those belong to AG / standing / nightshift. NQ supplies their testimony substrate; it does not occupy their slots.
-
-## Substrate axes
-
-The classical four. NQ asks: *what can this machine testify about itself?*
-
-| Axis | Observations |
-|------|--------------|
-| **CPU / compute** | saturation, load, runnable pressure, stolen time, throttling |
-| **Memory** | pressure, swap behavior, OOM events, page-fault patterns |
-| **Disk / storage** | SMART health, filesystem fullness, WAL/freelist state, pinned-WAL, vacuum hygiene, ZFS pool health |
-| **Network** | reachability, packet loss, latency, DNS resolution, route state, link state, conntrack/socket pressure |
-
-Substrate testimony is usually direct-ish — close to the machine, fallible but not interpretive. SMART says bad. Filesystem says full. Kernel says memory pressure. Interface says link down.
-
-## Context axes
-
-Beyond substrate, NQ recognizes four witness positions for application and platform state. Each asks a distinct question.
-
-### `application_internal`
-
-*What does the application claim is true from inside its own boundary?*
-
-Health endpoints, internal metrics, queue depth, worker state, DB connection pools, local error rates, migration status, replication status, cache state, internal dependency checks, background job backlog.
-
-**Reliability character:** useful but suspect. The app is often both witness and defendant. Self-reporting is informative when honest and pathological when not.
-
-### `application_external`
-
-*What is true from a consumer's or dependent system's position?*
-
-Synthetic HTTP probes, TLS/cert validity, DNS resolution from outside, response latency from outside, error rate from outside, content freshness, login path works, write path works, read-after-write behavior, API contract probes.
-
-**Reliability character:** often outranks `application_internal` when they disagree. "Service says healthy, users can't log in" is the canonical failure shape.
-
-### `platform_internal`
-
-*What does the runtime / control plane say about the app's placement, lifecycle and constraints?*
-
-systemd unit state, container state, k8s pod/deployment/service state, scheduler placement, restart loops, volume mounts, cgroup pressure, runtime limits, node conditions, service discovery registration, LB/backend membership.
-
-**Reliability character:** good for lifecycle state, dangerous when mistaken for consequence state. "k8s says desired replicas are available" is not the same as "the workload is doing useful work."
-
-### `platform_external`
-
-*Does the platform's advertised surface match usable reality?*
-
-Load balancer sees backend healthy from its position, CDN/cache sees origin correctly, service discovery resolves expected targets, ingress route works, public endpoint maps to intended deployment, failover actually works, tenant-visible state matches control-plane state, advertised availability matches reachable availability.
-
-**Reliability character:** catches the classic "control plane green, world broken" split. Often the position that breaks ties between `platform_internal` and `application_external`.
-
-## Witness positions
-
-Every NQ finding has a location. A well-shaped finding makes the witness position explicit — substrate / application_internal / application_external / platform_internal / platform_external — so downstream consumers can reason about which testimony they're acting on.
-
-This is not metadata-as-nicety. Witness position is part of the evidentiary shape. A finding without a position implicit-collapses across registers and loses the property that makes it useful for governance.
-
-## Disagreement as finding
-
-Witness positions may disagree. **Disagreement is not noise; it is often the finding.**
-
-```
-app_internal:        healthy
-app_external:        failing
-platform_internal:   green
-network_substrate:   DNS stale
-```
-
-NQ's job: emit the shape. Name the positions. Render the deltas. Surface the contradiction. Do not vote on which witness wins.
-
-The temptation to reconcile ("the probe must be wrong, the app says it's fine") is a category error. Reconciliation belongs to the operator or to downstream Governor reasoning under admissibility constraints. Once NQ silently picks a winner, the disagreement disappears from the record and downstream cannot re-litigate it.
-
-## NQ / Governor boundary
-
-NQ owns ephemerality as **observed system state.** Pod gone. WAL changed. DNS TTL expired. Route withdrawn. Service no longer degraded. Metric cannot testify. Evidence stale.
-
-Governor (AG, downstream) owns ephemerality as **authority / evidence / admissibility problem.** Can this stale observation justify action? Did this approval expire? Does this agent still have standing? Is this receipt bound to the right scope? Can this plan still execute? Did the environment change enough to require re-review?
-
-The bridge:
-
-> NQ detects that the premise moved.
-> Governor decides whether the authorization fell off.
-
-NQ emits findings rich enough for downstream Governor to deny, defer, revalidate or admit — without NQ encoding the governance outcome.
-
-### Inversion test
-
-For any NQ finding shape, ask:
-
-> Can downstream Governor correctly refuse to act on this finding?
-
-If not, NQ is doing Governor's job badly. Findings that imply "this is fine, ignore" or "this is urgent, act" have collapsed diagnosis into permission. The well-shaped version surfaces state, scope, freshness, witness position and observed deltas; the verdict is downstream's.
-
-## NQ / Night Shift contract
-
-Night Shift manages **admissibility across time** — it prevents old observations, stale plans, and deferred work from silently becoming current authority. NQ supplies the world-state movement that Night Shift schedules around. Two consumer-facing rules fall out (confirmed 2026-04-28 by Night Shift role-pinning):
-
-### Witness position is diagnostic metadata, not consumer interpretation burden
-
-Night Shift will not branch on `witness.position`. Therefore NQ must not rely on consumers reading raw position labels to infer scheduling or reconciliation behavior. If cross-position disagreement matters for downstream behavior, NQ encodes the disagreement as a **finding shape** — not as position metadata that consumers are expected to interpret.
-
-Bad (relies on consumer to interpret position metadata):
-
-```
-finding_kind: app_health_check
-witness_position: application_internal
-state: healthy
-
-finding_kind: app_health_check
-witness_position: application_external
-state: failing
-```
-
-Good (NQ has already recognized the disagreement as a finding):
-
-```
-finding_kind: cross_position_disagreement
-positions: [application_internal, application_external]
-summary: app reports healthy, external probe fails
-consumer_hint: revalidate_or_escalate_attention
-```
-
-Witness position supports NQ's diagnosis; the diagnosis, not the raw position label, is the consumer-facing contract. This prevents the bad future where every consumer grows its own little theology of `application_external`.
-
-### Staleness contract
-
-> Staleness may schedule re-observation. Staleness may not authorize execution.
-
-NQ's `cannot_testify` / `stale_basis` / `stale_observation` / `revalidation_required` finding shapes have a stable consumer-side contract: Night Shift will defer or revalidate, never act-on-stale. Governor likewise will refuse to admit stale evidence as authorization. NQ can therefore be brutally honest about staleness without worrying that downstream will misread `cannot_testify` as a weird degraded-action signal.
-
-## Three-way admissibility split
-
-The full constellation shape:
-
-| Consumer | Owns | Time axis |
+| Schema | Produced by | Purpose |
 |---|---|---|
-| **NQ** | admissibility-relevant world state | "what changed" |
-| **Night Shift** | admissibility across time | "premise still holds, or expired?" |
-| **Governor** | admissibility at decision time | "is current authority still valid?" |
+| `nq.witness_packet.v1` | `GET /state` on `nq-witness` | Operational snapshot containing a host identity and per-collector payloads. The monitor pulls and persists it. |
+| `nq.witness.v1` | Claim-witness commands or compatible producers | Portable, caller-supplied evidence evaluated by `nq-monitor verify` and referenced by receipts. |
 
-Or compressed:
+The `/state` envelope is not an `nq.witness.v1` claim packet. Do not use the schemas or field contracts interchangeably. See [Architecture Overview](OVERVIEW.md) for the runtime path and [Shared Claim and Receipt Spine](SHARED_SPINE.md) for the claim path.
 
-> NQ says what changed.
-> Night Shift prevents old premises from becoming current authority.
-> Governor decides whether current authority is still valid.
+## Vantage: where the observation happened
 
-Each consumer reads NQ's finding shape on its own time axis. NQ's job is to produce the shape; the time-axis interpretation belongs to the consumer.
+Vantage is physical and procedural. It answers: *from which host, process, and access path was this seen?*
 
-## Detector design implications
+- `/proc`, filesystem, systemd, Docker, ZFS, and SMART observations are from the host running `nq-witness`.
+- A Prometheus scrape describes reachability and response from that witness host's network path, not from every client location.
+- A successful monitor pull establishes the monitor-to-witness path for that cycle. It does not by itself establish that every collector inside the payload succeeded.
+- A DNS, TLS, or other named probe describes its declared probe vantage at its observation time. It is not global network truth.
 
-Falls out of the model:
+Vantage is not one normalized column on every operational finding. The `/state` path carries host, collector, source, and timestamps; specialized probes carry their own vantage fields where needed. In `nq.witness.v1`, `subject`, `access_path`, timestamps, and witness-family observations identify the concrete observation path.
 
-1. **Detector authorship asks "what is the witness position?" first.** Not "what is the threshold?" The position determines what the finding can honestly claim.
-2. **A finding without a witness position is half-shaped.** Position is part of the contract, not annotation.
-3. **Cross-position findings are first-class.** When two positions disagree, the disagreement *is* the finding — emit it as such, not as two contradictory single-position findings that downstream must correlate. This is consumer contract, not internal taste: Night Shift won't read `witness.position` to derive behavior. See §NQ / Night Shift contract.
-4. **Substrate findings should not opine on application consequence.** "Disk is 95% full" is substrate; "the app will fail in 4 hours" is interpretation that requires application-context evidence.
-5. **Application-internal findings should not pretend to be application-external observations.** "Health endpoint returns 200" is `application_internal`; it does not testify to `application_external` reachability.
+Do not use `position` as a substitute for vantage. `position=substrate` says which layer the testimony concerns; it does not say which host or network path produced it.
 
-## Non-goals
+## Witness position: which layer was observed
 
-Things this doc deliberately does not require:
+The portable `nq.witness.v1` packet has an optional `position` field with exactly three current values:
 
-- **Single coherent metrics ontology across all axes.** Each axis can have its own native shape; NQ does not need a Grand Unified Schema.
-- **Witness-position registry as a first-class table.** Position is a per-finding annotation today; promote to its own object only if cross-cutting reasoning forces the structure.
-- **Automated witness-position reconciliation.** NQ surfaces disagreement; deliberation belongs to operator and Governor. NQ does not vote.
-- **CI/CD detector family.** Off-books until a concrete operationally-observable need surfaces.
+| Value | Current meaning | Representative evidence |
+|---|---|---|
+| `substrate` | Host hardware, kernel, or on-host substrate state observable without application cooperation. | Filesystem bytes, SMART/ZFS state, host-vantage DNS, service-manager state. |
+| `application_internal` | State internal to a specific application or component. | A test command's exit code, SQLite WAL state, NQ ingest or evaluator state. |
+| `platform` | Shared tooling, runtime, control-plane, or scrape layer rather than one application's internals. | Git working-tree state, declared diff scope, Prometheus scrape vantage. |
 
-These are **deferred, not abandoned**. NQ is aimed at real monitoring; these become mandatory when an incident proves they should have been.
+Packets created before this field was added can deserialize with no position and remain unclassified. New NQ producers set a position explicitly.
 
-## Compact invariants
+There are no current `application_external` or `platform_external` wire values. Externality belongs in the concrete vantage and access path. Adding a position is a wire-enum change with compatibility and test consequences; it is not a documentation-only taxonomy change.
 
-> Classical monitoring is in scope by default; build order is the question.
->
-> NQ observes substrate health, application testimony and platform-mediated reality.
->
-> Witness positions may disagree; disagreement is often the finding.
->
-> NQ detects that the premise moved; Governor decides whether the authorization fell off.
->
-> A finding is well-shaped when downstream Governor can deny, defer, revalidate or admit without NQ encoding the governance outcome.
->
-> Positions locate testimony; findings carry consequence.
->
-> Staleness may schedule re-observation; staleness may not authorize execution.
+Operational `/state` findings do not universally carry `WitnessPosition`. Collector semantics and evidence references locate those observations. Contributors must not claim that every finding has a normalized position field.
 
-## References
+## Coverage and failed testimony
 
-- `docs/working/decisions/ARCHITECTURE_NOTES.md` §Design laws — companion one-liners
-- `docs/architecture/MIGRATION_DISCIPLINE.md` — peer doctrine doc, same shape
-- `docs/architecture/OVERVIEW.md` §Components — current substrate-axis coverage
-- `docs/architecture/DETECTOR_TAXONOMY.md` — detector inventory; should grow witness-position annotation
-- `docs/working/gaps/COMPLETENESS_PROPAGATION_GAP.md` — partial-state propagation, related to witness-position fidelity
-- `docs/working/gaps/CANNOT_TESTIFY_STATUS.md` — the canonical "this position cannot testify" finding shape
+Coverage is part of the result, not an afterthought.
 
-## Scope note
+For the operational `/state` path, each collector payload carries its status, collection time, optional error, and optional data. A collector failure, unsupported operation, permission denial, or missing source is not an empty healthy result. The monitor records source failure and preserves last-known state with stale or suppressed standing where applicable; it does not rewrite the previous observation as current health.
 
-This doc is NQ-specific. The broader cross-repo division of labor (AG admissibility / standing identity / NQ testimony / nightshift continuity-stress / continuity reliance) is captured in conversation and Claude memory; promote to a standalone constellation doc only when a third repo needs to cite it formally. The rule of thumb: pin shared doctrine once the third reader reinvents it, not before.
+For `nq.witness.v1`:
+
+- `observations` contains witness-family evidence.
+- `coverage_limits` states what that evidence does not observe.
+- `dependencies` names upstream paths on which the observation relies.
+- `observed_at` records when the subject was examined; `generated_at` records when the packet was assembled.
+- `position` locates the observation layer but does not authenticate the producer.
+
+A packet generated now from an old snapshot is still old testimony. A packet may be structurally valid while its coverage is too narrow for the requested claim. The packet reports observations and limits; the evaluator, not the producer, maps them to registered claims. See [Witness Packet](WITNESS_PACKET.md) for the complete semantic rules.
+
+## Disagreement between observations
+
+Different vantages or positions can disagree:
+
+```text
+service manager on host: active
+Prometheus scrape from host: reachable
+external probe from operator network: failing
+```
+
+That record does not establish which component is at fault. It establishes that the observations differ within their stated scopes.
+
+NQ does not ship a generic witness-voting or cross-position reconciliation engine. A detector may emit a contradiction finding only when its code explicitly joins the relevant evidence and defines the bounded conclusion. Otherwise NQ preserves the separate observations, timestamps, and coverage so an operator can investigate without losing the disagreement.
+
+## Contributor rules
+
+When adding a collector, packet producer, or evaluator:
+
+1. Name the exact subject and the vantage or access path.
+2. Record observation time separately from ingest or packet-generation time.
+3. Represent failed, unsupported, or unavailable testimony explicitly; never coerce it to zero, empty, or healthy.
+4. State the coverage ceiling. A manager state is not service usefulness; a scrape is not global reachability; a proxy anomaly is not target state.
+5. Use one of the three shipped witness positions when producing `nq.witness.v1`; do not invent a fourth string.
+6. Keep claim vocabulary in evaluators. Witness packets must not declare which registered claims they satisfy.
+7. If two observations must be correlated, implement and test the join and refusal behavior in code rather than relying on consumers to infer it from labels.
+8. Keep diagnosis separate from authority. Findings and receipts may recommend or refuse; they do not authorize a deployment, restart, page, or closure.
+
+## Trust boundary
+
+The host running a local witness is part of NQ's trusted computing base. The built-in witness HTTP service provides neither TLS nor client authentication. `position`, packet digests, and receipt self-hashes do not authenticate a host or producer.
+
+Use loopback for same-host deployments or a private/VPN path plus firewalling for remote witnesses. Protect the database and artifacts with independently controlled custody when hostile modification is in scope. The [Host-Trust Boundary](HOST_TRUST_BOUNDARY.md) defines the architectural limit; [Production Deployment](../operator/deployment.md) gives concrete network and service guidance.
+
+## Stable invariants
+
+- An observation is true only for its named subject, vantage, access path, and observation time.
+- Missing or failed testimony is not evidence of health.
+- Witness position describes a layer, not a physical location or trust level.
+- Coverage limits survive successful collection; success does not make a witness omniscient.
+- Disagreement is preserved until an explicit detector or operator resolves it.
+- A finding diagnoses bounded evidence. A receipt records a bounded decision. Neither authorizes a consequence.
+
+For operator-facing finding fields, see the [Operator Glossary](../operator/GLOSSARY.md).

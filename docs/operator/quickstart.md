@@ -1,208 +1,196 @@
-# NQ Quickstart
+# NQ single-host quickstart
 
-Get NQ monitoring a host in under 5 minutes.
+This gets one Linux host into NQ without root, systemd, an external exporter,
+or a writable system directory. It runs the witness and monitor on loopback and
+stores the trial database in the current directory.
 
-## What you need
+For service accounts, remote witnesses, firewalls, backups, and upgrades, use
+the [production deployment guide](deployment.md) after this walkthrough.
 
-- A Linux host (the one you want to monitor)
-- The `nq` binary (statically linked, no dependencies)
+## 1. Get both binaries
 
-## 1. Get the binary
+Releases provide static binaries for AMD64 and ARM64. Download the binary and
+its checksum as a pair:
 
 ```bash
-# From a release (when available):
-curl -sSL https://github.com/unpingable/nq/releases/latest/download/nq-linux-amd64 -o nq
-chmod +x nq
+mkdir nq-quickstart || exit 1
+cd nq-quickstart || exit 1
+
+(
+  set -eu
+  case "$(uname -m)" in
+    x86_64)         arch=amd64 ;;
+    aarch64|arm64)  arch=arm64 ;;
+    *) echo "No NQ release binary for $(uname -m)" >&2; exit 1 ;;
+  esac
+
+  stage="$(mktemp -d .nq-download.XXXXXX)"
+  trap 'rm -rf "$stage"' EXIT
+  base=https://github.com/unpingable/nq/releases/latest/download
+  for bin in nq-monitor nq-witness; do
+    curl -fL "$base/$bin-linux-$arch" -o "$stage/$bin-linux-$arch"
+    curl -fL "$base/$bin-linux-$arch.sha256" \
+      -o "$stage/$bin-linux-$arch.sha256"
+    (cd "$stage" && sha256sum --check "$bin-linux-$arch.sha256")
+  done
+  for bin in nq-monitor nq-witness; do
+    install -m 0755 "$stage/$bin-linux-$arch" "$bin"
+  done
+)
 ```
 
-Or build from source:
+Both checksum commands must report `OK`. A checksum downloaded from the same
+release detects a damaged or incomplete download; it is not an independent
+signature of the release publisher.
+
+To build instead, Rust is pinned by `rust-toolchain.toml`:
 
 ```bash
-git clone https://github.com/unpingable/nq.git
-cd nq
-cargo build --release
-cp target/release/nq-monitor /usr/local/bin/
+git clone https://github.com/unpingable/nq.git || exit 1
+cd nq || exit 1
+(
+  set -eu
+  cargo build --release --locked
+  install -m 0755 target/release/nq-monitor ./nq-monitor
+  install -m 0755 target/release/nq-witness ./nq-witness
+)
 ```
 
-## 2. Create a publisher config
+The remaining commands assume `./nq-monitor` and `./nq-witness` are in the
+current directory.
 
-The publisher runs on each host you want to monitor. It collects local state
-and serves it over HTTP.
+## 2. Write the local configs
 
-```bash
-cat > publisher.json << 'EOF'
+The witness observes the local host and serves one endpoint. Empty optional
+collector lists are intentional: this first run needs no Docker socket,
+journal access, application database, or Prometheus exporter.
+
+Save this as `publisher.json`:
+
+```json
 {
   "bind_addr": "127.0.0.1:9847",
   "sqlite_paths": [],
-  "service_health_urls": [
-    { "name": "docker", "check_type": "systemd", "unit": "docker" }
-  ],
-  "prometheus_targets": [
-    { "name": "node", "url": "http://localhost:9100/metrics" }
-  ]
+  "service_health_urls": [],
+  "prometheus_targets": [],
+  "log_sources": [],
+  "sqlite_wal_targets": []
 }
-EOF
 ```
 
-Adjust `service_health_urls` to list your systemd services. Remove
-`prometheus_targets` if you don't have node_exporter installed.
+The monitor pulls that witness every 10 seconds, writes `./nq.db`, and serves
+its UI on another loopback port:
 
-## 3. Create an aggregator config
+Save this as `aggregator.json`:
 
-The aggregator pulls from publishers, runs detectors, and serves the web UI.
-For a single-host setup, it runs on the same machine.
-
-```bash
-cat > aggregator.json << 'EOF'
+```json
 {
-  "interval_s": 60,
-  "db_path": "/var/lib/nq/nq.db",
+  "interval_s": 10,
+  "db_path": "./nq.db",
   "bind_addr": "127.0.0.1:9848",
   "sources": [
     {
-      "name": "my-host",
+      "name": "local-host",
       "base_url": "http://127.0.0.1:9847",
       "timeout_ms": 5000
     }
-  ]
-}
-EOF
-
-mkdir -p /var/lib/nq
-```
-
-## 4. Start both processes
-
-```bash
-nq-witness --config publisher.json &
-nq-monitor serve -c aggregator.json &
-```
-
-Or use systemd (recommended for production):
-
-```ini
-# /etc/systemd/system/nq-publish.service
-[Unit]
-Description=nq-witness publisher
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/nq-witness --config /etc/nq/publisher.json
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```ini
-# /etc/systemd/system/nq-serve.service
-[Unit]
-Description=nq-monitor aggregator + web UI
-After=network.target nq-publish.service
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/nq-monitor serve -c /etc/nq/aggregator.json
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## 5. Open the UI
-
-Browse to `http://localhost:9848`. You'll see:
-
-- **Left sidebar**: failure domain navigator (missing, skewed, unstable, degrading)
-- **Center**: active findings with severity and persistence
-- **Below**: host state, service status, SQLite DBs, SQL console
-
-## 6. Query with SQL
-
-The SQL console at the bottom accepts any read-only SELECT query against
-NQ's tables and views.
-
-> **SQL surface note.** Examples below mix public contract views
-> (`v_hosts`, `v_metrics`, `v_warnings`) with operator-visible storage
-> tables (`hosts_history`, `generations`). Storage tables are
-> operator-visible only where explicitly documented; they are not the
-> public SQL contract and should not be used by dashboards, exporters,
-> external consumers, or durable automation. Prefer public views where
-> available. See [sql-contract.md](sql-contract.md).
-
-```sql
--- Current host metrics
-SELECT * FROM v_hosts
-
--- All scraped Prometheus metrics
-SELECT metric_name, value FROM v_metrics WHERE metric_name LIKE 'node_load%'
-
--- Active findings
-SELECT severity, domain, kind, host, message FROM v_warnings
-
--- CPU trend over last hour
-SELECT g.completed_at, h.cpu_load_1m
-FROM hosts_history h
-JOIN generations g ON g.generation_id = h.generation_id
-WHERE h.host = 'my-host'
-ORDER BY g.generation_id DESC LIMIT 60
-```
-
-## 7. Add more hosts
-
-Deploy the publisher on another host. Add its source to the aggregator config:
-
-```json
-{
-  "sources": [
-    { "name": "host-1", "base_url": "http://host-1:9847" },
-    { "name": "host-2", "base_url": "http://host-2:9847" }
-  ]
-}
-```
-
-Restart the aggregator. Both hosts appear in the next generation.
-
-## 8. Enable notifications
-
-Add a webhook or Slack channel to the aggregator config:
-
-```json
-{
+  ],
+  "retention": {
+    "max_generations": 360,
+    "prune_every_n_cycles": 60
+  },
   "notifications": {
-    "channels": [
-      { "type": "slack", "webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK" }
-    ],
+    "channels": [],
     "min_severity": "warning"
+  },
+  "liveness": {
+    "path": "./liveness.json",
+    "instance_id": "quickstart"
   }
 }
 ```
 
-NQ notifies when findings escalate in severity (info -> warning -> critical),
-not every generation. Each notification includes the failure domain, evidence,
-and escalation history.
+## 3. Run it in two terminals
 
-## What NQ monitors out of the box
+In terminal 1, start the witness and leave it running:
 
-**Host metrics**: CPU, memory, disk, uptime, kernel version
-**Services**: systemd units, Docker containers (up/down/degraded)
-**SQLite databases**: size, WAL, freelist, journal mode, integrity
-**Prometheus metrics**: any /metrics endpoint (node_exporter, app exporters, etc.)
+```bash
+./nq-witness --config publisher.json
+```
 
-## What NQ detects
+In terminal 2, first prove that the witness endpoint is reachable. Then start
+the monitor in a guarded subshell, wait up to 30 seconds for its HTTP surface,
+inspect it, and keep the process attached to the terminal:
 
-NQ organizes findings into four failure domains:
+```bash
+(
+  set -eu
+  curl -fsS http://127.0.0.1:9847/state
 
-| Domain | Label | What it catches |
-|---|---|---|
-| Δo | missing | Host/service/metric disappeared, data stopped arriving |
-| Δs | skewed | NaN/Inf values, publisher errors, corrupted signals |
-| Δg | unstable | Disk/memory pressure, WAL/freelist bloat, service down |
-| Δh | degrading | Resource drift, service flapping, series count shifts |
+  ./nq-monitor serve --config aggregator.json &
+  monitor_pid=$!
+  trap 'kill "$monitor_pid" 2>/dev/null || true; wait "$monitor_pid" 2>/dev/null || true' EXIT
 
-Findings start at `info` severity and escalate to `warning` (30+ generations)
-then `critical` (180+ generations) based on persistence. This is not just
-threshold monitoring — it's diagnosis by failure type.
+  ready=false
+  for attempt in {1..30}; do
+    if curl -fsS http://127.0.0.1:9848/api/overview >/dev/null 2>&1; then
+      ready=true
+      break
+    fi
+    if ! kill -0 "$monitor_pid" 2>/dev/null; then
+      if wait "$monitor_pid"; then monitor_status=0; else monitor_status=$?; fi
+      echo "nq-monitor exited before HTTP became ready (status $monitor_status)" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+  if [ "$ready" != "true" ]; then
+    echo "nq-monitor HTTP did not become ready within 30 seconds" >&2
+    exit 1
+  fi
+
+  curl -fsS http://127.0.0.1:9848/api/overview
+  ./nq-monitor query --remote http://127.0.0.1:9848 \
+    "SELECT host, cpu_load_1m, mem_pressure_pct, disk_used_pct, age_s FROM v_hosts"
+
+  wait "$monitor_pid"
+)
+```
+
+The HTTP endpoint can become ready before the first generation completes. If
+the SQL query has no row yet, wait one 10-second interval and run it again. Press
+Ctrl-C in terminal 2 to stop the monitor; leaving the guarded subshell also
+cleans up its background process. Then press Ctrl-C in terminal 1 to stop the
+witness.
+
+## 4. Use the UI and SQL console
+
+While both processes are running, open <http://127.0.0.1:9848/>. The overview
+shows the current generation, the `local-host` state, and any active findings.
+
+Paste this into the SQL console at the bottom of the page:
+
+```sql
+SELECT host, cpu_load_1m, mem_pressure_pct, disk_used_pct, age_s
+FROM v_hosts;
+```
+
+The console and `nq-monitor query` accept read-only SQL. Prefer the public
+contract views (`v_hosts`, `v_services`, `v_metrics`, and `v_warnings`) for
+saved queries or integrations; internal storage tables can change. See the
+[SQL contract](sql-contract.md) and [SQL cookbook](sql-cookbook.md).
+
+## What this proved—and what it did not
+
+You have verified that both binaries start, the witness serves `/state`, the
+monitor can pull it, a generation reaches SQLite, and the overview API and
+read-only SQL query respond. Empty findings are not proof that every local
+service is healthy: the optional service, database, log, and Prometheus
+collectors are still unconfigured.
+
+Both HTTP listeners are loopback-only. `nq-witness` and `nq-monitor serve` do
+not add authentication or TLS. Do not turn either bind address into a public
+wildcard as the next step. The [production deployment guide](deployment.md)
+covers a service user, least-privilege collector access, private-interface
+witnesses, firewall rules, authenticated access to the UI, validation,
+backups, upgrades, and rollback.

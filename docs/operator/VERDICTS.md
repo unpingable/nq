@@ -1,93 +1,115 @@
-# Verdict Vocabulary (Candidate)
+# Verdict vocabulary
 
-**Status:** candidate / non-binding. Names the verdicts claim preflight may emit. Definitions are deliberately tight to avoid overlap. No code, schema, or persistence is authorized by this document.
-**Last updated:** 2026-05-12
+These eight values are the result vocabulary used by operational preflight
+evaluators. They are broad outcome classes, not a universal decision tree.
+Each claim kind owns its exact inputs, precedence, and wording.
 
-## Purpose
+Always read `verdict_note`, `coverage`, `supports`, `signals`, and
+`cannot_testify` with the verdict. Those fields explain what the evaluator
+actually observed and what an operator can do next.
 
-A verdict is preflight's output. Every preflighted claim resolves to exactly one verdict, plus a structured account of supported weaker claims, missing testimony, and excluded conclusions. The verdict is the load-bearing label; the rest is supporting structure.
+Track B `nq-monitor verify` does not expose these verdicts directly. It emits
+an `nq.receipt.v1` with a five-status vocabulary. When an operational result
+is converted to a receipt, the mapping is:
 
-Verdicts should be **non-overlapping** in their primary trigger. If two verdicts could apply to the same situation, the more specific one wins; if neither is more specific, the vocabulary needs tightening. Overlap is a defect.
+| Preflight verdict | Receipt status |
+|---|---|
+| `admissible`, `admissible_with_scope` | `verified` |
+| `claim_exceeds_testimony` | `partially_verified` |
+| `insufficient_coverage`, `stale_testimony` | `needs_more_evidence` |
+| `unsupported_as_stated`, `contradictory_testimony`, `cannot_testify` | `not_verified` |
 
-## The verdicts
+`invalid_evidence` is receipt-side status for malformed or invalid witness
+input; it is not a ninth preflight verdict.
+
+## The eight verdicts
 
 ### `admissible`
 
-The claim, as stated, is supported by available admissible testimony within declared coverage and freshness.
-
-Use when the claim is exactly what the testimony supports — no broader, no narrower. Rare in practice; most claims compress.
+The requested claim is supported as stated by the evaluator's admitted
+testimony. This is uncommon because most operational observations need an
+explicit time, vantage, or target scope.
 
 ### `admissible_with_scope`
 
-The claim is supported, but the testimony is narrower than the claim might suggest. The supporting weaker claim should be stated explicitly.
-
-Example: a claim of "tests passed" supported by a witness that can only testify to "`cargo test` exited 0 on commit X, host Y, at time T" resolves here. The verdict is positive; the scoping is mandatory.
+The evaluator can admit a bounded statement, and the result names that scope.
+Examples include “resolver R returned NXDOMAIN from vantage V at time T” or
+“WAL pressure stayed within the evaluator's bounds during this observation
+window.” It is positive only for the statement in `supports`; it is not a
+general health verdict.
 
 ### `unsupported_as_stated`
 
-The claim as phrased cannot be admitted. The supporting evidence is absent, refused, or contradicted, and no weaker form of the claim is being offered.
-
-Distinct from `claim_exceeds_testimony`: this verdict applies when *the claim itself* is not supportable, not when a weaker form would be.
+The requested statement is not supported in its submitted form and the
+evaluator is not offering a supported weaker statement. Read the note and
+coverage fields to distinguish missing, excluded, and incompatible inputs.
 
 ### `claim_exceeds_testimony`
 
-A weaker form of the claim *is* supported, but the submitted claim is broader than the testimony can carry.
-
-Example: testimony supports "liveness endpoint has returned 200 for 7 minutes" but the submitted claim is "service recovered". The weaker claim is admissible; the submitted one is not. The verdict says so, and names the weaker claim.
-
-This is the most operationally useful refusal class. It tells the caller: "Here is what you may say instead." Most agentic / CI laundering lands here. The proxy-shock-as-target-state case (a shock on a proxy channel emitted as a target-state claim) lands here when the witness has not pre-declared the target as `cannot_testify`; the weaker, regime-change claim is the one named. See `WITNESS_PACKET.md` — *Proxy shock is not target state.*
+The requested statement is broader than the evidence, but the evaluator can
+name a weaker statement that is supported. Consumers should preserve that
+weaker claim rather than render the result as a generic failure or silently
+upgrade it to the original claim.
 
 ### `insufficient_coverage`
 
-Required testimony for this claim kind is missing. No verdict can be returned because the inputs are not present, not because the inputs disagree.
-
-Distinct from `cannot_testify`: this verdict applies when the witness *could* speak but did not; `cannot_testify` applies when the witness has declared it *will not* speak to the conclusion.
+The evaluator lacks the observations or sample depth required for its claim.
+Depending on the claim kind, this can mean no row, too few samples, a silent
+witness, or no affirmative support. In particular, absence of an adverse
+finding is not automatically healthy testimony.
 
 ### `stale_testimony`
 
-Testimony exists but its `observed_at` is outside the freshness policy for this claim kind. No admission is granted, even where the testimony would otherwise be sufficient.
-
-Freshness is evaluated against `observed_at`, not `generated_at` or ingest time. Timestamp presence does not constitute live standing; a witness operating on archived, replicated, or replayed evidence must declare vintage standing via `access_path`. See `WITNESS_PACKET.md` — *Timestamped evidence is not live evidence.*
+The relevant evidence exists but is outside that evaluator's freshness
+policy. Freshness is normally based on observation time. Not every evaluator
+uses this verdict for loss of freshness: some treat a stale evaluator or
+observer as loss of standing and return `cannot_testify`, so the note remains
+authoritative.
 
 ### `contradictory_testimony`
 
-Two or more witnesses with overlapping coverage support incompatible claims at the same scope and freshness window. Preflight does not adjudicate; it names the contradiction.
-
-Witness diversity is not count diversity: two witnesses traversing the same dependency are not independent. Where preflight can detect a shared dependency, it should flag the contradiction as scope-limited rather than treat it as a tie-break. See `WITNESS_PACKET.md` — *Replicated observability is not witness diversity.*
+The admitted data contains a combination the evaluator cannot safely promote
+to the requested statement. The contradiction can be between independent
+witnesses or inside one observation—for example, a passing SMART summary with
+disagreeing error counters, a DNS answer that fails validation, or an
+impossible SQLite WAL state combination. NQ reports the conflict; it does not
+pick the convenient side.
 
 ### `cannot_testify`
 
-A relevant witness has explicitly declared the requested conclusion as outside its `cannot_testify` list. The claim is not refused for lack of evidence; it is refused because no available witness is willing to speak to it.
+The evaluator lacks standing to form the requested conclusion. Causes include
+an explicit constitutional refusal, an unobservable host, inaccessible
+substrate, transport failure at the vantage, a silent required witness, or a
+failed/stale evaluator path. This is a successful refusal, not proof that the
+underlying system is healthy or unhealthy. Some causes are transient and a
+fresh observation or repaired access path can resolve them; others are hard
+scope boundaries.
 
-This is **constitutional** output, not error condition. A preflight that returns `cannot_testify` has succeeded — it has prevented a sentence from crossing a boundary the witness layer has already marked.
+## How to triage a result
 
-## Verdict-vs-verdict disambiguation
+The verdict alone does not prescribe one remediation:
 
-The pairs most likely to confuse:
+| Verdict family | First fields to inspect |
+|---|---|
+| `admissible*`, `claim_exceeds_testimony` | `supports`, scope, observation times, `cannot_testify` |
+| `insufficient_coverage`, `stale_testimony` | `coverage`, freshness horizon, sample counts, source status |
+| `contradictory_testimony` | `signals`, conflicting fields, dependency and vantage details |
+| `cannot_testify`, `unsupported_as_stated` | `verdict_note`, `coverage`, access/transport errors, hard refusals |
 
-| Pair                                              | Distinction                                                                                  |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `unsupported_as_stated` vs `claim_exceeds_testimony` | Is a weaker form of the claim supported? If yes → exceeds; if no → unsupported.            |
-| `insufficient_coverage` vs `cannot_testify`        | Did the witness fail to speak, or refuse to speak? Failure → insufficient; refusal → cannot. |
-| `stale_testimony` vs `insufficient_coverage`       | Was the testimony present but old, or absent? Old → stale; absent → insufficient.            |
-| `admissible_with_scope` vs `claim_exceeds_testimony` | Is the submitted claim itself admissible at the narrower scope, or strictly broader?       |
+If more than one problem applies, the claim-specific evaluator's precedence
+determines the returned verdict. Do not infer that another condition is absent
+merely because a higher-precedence result was returned.
 
-These distinctions are load-bearing because each one routes a different remediation. "Get a fresher snapshot" is the right answer for `stale_testimony` and the wrong answer for `cannot_testify`.
+## What is not a verdict
 
-## What is deliberately not in the vocabulary
-
-The following terms are **not** verdicts in this candidate vocabulary:
-
-- `authority_required` — authority belongs to a separate layer; preflight should not mint authority verdicts from substrate testimony.
-- `masked_by_dependency` — masking is an internal NQ mechanism; the operator-facing verdict for masked findings should be `cannot_testify` or `insufficient_coverage`, depending on the witness's declared posture.
-- `outside_scope` — too vague to disambiguate from `cannot_testify` and `insufficient_coverage`.
-- `safe` / `unsafe` / `ready` / `not_ready` — these are claim *kinds*, not verdicts.
-
-Reintroducing any of these requires a separate ratified change.
+`safe`, `unsafe`, `ready`, `not_ready`, and `authority_required` are not values
+in this vocabulary. NQ records bounded evidence and refusals; it does not turn
+an operational preflight into permission to merge, deploy, restart, or close
+an incident.
 
 ## Related
 
-- `CLAIM_PREFLIGHT.md` — doctrine.
-- `WITNESS_PACKET.md` — testimony shape verdicts are emitted against.
-- `gaps/CANNOT_TESTIFY_STATUS.md` — first-class no-standing at the collector layer.
-- `gaps/COVERAGE_HONESTY_GAP.md` — coverage axis preflight reads from.
+- [Claim Catalog](CLAIM_CATALOG.md) — public claim surfaces and their inputs
+- [Receipts](RECEIPTS.md) — external statuses, integrity checks, and replay
+- [Witness Packet](../architecture/WITNESS_PACKET.md) — witness semantics
+- [Shared Spine](../architecture/SHARED_SPINE.md) — preflight and receipt boundaries

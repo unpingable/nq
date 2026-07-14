@@ -54,7 +54,8 @@ Restart the publisher. Metrics appear in `v_metrics` on the next generation.
 Prometheus + Grafana shows you the metrics. NQ classifies them:
 
 - A metric reporting `NaN` is flagged as **skewed** (Δs) — the signal is corrupt
-- A metric that vanishes is flagged as **missing** (Δo) — signal dropout
+- A policy-historied metric that meets the recent-history threshold and then
+  vanishes is flagged as **missing** (Δo) — signal dropout
 - A sudden explosion in series count is flagged as **degrading** (Δh) — regime shift
 - Host metrics crossing pressure thresholds are flagged as **unstable** (Δg)
 
@@ -63,17 +64,19 @@ You keep your exporters. NQ adds diagnosis.
 ### History policy
 
 Not all scraped metrics need history. NQ stores current values for
-everything but only writes history for metrics matching the
-`metric_history_policy` table. See the SQL cookbook for how to manage it:
+everything but only writes history for metrics matching the built-in
+`metric_history_policy` table:
 
 ```sql
--- See what's being historied
-SELECT * FROM metric_history_policy ORDER BY mode, pattern
-
--- Add a metric to history
-INSERT INTO metric_history_policy (pattern, mode, notes)
-VALUES ('postgres_connections', 'full', 'Connection count trend');
+SELECT pattern, mode, sample_every, enabled, notes
+FROM metric_history_policy
+ORDER BY mode, pattern
 ```
+
+The web SQL console and `nq-monitor query` are deliberately read-only and
+reject `INSERT`. This release does not expose a supported runtime command for
+changing the metric-history policy. Metrics outside the built-in policy remain
+available in `v_metrics`, but they do not appear in `metrics_history`.
 
 ### Reading Prom-backed findings
 
@@ -88,30 +91,31 @@ they agree.** If they share an exporter library, scrape path, Kubernetes API
 view, recording rule, relabel config, node, sidecar, or deployment regime,
 the agreement may be shared contamination rather than corroboration.
 
-NQ does not yet implement a full witness-composition profile. See
-[How NQ Relates to Prometheus](RELATIONSHIP_TO_PROMETHEUS.md#exporters-as-witnesses-forward-note)
-for the orientation framing, and
-[`DURABLE_ARTIFACT_SUBSTRATE_GAP`](../working/gaps/DURABLE_ARTIFACT_SUBSTRATE_GAP.md)
-§Upstream theory note for the theory pointer.
-
-For **which** exporter may be relied on for **what** — the source-conformance
-tiers (observation source vs conforming witness) and the per-exporter matrix —
-see [`BASELINE_SOURCE_CONFORMANCE`](../working/decisions/BASELINE_SOURCE_CONFORMANCE.md).
-Short version: these exporters are Tier-2 observation sources — fine for generic
-detectors, but they confer no domain standing until wrapped into a witness.
+NQ does not currently model exporter independence or perform generic
+witness-voting. Treat each scrape as a bounded observation source, preserve its
+vantage and failure status, and let only explicit detector code form a joined
+conclusion. See [How NQ Relates to Prometheus](RELATIONSHIP_TO_PROMETHEUS.md)
+and the [Scope and Witness Model](../architecture/SCOPE_AND_WITNESS_MODEL.md).
 
 ### Querying Prometheus metrics in NQ
 
-```sql
--- Search for a metric
-SELECT metric_name, value FROM v_metrics WHERE metric_name LIKE 'node_cpu%'
+Search for a metric:
 
--- Specific metric with labels
+```sql
+SELECT metric_name, value FROM v_metrics WHERE metric_name LIKE 'node_cpu%'
+```
+
+A specific metric with labels:
+
+```sql
 SELECT metric_name, labels_json, value
 FROM v_metrics
 WHERE metric_name = 'node_filesystem_avail_bytes'
+```
 
--- Metric history (if policy-included)
+The 60 most recent stored samples for a policy-included metric:
+
+```sql
 SELECT g.completed_at, mh.value
 FROM metrics_history mh
 JOIN series s ON s.series_id = mh.series_id
@@ -169,10 +173,13 @@ NQ monitors systemd units natively. No exporter needed.
 
 The `unit` field is optional — defaults to the `name` as the unit name.
 
-Services are checked via `systemctl show` and mapped to:
-- **up** — active/running
-- **down** — failed/inactive
-- **degraded** — activating/deactivating
+Services are checked via `systemctl show` and mapped from systemd's
+`ActiveState`:
+
+- **up** — `active`
+- **down** — `failed` or `inactive`
+- **degraded** — `activating` or `deactivating`
+- **unknown** — an unrecognized state or a failed `systemctl` observation
 
 A service going `down` produces an **unstable** (Δg) finding. A service
 oscillating between states produces a **degrading** (Δh) flap finding.
@@ -210,28 +217,38 @@ NQ monitors SQLite databases directly — no exporter needed.
 ```
 
 NQ checks:
-- Database size
-- WAL size (absolute and as % of DB — **relative thresholds**)
-- Freelist / reclaimable space (absolute and %)
-- Journal mode
-- Page count and size
-- Quick check / integrity check results
+
+- Main database and `-wal` sidecar size
+- Main database and WAL modification times
+- Page size and freelist count parsed from the SQLite file header
+- Page count derived from file size and page size
+- Auto-vacuum mode parsed from the header
+- Presence of a `-wal` sidecar, used only as a WAL-mode hint
+
+The collector is metadata-only: it never opens a SQLite connection to the
+monitored database. It therefore does **not** run `quick_check` or
+`integrity_check`, execute checkpoints, or verify the database's live journal
+mode. `last_quick_check` and checkpoint fields in the public view are normally
+`NULL` for this collector.
 
 WAL or freelist bloat produces **unstable** (Δg) findings with context
-about how bad it is relative to the database size.
+about the observed size relative to the database. Those findings identify a
+condition to investigate; they do not establish corruption or its cause.
 
 ---
 
 ## Webhooks (Outbound)
 
-NQ sends notifications when findings escalate in severity.
+NQ sends notifications when findings become eligible under the notification
+lifecycle and configured severity floor.
 
 ```json
 {
   "notifications": {
     "channels": [
       { "type": "webhook", "url": "https://your-endpoint.com/nq-alerts" },
-      { "type": "slack", "webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK" }
+      { "type": "slack", "webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK" },
+      { "type": "discord", "webhook_url": "https://discord.com/api/webhooks/..." }
     ],
     "min_severity": "warning",
     "external_url": "https://nq.your-domain.com"
@@ -239,15 +256,21 @@ NQ sends notifications when findings escalate in severity.
 }
 ```
 
-Webhook payloads include:
+The current serve loop emits an `nq/v2` rollup envelope. Its findings include:
+
 - Finding identity (host, domain, kind, subject)
 - Failure domain label (missing/skewed/unstable/degrading)
-- Severity and escalation history
+- Severity, previous notified severity, and recurrence state
+- Structured diagnosis fields when the detector supplies them
 - Direct link to the finding detail page
-- Generation ID and consecutive generation count
+- Generation ID, first-seen timestamp, and consecutive generation count
 
-NQ only notifies on severity **escalation** (info→warning, warning→critical),
-not every generation. This prevents alert fatigue by design.
+At or above `min_severity`, NQ notifies for a new eligible finding. A higher
+severity fires as an escalation; a non-escalating severity change or an
+identity that disappears and later returns is held during the durable 24-hour
+cooldown and may notify afterward. An unchanged finding is not resent every
+generation. Findings are grouped into notification rollups by host, state kind,
+and detector family.
 
 ### Slack format
 
@@ -255,21 +278,26 @@ Slack notifications include emoji severity indicators, clickable links
 to the finding detail page, and compact metadata:
 
 ```
-🔴 [CRITICAL unstable] (escalated from warning) `freelist_bloat`/`/path/to/db` on labelwatch-host
-> freelist reclaimable 46229.9 MB (85.0% of db)
-gen #17223 · 1497 consecutive · since 2026-03-31T20:45:15Z
+:red_circle: CRITICAL on labelwatch-host (unstable) `INVESTIGATE BUSINESS HOURS`
+• `freelist_bloat` on `/path/to/db`
+Freelist has 46229.9 MB reclaimable (85.0% of database).
+Escalated from warning · generation #17223 · 1497 consecutive
+Since 2026-03-31 20:45 UTC
+> Source: freelist reclaimable 46229.9 MB (85.0% of db)
 ```
 
 ### Discord
 
-Discord accepts Slack-format webhooks. Use the Slack channel type with
-your Discord webhook URL — it works as-is.
+Discord is a native notification channel. Use `type: "discord"`, as in the
+configuration above. NQ sends Discord's `content` payload shape; do not put a
+Discord URL under the Slack channel type.
 
 ---
 
 ## PagerDuty
 
-Use the webhook channel with PagerDuty's Events API v2:
+Put a small proxy or Lambda between NQ and PagerDuty. Configure NQ's generic
+webhook channel to call that proxy:
 
 ```json
 {
@@ -277,7 +305,7 @@ Use the webhook channel with PagerDuty's Events API v2:
     "channels": [
       {
         "type": "webhook",
-        "url": "https://events.pagerduty.com/v2/enqueue",
+        "url": "https://nq-pagerduty-proxy.example.com/events",
         "headers": {
           "Content-Type": "application/json"
         }
@@ -287,8 +315,10 @@ Use the webhook channel with PagerDuty's Events API v2:
 }
 ```
 
-You'll need a small proxy or Lambda to transform NQ's webhook payload
-into PagerDuty's event format. Native PagerDuty integration is planned.
+The proxy must transform NQ's `nq/v2` rollup webhook payload into a PagerDuty
+Events API v2 event and supply the PagerDuty routing key. Pointing NQ directly at
+`https://events.pagerduty.com/v2/enqueue` does not perform that translation and
+is unsupported. There is no native PagerDuty channel in the current config.
 
 ---
 

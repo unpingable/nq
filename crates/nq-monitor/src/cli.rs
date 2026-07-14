@@ -29,7 +29,7 @@ pub enum Command {
     /// alerts on staleness/silence from outside NQ's failure boundary.
     Sentinel(SentinelCmd),
     /// Consumer-facing finding surface (canonical JSON export).
-    /// See docs/working/gaps/FINDING_EXPORT_GAP.md.
+    /// See `docs/architecture/FINDING_STATE_MODEL.md`.
     Findings(FindingsCmd),
     /// Consumer-facing liveness surface (canonical JSON export of
     /// the sentinel liveness artifact). Single-instance today; the
@@ -39,22 +39,22 @@ pub enum Command {
     /// Fleet index — comparison surface for declared NQ targets. Reads
     /// each target's liveness artifact via the manifest URL and renders
     /// one row per target. No merged authority, no synthetic fleet
-    /// rollup. See `docs/working/gaps/FLEET_INDEX_GAP.md`.
+    /// rollup. See `docs/operator/OPERATOR_GUIDE.md`.
     Fleet(FleetCmd),
     /// Maintenance — declare expected disturbance windows that annotate
     /// findings as `covered` (in window) or `overrun` (window past, finding
     /// persists). Annotation only — never suppresses or hides findings.
-    /// See `docs/working/gaps/MAINTENANCE_DECLARATION_GAP.md`.
+    /// See `docs/operator/GLOSSARY.md`.
     Maintenance(MaintenanceCmd),
     /// Source — explicit evidence-retirement verb. `retire` withdraws a
     /// deliberately torn-down source and transitions the findings it backs to
     /// `retired`; `unretire` reverses the current state (to `unknown`, never
     /// auto-`live`) while preserving the audit trail. Retirement is explicit,
-    /// never inferred from silence. See `docs/working/gaps/EVIDENCE_RETIREMENT_GAP.md`.
+    /// never inferred from silence. See `docs/architecture/FINDING_STATE_MODEL.md`.
     Source(SourceCmd),
     /// Claim preflight — bounded verdict against existing NQ testimony for a
-    /// structured claim kind. V1 supports `disk_state`. NQ testifies; NQ does
-    /// not authorize consequence. See `docs/working/decisions/CLAIM_PREFLIGHT.md`.
+    /// registered operational claim kind. NQ testifies; NQ does not authorize
+    /// consequence. See `docs/operator/CLAIM_CATALOG.md`.
     Preflight(PreflightCmd),
     /// Validate a caller-supplied witness packet (`nq.witness.v1`).
     /// Reads a JSON file, checks the envelope, and reports problems.
@@ -83,27 +83,14 @@ pub enum Command {
     /// are not smoke failures.
     Smoke(SmokeCmd),
     /// Probe an external substrate and write the observation into NQ's
-    /// DB. V0 supports `dns` — one DNS query per invocation, writing
-    /// one `dns_observations` row. See `docs/working/gaps/DNS_WITNESS_FAMILY_GAP.md`.
-    /// Decoupled from the aggregator publish transaction; the row is
-    /// recorded in the latest existing generation context.
+    /// DB. The DNS probe issues one query per invocation and writes one
+    /// `dns_observations` row. It is decoupled from the aggregator publish
+    /// transaction and records the row in the latest generation context.
     Probe(ProbeCmd),
-    /// **D0-Origin (cross-repo bridge to AG, 2026-06-09)**: invoke the
-    /// real production evaluator pipeline against a staged sandbox
-    /// substrate and emit `FindingSnapshot` JSON stamped with a chosen
-    /// `origin_mode` from the closed vocabulary
-    /// `{observed, drill, replay, synthetic}` (NQ migration 057).
-    ///
-    /// This is **not** a synthetic-finding generator. The same
-    /// `sqlite_health::collect`, `publish_batch`, `detect::run_all`,
-    /// and `update_warning_state_with_origin_mode` code paths the
-    /// `serve` loop uses are invoked here in-process. The condition is
-    /// operator-staged (smoke machine), but the observation is real
-    /// (no fake alarm). See
-    /// `~/git/agent_gov/working/nq-custody-gap-origin-discriminator.md`
-    /// for the forcing case and
-    /// `~/git/agent_gov/working/campaign-standing-before-spendability.md`
-    /// §3 D0-Origin for the cross-repo slice spec.
+    /// Run the production collection, publish, and detector path against a
+    /// deliberately staged sandbox condition, then emit finding snapshots
+    /// with explicit drill provenance. This observes a real staged condition;
+    /// it does not inject a synthetic finding. See `docs/operator/GLOSSARY.md`.
     Drill(DrillCmd),
 }
 
@@ -115,23 +102,17 @@ pub struct DrillCmd {
 
 #[derive(Debug, Subcommand)]
 pub enum DrillAction {
-    /// Run the WAL-bloat detector against a staged sandbox SQLite
-    /// substrate. The detector is the production
-    /// `nq_db::detect::detect_wal_bloat` reading
-    /// `monitored_dbs_current`; the sandbox is populated via the
-    /// production `nq_witness::collect::sqlite_health::collect` reader
-    /// followed by `nq_db::publish_batch`. The resulting findings are
-    /// stamped with the supplied `origin_mode`, then exported as
-    /// `nq.finding_snapshot.v1` JSON on stdout.
+    /// Run the production SQLite collection, publish, and WAL-bloat detector
+    /// path against a staged sandbox database. Findings are stamped with the
+    /// supplied `origin_mode` and exported as `nq.finding_snapshot.v1` JSON.
     WalBloat(DrillWalBloatCmd),
 }
 
 #[derive(Debug, Args)]
 pub struct DrillWalBloatCmd {
     /// Path to the sandbox SQLite DB file. The collector also reads the
-    /// sibling `<path>-wal` file; the operator is responsible for
-    /// ensuring the WAL is bloated (Night Shift's
-    /// `wal_bloat_stager.rs` does this in the campaign D0-Origin slice).
+    /// sibling `<path>-wal` file. The operator must stage the WAL condition;
+    /// this command does not manufacture it.
     #[arg(long)]
     pub sandbox_db: PathBuf,
 
@@ -141,17 +122,13 @@ pub struct DrillWalBloatCmd {
     #[arg(long)]
     pub db: Option<PathBuf>,
 
-    /// Origin-mode discriminator to stamp on every emitted finding's
-    /// `warning_state.origin_mode` column. Must be in the closed
-    /// vocabulary `{observed, drill, replay, synthetic}` (migration
-    /// 057). Default: `drill` because that is the forcing case D0-Origin
-    /// landed this command for.
+    /// Origin-mode discriminator to stamp on every emitted finding. Must be
+    /// one of `{observed, drill, replay, synthetic}`. Defaults to `drill`.
     #[arg(long, default_value = "drill")]
     pub origin_mode: String,
 
-    /// Host label to record on the staged batch. Defaults to a stable
-    /// fixture value so the deterministic-transcript invariant on the
-    /// AG side does not flap on a real hostname.
+    /// Host label to record on the staged batch. The stable default keeps
+    /// output independent of the machine's real hostname.
     #[arg(long, default_value = "host-drill")]
     pub host: String,
 
@@ -607,8 +584,8 @@ pub enum FindingsAction {
     /// Export is evidence, not authority. A `FindingSnapshot` is admissible
     /// evidence for downstream reconciliation, not an authorization token —
     /// consumers must reconcile against current state before acting on any
-    /// snapshot. See docs/working/gaps/FINDING_EXPORT_GAP.md §"Consumer Semantics"
-    /// for the full discipline.
+    /// snapshot. See `docs/architecture/FINDING_STATE_MODEL.md` for the
+    /// projection's lifecycle and evidence semantics.
     Export(FindingsExportCmd),
 }
 

@@ -1,15 +1,14 @@
-# NQ Architecture Spine and Roadmap
+# Claim-Verification Spine and Evolution Rules
 
-**Status:** `ratified` — drafted 2026-05-20 after audit of `nq` and `nq-witness` against the proposed spine framing. This document is the source of truth; the memory leaves `project_nq_architecture_spine.md` and `project_nq_roadmap_v0.md` summarize and point here.
-**Depends on:** `../working/decisions/CLAIM_PREFLIGHT.md` (doctrine), `../architecture/WITNESS_PACKET.md` (witness side), `../operator/VERDICTS.md` (verdict vocabulary), `../working/decisions/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md` (Track A surface), `SHARED_SPINE.md` (Receipt boundary)
-**Related gaps:** `../working/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`, `../working/gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md`, `../working/gaps/DNS_WITNESS_FAMILY_GAP.md`, `../working/gaps/PREMISE_DEGRADED_GAP.md`
-**Last updated:** 2026-05-20
+**Status:** ratified doctrine for NQ's claim-verification subsystem. This document describes the stable spine and the rules for extending it; source code and the [Claim Catalog](../operator/CLAIM_CATALOG.md) own the changing inventory of claim kinds and routes.
 
-## Keeper
+## Scope
 
-> NQ is a claim-preflight system for operational evidence. The architecture is whatever preserves the chain from observation → admissible claim → explicit refusal → receipt.
+NQ as a product includes an operational monitor, web UI, SQL interface, and notification engine. This document covers the narrower subsystem that turns bounded evidence into a bounded claim result and, where requested, a receipt.
 
-NQ is not a monitoring platform. NQ is not a dashboard. NQ is not a policy engine. NQ is a bounded claim evaluator that holds the line between observation and conclusion.
+> The claim-verification architecture is whatever preserves observation → admissible claim → explicit refusal → receipt without promoting evidence beyond its coverage.
+
+This subsystem is not a policy or authorization engine. It can constrain what a consumer may honestly say; it cannot decide what that consumer may do.
 
 ## The spine
 
@@ -17,49 +16,42 @@ NQ is not a monitoring platform. NQ is not a dashboard. NQ is not a policy engin
 Observation → WitnessPacket → ClaimKind → PreflightResult → Receipt → Consumer
 ```
 
-Five layers. Each layer has one job and one keeper rule. The keepers exist to prevent silent promotion of weaker testimony into stronger claims.
+The stages are deliberately separate. Not every surface serializes every intermediate object, but no implementation may skip the responsibility that object represents.
 
-### Layer 1 — Witness
+### 1. Observation
 
-**Job:** answer "what was observed, by whom/what, from where, when, with what coverage?"
+**Question:** what happened at a particular vantage, time, and scope?
 
-**Keeper:** *Witnesses observe. They do not promote.*
+An observation is a bounded fact produced by a collector, probe, command wrapper, database projection, or other declared source. It carries no automatic permission to name a broader condition. “The command exited zero” is an observation; “the change is safe” is a different claim.
 
-**Core objects (live):**
-- `WitnessPacket` — `crates/nq-core/src/witness.rs` (constant `WITNESS_SCHEMA = "nq.witness.v1"`)
-- `observed_at`, `generated_at`, `vantage`, `subject`, `coverage_limits`, `dependencies` — `WitnessPacket` fields
-- `cannot_testify` — per-claim-kind constitutional refusal lists (e.g. `disk_state_cannot_testify()`, `ingest_state_cannot_testify()`, `dns_state_cannot_testify()`) in `crates/nq-core/src/preflight.rs`
-- Producer-side contracts: `nq.witness.v0` plus per-profile shapes (`nq.witness.zfs.v0`, `nq.witness.smart.v0`) — separate repo at `~/git/nq-witness` (this is the sibling foundation-spec / library-spec repo, distinct from the workspace crate `crates/nq-witness/` introduced 2026-06-02 — see Track 4 of [`../working/decisions/OSS_READINESS_ROADMAP.md`](../working/decisions/OSS_READINESS_ROADMAP.md))
-- Structural W/E separation (2026-06-02): the witness role lives in its own workspace crate `crates/nq-witness/` + binary `nq-witness`. The monitor binary (`nq-monitor`) does not depend on `nq-witness` as a library — they communicate over HTTP via `crates/nq-witness-api/`. Co-residence inside one process is no longer the default; if a future deployment wants in-process witness collection, it must explicitly opt into a `local-witness` cargo feature (not yet implemented — gated on forcing case).
+### 2. Witness packet
 
-**Doctrine:** `../architecture/WITNESS_PACKET.md` (three witness-semantics constraints), `~/git/nq-witness/SPEC.md`
+**Question:** who or what observed it, through which path, with what dependencies, freshness, and coverage limits?
 
-**Tests:** envelope-validation tests in `crates/nq-core/src/witness.rs`; per-claim-kind cannot_testify presence asserted across the evaluator suites.
+**Keeper:** witnesses observe; they do not promote.
 
-### Layer 2 — Claim
+Caller-supplied verification uses `nq.witness.v1` packets directly. Operational preflights may project retained monitor evidence into a packet-shaped support before evaluation. Where a legacy path cannot retain a portable packet, its result must disclose that custody limitation rather than imply replayability.
 
-**Job:** answer "what type of statement is being attempted, and what does admissibility require for it?"
+The canonical packet type and validation live in `crates/nq-core/src/witness.rs`. The wire doctrine is [Witness Packet](WITNESS_PACKET.md).
 
-**Keeper:** *A claim kind is a jurisdictional boundary.*
+### 3. Claim kind
 
-A claim kind declares: required witness families, minimum freshness, required coverage, excluded conclusions (constitutional `cannot_testify`), supported weaker claims, scope limits, failure / refusal modes.
+**Question:** what exact statement is being attempted, and what testimony would be required to admit it?
 
-**Core objects (live):**
-- `ClaimKind` enum — `crates/nq-core/src/preflight.rs` — V3 covers `DiskState`, `IngestState`, `DnsState`
-- `ClaimRegistry` — `crates/nq-core/src/claim_registry.rs` — `Leaf` / `Composite` / `NonMintable` entries; Track B starter catalog hardcoded
-- Per-kind `cannot_testify` lists — `crates/nq-core/src/preflight.rs`
+**Keeper:** a claim kind is a jurisdictional boundary.
 
-**Doctrine:** `../working/decisions/CLAIM_PREFLIGHT.md`, `../working/decisions/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md`, `../working/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`
+An operational claim kind declares its target shape, required witness families, scope and freshness rules, admissible weaker statements, and constitutional `cannot_testify` conclusions. Track B registry entries declare their applicable witness requirements and non-mintable relationships; dimensions that do not apply can be absent or empty. New claim kinds are Rust/code changes with tests, not free-form strings that acquire meaning from configuration.
 
-**Tests:** unit tests across `crates/nq-core/src/claim_registry.rs` and `crates/nq-core/src/preflight.rs` cover serde shape, skeleton refusals, leaf/composite/non-mintable resolution.
+Operational claim kinds live in `crates/nq-core/src/preflight.rs`. CI/agent leaf, composite, and non-mintable claims live in `crates/nq-core/src/claim_registry.rs`. The [Claim Catalog](../operator/CLAIM_CATALOG.md) is the operator-facing inventory.
 
-### Layer 3 — Preflight / Evaluator
+### 4. Preflight result
 
-**Job:** answer "given these witnesses, what may honestly be claimed?"
+**Question:** given the admitted testimony, what may honestly be claimed?
 
-**Keeper:** *The strongest honest claim may be weaker than the requested claim.*
+**Keeper:** the strongest honest claim may be weaker than the requested claim.
 
-**Verdict taxonomy (closed):**
+Operational evaluators return a typed `PreflightResult` with one of eight internal verdicts:
+
 1. `admissible`
 2. `admissible_with_scope`
 3. `unsupported_as_stated`
@@ -69,211 +61,118 @@ A claim kind declares: required witness families, minimum freshness, required co
 7. `contradictory_testimony`
 8. `cannot_testify`
 
-(`unknown` is not a verdict. Falling out of these eight forces a doctrine change, not a junk-drawer assignment.)
+`unknown` is not a catch-all verdict. Absence, staleness, contradiction, explicit refusal, and an over-broad claim route to different outcomes because they require different operator responses. See [Verdict Vocabulary](../operator/VERDICTS.md).
 
-**Core objects (live):**
-- `Verdict` enum — `crates/nq-core/src/preflight.rs`
-- `PreflightResult` DTO — `crates/nq-core/src/preflight.rs` (the internal Rust shape shared across per-kind wire schemas)
-- Track A evaluators — `crates/nq-db/src/preflight.rs` (`disk_state`, `ingest_state`), `crates/nq-db/src/dns.rs` (`dns_state`)
-- Track B evaluator — `crates/nq-core/src/claim_registry.rs::evaluate`
+### 5. Receipt
 
-**Doctrine:** `../operator/VERDICTS.md`
+**Question:** what decision was recorded, from which evidence, under which evaluator and time basis?
 
-**Tests:** 21 in `crates/nq-db/src/dns.rs`; analogous suites for `disk_state` and `ingest_state` in `crates/nq-db/src/preflight.rs`; the V0 wire-parser hardening pass in `crates/nq/src/probe.rs` exercises the response-kind classifier against hostile inputs.
+**Keeper:** a receipt preserves the decision; it does not ratify or authorize it.
 
-### Layer 4 — Receipt
+`nq.receipt.v1` carries the external five-status vocabulary, supported and unsupported claims, witness references, typed refusal statements, observation-time envelope, evaluator binding, and any evaluator-defined freshness horizon. `nq-monitor verify` emits receipts for caller-supplied claim evaluation. Operational results can be projected into the same receipt type where a surface calls for a durable artifact.
 
-**Job:** answer "what was decided, from what evidence, at what time, under what claim rules?"
+Sealed receipts use a canonicalized SHA-256 self-hash. A receipt's `WitnessRef` can carry a canonical SHA-256 digest computed from a supplied witness packet, but the packet does not contain or verify its own digest. These hashes detect accidental corruption and edits that were not resealed; they are not signatures and do not authenticate who wrote the artifact. Authenticated custody requires a separately controlled store or signing layer.
 
-**Keeper:** *Refusal without receipt is advice. Receipt-backed refusal is infrastructure.*
+See [Receipts](../operator/RECEIPTS.md) and [Shared Spine](SHARED_SPINE.md).
 
-A receipt binds: requested claim, evaluated claim, witness references, evaluator version, verdict, scope, excluded conclusions, freshness horizon, cannot-testify boundaries.
+### 6. Consumer
 
-**Core objects (live):**
-- `Receipt`, `Status`, `StatusReason`, `WitnessRef` — `crates/nq-core/src/receipt.rs` (constant `RECEIPT_SCHEMA = "nq.receipt.v1"`)
-- `From<PreflightResult>` projection — same file
-- Renderers (human / json / jsonl / markdown) — `crates/nq-core/src/render.rs`
+**Question:** how does a human or tool use the bounded result without silently upgrading it?
 
-**Doctrine:** `SHARED_SPINE.md`
+**Keeper:** a consumer may render or route jurisdiction; it may not invent it.
 
-**Not yet (Phase 2 work):** witness-ref hashing (`digest` schema slot exists; unpopulated), evaluator-version binding, receipt-replay / check command, explicit freshness-horizon field (today expressed via `observed_at_min` / `observed_at_max`).
+Consumers include CLI output, HTTP clients, CI jobs, audit stores, dashboards, postmortems, and external authority systems. A consumer must preserve `cannot_testify`, freshness, scope, and custody limitations. A verified or replayable receipt is evidence supplied to an authority layer; it is not authority itself.
 
-### Layer 5 — Surface
+## Track A and Track B
 
-**Job:** answer "how do humans and tools consume the result?"
+The shared spine has two input paths:
 
-**Keeper:** *UI consumes jurisdiction; it does not invent it.*
-
-**Surfaces shipping today:**
-- CLI: `nq-monitor preflight disk-state`, `nq-monitor verify`, `nq-monitor witness {git-status,pytest,diff-scope}`, `nq-monitor probe dns`, `nq-monitor receipt render`, `nq-monitor smoke ...`
-- HTTP: `GET /api/preflight/disk-state/{host}`, `GET /api/preflight/ingest-state`, `GET /api/preflight/dns-state?vantage=&resolver=&name=&type=`
-- GitHub Action: `.github/actions/nq-verify/action.yml` (orchestrates witness → verify → markdown → comment)
-- Read-only web UI (templates in `crates/nq/src/http/routes.rs`)
-
-## The four canonical contracts (audit-corrected status)
-
-| Contract | Status | Notes |
-|---|---|---|
-| `nq.witness.v1` | **live** | `WITNESS_SCHEMA` in `nq-core::witness`. nq-witness side ships `v0` — independent versioning is intentional (see seam #3 below). |
-| `nq.claim.v1` | **deferred / aspirational** | Claim kinds live in Rust code (`ClaimRegistry`). Extract to wire contract only when external claim authorship, cross-repo claim inspection, or non-Rust consumers force it. Symmetry for symmetry's sake is how YAML gets tenure. |
-| `nq.preflight.<claim_kind>.v1` (per-kind, plural) | **live as per-kind** | `nq.preflight.disk_state.v1`, `nq.preflight.ingest_state.v1`, `nq.preflight.dns_state.v1` all ship today. Single internal `PreflightResult` DTO. Unified `nq.preflight_result.v1` is future consolidation only — the registry-pressure point named in `../working/gaps/DNS_WITNESS_FAMILY_GAP.md` stays visible until claim kind 4 forces it. |
-| `nq.receipt.v1` | **live** | `RECEIPT_SCHEMA` in `nq-core::receipt`. Renderers ship. Hash / binding / replay still TODO (Phase 2 of roadmap). |
-
-## Claim families — live vs candidate
-
-### Live / implemented
-
-| Claim | Track | Evaluator path | Wire surface |
+| Track | Evidence source | Evaluation surface | Primary output |
 |---|---|---|---|
-| `disk_state` | A | `crates/nq-db/src/preflight.rs::evaluate_disk_state_preflight` (projects ZFS/SMART findings through `disk_state_witness_projection.rs` into `legacy_projection` witness packets before admitting them) | CLI, HTTP, nested on `/api/host/{name}` |
-| `ingest_state` | A | `crates/nq-db/src/preflight.rs::evaluate_ingest_state_preflight` (projects `generations` + `source_runs` rows through `ingest_state_witness_projection.rs`) | HTTP |
-| `dns_state` | A | `crates/nq-db/src/dns.rs::evaluate_dns_state_preflight` (projects `dns_observations` rows through `dns_state_witness_projection.rs`) | HTTP, CLI probe (`nq-monitor probe dns`) |
-| `sqlite_wal_state` | A | `crates/nq-db/src/sqlite_wal_state.rs::evaluate_sqlite_wal_state_preflight` (projects `wal_observations` rows through `sqlite_wal_state_witness_projection.rs`) | HTTP |
-| `repo_clean` | B (Leaf) | `claim_registry::evaluate` over `git_status` witness | `nq-monitor verify`, GitHub Action |
-| `tests_passed` | B (Leaf) | `claim_registry::evaluate` over `pytest` witness | `nq-monitor verify`, GitHub Action |
-| `diff_scope_matches_claim` | B (Leaf) | `claim_registry::evaluate` over `diff_scope` witness | `nq-monitor verify`, GitHub Action |
-| `ready_for_review` | B (Composite) | Requires the above three | `nq-monitor verify`, GitHub Action |
-| `safe_to_merge` | B (NonMintable) | Surfaces `ready_for_review` as the admissible weaker claim | `nq-monitor verify` (always refused as stronger; weaker is the offer) |
+| A — operational | Evidence already retained by a running monitor | Per-kind DB evaluator, normally exposed through `/api/preflight/*`; disk state also has a CLI preflight | Typed per-kind `PreflightResult` |
+| B — caller supplied | `nq.witness.v1` packet files | `nq-monitor verify` through the registered claim catalog | `nq.receipt.v1` |
 
-### Candidate / docs-only / not live
+Track A preflights are read-only. They do not create findings, mutate work state, or send notifications. Track B does not consult the monitor database unless the caller explicitly creates a witness from that substrate.
 
-| Claim | Status | Notes |
-|---|---|---|
-| `service_recovered` / `service_state` | docs-only candidate | Doctrined in `../working/decisions/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md`. No witness, no evaluator. |
-| `deployment_safe` | not in scope | Mentioned in some prior framings as an example; no implementation, no doctrine. |
-| `dns_name_exists` | **subsumed by `dns_state`** | NQ ships finer-grained per-(vantage, resolver, name, type) testimony. No separate name. Do not record as roadmap debt. |
+The two tracks share claim/refusal discipline, not necessarily identical custody. A Track B receipt references the caller-supplied packets whose subject matches the requested subject, including packet types that may not contribute to the claim. An operational evaluator may derive support from database evidence that has not been packaged for portable replay. That difference must remain visible.
 
-## Intentional current seams (not gaps)
+## Receipt check, replay, and freshness
 
-These are surfaces a future audit would otherwise call "incomplete" — they are deliberate.
+Three questions must not collapse:
 
-1. **Claim wire contract is not extracted.** Claim kinds live in `ClaimRegistry` Rust code, not in a `nq.claim.v1` serialized doctrine. Defer extraction until external claim authorship, cross-repo claim inspection, or non-Rust consumers force the wire format. Claim definitions are operational doctrine, not portable data blobs.
-
-2. **Preflight results carry per-claim-kind wire schemas.** No unified `nq.preflight_result.v1` envelope. Three per-kind shapes (`nq.preflight.disk_state.v1`, `nq.preflight.ingest_state.v1`, `nq.preflight.dns_state.v1`) sit on the wire. Consolidation is the registry generalization (`../working/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`), forcing case: claim kind 4.
-
-3. **nq-monitor and nq-witness version independently.** nq's consumer-side `nq.witness.v1` and nq-witness's producer-side `nq.witness.v0` are contract-compatible today. Bump nq-witness when the producer contract itself changes or hardens — not for aesthetic alignment.
-
-4. **Track A.0 — retired 2026-05-27.** Historical: the `disk_state` evaluator originally read `FindingSnapshot` directly, bypassing the witness-packet projection. That carry is paid down. Each Track A evaluator (`disk_state`, `ingest_state`, `dns_state`) now projects substrate rows through a per-kind projector into `legacy_projection` witness packets before admitting them; `sqlite_wal_state` was greenfield kind 4, never had a Track A.0 phase. The keeper rule ("Witnesses observe. They do not promote.") is upheld uniformly across Track A and Track B. See [`../working/decisions/TRACK_A_0_RETIREMENT.md`](../working/decisions/TRACK_A_0_RETIREMENT.md) for the timeline and how to read older "Track A.0" references in the working/ tree.
-
-## Roadmap — audit-corrected
-
-**NQ is not pre-architecture.** The spine is real, three of the four contracts are wire-shipping, the verdict taxonomy is closed and tested, and at least eight claim families are live across both Track A (operational) and Track B (CI). The roadmap is **consolidation + sequencing**, not invention.
-
-Each phase has an **exit condition**: a boring, testable state that unlocks the next phase.
-
-### Phase 0 — Consolidate the spine
-
-**Status:** ~70–80% instantiated. Not "build contracts" — *finish freezing what is already real.*
-
-| Existing | Remaining |
+| Question | Surface |
 |---|---|
-| `nq.witness.v1`, `nq.receipt.v1` ship; per-kind preflight schemas ship | Decide if/when `nq.claim.v1` extraction forces (likely not yet) |
-| Verdict taxonomy closed (8 verdicts); `cannot_testify` doctrine; per-kind constitutional refusal lists live | Decide if/when unified `nq.preflight_result.v1` forces (claim kind 4 trigger) |
-| Track A: disk/ingest/dns evaluators + HTTP. Track B: claim registry + `nq-monitor verify` + GitHub Action | Track A.1 cut-over (gap doc landed; implementation deferred) |
-| Canonical examples exist via e2e tests + live production probes | Codify a small canonical-example set (3–5 claim kinds) in repo docs so new readers don't have to mine tests |
+| Is the receipt structurally intact and are referenced packets present? | `nq-monitor receipt check` |
+| Does a compatible evaluator reproduce the recorded decision from supplied packets? | `nq-monitor receipt replay` |
+| Is the underlying claim supported by current evidence? | A fresh `verify` or operational preflight |
 
-**Exit:** a reader can open one packet/result/receipt and see exactly what NQ is allowed to say and what it refuses. (Mostly already true.)
+`check` can evaluate a declared freshness horizon, but that only says whether the old receipt remains within its own policy window. `replay` reproduces a decision; it does not renew that window. A clean replay of old evidence is not a current health claim or fresh authorization.
 
-### Phase 1 — Operational wedge
+The receipt replay command cannot host some operational evaluators from supplied packets. For recognized operational bindings it returns a typed not-applicable outcome; missing Track B packet custody has its own status. “Cannot replay” is an honest subsystem result, not permission to assume equivalence.
 
-**Status:** ~60% wedged. Boring claims already catch overpromotion that a normal status surface would have swallowed.
+The detailed outcome taxonomy is pinned in [Receipt Replay](RECEIPT_REPLAY.md).
 
-| Existing | Remaining |
-|---|---|
-| `disk_state`, `ingest_state`, `dns_state`, `repo_clean`, `tests_passed`, `diff_scope_matches_claim` all live; CLI + HTTP + GitHub Action | `service_recovered` / `service_state` (witness shape undecided) |
-| GitHub Action wire-tested; markdown renderer ships | Refusal-example library for operators (the "refused stronger / admissible weaker" pairs as published doctrine, not just code-internal) |
+## Contract boundaries
 
-**Exit:** NQ catches a claim a normal monitoring/CI surface would have overpromoted. (Already happens; needs documented operator-facing pair examples.)
+The stable public objects are:
 
-### Phase 2 — Receipt discipline
+- `nq.witness.v1` for caller-supplied witness packets;
+- per-claim operational preflight schemas such as `nq.preflight.<kind>.v1`;
+- `nq.receipt.v1` for persistent claim decisions;
+- the closed internal preflight verdict vocabulary and external receipt status vocabulary;
+- typed `cannot_testify` refusals carried with results and receipts.
 
-**Status:** **shape exists; durability discipline is the work.** This is the next phase that actually needs invention, not consolidation.
+Claim kinds themselves remain code-defined. There is no general operator-authored claim language. Per-kind preflight schemas may evolve independently when their target or signal shape is genuinely different; visual symmetry alone is not a reason to create a generic schema.
 
-| Existing | Remaining |
-|---|---|
-| `nq.receipt.v1` DTO; renderers (human / json / jsonl / markdown); `From<PreflightResult>` projection | Receipt hash + canonicalization |
-| Per-witness `observed_at` reaches the wire; `observed_at_min` / `observed_at_max` envelope on results | Evaluator-version binding |
-|  | Witness refs / hashes (`digest` schema slot exists; unpopulated) |
-|  | Explicit freshness horizon field |
-|  | `nq-monitor receipt check` / `nq-monitor receipt replay` command |
+The wire contract between the runtime witness service and monitor collection (`nq.witness_packet.v1`) is related but distinct from caller-supplied claim packets (`nq.witness.v1`). Do not infer version or custody equivalence from the similar names.
 
-**Exit:** a later system can consume a receipt without trusting prose. (Nightshift can then become plausible.)
+## As-built surfaces
 
-### Phase 3 — Nightshift consumption
+The inventory changes more often than the architecture. Use these sources rather than copying counts into design prose:
 
-**Status:** unstarted. Sequenced after Phase 2.
+- `crates/nq-core/src/preflight.rs` — operational `ClaimKind`, verdict types, and per-kind schemas;
+- `crates/nq-core/src/claim_registry.rs` — caller-supplied claim registry;
+- `crates/nq-monitor/src/http/routes.rs` — public HTTP preflight routes;
+- `crates/nq-monitor/src/cli.rs` — public CLI verbs;
+- `crates/nq-core/src/receipt.rs` — receipt and status contract;
+- [Claim Catalog](../operator/CLAIM_CATALOG.md) — operator examples and refusal summaries.
 
-| Trigger | Exit |
-|---|---|
-| Phase 2 receipts are durable enough to bind a consumer | Nightshift behavior changes because NQ constrained a claim |
+The architecture does not promise that every enum variant has a public HTTP route, that every HTTP route has a dedicated CLI command, or that every receipt is semantically replayable. Each surface must document the exact path it ships.
 
-### Phase 4 — Mutation gate where forced
+## Evolution rules
 
-**Status:** unstarted. Triggered only when "may say" must become "may do."
+Changes to this subsystem must satisfy all of the following:
 
-| Trigger | Exit |
-|---|---|
-| A claim result is being used to authorize mutation | A mutation is blocked because the claim basis was inadmissible, stale, or out of scope |
+1. **A forcing case precedes a new layer or generic abstraction.** Similar-looking claim kinds are not enough.
+2. **Every new claim names the applicable target, testimony, scope, freshness, and refusal dimensions, with explicit none/empty values where a dimension does not apply.**
+3. **No success observation is silently promoted into a safety or authorization conclusion.**
+4. **No missing, stale, contradictory, or explicitly refusing witness is coerced into an affirmative verdict.**
+5. **Receipt changes preserve the distinction between structural integrity, semantic reproducibility, and current-world standing.**
+6. **A new consumer preserves refusal and custody fields; it does not reduce them to a green/red boolean.**
+7. **Counts and percentage-complete roadmaps stay out of canonical architecture.** Code, tests, and decision records carry changing inventory and work status.
 
-### Phase 5 — Effect-boundary probes (with specimen)
+Potential future work—new claim families, portable Track A custody, authenticated receipt stores, cross-host attestation, or effect-boundary probes—requires its own forcing case and decision record. None is implied merely by the spine.
 
-**Status:** unstarted.
+## What not to infer
 
-**Keeper:** *No probe without a specimen.*
+The spine does not imply:
 
-| Trigger | Exit |
-|---|---|
-| A mutation class where semantic authorization says "governed" but effect observation suggests escape | Either the effect witness finds a real delta, or the idea goes back in the jar |
+- a general policy language;
+- proof of operational truth or root cause;
+- incident priority, ownership, or SLA semantics;
+- permission to merge, deploy, restart, fail over, or close an incident;
+- a universal dashboard or observability replacement;
+- semantic replay when the required witness material was never retained;
+- authenticated tamper resistance from a self-hash alone.
 
-## Future branches (parallel, not sequential)
+## Related doctrine
 
-The six phases above are sequential consolidation work on the mainline spine. NQ also has parallel hardening branches that may activate independently when a forcing case names them. Listing them here so they exist as named candidate handles, not so they get built.
+- [Architecture Overview](OVERVIEW.md) — the whole product, including operational monitoring
+- [Claim Custody](CLAIM_CUSTODY.md) — category and authority boundary
+- [Shared Spine](SHARED_SPINE.md) — witness/result/receipt implementation boundary
+- [Witness Packet](WITNESS_PACKET.md) — witness semantics
+- [Verdict Vocabulary](../operator/VERDICTS.md) — the eight preflight outcomes
+- [Receipts](../operator/RECEIPTS.md) — operator commands and failure taxonomy
+- [Claim Catalog](../operator/CLAIM_CATALOG.md) — current public claims and routes
 
-### Witness-path assurance
-
-**Question:** *why should this observation be admissible testimony?*
-
-Mainline NQ asks "given this observation, what may we claim?" Witness-path assurance asks one layer earlier — how much standing the evidence path itself has, independent of what's claimed from it. The branch covers a six-level ladder: declared / bound / checked / corroborated / attested / formally-bounded witness paths.
-
-**Status:** candidate, parked. Current NQ sits ~partial Level 2 with a complete Level 1 floor. Phase 2 (receipt durability) closes Level 2 as a side effect; Level 3 and beyond are unstarted.
-
-**Keeper:** *NQ does not prove reality; it grades the admissibility of testimony and refuses claims beyond the witness path.*
-
-**Warning label:** do not build until a real claim family needs stronger testimony than today's packets provide. Candidate first forcing cases (none active): DNS multi-vantage disagreement, imported findings with stale producer basis, CI witness packets where provenance is weak, Nightshift consumption distinguishing native vs imported freshness, effect-boundary witness with specimen.
-
-See `../working/gaps/WITNESS_PATH_ASSURANCE_GAP.md` for the full ladder, current-level audit, and composition rules with the existing phases.
-
-## Roadmap rules (anti-sprawl)
-
-1. **No new layer without an exit condition.**
-2. **No named subsystem without recurrence.**
-3. **No dashboard until receipts are boring.**
-4. **No AG dependency unless AG is the shortest path** (it probably is not).
-5. **No product surface before personal operational utility.**
-6. **Every phase must retire, simplify, or kill something.**
-
-## What NOT to infer from the spine
-
-The spine implies bounded claim evaluation. It does **not** imply:
-
-- a full policy language
-- a dashboard (a UI may consume receipts but does not produce jurisdiction)
-- AG integration as the gravitational center
-- Standing integration before its forcing case
-- generalized effect witnesses without a specimen
-- LLM adjudication
-- a plugin marketplace
-- "NQ as observability platform"
-
-Each of those may appear later. None is implied by the shape.
-
-## Cross-references
-
-- Doctrine: `../working/decisions/CLAIM_PREFLIGHT.md`, `../architecture/WITNESS_PACKET.md`, `../operator/VERDICTS.md`, `../working/decisions/CLAIM_PREFLIGHT_EXISTING_WITNESSES.md`
-- Architecture: `SHARED_SPINE.md`
-- Gaps: `../working/gaps/CLAIM_PREFLIGHT_REGISTRY_SHAPE_GAP.md`, `../working/gaps/DISK_STATE_CUTOVER_TO_SHARED_SPINE.md`, `../working/gaps/DNS_WITNESS_FAMILY_GAP.md`, `../working/gaps/PREMISE_DEGRADED_GAP.md`
-- Producer side: `~/git/nq-witness/SPEC.md`, `~/git/nq-witness/profiles/{zfs,smart}.md`
-
-## Closing line
-
-> NQ bounds operational speech, not operational truth. The spine is the apparatus that holds the boundary. Everything else is implementation detail until forced.
+> NQ bounds operational speech, not operational truth.

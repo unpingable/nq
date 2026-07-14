@@ -1,42 +1,20 @@
 {
-  "_comment": "Template for nq-publish.service. Each host customizes locally; live configs live outside the repo (gitignored). See README and AGENTS.md.",
+  "_comment": "Safe baseline for nq-publish.service. Install as /etc/nq/publisher.json. The loopback bind is for a same-host monitor; use a private interface address plus a firewall rule for a remote monitor.",
 
   "bind_addr": "127.0.0.1:9847",
 
-  "sqlite_paths": [
-    "/var/lib/myapp/data.sqlite",
-    "/var/lib/myapp/work.sqlite"
-  ],
+  "sqlite_paths": [],
 
   "service_health_urls": [
-    { "name": "myapp", "check_type": "systemd" },
-    { "name": "worker", "check_type": "systemd" },
-    { "name": "nginx", "check_type": "docker" }
+    { "name": "nq-witness", "check_type": "systemd", "unit": "nq-publish.service" }
   ],
 
-  "_sqlite_wal_targets_comment": "Optional but recommended. Activates the stat-only SQLite WAL probe: per target per cycle it stats the db/wal/shm trio and reads /proc/locks to set pinned_reader_present (the checkpoint-pin signal a mtime-based detector misses). Declare every production SQLite writer AND nq's own db_path (self-coverage — a WAL pin on nq.db is otherwise invisible to nq). The probe never opens the DB, so a self-target cannot pin nq.db. Symlinked handles are canonicalized to find sidecars. Empty/omitted = probe inert. /proc/locks enrichment defaults on (sqlite_wal_proc_locks_enabled).",
-  "sqlite_wal_targets": [
-    { "db_file_path": "/var/lib/myapp/data.sqlite" },
-    { "db_file_path": "/opt/nq/nq.db" }
-  ],
+  "_sqlite_wal_targets_comment": "Optional. Add real local database paths only after granting the nq service user traverse/read permission on their parent directories. Empty means the probe is inert.",
+  "sqlite_wal_targets": [],
 
-  "prometheus_targets": [
-    { "name": "node", "url": "http://127.0.0.1:9100/metrics" }
-  ],
+  "prometheus_targets": [],
 
   "log_sources": [],
 
-  "_zfs_witness_comment": "Optional. Configure when this host has a ZFS witness helper installed. helper_path is the absolute path to the witness binary; wrapper is prepended to invocation (e.g. ['sudo','-n'] for sudo_helper privilege model, [] for unprivileged).",
-  "zfs_witness": {
-    "helper_path": "/path/to/nq-zfs-witness",
-    "wrapper": [],
-    "timeout_ms": 5000
-  },
-
-  "_smart_witness_comment": "Optional. Configure when this host has a SMART witness helper installed. SMART invariably needs sudo (smartctl requires root); wrapper should be ['sudo','-n'] with a NOPASSWD sudoers grant for helper_path.",
-  "smart_witness": {
-    "helper_path": "/path/to/nq-smart-witness",
-    "wrapper": ["sudo", "-n"],
-    "timeout_ms": 15000
-  }
+  "_helper_comment": "zfs_witness and smart_witness are intentionally omitted. Add either block only after installing and testing its helper; a configured missing helper is reported as failed testimony."
 }
