@@ -17,6 +17,9 @@ pub enum Command {
     /// Ask a profile-governed question. Report profiles read existing NQ state;
     /// the bounded TLS-certificate profile acquires only its declared targets.
     Inquire(InquireCmd),
+    /// Compile a closed typed utterance into an existing candidate inquiry
+    /// plan, clarification, or compiler-local refusal. Executes nothing.
+    Intent(IntentCmd),
     /// Explicitly emit an annotation-only escalation request from an existing
     /// sealed inquiry receipt. This does not execute an inquiry or alter a grant.
     EmitEscalation(EmitEscalationCmd),
@@ -757,6 +760,26 @@ pub struct InquireCmd {
 }
 
 #[derive(Debug, Args)]
+pub struct IntentCmd {
+    /// Path to an nq.inquiry_intent.v0 JSON document.
+    #[arg(long)]
+    pub utterance: PathBuf,
+
+    /// Path to an nq.inquiry_profile_catalog.v0 JSON document.
+    #[arg(long = "profile-catalog")]
+    pub profile_catalog: PathBuf,
+
+    /// Output format: human or json (JCS canonical resolution artifact).
+    #[arg(long, short, default_value = "human")]
+    pub format: String,
+
+    /// Write only the resolved nq.inquiry_plan.v0 as canonical JSON. A
+    /// clarification or refusal is a hard error when this option is present.
+    #[arg(long = "emit-plan")]
+    pub emit_plan: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
 pub struct EmitEscalationCmd {
     /// Path to a sealed nq.inquiry_receipt.v0 JSON document.
     #[arg(long)]
@@ -1216,6 +1239,53 @@ mod tests {
                 assert_eq!(cmd.grant, None);
             }
             other => panic!("expected Inquire, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn intent_accepts_only_compiler_artifact_paths() {
+        let cli = Cli::try_parse_from([
+            "nq",
+            "intent",
+            "--utterance",
+            "/tmp/utterance.v0.json",
+            "--profile-catalog",
+            "/tmp/profiles.v0.json",
+            "--format",
+            "json",
+            "--emit-plan",
+            "/tmp/plan.v0.json",
+        ])
+        .expect("nq intent arguments must parse");
+        match cli.command {
+            Command::Intent(cmd) => {
+                assert_eq!(cmd.utterance, PathBuf::from("/tmp/utterance.v0.json"));
+                assert_eq!(cmd.profile_catalog, PathBuf::from("/tmp/profiles.v0.json"));
+                assert_eq!(cmd.format, "json");
+                assert_eq!(cmd.emit_plan, Some(PathBuf::from("/tmp/plan.v0.json")));
+            }
+            other => panic!("expected Intent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn intent_rejects_db_and_grant_arguments() {
+        for forbidden in ["--db", "--grant"] {
+            let err = Cli::try_parse_from([
+                "nq",
+                "intent",
+                "--utterance",
+                "/tmp/utterance.v0.json",
+                "--profile-catalog",
+                "/tmp/profiles.v0.json",
+                forbidden,
+                "/tmp/forbidden",
+            ])
+            .expect_err("nq intent must not accept database or grant arguments");
+            assert!(
+                err.to_string().contains(forbidden),
+                "error must name forbidden argument {forbidden}: {err}"
+            );
         }
     }
 

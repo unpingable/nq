@@ -1,0 +1,80 @@
+{
+  "schema": "nq.inquiry_profile_catalog.v0",
+  "version": "v0",
+  "profiles": [
+    {
+      "schema": "nq.inquiry_profile.v0",
+      "version": "v0",
+      "profile_id": "bounded_tls_cert_alpha",
+      "aliases": [
+        "tls-cert-alpha"
+      ],
+      "question_kind": "tls_certificate_presentation_and_expiry_horizon",
+      "question": "what certificate did these declared endpoints present, and does it validate within the profile's expiry horizon?",
+      "tls_cert": {
+        "collector": "tls_cert_probe",
+        "declared_targets": [
+          {
+            "target_id": "alpha",
+            "host": "192.0.2.10",
+            "port": 443,
+            "sni": "alpha.example.test"
+          }
+        ],
+        "max_targets": 1,
+        "max_concurrency": 1,
+        "per_target_deadline_ms": 500,
+        "total_deadline_ms": 750,
+        "expiry_horizon_days": 30,
+        "validation_policy": "webpki",
+        "vantage": "test-runner-alpha"
+      },
+      "coverage": [
+        "Only the predeclared alpha endpoint and SNI are acquired; no target discovery or dependency follow-up is authorized."
+      ],
+      "cannot_testify": [
+        {
+          "kind": "consequence_authority",
+          "statement": "This inquiry authorizes no remediation or broader follow-up acquisition."
+        }
+      ]
+    },
+    {
+      "schema": "nq.inquiry_profile.v0",
+      "version": "v0",
+      "profile_id": "bounded_tls_cert_beta",
+      "aliases": [
+        "tls-cert-beta"
+      ],
+      "question_kind": "tls_certificate_presentation_and_expiry_horizon",
+      "question": "what certificate did these declared endpoints present, and does it validate within the profile's expiry horizon?",
+      "tls_cert": {
+        "collector": "tls_cert_probe",
+        "declared_targets": [
+          {
+            "target_id": "beta",
+            "host": "192.0.2.20",
+            "port": 443,
+            "sni": "beta.example.test"
+          }
+        ],
+        "max_targets": 1,
+        "max_concurrency": 1,
+        "per_target_deadline_ms": 500,
+        "total_deadline_ms": 750,
+        "expiry_horizon_days": 30,
+        "validation_policy": "webpki",
+        "vantage": "test-runner-beta"
+      },
+      "coverage": [
+        "Only the predeclared beta endpoint and SNI are acquired; no target discovery or dependency follow-up is authorized."
+      ],
+      "cannot_testify": [
+        {
+          "kind": "consequence_authority",
+          "statement": "This inquiry authorizes no remediation or broader follow-up acquisition."
+        }
+      ]
+    }
+  ]
+}

@@ -3,6 +3,7 @@ pub mod claim_registry;
 pub mod config;
 pub mod humanize;
 pub mod inquiry;
+pub mod intent;
 pub mod preflight;
 pub mod receipt;
 pub mod receipt_check;
@@ -46,6 +47,12 @@ pub use inquiry::{
     INQUIRY_SURVEY_DEPTH_V0, INQUIRY_TRANSITION_REFUSAL_SCHEMA_V0,
     INQUIRY_TRANSITION_REQUEST_SCHEMA_V0, INQUIRY_WITNESS_PLAN_SCHEMA_V0,
     TLS_CERT_INQUIRY_QUESTION_V0,
+};
+pub use intent::{
+    compile_inquiry_intent, ComposerV0, InquiryIntentDispositionV0, InquiryIntentResolutionV0,
+    InquiryIntentSelectorV0, InquiryIntentV0, InquiryIntentValidationError, IntentRefusalFamilyV0,
+    IntentRefusalKindV0, IntentRefusalV0, INQUIRY_INTENT_RESOLUTION_SCHEMA_V0,
+    INQUIRY_INTENT_SCHEMA_V0,
 };
 pub use preflight::{
     disk_state_cannot_testify, sqlite_wal_state_cannot_testify, ClaimKind, PreflightCoverage,

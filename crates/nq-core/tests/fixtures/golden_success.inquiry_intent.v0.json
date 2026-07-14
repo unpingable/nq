@@ -1,0 +1,13 @@
+{
+  "schema": "nq.inquiry_intent.v0",
+  "version": "v0",
+  "selector": {
+    "profile": "tls-cert"
+  },
+  "as_of": "2026-07-11T12:00:00Z",
+  "target_ids": [
+    "loopback"
+  ],
+  "composed_by": "operator",
+  "source_text": "Check the certificate presented by the declared loopback TLS target."
+}
