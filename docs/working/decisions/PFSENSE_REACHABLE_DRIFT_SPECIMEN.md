@@ -1,7 +1,23 @@
 # PFSENSE_REACHABLE_DRIFT — declared controller vs observed state vs enforcement (candidate)
 
-**Status:** Candidate / non-binding / doc-only. **No pfSense integration, no
-nq-monitor-on-pfSense, no config mutation, no REST API, no probe built.** Handle for
+> **SUPERSEDED 2026-06-24 — this record is the pre-build candidate, kept for provenance.**
+> The probe it says does not exist was built five days after this was filed:
+> `nq.probe.declared_deny.v1` landed in `c65bc98` (2026-06-24), and the lab subject
+> probe executed 2026-06-25. **Do not cite this file for current behaviour.** Its
+> verdict names are the speculative pre-build set (`denied_as_declared`,
+> `cannot_testify_target_unreachable`) and were all renamed in the real build.
+>
+> Current, accurate records:
+> - [`docs/specimens/pfsense_reachable_drift.md`](../../specimens/pfsense_reachable_drift.md) — Step-0 rollup, three landed specimens, live doctrine.
+> - [`docs/specimens/declared_deny_lab_subject_probe.md`](../../specimens/declared_deny_lab_subject_probe.md) — the controlled lab run, all six verdict faces, and its scope ceiling.
+>
+> What this record still holds: the *Edge Vantage Witness* doctrine name, the
+> vantage-and-target-not-substrate framing, and the reasoning that led to the build.
+> Those survived contact. The status line below did not.
+
+**Status:** ~~Candidate / non-binding / doc-only. **No pfSense integration, no
+nq-monitor-on-pfSense, no config mutation, no REST API, no probe built.**~~
+**Superseded — built.** See the banner above. Handle for
 review. **Register:** routine design candidate. Not custody-affecting.
 **Constraint envelope:** `agent_gov/docs/cross-tool/active-witnessing-probe-is-transition-note.md`
 (active witnessing / Probe Is Transition). **Doctrine name:** *Edge Vantage Witness.*
@@ -195,3 +211,10 @@ compromise the seam discipline.
 
 *Candidate. Name early, ratify lazily. No pfSense integration, no probe, and no state
 taxonomy authorized by this record.*
+
+---
+
+*Postscript, 2026-06-24: it was ratified, and it was built. The closing line above was
+accurate the day it was written and wrong five days later — which is the intended
+lifecycle of a candidate record, not a defect in it. Left unedited above the fold so the
+pre-build reasoning stays legible; see the banner at the top for what to read instead.*

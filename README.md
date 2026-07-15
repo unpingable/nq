@@ -17,12 +17,13 @@ NQ is useful when a green/red status or a metric graph hides the operational dis
 
 ## Product surfaces
 
-NQ has two surfaces that share evidence and refusal contracts:
+NQ has three surfaces that share evidence and refusal contracts:
 
 1. **Operational monitoring.** `nq-witness` observes local substrates and serves `GET /state`. `nq-monitor serve` pulls witnesses, publishes each observation batch atomically, evaluates findings, sends best-effort notifications, and serves the web UI, API, and read-only SQL interface.
 2. **Claim verification.** `nq-monitor witness` records caller-supplied evidence; `verify` and operational `preflight` evaluators assess bounded statements such as “this test command exited zero” or “this resolver returned this response”; receipt commands render, check, or replay the resulting artifacts. The workflow preserves both what the evidence supports and what it cannot support.
+3. **Governed inquiry.** `nq-monitor inquire` answers a question written down in advance as a versioned profile — which targets, which bounds, which deadline, and an explicit declaration of what the question cannot answer. Acquisition is metered and refuses before the first socket without a covering grant. See [Governed inquiry](#governed-inquiry).
 
-The second surface is not an alerting or authorization system. A clean receipt does not approve a merge, deployment, restart, or incident closure. See [Claim Custody](docs/architecture/CLAIM_CUSTODY.md) for that subsystem boundary.
+Neither the second nor the third surface is an alerting or authorization system. A clean receipt does not approve a merge, deployment, restart, or incident closure, and an inquiry's findings authorize nothing. See [Claim Custody](docs/architecture/CLAIM_CUSTODY.md) for that subsystem boundary.
 
 ## How to read a finding
 
@@ -177,6 +178,44 @@ The claim-verification subsystem evaluates explicitly registered claims against 
 The receipt self-hash detects accidental change or an unresealed edit; it is not a signature or an authenticated chain of custody. An actor who can rewrite and reseal the artifact can recompute it. Preserve receipts and witness packets in a separately controlled artifact store when adversarial tamper resistance matters.
 
 See [Receipts](docs/operator/RECEIPTS.md), the [Claim Catalog](docs/operator/CLAIM_CATALOG.md), and [Verdict Vocabulary](docs/operator/VERDICTS.md).
+
+## Governed inquiry
+
+`nq-monitor inquire` answers a question that was written down before it was asked. The question is a versioned profile: which targets, which bounds, which deadline, and — declared up front — what the question cannot answer. Every profile must declare at least one constitutional refusal, so no inquiry can quietly imply root cause, future state, or permission to act.
+
+Three commands, and the split between them is the point:
+
+- `nq-monitor inquire` — run a profile-governed question. Passive profiles read existing NQ state; the bounded TLS-certificate profile acquires only its declared targets, and only under a grant.
+- `nq-monitor intent` — compile a closed typed utterance into a candidate plan, a clarification, or a compiler-local refusal. Executes nothing.
+- `nq-monitor emit-escalation` — emit an annotation-only escalation request from an existing sealed receipt. It executes no inquiry and alters no grant.
+
+**Reading is spending.** Acquisition is metered, not merely bounded: attempts are counted and caps enforced before resolution begins, and a failed attempt still costs. The worked TLS-certificate example in `crates/nq-core/tests/fixtures/` authorizes one target, one DNS attempt, one connection attempt, one handshake, and one bound check — four work units and 750 ms in total.
+
+**You write the catalog.** No profile catalog ships. `--profile-catalog` is a required path to an `nq.inquiry_profile_catalog.v0` document you author; the fixtures under `crates/nq-core/tests/fixtures/` are worked examples, not defaults. That is deliberate — the declared targets, the bounds, and the refusals are the question, and NQ does not supply them for you.
+
+**Preflight tells you what you would need; it cannot mint it.** `--preflight` renders the grant-shaped minimum for a plan and exits without opening the database. It has no conversion into a grant. An active inquiry without a covering grant refuses at zero spend, before DNS.
+
+**Scope only narrows.** Under one grant, scope may shrink but never swap or widen, depth never regresses, and no counter replenishes; deepening requires a strictly narrower scope. What an inquiry found cannot fund what it does next — findings may only request more through an escalation candidate, which mints nothing.
+
+**`cannot_testify` is an answer about the evidence boundary, never a synonym for “inactive.”** Answers are `operationally_active`, `not_operationally_active`, `cannot_testify`, or per-target outcomes; status is separately `answered` or `refused`. TLS outcomes are typed — `chain_invalid`, `expired_under_acquisition_clock`, `valid_now_but_expires_within_horizon`, and so on — never “unhealthy.” Asking for the latest generation when the newest is unsealed refuses rather than silently falling back to an older good one.
+
+The grammar is a fence rather than a filter: an utterance cannot express `depth`, `grant`, `host`, `port`, or `sni` — those fields fail deserialization instead of being caught by a gate. Provenance never enters the plan digest, so an operator-written and a model-written utterance with the same semantic fields compile to byte-identical plans. Natural language is a compiler front-end here, not an operational interface.
+
+**Status.** Shipped and CLI-only: no HTTP route, not wired into `serve`, and not covered by the compatibility policy above. Two question kinds exist today — finding activity (passive) and TLS certificate presentation/expiry horizon (active). `intent` accepts a pre-typed JSON utterance; no model adapter ships.
+
+## Declared versus observed
+
+`nq-monitor probe declared-deny` reconciles what a firewall is *configured* to refuse against what an independent probe *observes*. It is a custody test, not a firewall-correctness test: NQ does not certify the firewall right or wrong, and a declared denial and an observed reachability are never quietly promoted into one coherent policy claim.
+
+Three source types stay distinct:
+
+- A loaded `block` rule is a **declaration** — what the box is configured to refuse, not proof any path was refused.
+- Its counters are the box's **self-report**. Nearly a million blocked packets still do not produce a blocked verdict without a subject observation.
+- Only a probe from a named vantage at a named time is **observed reachability**, and only from that vantage at that time.
+
+The asymmetry is load-bearing. A blocked subject is admissible only alongside a passing control probe proving the vantage has ordinary egress; without it, a dead vantage is indistinguishable from a working rule. Only a real completed handshake to a declared-denied target is an unambiguous contradiction — a `block return` RST is not a way through. An absent rule is `cannot_testify_declared_policy_absent`, never “allowed.” There is no `is_ok()`: a test asserts the serialized receipt contains no `healthy` and no `green`, and every receipt carries its non-claims inline.
+
+Read [pfSense reachable-drift](docs/specimens/pfsense_reachable_drift.md) for the three landed specimens and the doctrine that governs adding more, and [the lab subject probe](docs/specimens/declared_deny_lab_subject_probe.md) for the controlled run where all six live verdict faces were observed. Observe that document's scope ceiling before citing it: the lab shows the frozen probe can exercise the declared-deny witness path against real pfSense substrate. It does not promote the production read into a tested production deny.
 
 ## Non-goals
 
