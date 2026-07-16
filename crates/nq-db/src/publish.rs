@@ -505,6 +505,9 @@ pub fn publish_batch(db: &mut WriteDb, batch: &Batch) -> anyhow::Result<PublishR
     // 10. Same pattern for SMART witness reports.
     publish_smart_witness(&tx, generation_id, batch)?;
 
+    // 11. Same pattern for GPU witness reports.
+    publish_gpu_witness(&tx, generation_id, batch)?;
+
     tx.commit()?;
 
     Ok(PublishResult {
@@ -967,6 +970,195 @@ fn publish_smart_witness(
         for (ordinal, err) in report.errors.iter().enumerate() {
             tx.execute(
                 "INSERT INTO smart_witness_errors_current
+                    (host, ordinal, kind, detail, observed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    &row.host,
+                    ordinal as i64,
+                    &err.kind,
+                    &err.detail,
+                    fmt_ts(&err.observed_at),
+                ],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Publish a GPU witness report: replace prior per-host rows wholesale.
+/// Same set semantics as the ZFS/SMART paths — the witness's current
+/// cycle is the truth; a device or VRAM-holding process present last
+/// cycle but absent this cycle is gone. No history tables in V0
+/// (histories arrive with detectors, per the 031/034 phase discipline).
+fn publish_gpu_witness(
+    tx: &rusqlite::Transaction<'_>,
+    generation_id: i64,
+    batch: &nq_core::Batch,
+) -> anyhow::Result<()> {
+    use nq_core::wire::GpuObservation;
+    for row in &batch.gpu_witness_rows {
+        let report = &row.report;
+
+        // Witness metadata.
+        tx.execute("DELETE FROM gpu_witness_current WHERE host = ?1", [&row.host])?;
+        tx.execute(
+            "INSERT INTO gpu_witness_current
+                (host, witness_id, witness_type, witness_host, observed_subject,
+                 profile_version, collection_mode, privilege_model, witness_status,
+                 witness_collected_at, duration_ms, as_of_generation, received_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            rusqlite::params![
+                &row.host,
+                &report.witness.id,
+                &report.witness.witness_type,
+                &report.witness.host,
+                &report.witness.observed_subject,
+                &report.witness.profile_version,
+                &report.witness.collection_mode,
+                &report.witness.privilege_model,
+                &report.witness.status,
+                fmt_ts(&report.witness.collected_at),
+                report.witness.duration_ms,
+                generation_id,
+                fmt_ts(&row.collected_at),
+            ],
+        )?;
+
+        // Witness-level coverage.
+        tx.execute(
+            "DELETE FROM gpu_witness_coverage_current WHERE host = ?1",
+            [&row.host],
+        )?;
+        {
+            let mut ins = tx.prepare_cached(
+                "INSERT OR REPLACE INTO gpu_witness_coverage_current (host, tag, can_testify)
+                 VALUES (?1, ?2, ?3)",
+            )?;
+            for tag in &report.coverage.can_testify {
+                ins.execute(rusqlite::params![&row.host, tag, 1])?;
+            }
+            for tag in &report.coverage.cannot_testify {
+                ins.execute(rusqlite::params![&row.host, tag, 0])?;
+            }
+        }
+
+        // Standing.
+        tx.execute(
+            "DELETE FROM gpu_witness_standing_current WHERE host = ?1",
+            [&row.host],
+        )?;
+        {
+            let mut ins = tx.prepare_cached(
+                "INSERT OR REPLACE INTO gpu_witness_standing_current (host, fact, standing)
+                 VALUES (?1, ?2, ?3)",
+            )?;
+            for fact in &report.standing.authoritative_for {
+                ins.execute(rusqlite::params![&row.host, fact, "authoritative"])?;
+            }
+            for fact in &report.standing.advisory_for {
+                ins.execute(rusqlite::params![&row.host, fact, "advisory"])?;
+            }
+            for fact in &report.standing.inadmissible_for {
+                ins.execute(rusqlite::params![&row.host, fact, "inadmissible"])?;
+            }
+        }
+
+        // Observations. Wipe per-host, then insert.
+        tx.execute(
+            "DELETE FROM gpu_devices_current WHERE host = ?1",
+            [&row.host],
+        )?;
+        tx.execute(
+            "DELETE FROM gpu_compute_apps_current WHERE host = ?1",
+            [&row.host],
+        )?;
+        tx.execute(
+            "DELETE FROM gpu_witness_errors_current WHERE host = ?1",
+            [&row.host],
+        )?;
+
+        let collected_at = fmt_ts(&row.collected_at);
+        for obs in &report.observations {
+            match obs {
+                GpuObservation::Device(d) => {
+                    tx.execute(
+                        "INSERT INTO gpu_devices_current
+                            (host, subject, gpu_index, name, collection_outcome,
+                             driver_version, pstate,
+                             temperature_c, fan_speed_pct,
+                             utilization_gpu_pct, utilization_mem_pct,
+                             memory_total_mib, memory_used_mib,
+                             power_draw_w, power_limit_w,
+                             sm_clock_mhz, persistence_mode, compute_mode,
+                             throttle_reasons_active, ecc_errors_corrected_total,
+                             as_of_generation, collected_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5,
+                                 ?6, ?7,
+                                 ?8, ?9,
+                                 ?10, ?11,
+                                 ?12, ?13,
+                                 ?14, ?15,
+                                 ?16, ?17, ?18,
+                                 ?19, ?20,
+                                 ?21, ?22)",
+                        rusqlite::params![
+                            &row.host,
+                            &d.subject,
+                            d.index,
+                            &d.name,
+                            &d.collection_outcome,
+                            &d.driver_version,
+                            &d.pstate,
+                            d.temperature_c,
+                            d.fan_speed_pct,
+                            d.utilization_gpu_pct,
+                            d.utilization_mem_pct,
+                            d.memory_total_mib,
+                            d.memory_used_mib,
+                            d.power_draw_w,
+                            d.power_limit_w,
+                            d.sm_clock_mhz,
+                            &d.persistence_mode,
+                            &d.compute_mode,
+                            &d.throttle_reasons_active,
+                            d.ecc_errors_corrected_total,
+                            generation_id,
+                            &collected_at,
+                        ],
+                    )?;
+                }
+                GpuObservation::ComputeApp(a) => {
+                    // INSERT OR REPLACE: (host, pid) is the key; a pid
+                    // holding VRAM on two GPUs collapses to the last
+                    // row — acceptable V0 grain, single-GPU estates.
+                    tx.execute(
+                        "INSERT OR REPLACE INTO gpu_compute_apps_current
+                            (host, gpu_uuid, pid, process_name, used_memory_mib,
+                             as_of_generation, collected_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        rusqlite::params![
+                            &row.host,
+                            &a.gpu_uuid,
+                            a.pid,
+                            &a.process_name,
+                            a.used_memory_mib,
+                            generation_id,
+                            &collected_at,
+                        ],
+                    )?;
+                }
+                GpuObservation::Other => {
+                    // Unknown observation kind: dropped, same as the
+                    // ZFS/SMART paths. Coverage-gating means detectors
+                    // never fire on unknown shapes.
+                }
+            }
+        }
+
+        // Witness-reported collection errors.
+        for (ordinal, err) in report.errors.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO gpu_witness_errors_current
                     (host, ordinal, kind, detail, observed_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 rusqlite::params![
@@ -2189,6 +2381,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         };
@@ -2224,6 +2417,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         }
@@ -2389,6 +2583,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         };
@@ -2480,6 +2675,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         };
@@ -2543,6 +2739,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         };
@@ -2615,6 +2812,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         };
@@ -2718,6 +2916,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         };
@@ -2845,6 +3044,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         };
@@ -2909,6 +3109,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         };
@@ -2935,6 +3136,7 @@ mod tests {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         };
@@ -5326,6 +5528,7 @@ mod tests {
                 report,
             }],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         }
@@ -5997,5 +6200,152 @@ mod tests {
             "retired",
             "retirement must survive re-detection (the haunting scar)"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // GPU witness ingestion spine — V0 of GPU_WITNESS_GAP.
+    // Definition of done: a conforming embedded-mode report can be
+    // stored and queried back in current-gen form, with per-field
+    // absence ([N/A] ECC on consumer silicon) surviving as NULL.
+    // -----------------------------------------------------------------
+
+    /// Live fixture captured from crow (RTX 5060 Ti, driver 570.211.01,
+    /// mid-qwen-experiment) 2026-07-16. ECC is [N/A] on consumer
+    /// silicon → ecc_errors_corrected_total omitted (absent, not zero).
+    const GPU_WITNESS_FIXTURE: &str = r#"{
+      "schema": "nq.witness.v0",
+      "witness": {
+        "id": "gpu.nvidia_smi.crow",
+        "type": "gpu",
+        "host": "crow",
+        "profile_version": "nq.witness.gpu.v0",
+        "collection_mode": "embedded",
+        "privilege_model": "unprivileged",
+        "collected_at": "2026-07-16T21:40:00Z",
+        "duration_ms": 61,
+        "status": "ok"
+      },
+      "coverage": {
+        "can_testify": ["device_enumeration","device_state_readings","compute_process_vram"],
+        "cannot_testify": ["inference_qos","model_health","utilization_as_progress","vram_requirement","cuda_correctness"]
+      },
+      "standing": {
+        "authoritative_for": ["nvidia_smi_reported_device_state"],
+        "advisory_for": [],
+        "inadmissible_for": ["gpu_health_overall","workload_health","authorization","remediation"]
+      },
+      "observations": [
+        {"kind":"gpu_device","subject":"GPU-8ec2d0d3-9293-989a-d501-ddd9e7652ea2","index":0,"name":"NVIDIA GeForce RTX 5060 Ti","driver_version":"570.211.01","pstate":"P1","temperature_c":68,"fan_speed_pct":43,"utilization_gpu_pct":86,"utilization_mem_pct":73,"memory_total_mib":16311,"memory_used_mib":12883,"power_draw_w":127.62,"power_limit_w":180.0,"sm_clock_mhz":2745,"persistence_mode":"Disabled","compute_mode":"Default","throttle_reasons_active":"0x0000000000000000","collection_outcome":"ok"},
+        {"kind":"gpu_compute_app","gpu_uuid":"GPU-8ec2d0d3-9293-989a-d501-ddd9e7652ea2","pid":766688,"process_name":"/snap/ollama/122/bin/ollama","used_memory_mib":12874}
+      ],
+      "errors": []
+    }"#;
+
+    fn gpu_witness_batch(host: &str, report_json: &str) -> Batch {
+        let t = now();
+        let report: nq_core::wire::GpuWitnessReport =
+            serde_json::from_str(report_json).expect("fixture parses");
+        Batch {
+            cycle_started_at: t,
+            cycle_completed_at: t,
+            sources_expected: 1,
+            source_runs: vec![SourceRun {
+                source: host.into(),
+                status: SourceStatus::Ok,
+                received_at: t,
+                collected_at: Some(t),
+                duration_ms: Some(15),
+                error_message: None,
+            }],
+            collector_runs: vec![CollectorRun {
+                source: host.into(),
+                collector: CollectorKind::GpuWitness,
+                status: CollectorStatus::Ok,
+                collected_at: Some(t),
+                entity_count: Some(report.observations.len() as u32),
+                error_message: None,
+            }],
+            host_rows: vec![],
+            service_sets: vec![],
+            sqlite_db_sets: vec![],
+            metric_sets: vec![],
+            log_sets: vec![],
+            zfs_witness_rows: vec![],
+            smart_witness_rows: vec![],
+            gpu_witness_rows: vec![nq_core::GpuWitnessRow {
+                host: host.into(),
+                collected_at: t,
+                report,
+            }],
+            wal_observation_sets: vec![],
+            nq_binary_observation_rows: vec![],
+        }
+    }
+
+    #[test]
+    fn gpu_witness_fixture_round_trips_through_current_gen() {
+        let mut db = test_db();
+        let batch = gpu_witness_batch("crow", GPU_WITNESS_FIXTURE);
+        publish_batch(&mut db, &batch).unwrap();
+
+        // Witness metadata round-trips through v_gpu_witness.
+        let (witness_id, status, collection_mode, privilege_model): (String, String, String, String) = db.conn.query_row(
+            "SELECT witness_id, witness_status, collection_mode, privilege_model
+             FROM v_gpu_witness WHERE host = 'crow'",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).unwrap();
+        assert_eq!(witness_id, "gpu.nvidia_smi.crow");
+        assert_eq!(status, "ok");
+        assert_eq!(collection_mode, "embedded");
+        assert_eq!(privilege_model, "unprivileged");
+
+        // Device observation round-trips through v_gpu_devices; the
+        // absent ECC field survives as NULL, not zero.
+        let (name, temp, util, mem_used, ecc): (String, i64, i64, i64, Option<i64>) = db.conn.query_row(
+            "SELECT name, temperature_c, utilization_gpu_pct, memory_used_mib,
+                    ecc_errors_corrected_total
+             FROM v_gpu_devices WHERE host = 'crow' AND gpu_index = 0",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        ).unwrap();
+        assert_eq!(name, "NVIDIA GeForce RTX 5060 Ti");
+        assert_eq!(temp, 68);
+        assert_eq!(util, 86);
+        assert_eq!(mem_used, 12883);
+        assert_eq!(ecc, None, "[N/A] ECC must be NULL — absent, not zero");
+
+        // Compute app round-trips with its process identity.
+        let (pid, pname, vram): (i64, String, i64) = db.conn.query_row(
+            "SELECT pid, process_name, used_memory_mib FROM v_gpu_compute_apps WHERE host = 'crow'",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!(pid, 766688);
+        assert_eq!(pname, "/snap/ollama/122/bin/ollama");
+        assert_eq!(vram, 12874);
+
+        // Coverage and standing land in their tables.
+        let cov: i64 = db.conn.query_row(
+            "SELECT can_testify FROM gpu_witness_coverage_current
+             WHERE host = 'crow' AND tag = 'utilization_as_progress'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(cov, 0, "utilization_as_progress is cannot_testify");
+        let standing: String = db.conn.query_row(
+            "SELECT standing FROM gpu_witness_standing_current
+             WHERE host = 'crow' AND fact = 'gpu_health_overall'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(standing, "inadmissible");
+
+        // Set semantics: a second publish with a different pid replaces
+        // the VRAM-holder set wholesale.
+        let mut fixture2 = GPU_WITNESS_FIXTURE.replace("766688", "999999");
+        fixture2 = fixture2.replace("/snap/ollama/122/bin/ollama", "/usr/bin/python3");
+        let batch2 = gpu_witness_batch("crow", &fixture2);
+        publish_batch(&mut db, &batch2).unwrap();
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM gpu_compute_apps_current WHERE host = 'crow'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1, "prior cycle's VRAM holders must be replaced, not accumulated");
     }
 }

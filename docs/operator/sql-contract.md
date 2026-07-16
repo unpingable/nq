@@ -73,6 +73,9 @@ applicable / unavailable," not broken schema.
 | `v_smart_devices` | Per-device SMART data |
 | `v_zfs_witness` | ZFS witness state |
 | `v_zfs_pools` | ZFS pool health |
+| `v_gpu_witness` | GPU witness state |
+| `v_gpu_devices` | Per-device GPU state (nvidia-smi) |
+| `v_gpu_compute_apps` | Per-process VRAM holdings (island-local) |
 
 ---
 

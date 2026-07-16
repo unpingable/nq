@@ -1,3 +1,4 @@
+pub mod gpu;
 pub mod host;
 pub mod host_bsd;
 pub mod logs;
@@ -29,6 +30,7 @@ pub fn collect_state(config: &PublisherConfig) -> PublisherState {
             logs: Some(logs::collect(config)),
             zfs_witness: Some(zfs::collect(config)),
             smart_witness: Some(smart::collect(config)),
+            gpu_witness: Some(gpu::collect(config)),
             sqlite_wal_observations: Some(sqlite_wal_probe::collect(config)),
             nq_binary_observations: Some(nq_binary::collect(config)),
         },

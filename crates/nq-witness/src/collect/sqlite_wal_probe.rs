@@ -437,6 +437,7 @@ mod tests {
             log_sources: vec![],
             zfs_witness: None,
             smart_witness: None,
+            gpu_witness: None,
             sqlite_wal_targets: vec![],
             sqlite_wal_proc_locks_enabled: false,
             nq_binary_path: None,

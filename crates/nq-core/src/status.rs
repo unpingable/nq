@@ -73,6 +73,7 @@ pub enum CollectorKind {
     Logs,
     ZfsWitness,
     SmartWitness,
+    GpuWitness,
     SqliteWalProbe,
     NqBinary,
 }
@@ -87,6 +88,7 @@ impl CollectorKind {
             Self::Logs => "logs",
             Self::ZfsWitness => "zfs_witness",
             Self::SmartWitness => "smart_witness",
+            Self::GpuWitness => "gpu_witness",
             Self::SqliteWalProbe => "sqlite_wal_probe",
             Self::NqBinary => "nq_binary",
         }
@@ -105,6 +107,7 @@ impl CollectorKind {
             Self::Host => Some("/proc"),
             Self::Services => Some("systemd/systemctl"),
             Self::Logs => Some("journalctl"),
+            Self::GpuWitness => Some("nvidia-smi (NVIDIA driver CLI)"),
             _ => None,
         }
     }

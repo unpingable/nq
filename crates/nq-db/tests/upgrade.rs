@@ -47,20 +47,32 @@ const PREVIOUS_SCHEMA_VERSION: u32 = CURRENT_SCHEMA_VERSION - 1;
 /// constants were likewise empty. (Per-migration maintenance: these
 /// constants track the LATEST migration's changes; update them each
 /// migration.)
-const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &["zfs_pools_history", "zfs_spares_history"];
+const TABLES_ADDED_IN_LATEST_MIGRATION: &[&str] = &[
+    "gpu_witness_current",
+    "gpu_witness_coverage_current",
+    "gpu_witness_standing_current",
+    "gpu_devices_current",
+    "gpu_compute_apps_current",
+    "gpu_witness_errors_current",
+];
 
 /// Columns added by the most recent migration, as (table, column)
 /// pairs. The rollback fixture drops these so the upgrade test
 /// represents a real v(N-1) DB that never had the column. SQLite's
 /// `ALTER TABLE DROP COLUMN` (3.35+) handles this directly. Views that
 /// reference these columns are dropped first (below) so DROP COLUMN
-/// succeeds. (Migration 060 adds no columns to existing tables.)
+/// succeeds. (Migration 064 adds no columns to existing tables.)
 const COLUMNS_ADDED_IN_LATEST_MIGRATION: &[(&str, &str)] = &[];
 
-/// Views recreated by the most recent migration. The rollback fixture
-/// drops them so re-migration recreates them cleanly. (Migration 060
-/// recreates no views.)
-const VIEWS_RECREATED_IN_LATEST_MIGRATION: &[&str] = &[];
+/// Views recreated (or created) by the most recent migration. The
+/// rollback fixture drops them so re-migration recreates them cleanly —
+/// a view left dangling over a dropped table poisons the migration's
+/// own collector_runs rebuild.
+const VIEWS_RECREATED_IN_LATEST_MIGRATION: &[&str] = &[
+    "v_gpu_witness",
+    "v_gpu_devices",
+    "v_gpu_compute_apps",
+];
 
 #[test]
 fn upgrade_from_previous_version_preserves_data() {
@@ -236,6 +248,7 @@ fn make_batch(t: OffsetDateTime) -> Batch {
         log_sets: vec![],
         zfs_witness_rows: vec![],
         smart_witness_rows: vec![],
+        gpu_witness_rows: vec![],
         wal_observation_sets: vec![],
         nq_binary_observation_rows: vec![],
     }

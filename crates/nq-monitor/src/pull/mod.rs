@@ -5,7 +5,7 @@ use nq_core::batch::*;
 use nq_core::batch::{NqBinaryObservationRow, WalObservationSet};
 use nq_core::status::*;
 use nq_core::wire::{PublisherState, PUBLISHER_STATE_SCHEMA};
-use nq_core::{Config, SmartWitnessRow, SourceConfig, ZfsWitnessRow};
+use nq_core::{Config, GpuWitnessRow, SmartWitnessRow, SourceConfig, ZfsWitnessRow};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 use time::OffsetDateTime;
@@ -48,6 +48,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
     let mut log_sets = Vec::new();
     let mut zfs_witness_rows = Vec::new();
     let mut smart_witness_rows = Vec::new();
+    let mut gpu_witness_rows = Vec::new();
     let mut wal_observation_sets = Vec::new();
     let mut nq_binary_observation_rows = Vec::new();
 
@@ -64,6 +65,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
                 log_set,
                 zfs_witness_row,
                 smart_witness_row,
+                gpu_witness_row,
                 wal_observation_set,
                 nq_binary_observation_row,
             } => {
@@ -89,6 +91,9 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
                 }
                 if let Some(sw) = smart_witness_row {
                     smart_witness_rows.push(sw);
+                }
+                if let Some(gw) = gpu_witness_row {
+                    gpu_witness_rows.push(gw);
                 }
                 if let Some(ws) = wal_observation_set {
                     wal_observation_sets.push(ws);
@@ -118,6 +123,7 @@ pub async fn pull_all(config: &Config) -> anyhow::Result<Batch> {
         log_sets,
         zfs_witness_rows,
         smart_witness_rows,
+        gpu_witness_rows,
         wal_observation_sets,
         nq_binary_observation_rows,
     })
@@ -148,6 +154,7 @@ enum PullResult {
         log_set: Option<LogObsSet>,
         zfs_witness_row: Option<ZfsWitnessRow>,
         smart_witness_row: Option<SmartWitnessRow>,
+        gpu_witness_row: Option<GpuWitnessRow>,
         wal_observation_set: Option<WalObservationSet>,
         nq_binary_observation_row: Option<NqBinaryObservationRow>,
     },
@@ -237,6 +244,7 @@ async fn pull_one(source: SourceConfig) -> PullResult {
     let mut log_set = None;
     let mut zfs_witness_row = None;
     let mut smart_witness_row = None;
+    let mut gpu_witness_row = None;
     let mut wal_observation_set = None;
     let mut nq_binary_observation_row = None;
 
@@ -491,6 +499,29 @@ async fn pull_one(source: SourceConfig) -> PullResult {
         }
     }
 
+    // GPU witness collector
+    if let Some(ref payload) = state.collectors.gpu_witness {
+        let entity_count = payload.data.as_ref().map(|r| r.observations.len() as u32);
+        coll_runs.push(CollectorRun {
+            source: canonical_host.clone(),
+            collector: CollectorKind::GpuWitness,
+            status: payload.status,
+            collected_at: payload.collected_at,
+            entity_count,
+            error_message: payload.error_message.clone(),
+        });
+        if payload.status == CollectorStatus::Ok {
+            if let Some(ref report) = payload.data {
+                let collected_at = payload.collected_at.unwrap_or(state.collected_at);
+                gpu_witness_row = Some(GpuWitnessRow {
+                    host: canonical_host.clone(),
+                    collected_at,
+                    report: report.clone(),
+                });
+            }
+        }
+    }
+
     // nq_binary collector — one observation per pulse from the
     // publisher's own /proc/self/exe (or operator override). Wire
     // payload is a single struct, not a Vec; per-host packaging into
@@ -551,6 +582,7 @@ async fn pull_one(source: SourceConfig) -> PullResult {
         log_set,
         zfs_witness_row,
         smart_witness_row,
+        gpu_witness_row,
         wal_observation_set,
         nq_binary_observation_row,
     }

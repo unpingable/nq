@@ -126,6 +126,24 @@ FROM v_zfs_pools
 ORDER BY host, pool
 ```
 
+GPU state and who is holding VRAM (utilization is not progress; VRAM
+used is not VRAM needed — the witness reports device state, nothing
+about workload health):
+
+```sql
+SELECT host, gpu_index, name, temperature_c, utilization_gpu_pct,
+       memory_used_mib, memory_total_mib, power_draw_w, pstate,
+       throttle_reasons_active, witness_status
+FROM v_gpu_devices
+ORDER BY host, gpu_index
+```
+
+```sql
+SELECT host, pid, process_name, used_memory_mib
+FROM v_gpu_compute_apps
+ORDER BY used_memory_mib DESC
+```
+
 ---
 
 ## Operator-visible storage examples

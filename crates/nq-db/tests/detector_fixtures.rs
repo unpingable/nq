@@ -44,6 +44,7 @@ fn empty_batch(t: OffsetDateTime) -> Batch {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
     }
@@ -744,6 +745,7 @@ fn zfs_witness_batch(
             report,
         }],
         smart_witness_rows: vec![],
+        gpu_witness_rows: vec![],
         wal_observation_sets: vec![],
         nq_binary_observation_rows: vec![],
     }
@@ -991,6 +993,7 @@ fn zfs_witness_batch_with_vdevs(
             report,
         }],
         smart_witness_rows: vec![],
+        gpu_witness_rows: vec![],
         wal_observation_sets: vec![],
         nq_binary_observation_rows: vec![],
     }
@@ -1588,6 +1591,7 @@ fn zfs_scan_batch(
             report,
         }],
         smart_witness_rows: vec![],
+        gpu_witness_rows: vec![],
         wal_observation_sets: vec![],
         nq_binary_observation_rows: vec![],
     }
@@ -1754,6 +1758,7 @@ fn sqlite_db_batch(
         log_sets: vec![],
         zfs_witness_rows: vec![],
         smart_witness_rows: vec![],
+        gpu_witness_rows: vec![],
         wal_observation_sets: vec![],
         nq_binary_observation_rows: vec![],
     }
@@ -1932,6 +1937,7 @@ fn freelist_db_batch(
         log_sets: vec![],
         zfs_witness_rows: vec![],
         smart_witness_rows: vec![],
+        gpu_witness_rows: vec![],
         wal_observation_sets: vec![],
         nq_binary_observation_rows: vec![],
     }
@@ -2150,6 +2156,7 @@ fn smart_witness_batch_with_status(
             collected_at: received_at,
             report,
         }],
+        gpu_witness_rows: vec![],
         wal_observation_sets: vec![],
         nq_binary_observation_rows: vec![],
     }

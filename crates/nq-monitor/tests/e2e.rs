@@ -345,6 +345,7 @@ fn state_to_batch(state: &PublisherState, canonical_host: &str) -> Batch {
         log_sets: vec![],
         zfs_witness_rows: vec![],
         smart_witness_rows: vec![],
+        gpu_witness_rows: vec![],
         wal_observation_sets: vec![],
         nq_binary_observation_rows: vec![],
     }
@@ -2523,6 +2524,7 @@ fn sqlite_wal_probe_pipeline_end_to_end_smoke() {
         log_sources: vec![],
         zfs_witness: None,
         smart_witness: None,
+        gpu_witness: None,
         sqlite_wal_targets: vec![
             SqliteWalTargetConfig {
                 db_file_path: real_db.to_string_lossy().to_string(),
@@ -2596,6 +2598,7 @@ fn sqlite_wal_probe_pipeline_end_to_end_smoke() {
         log_sets: vec![],
         zfs_witness_rows: vec![],
         smart_witness_rows: vec![],
+        gpu_witness_rows: vec![],
         wal_observation_sets: vec![WalObservationSet {
             host: canonical_host.into(),
             collected_at,

@@ -202,6 +202,7 @@ fn partial_batch_then_recovery() {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
     };
@@ -336,6 +337,7 @@ fn partial_batch_then_recovery() {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
     };
@@ -413,6 +415,7 @@ fn service_lifecycle_three_generations() {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         };
@@ -460,6 +463,7 @@ fn service_lifecycle_three_generations() {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         };
@@ -508,6 +512,7 @@ fn service_lifecycle_three_generations() {
             log_sets: vec![],
             zfs_witness_rows: vec![],
             smart_witness_rows: vec![],
+            gpu_witness_rows: vec![],
             wal_observation_sets: vec![],
             nq_binary_observation_rows: vec![],
         };
@@ -586,6 +591,7 @@ fn not_supported_collector_persists_and_reads_back() {
         log_sets: vec![],
         zfs_witness_rows: vec![],
         smart_witness_rows: vec![],
+        gpu_witness_rows: vec![],
         wal_observation_sets: vec![],
         nq_binary_observation_rows: vec![],
     };

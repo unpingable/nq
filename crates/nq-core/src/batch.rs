@@ -1,5 +1,5 @@
 use crate::status::{CollectorKind, CollectorStatus, GenerationStatus, ServiceStatus, SourceStatus};
-use crate::wire::{NqBinaryObservationData, SmartWitnessReport, WalObservationData, ZfsWitnessReport};
+use crate::wire::{GpuWitnessReport, NqBinaryObservationData, SmartWitnessReport, WalObservationData, ZfsWitnessReport};
 use time::OffsetDateTime;
 
 /// A fully collected batch ready for atomic publish.
@@ -19,6 +19,7 @@ pub struct Batch {
     pub log_sets: Vec<LogObsSet>,
     pub zfs_witness_rows: Vec<ZfsWitnessRow>,
     pub smart_witness_rows: Vec<SmartWitnessRow>,
+    pub gpu_witness_rows: Vec<GpuWitnessRow>,
     /// Slice 6b: per-host sqlite_wal probe observations. Each set is
     /// one publisher's worth of `WalObservationData` rows from this
     /// cycle. The aggregator inserts every row into `wal_observations`
@@ -49,6 +50,14 @@ pub struct SmartWitnessRow {
     pub host: String,
     pub collected_at: OffsetDateTime,
     pub report: SmartWitnessReport,
+}
+
+/// A single conforming GPU witness report keyed to its publisher host.
+#[derive(Debug, Clone)]
+pub struct GpuWitnessRow {
+    pub host: String,
+    pub collected_at: OffsetDateTime,
+    pub report: GpuWitnessReport,
 }
 
 /// One publisher's worth of sqlite_wal probe observations for this

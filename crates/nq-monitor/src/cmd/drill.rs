@@ -92,6 +92,7 @@ fn run_wal_bloat(cmd: DrillWalBloatCmd) -> anyhow::Result<()> {
         log_sources: vec![],
         zfs_witness: None,
         smart_witness: None,
+        gpu_witness: None,
         sqlite_wal_targets: vec![],
         sqlite_wal_proc_locks_enabled: true,
         nq_binary_path: None,
@@ -185,6 +186,7 @@ fn run_wal_bloat(cmd: DrillWalBloatCmd) -> anyhow::Result<()> {
         log_sets: vec![],
         zfs_witness_rows: vec![],
         smart_witness_rows: vec![],
+        gpu_witness_rows: vec![],
         wal_observation_sets: vec![],
         nq_binary_observation_rows: vec![],
     };

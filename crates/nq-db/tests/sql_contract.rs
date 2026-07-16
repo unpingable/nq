@@ -52,6 +52,9 @@ const PUBLIC_CONTRACT_VIEWS: &[&str] = &[
     "v_smart_devices",
     "v_zfs_witness",
     "v_zfs_pools",
+    "v_gpu_witness",
+    "v_gpu_devices",
+    "v_gpu_compute_apps",
 ];
 
 #[derive(Serialize)]

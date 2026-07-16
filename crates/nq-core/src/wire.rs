@@ -65,6 +65,10 @@ pub struct Collectors {
     pub zfs_witness: Option<CollectorPayload<ZfsWitnessReport>>,
     #[serde(default)]
     pub smart_witness: Option<CollectorPayload<SmartWitnessReport>>,
+    /// GPU witness (embedded nvidia-smi collector). Additive; older
+    /// payloads without this field deserialize cleanly.
+    #[serde(default)]
+    pub gpu_witness: Option<CollectorPayload<GpuWitnessReport>>,
     /// Slice 6b: publisher-side sqlite_wal probe observations. Each
     /// row is one `(host, db_file_path)` target observed in this cycle.
     /// The aggregator persists them into the `wal_observations`
@@ -757,6 +761,162 @@ pub struct SmartDeviceCoverage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmartWitnessError {
+    pub kind: String,
+    pub detail: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub observed_at: OffsetDateTime,
+}
+
+// ---------------------------------------------------------------------------
+// GPU witness report — canonical shape produced by the embedded GPU collector.
+// Mirrors nq.witness.v0 / nq.witness.gpu.v0. See docs/working/gaps/GPU_WITNESS_GAP.md.
+//
+// Third deliberate duplication of the witness envelope (after ZFS and SMART).
+// The duplication is now demonstrably structural-only: each profile's header/
+// coverage/standing carry profile-specific vocabulary and evolve on their own
+// clock. Dedupe remains deferred per the note above SmartWitnessReport.
+//
+// Unlike ZFS/SMART there is no external helper: the collector invokes
+// `nvidia-smi` directly (collection_mode "embedded", privilege_model
+// "unprivileged") and constructs this report in-process. The stale-helper-path
+// failure mode observed live on sushi-k's SMART witness is the reason.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuWitnessReport {
+    pub schema: String,
+    pub witness: GpuWitnessHeader,
+    pub coverage: GpuWitnessCoverage,
+    pub standing: GpuWitnessStanding,
+    #[serde(default)]
+    pub observations: Vec<GpuObservation>,
+    #[serde(default)]
+    pub errors: Vec<GpuWitnessError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuWitnessHeader {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub witness_type: String,
+    pub host: String,
+    pub profile_version: String,
+    pub collection_mode: String,
+    pub privilege_model: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub collected_at: OffsetDateTime,
+    pub duration_ms: Option<i64>,
+    pub status: String,
+    #[serde(default)]
+    pub observed_subject: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuWitnessCoverage {
+    #[serde(default)]
+    pub can_testify: Vec<String>,
+    #[serde(default)]
+    pub cannot_testify: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuWitnessStanding {
+    #[serde(default)]
+    pub authoritative_for: Vec<String>,
+    #[serde(default)]
+    pub advisory_for: Vec<String>,
+    #[serde(default)]
+    pub inadmissible_for: Vec<String>,
+}
+
+/// GPU observation. Two variants in V0: per-device state and per-process
+/// VRAM holdings. Unknown kinds deserialize into `Other` so forward-compat
+/// profile growth does not break NQ.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum GpuObservation {
+    #[serde(rename = "gpu_device")]
+    Device(GpuDeviceObservation),
+    #[serde(rename = "gpu_compute_app")]
+    ComputeApp(GpuComputeAppObservation),
+    #[serde(other)]
+    Other,
+}
+
+/// One row of nvidia-smi-reported device state. Every metric field is
+/// optional: nvidia-smi reports `[N/A]` / `[Not Supported]` per-field on
+/// silicon that lacks the sensor (consumer cards have no ECC counters),
+/// and per-field absence is typed absent, not an error — the observation
+/// stays admissible with the field null.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuDeviceObservation {
+    /// GPU UUID as reported (`GPU-8ec2…`) — the stable identity.
+    pub subject: String,
+    pub index: i64,
+    pub name: String,
+
+    #[serde(default)]
+    pub driver_version: Option<String>,
+    #[serde(default)]
+    pub pstate: Option<String>,
+
+    #[serde(default)]
+    pub temperature_c: Option<i64>,
+    #[serde(default)]
+    pub fan_speed_pct: Option<i64>,
+
+    #[serde(default)]
+    pub utilization_gpu_pct: Option<i64>,
+    #[serde(default)]
+    pub utilization_mem_pct: Option<i64>,
+
+    #[serde(default)]
+    pub memory_total_mib: Option<i64>,
+    #[serde(default)]
+    pub memory_used_mib: Option<i64>,
+
+    #[serde(default)]
+    pub power_draw_w: Option<f64>,
+    #[serde(default)]
+    pub power_limit_w: Option<f64>,
+
+    #[serde(default)]
+    pub sm_clock_mhz: Option<i64>,
+    #[serde(default)]
+    pub persistence_mode: Option<String>,
+    #[serde(default)]
+    pub compute_mode: Option<String>,
+
+    /// Hex bitmask verbatim from `clocks_throttle_reasons.active`
+    /// (e.g. `0x0000000000000000`). Kept as a string: decoding the
+    /// bits is detector work, not witness work.
+    #[serde(default)]
+    pub throttle_reasons_active: Option<String>,
+
+    /// Volatile corrected ECC total. Null on silicon without ECC
+    /// (`[N/A]` on consumer cards) — absent, not zero.
+    #[serde(default)]
+    pub ecc_errors_corrected_total: Option<i64>,
+
+    pub collection_outcome: String,
+}
+
+/// One process currently holding VRAM, from `--query-compute-apps`.
+/// Custody note (GPU_WITNESS_GAP.md): process names are island-local
+/// evidence and must never ship to the public box.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuComputeAppObservation {
+    #[serde(default)]
+    pub gpu_uuid: Option<String>,
+    pub pid: i64,
+    #[serde(default)]
+    pub process_name: Option<String>,
+    #[serde(default)]
+    pub used_memory_mib: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuWitnessError {
     pub kind: String,
     pub detail: String,
     #[serde(with = "time::serde::rfc3339")]

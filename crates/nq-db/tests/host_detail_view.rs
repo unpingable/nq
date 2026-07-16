@@ -119,6 +119,7 @@ fn host_detail_populates_host_row_services_sqlite_dbs() {
         log_sets: vec![],
         zfs_witness_rows: vec![],
         smart_witness_rows: vec![],
+        gpu_witness_rows: vec![],
         wal_observation_sets: vec![],
         nq_binary_observation_rows: vec![],
     };
@@ -164,6 +165,7 @@ fn host_detail_returns_none_host_row_for_unknown_host() {
         log_sets: vec![],
         zfs_witness_rows: vec![],
         smart_witness_rows: vec![],
+        gpu_witness_rows: vec![],
         wal_observation_sets: vec![],
         nq_binary_observation_rows: vec![],
     };

@@ -14,7 +14,7 @@ pub mod time_basis;
 pub mod wire;
 pub mod witness;
 
-pub use batch::{
+pub use batch::{GpuWitnessRow, 
     Batch, CollectorRun, HostRow, MetricRow, MetricSet, ServiceRow, ServiceSet, SmartWitnessRow,
     SourceRun, SqliteDbRow, SqliteDbSet, ZfsWitnessRow,
 };
@@ -23,7 +23,7 @@ pub use claim_registry::{
 };
 pub use config::{
     Config, DetectorThresholds, DiskBudgetConfig, EscalationThresholds, PublisherConfig,
-    RetentionConfig, SmartWitnessConfig, SourceConfig, ZfsWitnessConfig,
+    RetentionConfig, SmartWitnessConfig, GpuWitnessConfig, SourceConfig, ZfsWitnessConfig,
 };
 pub use humanize::humanize_duration_s;
 pub use inquiry::{

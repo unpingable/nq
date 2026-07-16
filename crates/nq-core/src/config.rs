@@ -211,6 +211,12 @@ pub struct PublisherConfig {
     pub zfs_witness: Option<ZfsWitnessConfig>,
     #[serde(default)]
     pub smart_witness: Option<SmartWitnessConfig>,
+    /// GPU witness (embedded nvidia-smi collector). Present = the
+    /// operator claims this host has NVIDIA substrate; a configured
+    /// witness whose nvidia-smi binary is absent reports
+    /// `not_supported`, not silence. Absent = skipped, not coverage.
+    #[serde(default)]
+    pub gpu_witness: Option<GpuWitnessConfig>,
     /// Slice 6b: operator-declared SQLite WAL probe targets. Each entry
     /// is one `(host, db_file_path)` tuple per `KIND_4_SQLITE_WAL_PROBE.md`
     /// §2 (operator-declared only; no auto-discovery). Empty by default
@@ -312,6 +318,33 @@ fn default_smart_witness_timeout_ms() -> u64 {
     // seconds, not milliseconds. 15s is a conservative default; the
     // deployment can tighten it when they know their fleet.
     15_000
+}
+
+/// Embedded GPU witness: the collector invokes `nvidia-smi` directly
+/// (no helper, no wrapper — collection_mode "embedded", privilege_model
+/// "unprivileged") and builds the canonical report in-process. The
+/// helper indirection the ZFS/SMART families use exists to isolate
+/// privilege; nvidia-smi needs none, and skipping the helper removes
+/// the stale-helper-path failure mode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuWitnessConfig {
+    /// Path or bare name of the nvidia-smi binary. Bare name resolves
+    /// via PATH; spawn NotFound reports `not_supported`.
+    #[serde(default = "default_gpu_witness_nvidia_smi_path")]
+    pub nvidia_smi_path: String,
+    #[serde(default = "default_gpu_witness_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+fn default_gpu_witness_nvidia_smi_path() -> String {
+    "nvidia-smi".to_string()
+}
+
+fn default_gpu_witness_timeout_ms() -> u64 {
+    // nvidia-smi answers from the driver in tens of milliseconds when
+    // healthy; a wedged driver can hang far longer. 5s bounds the
+    // witness without masking a slow-but-alive driver.
+    5_000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

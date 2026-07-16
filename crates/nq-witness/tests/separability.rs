@@ -62,6 +62,7 @@ fn witness_emits_structurally_complete_publisher_state() {
     assert!(c.logs.is_some(), "logs slot must be present");
     assert!(c.zfs_witness.is_some(), "zfs_witness slot must be present");
     assert!(c.smart_witness.is_some(), "smart_witness slot must be present");
+    assert!(c.gpu_witness.is_some(), "gpu_witness slot must be present");
     assert!(
         c.sqlite_wal_observations.is_some(),
         "sqlite_wal_observations slot must be present"
