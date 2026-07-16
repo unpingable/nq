@@ -20,6 +20,14 @@ The chronological order below is newest-first.
 
 ---
 
+## GPU_WITNESS V0 (embedded nvidia-smi typed-witness family)
+
+- **Status** — shipped (V0: witness + wire + ingest + views; detectors are V1).
+- **Shipped commits** — `361c5cd` GPU witness V0, schema 64.
+- **Evidence** — `crates/nq-witness/src/collect/gpu.rs` (collector + 8 tests incl. tri-state honesty: `absent_binary_is_not_supported`, `driver_unreachable_is_error_not_incapacity`, `crow_fixture_is_parsed` with `[N/A]` ECC → `None`); migration `064_gpu_witness.sql`; `publish_gpu_witness` + `gpu_witness_fixture_round_trips_through_current_gen` (nq-db); views `v_gpu_witness` / `v_gpu_devices` / `v_gpu_compute_apps` locked in `sql_contract.rs` and `docs/operator/sql-contract.md`. Fixtures captured live from crow (RTX 5060 Ti, driver 570.211.01) 2026-07-16.
+- **Unblocks** — GPU_WITNESS_GAP.md V1 detectors (thermal, VRAM pressure, throttle-active, device-disappeared, ECC rising).
+- **Field notes** — First family with no external helper: `collection_mode: "embedded"`. Chosen because nvidia-smi is unprivileged and the helper indirection's stale-path failure mode was observed live (sushi-k SMART WARN spam after the repo move). If a future GPU substrate needs privilege (NVML on locked-down hosts), that variant should be a new collection_mode, not a retrofit of this one.
+
 ## EVIDENCE_RETIREMENT_RETIRED_RENDER_AND_GATING (retired evidence is visible and non-paging)
 
 **Status:** `shipped` 2026-07-01 (restricted to explicit `retired`; passive basis-stale deferred behind a design record).
