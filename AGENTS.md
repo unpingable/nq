@@ -113,6 +113,28 @@ External labels (missing, skewed, unstable, degrading) face operators.
 - musl static linking for cross-glibc deployment
 - Commit in logical chunks with co-author trailers
 
+### Declare before you disturb
+
+If you are about to do planned disruptive work on a host NQ is witnessing —
+deploy, restart a service, vacuum a database, build on the host — declare a
+maintenance window **first**:
+
+```bash
+nq-monitor maintenance declare --db <nq.db> \
+  --host <host> --kind error_shift --subject <service> \
+  --start now --end now+15m \
+  --reason "deploy <commit>" --declared-by <your-agent-name>
+```
+
+Repeat per disturbed detector kind (`--kind` is exact-match): a deploy
+typically needs `error_shift` and `log_silence` for each restarted service,
+plus `resource_drift` if you compile on the host. This annotates the resulting
+findings as `covered` (or `overrun` if they outlive the window) — it never
+suppresses them; planned work stays visible, it just stops reading as anomaly.
+NQ rejects past-dated windows: declaring is step zero of the work, not cleanup
+afterward. Details: `docs/operator/OPERATOR_GUIDE.md` §"I'm planning
+maintenance".
+
 ## Related projects
 
 | Project | Role | Repo |

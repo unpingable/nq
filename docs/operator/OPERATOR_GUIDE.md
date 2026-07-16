@@ -596,6 +596,16 @@ sudo -u nq /usr/local/bin/nq-monitor maintenance declare \
 
 Maintenance annotates matching findings (`covered` while in window, `overrun` if they persist past `end`); it does not hide, suppress, delete, or silence them. Notifications can still fire during the window. There is no preemptive maintenance-wide alert mute in this command. Quiescing an already-open finding in the UI makes that finding notification-ineligible, but that is a separate lifecycle action, not a property of the maintenance declaration.
 
+This applies to automated actors as well as humans: an agent about to do
+planned disruptive work on a witnessed host — a deploy, a service restart, a
+database vacuum, an on-host build — should declare the window first with
+`--declared-by <agent-name>`; the field exists for exactly that. `--kind` is
+an exact match per detector, so one piece of planned work may need several
+declarations (a deploy typically disturbs `error_shift` and `log_silence` on
+the restarted services, and `resource_drift` if it builds on the host).
+Declarations are rejected once the disturbance has started, so declaring is
+step zero of the work, not cleanup afterward.
+
 ### "Is NQ itself still running?"
 
 First configure `liveness.path` in `aggregator.json` and make its parent directory writable by the monitor's service user; the examples above use `/var/lib/nq/liveness.json`. The monitor rewrites the artifact after a successful observation publish. Follow-on detector, lifecycle, notification, seal, or self-probe errors are logged but do not prevent that write, so the artifact proves the loop reached a checkpoint rather than proving the whole cycle succeeded.

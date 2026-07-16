@@ -339,17 +339,24 @@ a newer one.
 
 Before an upgrade:
 
-1. Read the release notes, download and verify both new binaries, and stage
+1. Declare a maintenance window before touching anything, one per detector
+   kind you expect to disturb (`error_shift` and `log_silence` for the
+   restarted services; `resource_drift` if you build on the host). Declaration
+   must precede effect — NQ rejects past-dated windows, so this cannot be done
+   retroactively. See ["I'm planning maintenance"](OPERATOR_GUIDE.md#im-planning-maintenance-mark-the-expected-disturbance)
+   for the command. The window annotates the restart's findings as `covered`
+   instead of letting planned work read as anomaly; nothing is hidden.
+2. Read the release notes, download and verify both new binaries, and stage
    them without replacing the installed pair.
-2. Save the installed binaries and `/etc/nq` configs with the release and date
+3. Save the installed binaries and `/etc/nq` configs with the release and date
    in their backup names.
-3. Stop `nq-serve` so the pre-migration restore point cannot miss a generation.
+4. Stop `nq-serve` so the pre-migration restore point cannot miss a generation.
    On a single-host deployment, stop `nq-publish` too.
-4. Run `VACUUM INTO` while the monitor is stopped and verify the resulting
+5. Run `VACUUM INTO` while the monitor is stopped and verify the resulting
    pre-upgrade database with `PRAGMA quick_check`.
-5. Replace the witness and monitor as a matched pair. Restart witnesses, verify
+6. Replace the witness and monitor as a matched pair. Restart witnesses, verify
    `/state` from the central host, then start the monitor.
-6. Check the journal, confirm the schema opens, query `v_sources`, and confirm
+7. Check the journal, confirm the schema opens, query `v_sources`, and confirm
    the generation ID advances.
 
 If validation fails, stop the new services. Preserve the failed database and

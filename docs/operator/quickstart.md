@@ -194,3 +194,14 @@ wildcard as the next step. The [production deployment guide](deployment.md)
 covers a service user, least-privilege collector access, private-interface
 witnesses, firewall rules, authenticated access to the UI, validation,
 backups, upgrades, and rollback.
+
+One habit worth adopting from day one: once NQ is witnessing a host, tell it
+about planned work *before* you do the work. A deploy, restart, or vacuum
+looks exactly like an anomaly to a witness that wasn't warned —
+`nq-monitor maintenance declare` marks the expected disturbance so those
+findings render as `covered` rather than incident truth, without hiding
+anything. This goes for automated agents operating on the host, not just
+humans at a keyboard (`--declared-by` takes an agent name). Declarations must
+precede the disturbance; NQ rejects past-dated windows by design. See
+["I'm planning maintenance"](OPERATOR_GUIDE.md#im-planning-maintenance-mark-the-expected-disturbance)
+in the operator guide.
