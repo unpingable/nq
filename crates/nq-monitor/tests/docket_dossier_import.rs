@@ -398,3 +398,163 @@ fn unknown_fields_refuse_under_the_closed_schema_policy() {
         other => panic!("expected malformed, got {other:?}"),
     }
 }
+
+// --- dossier v2: upstream authorization facts as source testimony ---
+//
+// The receiving-side law for the new block: authorization is not execution,
+// authorization is not admissibility, upstream premises become coverage limits
+// distinct from settlement premises, upstream residuals are carried
+// undischarged, and both upstream digests survive opaquely.
+
+// 19 — a v2 dossier with an upstream issuance imports; authorization facts are
+//      carried as source testimony and bounded by coverage limits.
+#[test]
+fn v2_upstream_authorization_is_carried_as_bounded_source_testimony() {
+    let s = store();
+    let (path, _, _) = import_ok(&fixture("v2_upstream.json"), s.path());
+    let p = read_packet(&path);
+    p.validate().unwrap();
+
+    let authz = p
+        .observations
+        .iter()
+        .find(|o| o.get("type").and_then(|t| t.as_str()) == Some("docket_authorization"))
+        .expect("authorization observation present");
+    assert_eq!(
+        authz
+            .get("docket_authorization_source")
+            .and_then(|v| v.as_str()),
+        Some("upstream")
+    );
+    // Both upstream digests survive, opaque and distinct from each other.
+    let raw = authz
+        .pointer("/issuance/request_raw_sha256")
+        .and_then(|v| v.as_str())
+        .unwrap();
+    let upstream = authz
+        .pointer("/issuance/request_upstream_digest")
+        .and_then(|v| v.as_str())
+        .unwrap();
+    assert_ne!(raw, upstream);
+    // The upstream office's own establishes/does-not-establish sentences.
+    assert!(authz
+        .pointer("/issuance/docket_authorization_does_not_establish")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .contains("that the effect executed"));
+
+    // Authorization premises become coverage limits, labelled as authorization
+    // premises — never as the source's settlement premises.
+    assert!(p.coverage_limits.iter().any(|l| l.starts_with(
+        "coverage bounded by upstream authorization premise: principal_authentication"
+    )));
+    assert!(p
+        .coverage_limits
+        .iter()
+        .any(|l| l.contains("docket premise: exclusive_ref_custody")));
+    // The fixed boundary limit is present.
+    assert!(p
+        .coverage_limits
+        .iter()
+        .any(|l| l.contains("docket authorization is not docket execution")));
+    // Unrepresented residuals are stated as a producer limitation.
+    assert!(p
+        .coverage_limits
+        .iter()
+        .any(|l| l.contains("unrepresented by the issuing office")));
+}
+
+// 20 — present upstream residuals are carried undischarged, as outstanding
+//      coverage limits, and never as NQ or Docket obligations.
+#[test]
+fn v2_upstream_residuals_are_carried_undischarged() {
+    let s = store();
+    let (path, _, _) = import_ok(&fixture("v2_upstream_residual.json"), s.path());
+    let p = read_packet(&path);
+    assert!(p
+        .coverage_limits
+        .iter()
+        .any(|l| l.starts_with("outstanding upstream residual obligation obl-1")));
+    let text = serde_json::to_string(&p).unwrap();
+    assert!(text.contains("human_review_before_publication"));
+    assert!(text.contains("\"discharged\":false"));
+}
+
+// 21 — a residual the source marks discharged cannot be imported: import must
+//      not represent an upstream obligation as satisfied.
+#[test]
+fn v2_discharged_upstream_residual_refuses() {
+    let s = store();
+    match import_dossier(&fixture("v2_residual_discharged.json"), "x", s.path(), AT) {
+        Err(ImportRefusal::UnenforceablePremise { detail }) => {
+            assert!(detail.contains("discharged"), "{detail}");
+        }
+        other => panic!("expected refusal, got {other:?}"),
+    }
+    assert!(std::fs::read_dir(s.path()).unwrap().next().is_none());
+}
+
+// 22 — local and unrecorded authorization sources are visibly distinct, and
+//      neither claims an upstream issuance.
+#[test]
+fn v2_local_and_unrecorded_sources_are_distinct() {
+    for (fixture_name, expected) in [
+        ("v2_local.json", "local"),
+        ("v2_unrecorded.json", "unrecorded"),
+    ] {
+        let s = store();
+        let (path, _, _) = import_ok(&fixture(fixture_name), s.path());
+        let p = read_packet(&path);
+        let authz = p
+            .observations
+            .iter()
+            .find(|o| o.get("type").and_then(|t| t.as_str()) == Some("docket_authorization"))
+            .expect("authorization observation present");
+        assert_eq!(
+            authz
+                .get("docket_authorization_source")
+                .and_then(|v| v.as_str()),
+            Some(expected)
+        );
+        assert!(authz.get("issuance").unwrap().is_null());
+        // No upstream premise limits when there is no issuance.
+        assert!(!p
+            .coverage_limits
+            .iter()
+            .any(|l| l.contains("upstream authorization premise")));
+    }
+}
+
+// 23 — an unenforceable upstream premise or unknown residual status refuses
+//      rather than dropping or guessing.
+#[test]
+fn v2_unenforceable_authorization_metadata_refuses() {
+    for name in ["v2_empty_premise.json", "v2_unknown_residual_status.json"] {
+        let s = store();
+        match import_dossier(&fixture(name), "x", s.path(), AT) {
+            Err(ImportRefusal::UnenforceablePremise { .. }) => {}
+            other => panic!("{name}: expected unenforceable-premise refusal, got {other:?}"),
+        }
+    }
+}
+
+// 24 — authorization alone mints no claim: settlement plus authorization still
+//      cannot verify safe_to_merge or anything else in the registry.
+#[test]
+fn v2_authorization_plus_settlement_mints_no_claim() {
+    let s = store();
+    let (path, _, _) = import_ok(&fixture("v2_upstream.json"), s.path());
+    let packet = read_packet(&path);
+    let subject = packet.subject.clone();
+    let registry = ClaimRegistry::track_b_starter();
+    for claim in registry.names() {
+        let r = evaluate(&registry, claim, &subject, &[packet.clone()], AT);
+        assert_ne!(
+            r.status,
+            Status::Verified,
+            "claim {claim} must not verify from authorization plus settlement"
+        );
+    }
+    let r = evaluate(&registry, "safe_to_merge", &subject, &[packet], AT);
+    assert!(!r.verified.iter().any(|c| c == "safe_to_merge"));
+}

@@ -46,8 +46,14 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-/// The supported source schema, exactly.
+/// The supported source schemas, exactly. v2 adds the source's
+/// `authorization` block (upstream authorization facts, premises, and
+/// residuals); v1 remains supported so historical dossiers keep importing
+/// unchanged.
 pub const SUPPORTED_DOSSIER_FORMAT: &str = "gwr:attempt-dossier:v1";
+
+/// The v2 source schema, which additionally carries `authorization`.
+pub const SUPPORTED_DOSSIER_FORMAT_V2: &str = "gwr:attempt-dossier:v2";
 
 /// The `witness_type` this profile emits.
 pub const WITNESS_TYPE: &str = "docket_attempt_dossier";
@@ -55,7 +61,9 @@ pub const WITNESS_TYPE: &str = "docket_attempt_dossier";
 /// Fixed coverage limits carried on every packet this profile emits.
 /// These are the mechanical statement of the office boundary; tests pin
 /// their presence.
-pub const FIXED_COVERAGE_LIMITS: [&str; 5] = [
+pub const FIXED_COVERAGE_LIMITS: [&str; 6] = [
+    "docket authorization is not docket execution: that an upstream office \
+     authorized work does not establish that the effect executed",
     "projection of docket-held execution records; not native witness custody",
     "operational testimony; no notary; the source digest is producer \
      self-consistency, not independent custody",
@@ -94,6 +102,62 @@ struct Dossier {
     execution: Execution,
     observation: ObservationSection,
     qualification: Option<Qualification>,
+    /// Present only on v2 sources. Upstream *authorization* facts, kept
+    /// distinct from the source's own settlement facts throughout.
+    #[serde(default)]
+    authorization: Option<Authorization>,
+}
+
+/// The source's authorization provenance, as v2 records it.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Authorization {
+    source: String,
+    issuance: Option<Issuance>,
+}
+
+/// One upstream issuance the source verified and recorded.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Issuance {
+    issuance_id: String,
+    decision_id: String,
+    issuer_principal: String,
+    issuer_key_id: String,
+    target_id: String,
+    request_raw_sha256: String,
+    request_upstream_digest: String,
+    prepared_attempt_digest: String,
+    requested_actor: String,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+    accepted_at_ms: u64,
+    upstream_premises: Vec<UpstreamPremise>,
+    upstream_premises_meaning: String,
+    upstream_residual_status: String,
+    upstream_residuals: Vec<UpstreamResidual>,
+    consumption_ledger: String,
+    consumption_use_digest: String,
+    establishes: String,
+    does_not_establish: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpstreamPremise {
+    kind: String,
+    statement: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpstreamResidual {
+    source_system: String,
+    obligation_id: String,
+    subject: String,
+    kind: String,
+    statement: String,
+    discharged: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -471,6 +535,65 @@ fn premise_coverage(d: &Dossier) -> Result<Vec<String>, ImportRefusal> {
             "coverage bounded by docket premise: {tag} ({qualifier}asserted, not verified)"
         ));
     }
+    // Upstream authorization premises become coverage limits of their own,
+    // labelled as authorization premises so they can never be read as the
+    // source's settlement premises. A premise that cannot be rendered as an
+    // enforceable limit refuses rather than being dropped.
+    if let Some(a) = &d.authorization {
+        if let Some(i) = &a.issuance {
+            for p in &i.upstream_premises {
+                if p.kind.trim().is_empty() || p.statement.trim().is_empty() {
+                    return Err(ImportRefusal::UnenforceablePremise {
+                        detail: "an upstream authorization premise carries an empty kind \
+                                 or statement and cannot be enforced as a coverage limitation"
+                            .into(),
+                    });
+                }
+                limits.push(format!(
+                    "coverage bounded by upstream authorization premise: {} — {} \
+                     (asserted by the issuing office; not verified by docket or nq)",
+                    p.kind, p.statement
+                ));
+            }
+            limits.push(format!("cannot testify: {}", i.does_not_establish));
+            match i.upstream_residual_status.as_str() {
+                "present" => {
+                    for r in &i.upstream_residuals {
+                        if r.discharged {
+                            return Err(ImportRefusal::UnenforceablePremise {
+                                detail: format!(
+                                    "upstream residual {} is marked discharged; import \
+                                     cannot represent a discharged upstream obligation",
+                                    r.obligation_id
+                                ),
+                            });
+                        }
+                        limits.push(format!(
+                            "outstanding upstream residual obligation {} ({}) on {}: {}",
+                            r.obligation_id, r.kind, r.subject, r.statement
+                        ));
+                    }
+                }
+                "unrepresented" => limits.push(
+                    "upstream residual obligations are unrepresented by the issuing \
+                     office; their absence is a producer limitation, not evidence"
+                        .into(),
+                ),
+                "none_recorded" => {
+                    limits.push("the upstream decision recorded no residual obligations".into())
+                }
+                other => {
+                    return Err(ImportRefusal::UnenforceablePremise {
+                        detail: format!(
+                            "unknown upstream residual status {other:?}; it cannot be \
+                             enforced as a coverage limitation"
+                        ),
+                    })
+                }
+            }
+        }
+    }
+
     if let Some(q) = &d.qualification {
         let premise = q
             .custody_premise
@@ -544,6 +667,52 @@ fn build_packet(
             "JCS canonicalization of the dossier's immutable core \
              (identity, authority, timeline, execution, qualification)",
     }));
+    if let Some(a) = &d.authorization {
+        let issuance = a.issuance.as_ref().map(|i| {
+            json!({
+                "issuance_id": i.issuance_id,
+                "decision_id": i.decision_id,
+                "issuer_principal": i.issuer_principal,
+                "issuer_key_id": i.issuer_key_id,
+                "target_id": i.target_id,
+                "request_raw_sha256": i.request_raw_sha256,
+                "request_upstream_digest": i.request_upstream_digest,
+                "prepared_attempt_digest": i.prepared_attempt_digest,
+                "requested_actor": i.requested_actor,
+                "issued_at_ms": i.issued_at_ms,
+                "expires_at_ms": i.expires_at_ms,
+                "accepted_at_ms": i.accepted_at_ms,
+                "upstream_premises": i.upstream_premises.iter().map(|p| json!({
+                    "kind": p.kind, "statement": p.statement,
+                })).collect::<Vec<_>>(),
+                "upstream_premises_meaning": i.upstream_premises_meaning,
+                "upstream_residual_status": i.upstream_residual_status,
+                "upstream_residuals": i.upstream_residuals.iter().map(|r| json!({
+                    "source_system": r.source_system,
+                    "obligation_id": r.obligation_id,
+                    "subject": r.subject,
+                    "kind": r.kind,
+                    "statement": r.statement,
+                    "discharged": r.discharged,
+                })).collect::<Vec<_>>(),
+                "consumption_ledger": i.consumption_ledger,
+                "consumption_use_digest": i.consumption_use_digest,
+                "docket_authorization_establishes": i.establishes,
+                "docket_authorization_does_not_establish": i.does_not_establish,
+            })
+        });
+        observations.push(json!({
+            "type": "docket_authorization",
+            "docket_authorization_source": a.source,
+            "issuance": issuance,
+            "meaning": "upstream authorization facts as recorded by docket; \
+                        authorization is not execution, and neither is nq \
+                        admissibility. upstream premises are asserted by the \
+                        issuing office and verified by no one here; upstream \
+                        residual obligations are carried undischarged",
+        }));
+    }
+
     observations.push(json!({
         "type": "docket_attempt_core",
         "docket_attempt": d.attempt,
@@ -847,7 +1016,7 @@ pub fn import_dossier(
                 .unwrap_or("(absent)")
         })
         .to_string();
-    if found != SUPPORTED_DOSSIER_FORMAT {
+    if found != SUPPORTED_DOSSIER_FORMAT && found != SUPPORTED_DOSSIER_FORMAT_V2 {
         return Err(ImportRefusal::UnsupportedSchema { found });
     }
 
