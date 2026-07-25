@@ -1,0 +1,154 @@
+{
+ "dossier_format": "gwr:attempt-dossier:v1",
+ "attempt": "dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb",
+ "state": "proven_not_committed",
+ "version": 5,
+ "settlement": "recovered",
+ "identity": {
+  "work_request": "abababababababababababababababab",
+  "goal": "apply the governed fixture change",
+  "repository": "/governed/repo",
+  "target_ref": "refs/gwr/target",
+  "basis": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+  "effect_class": "git-ref-update:v1",
+  "settlement_premises": [
+   "inspectable_endpoint",
+   "atomic_compare_and_swap",
+   "attributable_result_state",
+   "exclusive_ref_custody"
+  ],
+  "allowed_paths": [
+   "src/lib.rs"
+  ],
+  "candidate": "acacacacacacacacacacacacacacacac",
+  "candidate_digest": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+  "patch_digest": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+  "preparation_run": "adadadadadadadadadadadadadadadad",
+  "candidate_ingested_at_ms": 1000,
+  "prepared_attempt_digest": "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
+  "observation_plan": {
+   "argv": [
+    "true"
+   ],
+   "environment": "fixture"
+  },
+  "request_created_at_ms": 900,
+  "admitted_at_ms": 1100
+ },
+ "authority": {
+  "ratification": {
+   "ratification": "aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae",
+   "actor": "afafafafafafafafafafafafafafafaf",
+   "standing_use": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+   "at_ms": 1200
+  },
+  "ratifying_grant": {
+   "grant": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+   "actor": "afafafafafafafafafafafafafafafaf",
+   "act": "ratify",
+   "attempt_digest_binding": "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
+   "expires_at_ms": 99999,
+   "consumed_by": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+   "used_at_ms": 1200
+  },
+  "reservation": {
+   "reservation": "babababababababababababababababa",
+   "basis": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+   "expires_at_ms": 99999,
+   "consumed_by": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "dispatch": {
+   "dispatch": "bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc",
+   "created_at_ms": 1300
+  },
+  "recovery_grant": {
+   "grant": "cececececececececececececececece",
+   "actor": "afafafafafafafafafafafafafafafaf",
+   "act": "resolve_recovery",
+   "attempt_digest_binding": "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
+   "expires_at_ms": 99999,
+   "consumed_by": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+   "used_at_ms": 1460
+  }
+ },
+ "timeline": [
+  {
+   "seq": 0,
+   "kind": "admitted",
+   "at_ms": 1100
+  },
+  {
+   "seq": 1,
+   "kind": "ratified",
+   "at_ms": 1200
+  },
+  {
+   "seq": 2,
+   "kind": "reserved",
+   "at_ms": 1250
+  },
+  {
+   "seq": 3,
+   "kind": "dispatching",
+   "at_ms": 1300
+  },
+  {
+   "seq": 4,
+   "kind": "indeterminate",
+   "at_ms": 1400
+  },
+  {
+   "seq": 5,
+   "kind": "proven_not_committed",
+   "at_ms": 1460
+  }
+ ],
+ "execution": {
+  "settlement": "recovered",
+  "commitment": null,
+  "dispatch_refusal": null,
+  "indeterminate": {
+   "last_journal_digest": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2",
+   "recorded_at_ms": 1400
+  },
+  "recovery_facts": [
+   {
+    "fact": "cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb",
+    "source": "ref_inspection",
+    "source_detail": null,
+    "observed_ref": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "expected_result_commit": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "journal_digest": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2",
+    "recorded_at_ms": 1450
+   }
+  ],
+  "resolution": {
+   "resolution": "cccccccccccccccccccccccccccccccc",
+   "fact": "cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb",
+   "verdict": "proven_not_committed",
+   "recovery_standing_use": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+   "resolved_at_ms": 1460
+  }
+ },
+ "observation": {
+  "observations": [],
+  "reliance_admissions": [],
+  "reliance_refusals": [],
+  "residual_obligations": [],
+  "reconciliation": null
+ },
+ "qualification": {
+  "verdict": "proven_not_committed",
+  "proof_basis": "runtime reading of the target ref plus the broker journal verified against the digest recorded at indeterminacy",
+  "fact": "cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb",
+  "fact_source": "ref_inspection",
+  "observed_ref": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+  "expected_result_commit": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+  "observed_ref_owner": null,
+  "journal_digest": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2",
+  "evidence_concordance": "effect_commit_recorded_but_not_observed",
+  "evidence_agrees": false,
+  "establishes": "the effect is not presently reflected in the target ref; under the asserted custody premise, that the effect never committed",
+  "does_not_establish": "unconditional non-occurrence: external mutation of the target ref would make this same evidence consistent with an effect that landed and was later reverted"
+ }
+}

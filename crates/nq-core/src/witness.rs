@@ -53,6 +53,18 @@ pub const CUSTODY_BASIS_NATIVE: &str = "native_observation";
 /// `docs/working/decisions/PATH_TO_1_0.md`).
 pub const CUSTODY_BASIS_LEGACY_PROJECTION: &str = "legacy_projection";
 
+/// `custody_basis` value for a packet projected from records held by an
+/// external source system (e.g. a Docket attempt dossier). Distinct from
+/// `legacy_projection`: the source records are not NQ's own legacy
+/// finding state, and NQ has performed no independent verification of
+/// the source's assertions — the packet is operational testimony about
+/// what the source's supported export surface said, bounded by the
+/// source's own declared premises. Subject to the same structural
+/// deadbolt as legacy projections: a non-empty `source_finding_ref`
+/// (here a source *record* reference) and a non-empty
+/// `projection_limits` including `"native_witness_custody"`.
+pub const CUSTODY_BASIS_EXTERNAL_PROJECTION: &str = "external_projection";
+
 /// Required `projection_limits` token on every legacy-projection packet.
 /// A projected packet cannot anchor native witness custody by construction;
 /// the wire validator refuses projection packets that omit this declaration.
@@ -109,15 +121,18 @@ pub struct WitnessPacket {
     #[serde(default)]
     pub dependencies: Vec<String>,
 
-    /// Custody basis: `"native_observation"` or `"legacy_projection"`.
-    /// Absent means the packet predates the Slice 2 cut-over (treated as
-    /// native by consumers; new producers should set it explicitly).
+    /// Custody basis: `"native_observation"`, `"legacy_projection"`, or
+    /// `"external_projection"`. Absent means the packet predates the
+    /// Slice 2 cut-over (treated as native by consumers; new producers
+    /// should set it explicitly).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custody_basis: Option<String>,
 
-    /// Reference back to the source finding when (and only when)
-    /// `custody_basis == "legacy_projection"`. Local finding identifier
-    /// (e.g. `finding:zfs_pool_degraded:host:storage01:pool:tank`).
+    /// Reference back to the source record when (and only when)
+    /// `custody_basis` is `"legacy_projection"` (a local finding
+    /// identifier, e.g. `finding:zfs_pool_degraded:host:storage01:pool:tank`)
+    /// or `"external_projection"` (a source-system record reference,
+    /// e.g. a Docket attempt/version/digest triple).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_finding_ref: Option<String>,
 
@@ -224,33 +239,33 @@ impl WitnessPacket {
             None | Some(CUSTODY_BASIS_NATIVE) => {
                 if self.source_finding_ref.is_some() {
                     return Err(err(
-                        "source_finding_ref is set without \
-                         custody_basis == \"legacy_projection\" — native or \
+                        "source_finding_ref is set without a projection \
+                         custody_basis — native or \
                          pre-cut-over packets must not name a source finding"
                             .into(),
                     ));
                 }
                 if !self.projection_limits.is_empty() {
                     return Err(err(
-                        "projection_limits is non-empty without \
-                         custody_basis == \"legacy_projection\" — \
+                        "projection_limits is non-empty without a \
+                         projection custody_basis — \
                          projection_limits describes what a projection \
                          cannot preserve and has no meaning on native packets"
                             .into(),
                     ));
                 }
             }
-            Some(CUSTODY_BASIS_LEGACY_PROJECTION) => {
+            Some(basis @ (CUSTODY_BASIS_LEGACY_PROJECTION | CUSTODY_BASIS_EXTERNAL_PROJECTION)) => {
                 let finding_ref = self.source_finding_ref.as_deref().unwrap_or("");
                 if finding_ref.trim().is_empty() {
                     return Err(err(format!(
-                        "custody_basis == {CUSTODY_BASIS_LEGACY_PROJECTION:?} \
+                        "custody_basis == {basis:?} \
                          requires a non-empty source_finding_ref"
                     )));
                 }
                 if self.projection_limits.is_empty() {
                     return Err(err(format!(
-                        "custody_basis == {CUSTODY_BASIS_LEGACY_PROJECTION:?} \
+                        "custody_basis == {basis:?} \
                          requires a non-empty projection_limits enumerating \
                          what the projection cannot preserve (must include \
                          {PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY:?})"
@@ -270,7 +285,7 @@ impl WitnessPacket {
                     .any(|l| l == PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY)
                 {
                     return Err(err(format!(
-                        "projection_limits on a legacy_projection packet must \
+                        "projection_limits on a projection packet must \
                          include {PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY:?} — \
                          projected packets cannot anchor native witness custody"
                     )));
@@ -278,8 +293,9 @@ impl WitnessPacket {
             }
             Some(other) => {
                 return Err(err(format!(
-                    "custody_basis must be {CUSTODY_BASIS_NATIVE:?} or \
-                     {CUSTODY_BASIS_LEGACY_PROJECTION:?}, got {other:?}"
+                    "custody_basis must be {CUSTODY_BASIS_NATIVE:?}, \
+                     {CUSTODY_BASIS_LEGACY_PROJECTION:?}, or \
+                     {CUSTODY_BASIS_EXTERNAL_PROJECTION:?}, got {other:?}"
                 )));
             }
         }

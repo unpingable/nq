@@ -1,0 +1,12 @@
+{
+ "schema": "nq.witness.v1",
+ "witness_type": "docket_attempt_dossier",
+ "subject": "docket:attempt:x",
+ "access_path": "x",
+ "observed_at": "2026-07-25T00:00:00Z",
+ "generated_at": "2026-07-25T00:00:00Z",
+ "observations": [],
+ "coverage_limits": [
+  "x"
+ ]
+}

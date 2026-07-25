@@ -2,6 +2,7 @@ mod artifact_registry;
 mod cli;
 mod cmd;
 mod declared_deny_probe;
+mod docket_dossier;
 mod declared_deny_transport;
 mod gateway_path_probe;
 mod gateway_path_transport;

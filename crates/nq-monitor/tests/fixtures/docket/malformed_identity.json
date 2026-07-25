@@ -1,0 +1,157 @@
+{
+ "dossier_format": "gwr:attempt-dossier:v1",
+ "attempt": 42,
+ "state": "committed",
+ "version": 4,
+ "settlement": "normal",
+ "identity": {
+  "work_request": "abababababababababababababababab",
+  "goal": "apply the governed fixture change",
+  "repository": "/governed/repo",
+  "target_ref": "refs/gwr/target",
+  "basis": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+  "effect_class": "git-ref-update:v1",
+  "settlement_premises": [
+   "inspectable_endpoint",
+   "atomic_compare_and_swap",
+   "attributable_result_state",
+   "exclusive_ref_custody"
+  ],
+  "allowed_paths": [
+   "src/lib.rs"
+  ],
+  "candidate": "acacacacacacacacacacacacacacacac",
+  "candidate_digest": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+  "patch_digest": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+  "preparation_run": "adadadadadadadadadadadadadadadad",
+  "candidate_ingested_at_ms": 1000,
+  "prepared_attempt_digest": "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
+  "observation_plan": {
+   "argv": [
+    "true"
+   ],
+   "environment": "fixture"
+  },
+  "request_created_at_ms": 900,
+  "admitted_at_ms": 1100
+ },
+ "authority": {
+  "ratification": {
+   "ratification": "aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae",
+   "actor": "afafafafafafafafafafafafafafafaf",
+   "standing_use": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+   "at_ms": 1200
+  },
+  "ratifying_grant": {
+   "grant": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+   "actor": "afafafafafafafafafafafafafafafaf",
+   "act": "ratify",
+   "attempt_digest_binding": "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
+   "expires_at_ms": 99999,
+   "consumed_by": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+   "used_at_ms": 1200
+  },
+  "reservation": {
+   "reservation": "babababababababababababababababa",
+   "basis": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+   "expires_at_ms": 99999,
+   "consumed_by": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "dispatch": {
+   "dispatch": "bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc",
+   "created_at_ms": 1300
+  },
+  "recovery_grant": null
+ },
+ "timeline": [
+  {
+   "seq": 0,
+   "kind": "admitted",
+   "at_ms": 1100
+  },
+  {
+   "seq": 1,
+   "kind": "ratified",
+   "at_ms": 1200
+  },
+  {
+   "seq": 2,
+   "kind": "reserved",
+   "at_ms": 1250
+  },
+  {
+   "seq": 3,
+   "kind": "dispatching",
+   "at_ms": 1300
+  },
+  {
+   "seq": 4,
+   "kind": "committed",
+   "at_ms": 1400
+  }
+ ],
+ "execution": {
+  "settlement": "normal",
+  "commitment": {
+   "result_commit": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+   "previous_value": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+   "target_ref": "refs/gwr/target",
+   "journal_digest": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2",
+   "committed_at_ms": 1400
+  },
+  "dispatch_refusal": null,
+  "indeterminate": null,
+  "recovery_facts": [],
+  "resolution": null
+ },
+ "observation": {
+  "observations": [
+   {
+    "observation": "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
+    "argv": [
+     "true"
+    ],
+    "working_directory": "worktree",
+    "result_commit": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+    "environment": "fixture",
+    "exit_status": 0,
+    "stdout_digest": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3",
+    "stderr_digest": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3",
+    "observed_at_ms": 1500
+   }
+  ],
+  "reliance_admissions": [
+   {
+    "observation": "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
+    "result_commit": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+    "at_ms": 1600
+   }
+  ],
+  "reliance_refusals": [
+   {
+    "kind": "claim_not_admissible",
+    "detail": null,
+    "subject": {
+     "observation": "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
+     "consumer": "review-queue",
+     "claim": "safe-to-merge"
+    },
+    "at_ms": 1610
+   }
+  ],
+  "residual_obligations": [
+   {
+    "obligation": "bebebebebebebebebebebebebebebebe",
+    "kind": "human_review_before_merge",
+    "recorded_at_ms": 1620
+   }
+  ],
+  "reconciliation": {
+   "retained_obligations": [
+    "bebebebebebebebebebebebebebebebe"
+   ],
+   "reconciled_at_ms": 1630
+  }
+ },
+ "qualification": null
+}

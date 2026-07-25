@@ -348,6 +348,24 @@ pub enum WitnessAction {
     /// Observe the file paths changed by a git diff and classify them
     /// against a declared scope. Emits a `diff_scope` witness packet.
     DiffScope(WitnessDiffScopeCmd),
+    /// Import a Docket canonical attempt dossier (`gwr:attempt-dossier:v1`,
+    /// the output of `docket show --json`) into a packet store as a
+    /// projection-marked `docket_attempt_dossier` witness packet.
+    /// Operational testimony, not sealed custody; settlement stays source
+    /// testimony; premises become coverage limits; import mints no claim.
+    DocketDossier(WitnessDocketDossierCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct WitnessDocketDossierCmd {
+    /// Path to the dossier JSON exactly as produced by `docket show --json`.
+    #[arg(long)]
+    pub dossier: PathBuf,
+    /// Packet store directory. One immutable packet per imported snapshot;
+    /// duplicate imports are idempotent; substitution of the immutable core
+    /// under an existing (attempt, version) identity is refused.
+    #[arg(long)]
+    pub store: PathBuf,
 }
 
 #[derive(Debug, Args)]
