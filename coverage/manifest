@@ -33,3 +33,6 @@ backend|service_state_systemd_collector|implemented|crates/nq-witness/src/collec
 backend|service_state_docker_collector|implemented|crates/nq-witness/src/collect/services.rs|
 backend|service_state_process_collector|deferred|docs/working/decisions/preflights/SERVICE_STATE.md|pid_file checks carry no manager-native state vocabulary; a bare PID liveness probe has no queried_state to quote — deferred until a shape that is not fabrication is named
 backend|service_state_witness_projection|implemented|crates/nq-db/src/service_state_witness_projection.rs|
+#
+# --- Docket dossier import (external_projection lane) ---
+backend|docket_dossier_import|lab_backed|crates/nq-monitor/tests/fixtures/docket|
