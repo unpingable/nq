@@ -8,6 +8,7 @@ pub mod preflight;
 pub mod receipt;
 pub mod receipt_check;
 pub mod receipt_replay;
+pub mod reliance;
 pub mod render;
 pub mod status;
 pub mod time_basis;
