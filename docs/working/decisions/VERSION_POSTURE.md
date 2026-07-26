@@ -1,6 +1,9 @@
 # Version Posture — what NQ versions by, and which "complete" is the trap
 
-**Status:** orientation / ratified 2026-06-30 (operator + review). Names the version
+**Status:** orientation / ratified 2026-06-30 (operator + review). *(Pin last reviewed
+2026-06-30; consumer-indexed reliance, the reliance machine transport, `qualify.sh`,
+and the dossier v2 import shipped after it — re-pinning is a future operator pass.)*
+Names the version
 *axis* and the load-bearing "complete" distinction that `PATH_TO_1_0`, `NQ_CLOSURE_STACK`,
 and `OSS_READINESS_ROADMAP` each assume but none states directly. Routine planning
 record; not custody-affecting.

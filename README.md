@@ -6,6 +6,23 @@ NQ is a local-first diagnostic monitor for Linux operators. It pulls bounded evi
 
 Two binaries. One SQLite database. No external datastore or dashboard service required.
 
+## Status (2026-07-26)
+
+NQ is the **testimony, claims, and reliance office** of a four-office
+governed constellation: Nightshift proposes, AG ng authorizes, Docket
+executes and settles, and NQ decides what recorded testimony does and does
+not establish — including importing Docket attempt dossiers
+(`witness docket-dossier`, dossier v1 and v2) and answering consumer-indexed
+reliance questions (`reliance evaluate`). NQ emits testimony and typed
+refusals, never actions; it does not authorize, execute, discharge
+obligations, or resolve contradictions, and a reliance refusal is never the
+negation of the underlying claim. The first four-office pilot completed
+2026-07-26 with NQ as its evaluation office; its honest outcome included
+`safe_to_merge` remaining structurally non-mintable on real governed
+evidence. Consumer identity remains **configured, not authenticated**, and
+NQ stays pre-1.0 — the office designation is a statement about jurisdiction,
+not a stability promise (see the compatibility policy below).
+
 ## What NQ is for
 
 NQ is useful when a green/red status or a metric graph hides the operational distinction that matters:

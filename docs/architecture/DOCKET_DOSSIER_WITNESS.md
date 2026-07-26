@@ -1,8 +1,15 @@
 # The `docket_attempt_dossier` witness profile
 
-Imports a **Docket canonical attempt dossier** — schema `gwr:attempt-dossier:v1`, the
-output of Docket's supported `show --json` surface — as a projection-marked
-`nq.witness.v1` packet.
+Imports a **Docket canonical attempt dossier** — schema `gwr:attempt-dossier:v1` **or
+`gwr:attempt-dossier:v2`** (v2 adds the upstream-`authorization` block; both are closed
+schemas), the output of Docket's supported `show --json` surface — as a
+projection-marked `nq.witness.v1` packet. Upstream authorization premises from a v2
+dossier become their own labeled coverage limits, kept separate from settlement
+premises, and the upstream residual-obligation status (`none recorded` vs
+`unrepresented`) is carried, never upgraded. *(This paragraph originally named only v1;
+the implementation and its conformance fixtures have accepted v1+v2 since the
+three-office vertical, and the 2026-07-26 four-office pilot imported a live v2 dossier
+through this profile.)*
 
 ```bash
 nq-monitor witness docket-dossier --dossier <dossier.json> --store <dir>
