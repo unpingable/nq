@@ -75,6 +75,15 @@ pub enum Command {
     /// downstream consumers (PR comments, dashboards) without
     /// re-running verification.
     Receipt(ReceiptCmd),
+    /// Consumer-indexed reliance — decide whether a configured consumer
+    /// may rely on an existing `nq.receipt.v1` for a bounded purpose.
+    /// Reads JSON, writes JSON, opens no database, and authorizes
+    /// nothing.
+    ///
+    /// A refused reliance is a decision. No decision is not a refusal.
+    ///
+    /// A configured consumer is not an authenticated consumer.
+    Reliance(RelianceCmd),
     /// Operator-facing contract smokes against a running monitor's
     /// HTTP API. Verifies the operator-facing surface honors its
     /// contract; safe to run repeatedly against production. Exits
@@ -1306,4 +1315,50 @@ mod tests {
             other => panic!("expected EmitEscalation, got {other:?}"),
         }
     }
+}
+
+#[derive(Debug, Args)]
+pub struct RelianceCmd {
+    #[command(subcommand)]
+    pub action: RelianceAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RelianceAction {
+    /// Evaluate one `nq.reliance.request.v1` against a sealed
+    /// `nq.receipt.v1` under a configured consumer-profile catalog.
+    ///
+    /// Exits 0 when a decision was reached — including a refusal.
+    /// Exits 1 when the input could not be decoded, i.e. when no
+    /// decision exists at all.
+    Evaluate(RelianceEvaluateCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct RelianceEvaluateCmd {
+    /// Path to an `nq.reliance.request.v1` JSON document. Use `-` for
+    /// stdin.
+    #[arg(long)]
+    pub request: std::path::PathBuf,
+    /// Path to the sealed `nq.receipt.v1` being relied upon. Its
+    /// `content_hash` must match the request, or the decision is a
+    /// substitution refusal.
+    #[arg(long)]
+    pub receipt: std::path::PathBuf,
+    /// Optional evidence context (premises, coverage limits,
+    /// contradictions, residuals, evidence age). Defaults to empty.
+    #[arg(long)]
+    pub evidence: Option<std::path::PathBuf>,
+    /// Path to the `nq.reliance.profiles.v1` consumer-profile catalog.
+    #[arg(long)]
+    pub profiles: std::path::PathBuf,
+    /// Output format. `json`/`jsonl` emit the reliance receipt and
+    /// nothing else on stdout; `human` is the terminal rendering.
+    #[arg(long, short, default_value = "human")]
+    pub format: String,
+    /// Override the receipt envelope timestamp. Deterministic-output
+    /// aid for tests and fixtures; it is not part of the decision
+    /// identity.
+    #[arg(long)]
+    pub generated_at: Option<String>,
 }

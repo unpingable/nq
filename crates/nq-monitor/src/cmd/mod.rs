@@ -11,6 +11,7 @@ pub mod preflight;
 pub mod probe;
 pub mod query;
 pub mod receipt;
+pub mod reliance;
 pub mod sentinel;
 pub mod serve;
 pub mod smoke;
@@ -40,6 +41,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Verify(cmd) => verify::run(cmd),
         Command::Witness(cmd) => witness::run(cmd),
         Command::Receipt(cmd) => receipt::run(cmd),
+        Command::Reliance(cmd) => reliance::run(cmd),
         Command::Smoke(cmd) => smoke::run(cmd),
         Command::Probe(cmd) => probe::run(cmd),
         Command::Drill(cmd) => drill::run(cmd),
