@@ -241,6 +241,7 @@ It can ingest Prometheus exposition data and complement an existing metrics stac
 - [Receipts](docs/operator/RECEIPTS.md) — integrity, replay, freshness, and custody
 - [Claim Catalog](docs/operator/CLAIM_CATALOG.md) — supported claims and explicit refusals
 - [Architecture overview](docs/architecture/OVERVIEW.md) — as-built components and trust boundaries
+- [Consumer-indexed reliance](docs/architecture/CONSUMER_RELIANCE.md) — whether a named, *configured* consumer may rely on an evaluation result for a bounded purpose. Claim evaluation stays consumer-blind, `verified` does not mean every consumer may rely, the consumer never enters a witness packet, and no reliance decision grants execution authority
 
 ## License
 
