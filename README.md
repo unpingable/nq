@@ -12,8 +12,14 @@ NQ is the **testimony, claims, and reliance office** of a four-office
 governed constellation: Nightshift proposes, AG ng authorizes, Docket
 executes and settles, and NQ decides what recorded testimony does and does
 not establish — including importing Docket attempt dossiers
-(`witness docket-dossier`, dossier v1 and v2) and answering consumer-indexed
-reliance questions (`reliance evaluate`). NQ emits testimony and typed
+(`witness docket-dossier`, dossier v1 and v2), importing Continuity rely
+snapshots (`witness continuity-record`, evaluated as the narrow
+`continuity_rely_eligible` claim — see
+[`docs/architecture/CONTINUITY_RELY_WITNESS.md`](docs/architecture/CONTINUITY_RELY_WITNESS.md)),
+and answering consumer-indexed reliance questions (`reliance evaluate`,
+which may require current supporting evaluations — an original evaluation
+stays immutable while later continuity testimony changes the current
+decision; NQ implements none of Continuity's trajectory law). NQ emits testimony and typed
 refusals, never actions; it does not authorize, execute, discharge
 obligations, or resolve contradictions, and a reliance refusal is never the
 negation of the underlying claim. The first four-office pilot completed
