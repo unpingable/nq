@@ -4,6 +4,7 @@
 //! ...) and emits a witness packet to stdout. Witnesses report typed
 //! observations + `coverage_limits`; they do not name claims.
 
+pub mod continuity_record;
 pub mod diff_scope;
 pub mod docket_dossier;
 pub mod git_status;
@@ -17,6 +18,7 @@ pub fn run(cmd: WitnessCmd) -> anyhow::Result<()> {
         WitnessAction::Pytest(c) => pytest::run(c),
         WitnessAction::DiffScope(c) => diff_scope::run(c),
         WitnessAction::DocketDossier(c) => docket_dossier::run(c),
+        WitnessAction::ContinuityRecord(c) => continuity_record::run(c),
     }
 }
 

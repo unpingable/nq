@@ -1,6 +1,7 @@
 mod artifact_registry;
 mod cli;
 mod cmd;
+mod continuity_record;
 mod declared_deny_probe;
 mod docket_dossier;
 mod declared_deny_transport;

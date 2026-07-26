@@ -363,6 +363,24 @@ pub enum WitnessAction {
     /// Operational testimony, not sealed custody; settlement stays source
     /// testimony; premises become coverage limits; import mints no claim.
     DocketDossier(WitnessDocketDossierCmd),
+    /// Import a Continuity rely-result snapshot (`continuity.rely_export.v0`,
+    /// the output of `contctl rely-export`) into a packet store as a
+    /// projection-marked `continuity_rely_record` witness packet. Operational
+    /// testimony, not sealed custody; the rely verdict stays source
+    /// testimony; premises become coverage limits; import mints no claim.
+    ContinuityRecord(WitnessContinuityRecordCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct WitnessContinuityRecordCmd {
+    /// Path to the record JSON exactly as produced by `contctl rely-export`.
+    #[arg(long)]
+    pub record: PathBuf,
+    /// Packet store directory. One immutable packet per imported snapshot;
+    /// duplicate imports are idempotent; substitution of the semantic core
+    /// under an existing (memory, evaluation-time) identity is refused.
+    #[arg(long)]
+    pub store: PathBuf,
 }
 
 #[derive(Debug, Args)]

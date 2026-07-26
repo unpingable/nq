@@ -1,0 +1,67 @@
+{
+  "schema": "continuity.rely_export.v0",
+  "export_id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "exported_at": "2026-07-26T22:00:05+00:00",
+  "source": {
+    "system": "continuity",
+    "store_id": "store_fixture0000000000000000000000",
+    "scope_kind": "explicit",
+    "schema_version": 4,
+    "exporter": {
+      "tool": "continuity",
+      "version": "0.1.0",
+      "repo": null,
+      "commit": null
+    }
+  },
+  "subject": {
+    "memory_id": "mem_fixture00000000000000000000000",
+    "scope": "repo:demo",
+    "kind": "fact",
+    "basis": "operator_assertion"
+  },
+  "content_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "status": "committed",
+  "supersedes": null,
+  "revoked_by": null,
+  "authoring_tier": "agent_authored",
+  "reliance_class": "advisory",
+  "effective_reliance": "advisory",
+  "lifecycle": {
+    "observe_event_id": "evt_fixtureobserve0000000000000000",
+    "observe_receipt_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+    "latest_commit_event_id": "evt_fixturecommit00000000000000000",
+    "latest_commit_receipt_hash": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "times": {
+    "created_at": "2026-07-26T21:00:00+00:00",
+    "updated_at": "2026-07-26T21:30:00+00:00",
+    "source_observed_at": null,
+    "expires_at": null
+  },
+  "evaluation_time": "2026-07-26T22:00:00.000000+00:00",
+  "rely": {
+    "rely_ok": true,
+    "code": "eligible",
+    "message": "eligible for reliance at class advisory",
+    "details": {
+      "authoring_tier": "agent_authored",
+      "effective_reliance": "advisory",
+      "reliance_class": "advisory"
+    }
+  },
+  "premises": [],
+  "history": {
+    "event_count": 2,
+    "receipt_count": 2
+  },
+  "establishes": [
+    "continuity's rely gate returned eligible for memory mem_fixture00000000000000000000000 at 2026-07-26T22:00:00.000000+00:00 under the recorded premises and authoring tier"
+  ],
+  "does_not_establish": [
+    "this record is a continuity rely snapshot at the stated evaluation time; it is not an nq verdict, not admissibility, and not execution authority",
+    "rely advises, never authorizes; the answer is consumer-neutral and binds no consumer to anything",
+    "a later evaluation may supersede this answer without rewriting it; absence of a newer export is not evidence of continuity or discontinuity",
+    "authoring-tier and reliance-class ceilings quoted here are continuity law, carried for disclosure, and confer nothing"
+  ]
+}

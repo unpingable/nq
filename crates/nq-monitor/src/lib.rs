@@ -1,4 +1,5 @@
 pub mod artifact_registry;
+pub mod continuity_record;
 pub mod declared_deny_probe;
 pub mod docket_dossier;
 pub mod declared_deny_transport;
