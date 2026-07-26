@@ -1,0 +1,91 @@
+{
+  "evidence_context": {
+    "coverage_limits": [],
+    "premises": [],
+    "retained_contradictions": [
+      "source A reports committed; source B reports not committed"
+    ],
+    "unenforceable_premises": [],
+    "unresolved_residuals": []
+  },
+  "expected_decision": "contradiction_retained",
+  "name": "contradiction_retained",
+  "note": "a retained disagreement is preserved, not resolved, and defeats reliance under the strict profile",
+  "reliance_receipt": {
+    "caller_binding": "configured",
+    "caller_binding_disclosure": "consumer profile was selected from local configuration; this is not an authenticated consumer identity",
+    "claim": "docket_attempt_settled",
+    "consumer_profile_id": "nightshift-readonly",
+    "coverage_limits": [],
+    "decision": "contradiction_retained",
+    "decision_id": "sha256:7aa0836d14ce7c49904e2d889544952275e6f69dc1fa0afa4c802cb8d327b873",
+    "does_not_establish": [
+      "this decision grants no execution authority",
+      "this decision is operational evidence, not sealed custody",
+      "this decision names no action and licenses no retry, clearing, or escalation",
+      "a reliance refusal is not a refutation of the underlying claim",
+      "a retained contradiction in the source testimony is preserved here and is not resolved by this decision"
+    ],
+    "establishes": [],
+    "evidence_context_digest": "sha256:dbbb0208d3a643fbb1a386bc3585a0a503e580fe1e8ffaa7269b1a259d02e75b",
+    "generated_at": "2026-07-26T00:00:00Z",
+    "policy_version": "v1",
+    "premises": [],
+    "purpose": "stop",
+    "receipt_content_hash": "sha256:f44b879dcf72a660286731a9f507f15bace230c94c4ba307dcbc239820a60d17",
+    "refusal_reasons": [
+      "a retained contradiction in the source testimony defeats reliance under this profile's contradiction policy"
+    ],
+    "request_digest": "sha256:7aa0836d14ce7c49904e2d889544952275e6f69dc1fa0afa4c802cb8d327b873",
+    "retained_contradictions": [
+      "source A reports committed; source B reports not committed"
+    ],
+    "schema": "nq.reliance.receipt.v1",
+    "underlying_status": "verified",
+    "unresolved_residuals": [],
+    "witnesses": [
+      {
+        "custody_basis": "native_observation",
+        "digest": "sha256:aa",
+        "observed_at": "2026-07-26T00:00:00Z",
+        "witness_type": "docket_dossier"
+      }
+    ]
+  },
+  "request": {
+    "caller_binding": "configured",
+    "claim": "docket_attempt_settled",
+    "consumer_profile_id": "nightshift-readonly",
+    "policy_version": "v1",
+    "purpose": "stop",
+    "receipt_content_hash": "sha256:f44b879dcf72a660286731a9f507f15bace230c94c4ba307dcbc239820a60d17",
+    "request_id": "req-conformance",
+    "schema": "nq.reliance.request.v1"
+  },
+  "source_receipt": {
+    "cannot_testify": [],
+    "claim": "docket_attempt_settled",
+    "content_hash": "sha256:f44b879dcf72a660286731a9f507f15bace230c94c4ba307dcbc239820a60d17",
+    "evaluator": {
+      "evaluator": "claim_registry",
+      "version": 1
+    },
+    "generated_at": "2026-07-26T00:00:00Z",
+    "not_verified": [],
+    "schema": "nq.receipt.v1",
+    "status": "verified",
+    "status_reasons": [],
+    "subject": "attempt/1",
+    "suggested_weaker_claims": [],
+    "supported_status": "",
+    "verified": [],
+    "witnesses": [
+      {
+        "custody_basis": "native_observation",
+        "digest": "sha256:aa",
+        "observed_at": "2026-07-26T00:00:00Z",
+        "witness_type": "docket_dossier"
+      }
+    ]
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "evidence_context": {
+    "coverage_limits": [],
+    "premises": [
+      "clock_trusted"
+    ],
+    "retained_contradictions": [],
+    "unenforceable_premises": [
+      "clock_trusted"
+    ],
+    "unresolved_residuals": []
+  },
+  "expected_decision": "premise_not_accepted",
+  "name": "premise_not_accepted",
+  "note": "a premise that cannot be rendered as an enforceable coverage limit is refused by the strict profile; the premise survives into the receipt",
+  "reliance_receipt": {
+    "caller_binding": "configured",
+    "caller_binding_disclosure": "consumer profile was selected from local configuration; this is not an authenticated consumer identity",
+    "claim": "docket_attempt_settled",
+    "consumer_profile_id": "nightshift-readonly",
+    "coverage_limits": [],
+    "decision": "premise_not_accepted",
+    "decision_id": "sha256:1c85e2dbe925a6cc00279b0ef6d499f7eaedf675288171d0439aa7fbfd940d62",
+    "does_not_establish": [
+      "this decision grants no execution authority",
+      "this decision is operational evidence, not sealed custody",
+      "this decision names no action and licenses no retry, clearing, or escalation",
+      "a reliance refusal is not a refutation of the underlying claim"
+    ],
+    "establishes": [],
+    "evidence_context_digest": "sha256:7d9583f3d8aa3e939886da366c57b246fd1f275d3e6c8ef053c24ae2a2ac7cca",
+    "generated_at": "2026-07-26T00:00:00Z",
+    "policy_version": "v1",
+    "premises": [
+      "clock_trusted"
+    ],
+    "purpose": "wait",
+    "receipt_content_hash": "sha256:f44b879dcf72a660286731a9f507f15bace230c94c4ba307dcbc239820a60d17",
+    "refusal_reasons": [
+      "1 premise(s) are recorded but not enforceable as coverage limits, which this profile does not accept"
+    ],
+    "request_digest": "sha256:1c85e2dbe925a6cc00279b0ef6d499f7eaedf675288171d0439aa7fbfd940d62",
+    "retained_contradictions": [],
+    "schema": "nq.reliance.receipt.v1",
+    "underlying_status": "verified",
+    "unresolved_residuals": [],
+    "witnesses": [
+      {
+        "custody_basis": "native_observation",
+        "digest": "sha256:aa",
+        "observed_at": "2026-07-26T00:00:00Z",
+        "witness_type": "docket_dossier"
+      }
+    ]
+  },
+  "request": {
+    "caller_binding": "configured",
+    "claim": "docket_attempt_settled",
+    "consumer_profile_id": "nightshift-readonly",
+    "policy_version": "v1",
+    "purpose": "wait",
+    "receipt_content_hash": "sha256:f44b879dcf72a660286731a9f507f15bace230c94c4ba307dcbc239820a60d17",
+    "request_id": "req-conformance",
+    "schema": "nq.reliance.request.v1"
+  },
+  "source_receipt": {
+    "cannot_testify": [],
+    "claim": "docket_attempt_settled",
+    "content_hash": "sha256:f44b879dcf72a660286731a9f507f15bace230c94c4ba307dcbc239820a60d17",
+    "evaluator": {
+      "evaluator": "claim_registry",
+      "version": 1
+    },
+    "generated_at": "2026-07-26T00:00:00Z",
+    "not_verified": [],
+    "schema": "nq.receipt.v1",
+    "status": "verified",
+    "status_reasons": [],
+    "subject": "attempt/1",
+    "suggested_weaker_claims": [],
+    "supported_status": "",
+    "verified": [],
+    "witnesses": [
+      {
+        "custody_basis": "native_observation",
+        "digest": "sha256:aa",
+        "observed_at": "2026-07-26T00:00:00Z",
+        "witness_type": "docket_dossier"
+      }
+    ]
+  }
+}

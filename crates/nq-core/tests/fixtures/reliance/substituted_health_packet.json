@@ -1,0 +1,88 @@
+{
+  "evidence_context": {
+    "coverage_limits": [],
+    "premises": [],
+    "retained_contradictions": [],
+    "unenforceable_premises": [],
+    "unresolved_residuals": []
+  },
+  "expected_decision": "malformed_request",
+  "name": "substituted_health_packet",
+  "note": "the request names a receipt digest; a different receipt under the same decision identity is a substitution refusal",
+  "reliance_receipt": {
+    "caller_binding": "configured",
+    "caller_binding_disclosure": "consumer profile was selected from local configuration; this is not an authenticated consumer identity",
+    "claim": "nq_evaluator_state",
+    "consumer_profile_id": "operator-review",
+    "coverage_limits": [],
+    "decision": "malformed_request",
+    "decision_id": "sha256:c895692db7af418cd82932f6b852beb2d986ac28c62c183261f2d557dfb3eb34",
+    "does_not_establish": [
+      "this decision grants no execution authority",
+      "this decision is operational evidence, not sealed custody",
+      "this decision names no action and licenses no retry, clearing, or escalation",
+      "a reliance refusal is not a refutation of the underlying claim"
+    ],
+    "establishes": [],
+    "evidence_context_digest": "sha256:6afc100b53dd4b58c2963ccfd2b6c07fc7e0a6c8ff6817be527c2705a0225b87",
+    "generated_at": "2026-07-26T00:00:00Z",
+    "policy_version": "v1",
+    "premises": [],
+    "purpose": "review",
+    "receipt_content_hash": "sha256:1e4de67b31e106c92aa28cdfe65326111b56fdc2c61f6a186d16232cea913da5",
+    "refusal_reasons": [
+      "receipt content_hash \"sha256:4459714d41e5cba5d22912f4628fd81c14f74e4e955c37dda49e7194002422bd\" does not match the requested \"sha256:1e4de67b31e106c92aa28cdfe65326111b56fdc2c61f6a186d16232cea913da5\"; evidence substituted under an unchanged decision identity"
+    ],
+    "request_digest": "sha256:c895692db7af418cd82932f6b852beb2d986ac28c62c183261f2d557dfb3eb34",
+    "retained_contradictions": [],
+    "schema": "nq.reliance.receipt.v1",
+    "underlying_status": "verified",
+    "unresolved_residuals": [],
+    "witnesses": [
+      {
+        "custody_basis": "native_observation",
+        "digest": "sha256:bb",
+        "observed_at": "2026-07-01T00:00:00Z",
+        "witness_type": "nq_self"
+      }
+    ]
+  },
+  "request": {
+    "caller_binding": "configured",
+    "claim": "nq_evaluator_state",
+    "consumer_profile_id": "operator-review",
+    "policy_version": "v1",
+    "purpose": "review",
+    "receipt_content_hash": "sha256:1e4de67b31e106c92aa28cdfe65326111b56fdc2c61f6a186d16232cea913da5",
+    "request_id": "req-conformance",
+    "schema": "nq.reliance.request.v1"
+  },
+  "source_receipt": {
+    "cannot_testify": [],
+    "claim": "nq_evaluator_state",
+    "content_hash": "sha256:4459714d41e5cba5d22912f4628fd81c14f74e4e955c37dda49e7194002422bd",
+    "evaluator": {
+      "evaluator": "claim_registry",
+      "version": 1
+    },
+    "generated_at": "2026-07-26T00:00:00Z",
+    "not_verified": [],
+    "schema": "nq.receipt.v1",
+    "status": "verified",
+    "status_reasons": [
+      "stale_observation"
+    ],
+    "subject": "host/nq_evaluator_state",
+    "suggested_weaker_claims": [],
+    "supported_status": "",
+    "verified": [],
+    "witnesses": [
+      {
+        "custody_basis": "native_observation",
+        "digest": "sha256:bb",
+        "observed_at": "2026-07-01T00:00:00Z",
+        "witness_type": "nq_self"
+      }
+    ]
+  }
+}

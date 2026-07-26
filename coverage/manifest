@@ -36,3 +36,10 @@ backend|service_state_witness_projection|implemented|crates/nq-db/src/service_st
 #
 # --- Docket dossier import (external_projection lane) ---
 backend|docket_dossier_import|lab_backed|crates/nq-monitor/tests/fixtures/docket|
+#
+# --- consumer-indexed reliance (nq.reliance.*.v1) ---
+# check-coverage-manifest.sh scans crates/nq-monitor/tests/fixtures/ only, so these
+# nq-core fixtures are not auto-required. Declared anyway: the manifest's rule is that
+# absence is declared rather than laundered, and that rule does not stop at a scan path.
+backend|reliance_conformance_vectors|implemented|crates/nq-core/tests/fixtures/reliance|
+backend|reliance_profile_catalog|implemented|docs/examples/reliance-profiles.json|
