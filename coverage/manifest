@@ -43,3 +43,6 @@ backend|docket_dossier_import|lab_backed|crates/nq-monitor/tests/fixtures/docket
 # absence is declared rather than laundered, and that rule does not stop at a scan path.
 backend|reliance_conformance_vectors|implemented|crates/nq-core/tests/fixtures/reliance|
 backend|reliance_profile_catalog|implemented|docs/examples/reliance-profiles.json|
+#
+# --- Continuity rely-record import (external_projection lane) ---
+backend|continuity_record_import|lab_backed|crates/nq-monitor/tests/fixtures/continuity|
