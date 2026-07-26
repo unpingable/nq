@@ -136,6 +136,18 @@ impl ClaimRegistry {
             },
             describes: "git diff matched the declared scope".into(),
         }));
+        r.register(ClaimEntry::Leaf(LeafClaim {
+            name: "continuity_rely_eligible".into(),
+            witness_type: "continuity_rely_record".into(),
+            observation_type: "continuity_rely_result".into(),
+            condition: LeafCondition::BoolFieldTrue {
+                path: "rely_ok".into(),
+            },
+            describes: "continuity's rely gate reported eligible for this subject at \
+                        the recorded evaluation time, under the recorded premises and \
+                        authoring tier"
+                .into(),
+        }));
         r.register(ClaimEntry::Composite(CompositeClaim {
             name: "ready_for_review".into(),
             requires: vec![
