@@ -116,6 +116,43 @@ Every receipt carries these mechanically, whatever the outcome:
 What happens next is a downstream decision, made *from* this receipt, never *by* it. No
 such downstream orchestrator is implemented, and NQ does not claim one exists.
 
+## Machine transport
+
+```
+nq-monitor reliance evaluate \
+    --request <path|->     nq.reliance.request.v1 ("-" reads stdin)
+    --receipt <path>       the sealed nq.receipt.v1 being relied upon
+    --evidence <path>      optional EvidenceContext; defaults to empty
+    --profiles <path>      nq.reliance.profiles.v1 catalog
+    --format json          machine mode
+```
+
+| exit | meaning |
+|---|---|
+| 0 | a decision was reached and emitted — **including a refusal** |
+| 1 | input could not be decoded or read; **no decision exists** |
+| 2 | usage error |
+
+The 0/1 split is load-bearing. A refused reliance is NQ working correctly, so it exits 0
+with a typed receipt on stdout. When no decision exists, stdout is **empty** — a consumer
+must be able to tell *NQ said no* from *NQ did not answer*, and collapsing the two would
+let a tool failure be read as testimony.
+
+In machine mode stdout carries exactly one JSON document and nothing else; diagnostics go
+to stderr. The command opens no database, contacts no service, and emits no orchestration
+action or capability.
+
+### Invoking it from another program
+
+Read the receipt from stdout on exit 0 and branch on `decision`. On exit 1, **do not
+synthesize a refusal** — no decision was made, and whether that matters is the caller's
+own timeout/liveness question, not NQ's. NQ cannot report its own unresponsiveness.
+
+## Qualification
+
+`scripts/qualify.sh` runs every required gate and fails if any one fails, including the
+reliance library tests, the golden vectors, and the machine-transport tests.
+
 ## Conformance
 
 Fourteen language-neutral golden vectors under
