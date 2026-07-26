@@ -90,6 +90,18 @@ fn evaluate(cmd: RelianceEvaluateCmd) -> anyhow::Result<()> {
         }
     };
 
+    let mut supporting: Vec<Receipt> = Vec::new();
+    for path in &cmd.supporting {
+        let bytes = read_input(path).unwrap_or_else(|e| no_decision(&e));
+        match serde_json::from_slice(&bytes) {
+            Ok(r) => supporting.push(r),
+            Err(e) => no_decision(&format!(
+                "supporting receipt {} is not an nq.receipt.v1: {e}",
+                path.display()
+            )),
+        }
+    }
+
     let catalog_bytes = read_input(&cmd.profiles).unwrap_or_else(|e| no_decision(&e));
     let catalog = match ProfileCatalog::from_json_slice(&catalog_bytes) {
         Ok(c) => c,
@@ -103,7 +115,7 @@ fn evaluate(cmd: RelianceEvaluateCmd) -> anyhow::Result<()> {
     });
 
     // The one and only call into the decision library.
-    let decision = match decide(&request, &receipt, &evidence, &catalog, &generated_at) {
+    let decision = match decide(&request, &receipt, &supporting, &evidence, &catalog, &generated_at) {
         Ok(d) => d,
         Err(e) => no_decision(&format!("canonicalization failed: {}", e.message)),
     };

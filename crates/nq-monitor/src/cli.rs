@@ -1367,6 +1367,11 @@ pub struct RelianceEvaluateCmd {
     /// contradictions, residuals, evidence age). Defaults to empty.
     #[arg(long)]
     pub evidence: Option<std::path::PathBuf>,
+    /// Sealed supporting `nq.receipt.v1` evaluation(s) bound by the
+    /// request's `supporting_receipt_hashes` (e.g. a current-continuity
+    /// evaluation a profile requires). Repeatable.
+    #[arg(long)]
+    pub supporting: Vec<std::path::PathBuf>,
     /// Path to the `nq.reliance.profiles.v1` consumer-profile catalog.
     #[arg(long)]
     pub profiles: std::path::PathBuf,

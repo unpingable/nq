@@ -54,6 +54,7 @@ fn request(profile: &str, purpose: &str, claim: &str, receipt: &Receipt) -> Reli
         receipt_content_hash: receipt.content_hash.clone().unwrap_or_default(),
         policy_version: "v1".into(),
         request_id: "req-transport".into(),
+        supporting_receipt_hashes: vec![],
     }
 }
 

@@ -62,6 +62,7 @@ fn request(profile: &str, purpose: &str, claim: &str, receipt: &Receipt) -> Reli
         receipt_content_hash: receipt.content_hash.clone().unwrap_or_default(),
         policy_version: "v1".to_string(),
         request_id: "req-conformance".to_string(),
+        supporting_receipt_hashes: vec![],
     }
 }
 
@@ -360,7 +361,7 @@ fn conformance_vectors_match_the_shipped_decision_behaviour() {
     }
 
     for s in scenarios() {
-        let decided = decide(&s.request, &s.receipt, &s.evidence, &catalog(), NOW)
+        let decided = decide(&s.request, &s.receipt, &[], &s.evidence, &catalog(), NOW)
             .expect("decision must not fail");
         assert_eq!(
             decided.decision, s.expected,
@@ -423,7 +424,7 @@ fn conformance_vectors_match_the_shipped_decision_behaviour() {
 #[test]
 fn every_vector_declares_exactly_one_authorizing_outcome_shape() {
     for s in scenarios() {
-        let decided = decide(&s.request, &s.receipt, &s.evidence, &catalog(), NOW).unwrap();
+        let decided = decide(&s.request, &s.receipt, &[], &s.evidence, &catalog(), NOW).unwrap();
         if decided.decision.is_authorized() {
             assert!(
                 !decided.establishes.is_empty(),

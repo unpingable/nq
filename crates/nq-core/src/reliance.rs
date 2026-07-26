@@ -111,13 +111,22 @@ pub struct ConsumerProfile {
     pub consumer_profile_id: String,
     pub allowed_claims: Vec<String>,
     pub allowed_purposes: Vec<String>,
-    /// Accepted `custody_basis` values, e.g. `native_observation`.
+    /// Accepted `custody_basis` values, e.g. `native_observation`. Applies to
+    /// the witnesses of the receipt being relied upon; supporting
+    /// evaluations carry their own custody visibly in the reliance receipt.
     pub accepted_custody_bases: Vec<String>,
     /// Maximum age of the underlying observation, in seconds.
     pub max_evidence_age_s: u64,
     pub premise_policy: PremisePolicy,
     pub contradiction_policy: ContradictionPolicy,
     pub residual_policy: ResidualPolicy,
+    /// Claims that must be currently verified by bound supporting
+    /// evaluations (same subject as the relied-upon receipt) before this
+    /// profile may rely on **any** claim. Generic — nothing here names a
+    /// source system. Empty (the default) preserves prior behaviour and
+    /// prior catalog bytes exactly.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_supporting_claims: Vec<String>,
 }
 
 /// A versioned catalog of consumer profiles.
@@ -199,6 +208,11 @@ pub struct EvidenceContext {
     /// Age of the underlying observation at decision time, in seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_age_s: Option<u64>,
+    /// Age of the oldest bound supporting observation at decision time, in
+    /// seconds. Caller-computed, like `evidence_age_s` — the decision core
+    /// stays clock-free. Absent when no supporting evaluations are bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supporting_evidence_age_s: Option<u64>,
 }
 
 impl EvidenceContext {
@@ -224,6 +238,13 @@ pub struct RelianceRequest {
     pub receipt_content_hash: String,
     pub policy_version: String,
     pub request_id: String,
+    /// `content_hash`es of the sealed supporting evaluations bound by this
+    /// request (e.g. a current-continuity evaluation a profile requires).
+    /// Changing a supporting snapshot changes the decision identity by
+    /// construction. Absent-when-empty keeps prior request bytes — and every
+    /// prior decision identity — exactly stable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supporting_receipt_hashes: Vec<String>,
 }
 
 impl RelianceRequest {
@@ -277,6 +298,17 @@ impl RelianceOutcome {
     }
 }
 
+/// A bound supporting evaluation, as recorded on the reliance receipt: which
+/// claim it evaluated, its sealed identity, its status, and its subject —
+/// disclosure, never authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupportingRef {
+    pub claim: String,
+    pub content_hash: String,
+    pub status: Status,
+    pub subject: String,
+}
+
 /// The record of a reliance decision.
 ///
 /// Operational evidence of NQ's decision. Not sealed custody, not a capability,
@@ -298,6 +330,10 @@ pub struct RelianceReceipt {
     /// Underlying evaluation status, recorded separately from the decision so
     /// a reliance refusal is never read as a claim refutation.
     pub underlying_status: Status,
+    /// Supporting evaluations bound by the request, disclosed with their
+    /// statuses. Absent-when-empty keeps prior receipt bytes stable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supporting_receipts: Vec<SupportingRef>,
     pub witnesses: Vec<crate::receipt::WitnessRef>,
     pub premises: Vec<String>,
     pub coverage_limits: Vec<String>,
@@ -324,7 +360,11 @@ fn mandatory_does_not_establish() -> Vec<String> {
 
 /// Decide whether `request`'s consumer may rely on `receipt` for its purpose.
 ///
-/// Never mutates state, never emits an action, and never re-evaluates evidence.
+/// `supporting` carries the sealed supporting evaluations the request binds
+/// (empty for requests that bind none — the prior behaviour, bit-for-bit).
+/// Never mutates state, never emits an action, and never re-evaluates
+/// evidence — supporting receipts are consumed as sealed decisions exactly
+/// like the primary receipt.
 ///
 /// # Errors
 ///
@@ -332,6 +372,7 @@ fn mandatory_does_not_establish() -> Vec<String> {
 pub fn decide(
     request: &RelianceRequest,
     receipt: &Receipt,
+    supporting: &[Receipt],
     evidence: &EvidenceContext,
     catalog: &ProfileCatalog,
     generated_at: &str,
@@ -344,7 +385,7 @@ pub fn decide(
     // Evaluate every applicable conjunct rather than short-circuiting, so the
     // receipt discloses all the reasons a consumer was refused, not just the
     // first one found.
-    let outcome = evaluate(request, receipt, evidence, catalog, &mut refusals);
+    let outcome = evaluate(request, receipt, supporting, evidence, catalog, &mut refusals);
 
     let establishes = if outcome.is_authorized() {
         vec![format!(
@@ -384,6 +425,15 @@ pub fn decide(
         claim: request.claim.clone(),
         receipt_content_hash: request.receipt_content_hash.clone(),
         underlying_status: receipt.status,
+        supporting_receipts: supporting
+            .iter()
+            .map(|s| SupportingRef {
+                claim: s.claim.clone(),
+                content_hash: s.content_hash.clone().unwrap_or_default(),
+                status: s.status,
+                subject: s.subject.clone(),
+            })
+            .collect(),
         witnesses: receipt.witnesses.clone(),
         premises: evidence.premises.clone(),
         coverage_limits: evidence.coverage_limits.clone(),
@@ -401,6 +451,7 @@ pub fn decide(
 fn evaluate(
     request: &RelianceRequest,
     receipt: &Receipt,
+    supporting: &[Receipt],
     evidence: &EvidenceContext,
     catalog: &ProfileCatalog,
     refusals: &mut Vec<String>,
@@ -520,6 +571,113 @@ fn evaluate(
         }
     }
 
+    // Supporting evaluations. Generic: the profile names required claims; the
+    // request binds exact sealed evaluations; a verified original claim
+    // cannot bypass this, and (checked above) supporting evidence cannot
+    // rescue an unverified, non-mintable, or cannot-testify original.
+    //
+    // Binding fences first: every listed hash must be provided sealed, and
+    // every provided receipt must be listed — an unlisted or unmatched
+    // supporting receipt is substitution under this decision's identity.
+    for s in supporting {
+        match s.content_hash.as_deref() {
+            None => {
+                refusals.push(format!(
+                    "supporting receipt for claim {:?} is unsealed (no \
+                     content_hash); an unsealed evaluation has no stable \
+                     identity to support a decision",
+                    s.claim
+                ));
+                return RelianceOutcome::MalformedRequest;
+            }
+            Some(h) if !request.supporting_receipt_hashes.iter().any(|x| x == h) => {
+                refusals.push(format!(
+                    "supporting receipt {h:?} (claim {:?}) is not bound by \
+                     the request; evidence substituted under an unchanged \
+                     decision identity",
+                    s.claim
+                ));
+                return RelianceOutcome::MalformedRequest;
+            }
+            Some(_) => {}
+        }
+    }
+    for bound in &request.supporting_receipt_hashes {
+        if !supporting
+            .iter()
+            .any(|s| s.content_hash.as_deref() == Some(bound.as_str()))
+        {
+            refusals.push(format!(
+                "the request binds supporting receipt {bound:?} but no such \
+                 sealed evaluation was provided"
+            ));
+            return RelianceOutcome::MalformedRequest;
+        }
+    }
+    for required in &profile.required_supporting_claims {
+        let bound: Vec<&Receipt> = supporting
+            .iter()
+            .filter(|s| &s.claim == required && s.subject == receipt.subject)
+            .collect();
+        if bound.is_empty() {
+            refusals.push(format!(
+                "profile {:?} requires a current supporting evaluation of \
+                 claim {required:?} for subject {:?}, and none is bound; \
+                 absence of supporting testimony is not evidence either way",
+                profile.consumer_profile_id, receipt.subject
+            ));
+            return RelianceOutcome::CoverageInsufficient;
+        }
+        for s in bound {
+            if s.cannot_testify.iter().any(|r| r.statement.contains(required)) {
+                refusals.push(format!(
+                    "the evaluator constitutionally declines to testify to \
+                     the required supporting claim {required:?}; inability is \
+                     not authorization"
+                ));
+                return RelianceOutcome::CannotTestify;
+            }
+            if s.status_reasons.contains(&StatusReason::StaleObservation) {
+                refusals.push(format!(
+                    "supporting evaluation of {required:?} is marked stale"
+                ));
+                return RelianceOutcome::StaleEvidence;
+            }
+            if s.status_reasons.contains(&StatusReason::ContradictoryObservation)
+                && profile.contradiction_policy == ContradictionPolicy::RefuseOnRetained
+            {
+                refusals.push(format!(
+                    "supporting evaluation of {required:?} retains a \
+                     contradiction, which this profile's contradiction policy \
+                     refuses"
+                ));
+                return RelianceOutcome::ContradictionRetained;
+            }
+            if s.status != Status::Verified {
+                refusals.push(format!(
+                    "required supporting claim {required:?} is {:?}, not \
+                     verified; a supporting refusal is not the negation of \
+                     the original claim, and it does not permit reliance now",
+                    s.status
+                ));
+                return RelianceOutcome::CoverageInsufficient;
+            }
+        }
+    }
+    if !profile.required_supporting_claims.is_empty() {
+        if let Some(age) = evidence.supporting_evidence_age_s {
+            if age > profile.max_evidence_age_s {
+                refusals.push(format!(
+                    "supporting evidence is {age}s old, beyond profile {:?}'s \
+                     maximum of {}s; a current requirement needs current \
+                     testimony",
+                    profile.consumer_profile_id, profile.max_evidence_age_s
+                ));
+                return RelianceOutcome::StaleEvidence;
+            }
+        }
+    }
+
     if profile.premise_policy == PremisePolicy::RequireAllEnforceable
         && !evidence.unenforceable_premises.is_empty()
     {
@@ -597,6 +755,7 @@ mod tests {
                     premise_policy: PremisePolicy::AllowQualified,
                     contradiction_policy: ContradictionPolicy::AllowWithDisclosure,
                     residual_policy: ResidualPolicy::AllowWithDisclosure,
+                    required_supporting_claims: vec![],
                 },
                 ConsumerProfile {
                     consumer_profile_id: "nightshift-readonly".to_string(),
@@ -613,6 +772,7 @@ mod tests {
                     premise_policy: PremisePolicy::RequireAllEnforceable,
                     contradiction_policy: ContradictionPolicy::RefuseOnRetained,
                     residual_policy: ResidualPolicy::RefuseOnUnresolved,
+                    required_supporting_claims: vec![],
                 },
             ],
         }
@@ -646,6 +806,7 @@ mod tests {
             receipt_content_hash: receipt.content_hash.clone().unwrap(),
             policy_version: "v1".to_string(),
             request_id: "req-1".to_string(),
+            supporting_receipt_hashes: vec![],
         }
     }
 
@@ -654,7 +815,7 @@ mod tests {
         rec: &Receipt,
         ev: &EvidenceContext,
     ) -> RelianceReceipt {
-        decide(req, rec, ev, &catalog(), NOW).unwrap()
+        decide(req, rec, &[], ev, &catalog(), NOW).unwrap()
     }
 
     // 1. verified claim, permitted consumer -> authorized
@@ -1140,6 +1301,7 @@ mod tests {
             receipt_content_hash: "sha256:00".to_string(),
             policy_version: "v1".to_string(),
             request_id: "req-1".to_string(),
+            supporting_receipt_hashes: vec![],
         };
         let out = decide_with(&req, &rec, &EvidenceContext::default());
         assert_eq!(out.decision, RelianceOutcome::MalformedRequest);
