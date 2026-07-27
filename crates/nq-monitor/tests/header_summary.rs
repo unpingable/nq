@@ -22,7 +22,7 @@ fn overview_with_one_critical_business_hours() -> nq_db::dashboard::DashboardOve
     current.diagnosis.failure_class = Some("substrate".into());
     current.diagnosis.service_impact = Some("none".into());
     current.diagnosis.action_bias = Some("investigate_business_hours".into());
-    current.diagnosis.synopsis = Some("Database space can be reclaimed".into());
+    current.diagnosis.synopsis = Some("/var/lib/db.sqlite has reclaimable database space".into());
     overview.monitored_findings.push(current);
     overview
 }

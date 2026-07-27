@@ -178,57 +178,6 @@ fn is_recent_change(finding: &DashboardFinding) -> bool {
 }
 
 fn finding_title(finding: &DashboardFinding) -> String {
-    let current = finding.status == DashboardFindingStatus::Ongoing;
-    match finding.kind.as_str() {
-        "error_shift" if !finding.subject.is_empty() => {
-            return if current {
-                format!("{} error rate increased", escape_html(&finding.subject))
-            } else {
-                format!(
-                    "{} had an error-rate increase in the last observation",
-                    escape_html(&finding.subject)
-                )
-            };
-        }
-        "disk_pressure" if !finding.host.is_empty() => {
-            return if current {
-                format!("{} disk is nearing capacity", escape_html(&finding.host))
-            } else {
-                format!(
-                    "{} disk pressure was observed previously",
-                    escape_html(&finding.host)
-                )
-            };
-        }
-        "freelist_bloat" if !finding.subject.is_empty() => {
-            return if current {
-                format!(
-                    "{} has reclaimable database space",
-                    escape_html(&finding.subject)
-                )
-            } else {
-                format!(
-                    "{} previously had reclaimable database space",
-                    escape_html(&finding.subject)
-                )
-            };
-        }
-        "smart_status_lies" if !finding.subject.is_empty() => {
-            return if current {
-                format!(
-                    "{} SMART status conflicts with error counters",
-                    escape_html(&finding.subject)
-                )
-            } else {
-                format!(
-                    "{} SMART sources disagreed in the last observation",
-                    escape_html(&finding.subject)
-                )
-            };
-        }
-        _ => {}
-    }
-
     if let Some(synopsis) = finding
         .diagnosis
         .synopsis
@@ -238,6 +187,9 @@ fn finding_title(finding: &DashboardFinding) -> String {
         return escape_html(synopsis);
     }
 
+    // Compatibility path for lifecycle rows emitted before typed diagnosis
+    // prose was persisted. New packs must provide a synopsis; the default
+    // dashboard does not need a branch for their check IDs.
     let meta = nq_db::finding_meta::finding_meta(&finding.kind);
     if finding.subject.is_empty() {
         escape_html(meta.plain_label)
@@ -265,10 +217,9 @@ fn impact_statement(finding: &DashboardFinding) -> String {
         "nonecurrent" | "none" => {
             "No current service impact is recorded. That is not proof of no impact.".into()
         }
-        "degraded" if finding.kind == "error_shift" => {
-            "Error output is degraded; user impact has not been independently established.".into()
+        "degraded" => {
+            "NQ records a currently degraded operational signal; its wider impact is not independently established.".into()
         }
-        "degraded" => "NQ records a currently degraded operational signal.".into(),
         "immediaterisk" => "The detector records immediate operational risk.".into(),
         _ => "Current operational impact is unknown.".into(),
     }
@@ -276,8 +227,11 @@ fn impact_statement(finding: &DashboardFinding) -> String {
 
 fn unknowns(finding: &DashboardFinding) -> Vec<String> {
     let mut items = vec!["Cause is not established by this finding.".to_string()];
-    if finding.kind == "error_shift" {
-        items.push("User-visible impact is not independently established.".into());
+    if matches!(
+        finding.evidence.as_ref(),
+        Some(DashboardEvidence::StatisticalShift(_))
+    ) {
+        items.push("Operational impact must be established independently.".into());
     }
     if normalize(&finding.basis_state) == "unknown" {
         items.push("The finding does not carry a complete evidence-basis identity.".into());
@@ -311,6 +265,117 @@ fn unknowns(finding: &DashboardFinding) -> Vec<String> {
     items.sort();
     items.dedup();
     items
+}
+
+fn recommended_next_inspections(
+    finding: &DashboardFinding,
+    evidence: Option<&DashboardEvidence>,
+) -> Vec<String> {
+    let mut checks = match evidence {
+        Some(DashboardEvidence::StatisticalShift(_)) => vec![
+            "Inspect the observations attached to the current sample.".to_string(),
+            "Compare operational changes during the observation and comparison intervals."
+                .to_string(),
+            "Check adjacent dependency and user-impact signals.".to_string(),
+        ],
+        Some(DashboardEvidence::SourceConflict(_)) => vec![
+            "Inspect each disagreeing source independently.".to_string(),
+            "Verify observation time, provenance, and coverage for every source.".to_string(),
+            "Look for an independent observation that can resolve the disagreement.".to_string(),
+        ],
+        None => Vec::new(),
+    };
+
+    if checks.is_empty() {
+        checks = match finding
+            .diagnosis
+            .failure_class
+            .as_deref()
+            .map(normalize)
+            .as_deref()
+        {
+            Some("availability") => vec![
+                "Inspect the subject's current state and recent errors.".to_string(),
+                "Compare recent deployment or configuration changes.".to_string(),
+                "Check direct dependencies before intervening.".to_string(),
+            ],
+            Some("accumulation" | "pressure" | "saturation" | "exhaustion") => vec![
+                "Confirm current utilization and remaining headroom.".to_string(),
+                "Compare the recent growth rate with the retained baseline.".to_string(),
+                "Review the safest bounded cleanup, capacity, or rollback option.".to_string(),
+            ],
+            Some("drift") => vec![
+                "Compare the current observation with the stated reference interval.".to_string(),
+                "Review operational changes made during that interval.".to_string(),
+                "Inspect adjacent signals before attributing cause or impact.".to_string(),
+            ],
+            Some("silence") => vec![
+                "Inspect the producer and delivery path for this observation.".to_string(),
+                "Find the last successful observation and its coverage.".to_string(),
+                "Do not infer monitored-subject health from missing evidence.".to_string(),
+            ],
+            Some("stuckness") => vec![
+                "Inspect the last known progress marker and pending work.".to_string(),
+                "Check the worker, queue, and dependency logs.".to_string(),
+                "Establish whether work is blocked or merely slow.".to_string(),
+            ],
+            Some("flapping") => vec![
+                "Compare the retained state-transition times.".to_string(),
+                "Inspect recent changes correlated with the oscillation.".to_string(),
+                "Check whether observation coverage changed between states.".to_string(),
+            ],
+            Some("unspecified") => vec![
+                "Inspect the attached observation and provenance.".to_string(),
+                "Determine what coverage is present or missing.".to_string(),
+                "Compare an independent signal before deciding what changed.".to_string(),
+            ],
+            _ => Vec::new(),
+        };
+    }
+
+    if checks.is_empty() {
+        // Legacy rows can predate the typed failure-class contract. Keep their
+        // existing operator help until those rows age out; this lookup is not
+        // used by a new pack that supplies structured diagnosis metadata.
+        checks.extend(
+            nq_db::finding_meta::finding_meta(&finding.kind)
+                .next_checks
+                .iter()
+                .map(|check| (*check).to_string()),
+        );
+    }
+    if checks.is_empty() {
+        checks.push("Inspect the retained observation, source, and coverage.".to_string());
+    }
+    checks
+}
+
+fn operator_rationale(finding: &DashboardFinding) -> String {
+    finding
+        .diagnosis
+        .why_care
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            nq_db::finding_meta::finding_meta(&finding.kind)
+                .gloss
+                .to_string()
+        })
+}
+
+fn evidence_boundary(evidence: Option<&DashboardEvidence>) -> &'static str {
+    match evidence {
+        Some(DashboardEvidence::StatisticalShift(_)) => {
+            "The retained comparison supports a changed proportion. It does not establish cause or operational impact."
+        }
+        Some(DashboardEvidence::SourceConflict(_)) => {
+            "The retained observations support a source disagreement. They do not establish which source is correct, the cause, or operational impact."
+        }
+        None => {
+            "The detector output is a bounded observation, not a causal explanation or authorization to act on the monitored system."
+        }
+    }
 }
 
 fn render_basis(basis: &DashboardBasis) -> String {
@@ -358,55 +423,64 @@ fn render_basis(basis: &DashboardBasis) -> String {
     }
 }
 
-fn render_error_shift_summary(evidence: &nq_db::dashboard::ErrorShiftEvidence) -> String {
+fn render_statistical_shift_summary(
+    evidence: &nq_db::dashboard::DashboardStatisticalShiftEvidence,
+) -> String {
     let current_pct = evidence
-        .current_error_ratio
+        .current_ratio
         .map(|value| format!("{:.1}%", value * 100.0))
         .unwrap_or_else(|| "Unavailable".into());
     let baseline_pct = evidence
-        .baseline_average_error_ratio
+        .baseline_average_ratio
         .map(|value| format!("{:.1}%", value * 100.0))
         .unwrap_or_else(|| "Unavailable".into());
     format!(
         "<div class=\"evidence-summary\">\
-           <strong>{errors} of {total} recent messages were errors ({current}).</strong>\
-           <span>Baseline: {baseline} average per window; {baseline_errors} errors in {baseline_messages} messages across {samples} prior observation windows.</span>\
+           <strong>{matches} {match_label} in {total} recent {sample_label} ({current} {measurement}).</strong>\
+           <span>Baseline: {baseline} average {measurement} per window; {baseline_matches} {match_label} in {baseline_total} {sample_label} across {samples} prior observation windows.</span>\
          </div>",
-        errors = evidence.current_errors,
-        total = evidence.current_total,
+        matches = evidence.current_matching_observations,
+        match_label = escape_html(&evidence.matching_observation_label),
+        total = evidence.current_sample_size,
+        sample_label = escape_html(&evidence.sample_unit_label),
         current = escape_html(&current_pct),
+        measurement = escape_html(&evidence.measurement_label),
         baseline = escape_html(&baseline_pct),
-        baseline_errors = evidence.baseline_errors,
-        baseline_messages = evidence.baseline_messages,
+        baseline_matches = evidence.baseline_matching_observations,
+        baseline_total = evidence.baseline_sample_size,
         samples = evidence.baseline_window_samples,
     )
 }
 
-fn render_smart_conflict_summary(
-    evidence: &nq_db::dashboard::SmartSourceConflictEvidence,
+fn render_source_conflict_summary(
+    evidence: &nq_db::dashboard::DashboardSourceConflictEvidence,
 ) -> String {
-    let total_errors: i64 = evidence.counters.iter().map(|counter| counter.value).sum();
-    let overall = match evidence.smart_overall_passed {
-        Some(true) => "passed",
-        Some(false) => "failed",
-        None => "unavailable",
+    let observations = if evidence.observations.is_empty() {
+        "the source values are unavailable".to_string()
+    } else {
+        evidence
+            .observations
+            .iter()
+            .take(2)
+            .map(|observation| format!("{} is {}", observation.label, observation.value))
+            .collect::<Vec<_>>()
+            .join("; ")
     };
     format!(
         "<div class=\"evidence-summary conflict-state\">\
-           <strong>Sources disagree: SMART self-assessment says {overall}; covered raw counters total {total_errors}.</strong>\
+           <strong>Sources disagree: {observations}.</strong>\
            <span>Both observations were captured together at {observed_at}; NQ did not average the contradiction away.</span>\
          </div>",
-        overall = escape_html(overall),
-        total_errors = total_errors,
-        observed_at = escape_html(&evidence.device_observed_at),
+        observations = escape_html(&observations),
+        observed_at = escape_html(&evidence.observed_at),
     )
 }
 
 fn render_card(finding: &DashboardFinding, evidence: Option<&DashboardEvidence>) -> String {
     let href = finding_href(&finding.finding_key);
     let evidence_summary = match evidence {
-        Some(DashboardEvidence::ErrorShift(value)) => render_error_shift_summary(value),
-        Some(DashboardEvidence::SmartSourceConflict(value)) => render_smart_conflict_summary(value),
+        Some(DashboardEvidence::StatisticalShift(value)) => render_statistical_shift_summary(value),
+        Some(DashboardEvidence::SourceConflict(value)) => render_source_conflict_summary(value),
         None => format!(
             "<p class=\"observed-claim\">{}</p>",
             escape_html(&finding.message)
@@ -416,9 +490,7 @@ fn render_card(finding: &DashboardFinding, evidence: Option<&DashboardEvidence>)
         .into_iter()
         .map(|item| format!("<li>{}</li>", escape_html(&item)))
         .collect::<String>();
-    let meta = nq_db::finding_meta::finding_meta(&finding.kind);
-    let next_checks = meta
-        .next_checks
+    let next_checks = recommended_next_inspections(finding, evidence)
         .iter()
         .map(|check| format!("<li>{}</li>", escape_html(check)))
         .collect::<String>();
@@ -1436,7 +1508,9 @@ fn render_actions(
     )
 }
 
-fn render_error_shift_evidence(evidence: &nq_db::dashboard::ErrorShiftEvidence) -> String {
+fn render_statistical_shift_evidence(
+    evidence: &nq_db::dashboard::DashboardStatisticalShiftEvidence,
+) -> String {
     let comparison_range = match (
         evidence.comparison_basis.generation_start,
         evidence.comparison_basis.generation_end,
@@ -1450,23 +1524,24 @@ fn render_error_shift_evidence(evidence: &nq_db::dashboard::ErrorShiftEvidence) 
         (Some(start), Some(end), _, _) => format!("snapshots #{start}–#{end}"),
         _ => "retained comparison range unavailable".into(),
     };
-    let sufficiency = if evidence.baseline_average_error_ratio.is_none() {
+    let sufficiency = if evidence.baseline_average_ratio.is_none() {
         format!(
             "Insufficient comparison coverage: {} prior windows are retained; at least 3 are required.",
             evidence.baseline_window_samples
         )
     } else if evidence.current_sample_size < 20 {
         format!(
-            "Low current sample: only {} messages were observed. Treat the magnitude cautiously.",
-            evidence.current_sample_size
+            "Low current sample: only {} {} were observed. Treat the magnitude cautiously.",
+            evidence.current_sample_size, evidence.sample_unit_label
         )
     } else {
-        "The detector's minimum comparison coverage is present; this does not establish cause or impact."
+        "The declared minimum comparison coverage is present; this does not establish cause or impact."
             .into()
     };
-    let examples = if evidence.examples.is_empty() {
-        "<p class=\"unknown-value\">No parseable error examples are attached to this observation.</p>"
-            .into()
+    let examples = if evidence.examples_unparseable {
+        "<p class=\"unknown-value\">Attached examples could not be parsed; their contents are unavailable on this view.</p>".into()
+    } else if evidence.examples.is_empty() {
+        "<p class=\"unknown-value\">No examples are attached to this observation.</p>".into()
     } else {
         let rows = evidence
             .examples
@@ -1481,30 +1556,35 @@ fn render_error_shift_evidence(evidence: &nq_db::dashboard::ErrorShiftEvidence) 
             })
             .collect::<String>();
         format!(
-            "<div class=\"table-scroll\"><table><caption>Error examples from the current source window</caption>\
+            "<div class=\"table-scroll\"><table><caption>{caption}</caption>\
              <thead><tr><th scope=\"col\">Time</th><th scope=\"col\">Level</th><th scope=\"col\">Message</th></tr></thead>\
-             <tbody>{rows}</tbody></table></div>"
+             <tbody>{rows}</tbody></table></div>",
+            caption = escape_html(&evidence.examples_caption),
         )
     };
 
     format!(
         "<div class=\"table-scroll\"><table class=\"evidence-table\">\
-           <caption>Error-rate comparison</caption><tbody>\
-             <tr><th scope=\"row\">Current observation</th><td>{errors} errors in {total} messages ({current})</td></tr>\
-             <tr><th scope=\"row\">Established comparison</th><td>{baseline} average per window; {baseline_errors} errors in {baseline_messages} messages across {baseline_samples} prior windows, {comparison_range}</td></tr>\
+           <caption>{measurement} comparison</caption><tbody>\
+             <tr><th scope=\"row\">Current observation</th><td>{matches} {match_label} in {total} {sample_label} ({current})</td></tr>\
+             <tr><th scope=\"row\">Established comparison</th><td>{baseline} average per window; {baseline_matches} {match_label} in {baseline_total} {sample_label} across {baseline_samples} prior windows, {comparison_range}</td></tr>\
              <tr><th scope=\"row\">Current source window</th><td><time datetime=\"{window_start}\">{window_start}</time> to <time datetime=\"{window_end}\">{window_end}</time></td></tr>\
              <tr><th scope=\"row\">Source</th><td><code>{source}</code>, collected <time datetime=\"{source_at}\">{source_at}</time>, snapshot #{generation}</td></tr>\
              <tr><th scope=\"row\">Comparison rule</th><td>{description}</td></tr>\
            </tbody></table></div>\
          <div class=\"evidence-caution\"><strong>Evidence sufficiency</strong><p>{sufficiency}</p></div>\
          {examples}\
-         <p><strong>Bounded conclusion:</strong> the observed error proportion changed relative to the detector comparison. This evidence does not identify the cause, prove a deployment was responsible, or establish user-visible impact.</p>",
-        errors = evidence.current_errors,
-        total = evidence.current_total,
-        current = percentage(evidence.current_error_ratio),
-        baseline = percentage(evidence.baseline_average_error_ratio),
-        baseline_errors = evidence.baseline_errors,
-        baseline_messages = evidence.baseline_messages,
+         <p><strong>Bounded conclusion:</strong> the observed {measurement_lower} changed relative to the retained comparison. This evidence does not identify the cause, attribute the change to an operational event, or establish wider impact.</p>",
+        measurement = escape_html(&evidence.measurement_label),
+        measurement_lower = escape_html(&evidence.measurement_label.to_lowercase()),
+        matches = evidence.current_matching_observations,
+        match_label = escape_html(&evidence.matching_observation_label),
+        total = evidence.current_sample_size,
+        sample_label = escape_html(&evidence.sample_unit_label),
+        current = percentage(evidence.current_ratio),
+        baseline = percentage(evidence.baseline_average_ratio),
+        baseline_matches = evidence.baseline_matching_observations,
+        baseline_total = evidence.baseline_sample_size,
         baseline_samples = evidence.baseline_window_samples,
         comparison_range = escape_html(&comparison_range),
         window_start = escape_html(&evidence.window_start),
@@ -1518,34 +1598,33 @@ fn render_error_shift_evidence(evidence: &nq_db::dashboard::ErrorShiftEvidence) 
     )
 }
 
-fn render_smart_conflict_evidence(
-    evidence: &nq_db::dashboard::SmartSourceConflictEvidence,
+fn render_source_conflict_evidence(
+    evidence: &nq_db::dashboard::DashboardSourceConflictEvidence,
 ) -> String {
-    let total_errors: i64 = evidence.counters.iter().map(|counter| counter.value).sum();
-    let counter_rows = if evidence.counters.is_empty() {
-        "<tr><td colspan=\"3\" class=\"unknown-value\">No covered raw counter values are available.</td></tr>".to_string()
+    let observation_rows = if evidence.observations.is_empty() {
+        "<tr><td colspan=\"4\" class=\"unknown-value\">No source values are available.</td></tr>"
+            .to_string()
     } else {
         evidence
-            .counters
+            .observations
             .iter()
-            .map(|counter| {
+            .map(|observation| {
                 format!(
-                    "<tr><th scope=\"row\">{}</th><td>{}</td><td>{}</td></tr>",
-                    escape_html(&counter.name),
-                    counter.value,
-                    escape_html(&counter.source_channel),
+                    "<tr><th scope=\"row\">{}</th><td>{}</td><td>{}</td><td>{}</td></tr>",
+                    escape_html(&observation.label),
+                    escape_html(&observation.value),
+                    escape_html(&observation.source_channel),
+                    if observation.coverage_present {
+                        "present"
+                    } else {
+                        "missing"
+                    },
                 )
             })
             .collect::<String>()
     };
-    let overall = match evidence.smart_overall_passed {
-        Some(true) => "passed",
-        Some(false) => "failed",
-        None => "unavailable",
-    };
     let missing = if evidence.missing_coverage.is_empty() {
-        "No missing coverage is recorded for the two channels used in this contradiction."
-            .to_string()
+        "No missing coverage is recorded for the displayed source observations.".to_string()
     } else {
         format!(
             "Coverage is missing for: {}.",
@@ -1554,10 +1633,10 @@ fn render_smart_conflict_evidence(
     };
     format!(
         "<div class=\"conflict-state\"><strong>Sources disagree.</strong>\
-         <p>The advisory SMART overall-status channel reports <strong>{overall}</strong>, while covered raw counters total <strong>{total_errors}</strong>. The individual values appear below. These are retained as a contradiction, not averaged into a reassuring single state.</p></div>\
-         <div class=\"table-scroll\"><table><caption>Conflicting SMART channels from one observation basis</caption>\
-           <thead><tr><th scope=\"col\">Observation</th><th scope=\"col\">Value</th><th scope=\"col\">Source channel</th></tr></thead>\
-           <tbody><tr><th scope=\"row\">SMART overall status</th><td>{overall}</td><td>device self-assessment (coverage: {overall_coverage})</td></tr>{counter_rows}</tbody>\
+         <p>The source observations below do not support one coherent value. They are retained as a contradiction, not averaged into a reassuring single state.</p></div>\
+         <div class=\"table-scroll\"><table><caption>Conflicting source observations from one observation basis</caption>\
+           <thead><tr><th scope=\"col\">Observation</th><th scope=\"col\">Value</th><th scope=\"col\">Source channel</th><th scope=\"col\">Coverage</th></tr></thead>\
+           <tbody>{observation_rows}</tbody>\
          </table></div>\
          <dl class=\"decision-facts\">\
            <div><dt>Observation time</dt><dd><time datetime=\"{observed_at}\">{observed_at}</time></dd></div>\
@@ -1565,16 +1644,9 @@ fn render_smart_conflict_evidence(
            <div><dt>Witness/source</dt><dd>{source}</dd></div>\
            <div><dt>Coverage</dt><dd>{missing}</dd></div>\
          </dl>\
-         <p><strong>Bounded conclusion:</strong> the device's self-assessment and covered raw counters disagree. This supports investigation of device health; it does not establish data loss, service impact, or the cause of the errors.</p>",
-        overall = escape_html(overall),
-        total_errors = total_errors,
-        overall_coverage = if evidence.overall_status_covered {
-            "present"
-        } else {
-            "missing"
-        },
-        counter_rows = counter_rows,
-        observed_at = escape_html(&evidence.device_observed_at),
+         <p><strong>Bounded conclusion:</strong> the retained source observations disagree. This supports investigation; it does not establish which source is correct, the cause, or operational impact.</p>",
+        observation_rows = observation_rows,
+        observed_at = escape_html(&evidence.observed_at),
         generation = evidence.generation_id,
         source = optional_text(evidence.source_id.as_deref()),
         missing = escape_html(&missing),
@@ -1616,17 +1688,12 @@ fn render_coherence_issues(finding: &DashboardFinding) -> String {
 
 fn render_evidence(finding: &DashboardFinding, evidence: Option<&DashboardEvidence>) -> String {
     match evidence {
-        Some(DashboardEvidence::ErrorShift(evidence)) => render_error_shift_evidence(evidence),
-        Some(DashboardEvidence::SmartSourceConflict(evidence)) => {
-            render_smart_conflict_evidence(evidence)
+        Some(DashboardEvidence::StatisticalShift(evidence)) => {
+            render_statistical_shift_evidence(evidence)
         }
-        None if finding.kind == "smart_status_lies" => format!(
-            "<div class=\"conflict-state\"><strong>Sources disagree.</strong>\
-             <p>{}</p><p>NQ preserves the contradiction; it does not average these channels into a healthy or failed verdict.</p></div>\
-             <p><strong>Detector output:</strong> {}</p>",
-            escape_html(nq_db::finding_meta::finding_meta(&finding.kind).contradiction),
-            escape_html(&finding.message),
-        ),
+        Some(DashboardEvidence::SourceConflict(evidence)) => {
+            render_source_conflict_evidence(evidence)
+        }
         None => format!(
             "<p><strong>Detector output:</strong> {}</p>\
              <div class=\"evidence-caution\"><strong>Structured evidence unavailable on this dashboard view.</strong>\
@@ -1701,13 +1768,11 @@ fn render_current_detail(
     mutation_available: bool,
 ) -> String {
     let finding = &detail.finding;
-    let meta = nq_db::finding_meta::finding_meta(&finding.kind);
     let unknown_items = unknowns(finding)
         .into_iter()
         .map(|item| format!("<li>{}</li>", escape_html(&item)))
         .collect::<String>();
-    let checks = meta
-        .next_checks
+    let checks = recommended_next_inspections(finding, detail.evidence.as_ref())
         .iter()
         .map(|check| format!("<li>{}</li>", escape_html(check)))
         .collect::<String>();
@@ -1818,25 +1883,30 @@ fn render_current_detail(
             None => "age unavailable".to_string(),
         },
         magnitude = match detail.evidence.as_ref() {
-            Some(DashboardEvidence::ErrorShift(evidence)) => format!(
-                "{} now versus {} baseline; {} current messages",
-                percentage(evidence.current_error_ratio),
-                percentage(evidence.baseline_average_error_ratio),
-                evidence.current_sample_size
+            Some(DashboardEvidence::StatisticalShift(evidence)) => format!(
+                "{} {} now versus {} baseline; {} current {}",
+                percentage(evidence.current_ratio),
+                escape_html(&evidence.measurement_label),
+                percentage(evidence.baseline_average_ratio),
+                evidence.current_sample_size,
+                escape_html(&evidence.sample_unit_label),
             ),
-            Some(DashboardEvidence::SmartSourceConflict(evidence)) => format!(
-                "SMART self-assessment {} versus {} covered raw errors",
-                match evidence.smart_overall_passed {
-                    Some(true) => "passed",
-                    Some(false) => "failed",
-                    None => "unavailable",
-                },
-                evidence
-                    .counters
+            Some(DashboardEvidence::SourceConflict(evidence)) => {
+                let values = evidence
+                    .observations
                     .iter()
-                    .map(|counter| counter.value)
-                    .sum::<i64>()
-            ),
+                    .take(2)
+                    .map(|observation| {
+                        format!("{} {}", observation.label, observation.value)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" versus ");
+                if values.is_empty() {
+                    "Source values unavailable; disagreement retained".to_string()
+                } else {
+                    format!("Sources disagree: {}", escape_html(&values))
+                }
+            }
             None => optional_number(finding.peak_value, ""),
         },
         impact = escape_html(&impact_statement(finding)),
@@ -1864,18 +1934,23 @@ fn render_current_detail(
         basis_source = optional_text(finding.basis_source_id.as_deref()),
         basis_witness = optional_text(finding.basis_witness_id.as_deref()),
         failure_class = optional_text(finding.diagnosis.failure_class.as_deref()),
-        gloss = escape_html(meta.gloss),
-        contradiction = escape_html(meta.contradiction),
+        gloss = escape_html(&operator_rationale(finding)),
+        contradiction = escape_html(evidence_boundary(detail.evidence.as_ref())),
         transition_count = detail.transitions.total_count,
         transitions = render_transition_history(&detail.transitions),
         sql_key = finding.finding_key.replace('\'', "''"),
     );
-    page_shell(&meta.plain_label, &detail.basis, content)
+    let page_title = finding
+        .diagnosis
+        .synopsis
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Finding detail");
+    page_shell(page_title, &detail.basis, content)
 }
 
 fn render_historical_detail(detail: &DashboardHistoricalFindingDetail) -> String {
     let identity = &detail.identity;
-    let meta = nq_db::finding_meta::finding_meta(&identity.kind);
     let latest = detail.latest_observation.as_ref();
     let content = format!(
         "<main id=\"main-content\">\
@@ -1905,7 +1980,20 @@ fn render_historical_detail(detail: &DashboardHistoricalFindingDetail) -> String
              {transitions}\
            </section>\
          </main>",
-        title = escape_html(meta.plain_label),
+        title = latest
+            .and_then(|observation| observation.message.as_deref())
+            .filter(|value| !value.trim().is_empty())
+            .map(escape_html)
+            .unwrap_or_else(|| {
+                if identity.subject.is_empty() {
+                    "Historical finding".to_string()
+                } else {
+                    format!(
+                        "Historical finding — {}",
+                        escape_html(&identity.subject)
+                    )
+                }
+            }),
         host = escape_html(&identity.host),
         subject = if identity.subject.is_empty() {
             String::new()

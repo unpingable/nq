@@ -567,11 +567,16 @@ async fn overview_and_detail_share_a_basis_and_expose_the_statistical_claim() {
         finding["current_observation"]["generation_id"],
         CURRENT_GENERATION
     );
-    assert_eq!(finding["evidence"]["kind"], "error_shift");
-    assert_eq!(finding["evidence"]["current_errors"], 3);
+    assert_eq!(finding["evidence"]["kind"], "statistical_shift");
+    assert_eq!(
+        finding["evidence"]["schema"],
+        "nq.dashboard.evidence.statistical_shift.v1"
+    );
+    assert_eq!(finding["evidence"]["measurement_label"], "error rate");
+    assert_eq!(finding["evidence"]["current_matching_observations"], 3);
     assert_eq!(finding["evidence"]["current_sample_size"], 16);
-    assert_eq!(finding["evidence"]["baseline_errors"], 2);
-    assert_eq!(finding["evidence"]["baseline_messages"], 40);
+    assert_eq!(finding["evidence"]["baseline_matching_observations"], 2);
+    assert_eq!(finding["evidence"]["baseline_sample_size"], 40);
     assert_eq!(finding["evidence"]["baseline_window_samples"], 4);
     assert_eq!(
         finding["evidence"]["comparison_basis"]["excludes_current_generation"],
@@ -602,9 +607,9 @@ async fn overview_and_detail_share_a_basis_and_expose_the_statistical_claim() {
     let (overview_status, overview_html) = get_text(&client, format!("{}/", server.base)).await;
     assert_eq!(overview_status, 200);
     assert!(overview_html.contains("labelwatch error rate increased"));
-    assert!(overview_html.contains("3 of 16 recent messages were errors (18.8%)"));
+    assert!(overview_html.contains("3 errors in 16 recent messages (18.8% error rate)"));
     assert!(overview_html.contains(
-        "Baseline: 5.0% average per window; 2 errors in 40 messages across 4 prior observation windows"
+        "Baseline: 5.0% average error rate per window; 2 errors in 40 messages across 4 prior observation windows"
     ));
     assert!(
         overview_html.contains("Current operational impact is unknown")
@@ -624,7 +629,7 @@ async fn overview_and_detail_share_a_basis_and_expose_the_statistical_claim() {
     assert!(detail_html.contains("4 prior windows"));
     assert!(detail_html.contains("3 errors in 16 messages"));
     assert!(detail_html.contains(
-        "does not identify the cause, prove a deployment was responsible, or establish user-visible impact"
+        "does not identify the cause, attribute the change to an operational event, or establish wider impact"
     ));
     assert!(detail_html.contains("SQL is not required for the primary workflow"));
     assert!(detail_html.contains("data-stale-after-seconds=\"300\""));
@@ -772,19 +777,27 @@ async fn stale_historical_conflicting_and_unknown_states_remain_distinct() {
         get_finding(&client, &server, &scenario.conflict_key).await;
     assert_eq!(conflict_status, 200);
     assert!(conflict_html.contains("Sources disagree"));
-    assert!(conflict_html.contains("covered raw counters total <strong>7</strong>"));
-    assert!(conflict_html.contains("Conflicting SMART channels from one observation basis"));
+    assert!(conflict_html.contains("Device self-assessment"));
+    assert!(conflict_html.contains(">passed<"));
+    assert!(conflict_html.contains("Conflicting source observations from one observation basis"));
     assert!(conflict_html.contains("uncorrected read errors"));
     assert!(conflict_html.contains("smart-test-1"));
     assert!(conflict_html.contains("not averaged into a reassuring single state"));
     let (_, conflict_json) = get_finding_json(&client, &server, &scenario.conflict_key).await;
-    assert_eq!(conflict_json["evidence"]["kind"], "smart_source_conflict");
+    assert_eq!(conflict_json["evidence"]["kind"], "source_conflict");
+    assert_eq!(
+        conflict_json["evidence"]["schema"],
+        "nq.dashboard.evidence.source_conflict.v1"
+    );
     assert_eq!(
         conflict_json["evidence"]["generation_id"],
         CURRENT_GENERATION
     );
-    assert_eq!(conflict_json["evidence"]["smart_overall_passed"], true);
-    assert_eq!(conflict_json["evidence"]["counters"][0]["value"], 7);
+    assert_eq!(
+        conflict_json["evidence"]["observations"][0]["value"],
+        "passed"
+    );
+    assert_eq!(conflict_json["evidence"]["observations"][1]["value"], "7");
 
     let (unknown_status, unknown_html) = get_finding(&client, &server, &scenario.unknown_key).await;
     assert_eq!(unknown_status, 200);

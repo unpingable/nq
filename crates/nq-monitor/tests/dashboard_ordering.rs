@@ -22,6 +22,7 @@ fn freelist_bloat_finding(host: &str, db_path: &str) -> nq_db::dashboard::Dashbo
     finding.diagnosis.failure_class = Some("substrate".into());
     finding.diagnosis.service_impact = Some("none".into());
     finding.diagnosis.action_bias = Some("investigate_business_hours".into());
+    finding.diagnosis.synopsis = Some(format!("{db_path} has reclaimable database space"));
     finding
 }
 

@@ -39,6 +39,8 @@ fn scenario() -> nq_db::dashboard::DashboardOverview {
         "41.5 MB is reclaimable (51.2% of the database)",
     );
     reclaimable.peak_value = Some(51.2);
+    reclaimable.diagnosis.synopsis =
+        Some("/var/lib/labeler.sqlite has reclaimable database space".into());
 
     let mut acknowledged = bounded_finding(
         "disk_pressure",

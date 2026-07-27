@@ -11,6 +11,10 @@ use serde::Serialize;
 use time::OffsetDateTime;
 
 pub const DASHBOARD_STALE_AFTER_SECONDS: i64 = 300;
+pub const DASHBOARD_STATISTICAL_SHIFT_EVIDENCE_SCHEMA: &str =
+    "nq.dashboard.evidence.statistical_shift.v1";
+pub const DASHBOARD_SOURCE_CONFLICT_EVIDENCE_SCHEMA: &str =
+    "nq.dashboard.evidence.source_conflict.v1";
 const OBSERVATION_HISTORY_LIMIT: i64 = 200;
 const TRANSITION_HISTORY_LIMIT: i64 = 200;
 
@@ -250,7 +254,7 @@ pub struct DashboardTransitionHistory {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DashboardLogExample {
+pub struct DashboardEvidenceExample {
     pub timestamp: Option<String>,
     pub severity: Option<String>,
     pub message: Option<String>,
@@ -275,51 +279,69 @@ pub struct DashboardComparisonBasis {
     pub excludes_current_generation: bool,
 }
 
+/// A bounded statistical comparison rendered without knowing the detector or
+/// check-pack identity that produced it.
+///
+/// This is deliberately not a universal evidence record. It represents one
+/// specific generic shape: a counted subset changed relative to a retained
+/// comparison interval.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ErrorShiftEvidence {
+pub struct DashboardStatisticalShiftEvidence {
+    pub schema: String,
+    /// Operator-facing name for the measured proportion, for example
+    /// "error rate" or "timeout rate".
+    pub measurement_label: String,
+    /// Label for observations counted in the numerator.
+    pub matching_observation_label: String,
+    /// Label for all observations counted in the denominator.
+    pub sample_unit_label: String,
     pub source_id: String,
     pub source_observed_at: String,
     pub window_start: String,
     pub window_end: String,
     pub current_generation: i64,
-    pub current_errors: i64,
-    pub current_total: i64,
-    pub current_error_ratio: Option<f64>,
+    pub current_matching_observations: i64,
+    pub current_ratio: Option<f64>,
     pub current_sample_size: i64,
-    pub baseline_average_error_ratio: Option<f64>,
-    pub baseline_errors: i64,
-    pub baseline_messages: i64,
+    pub baseline_average_ratio: Option<f64>,
+    pub baseline_matching_observations: i64,
+    pub baseline_sample_size: i64,
     pub baseline_window_samples: i64,
     pub comparison_basis: DashboardComparisonBasis,
-    pub examples: Vec<DashboardLogExample>,
+    pub examples: Vec<DashboardEvidenceExample>,
+    pub examples_caption: String,
     pub examples_unparseable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DashboardSmartCounter {
-    pub name: String,
-    pub value: i64,
+pub struct DashboardConflictObservation {
+    pub label: String,
+    pub value: String,
     pub source_channel: String,
+    pub coverage_present: bool,
 }
 
+/// Two or more source observations that cannot honestly be collapsed into one
+/// reassuring value.
+///
+/// Producer-specific adapters translate their source records into this
+/// bounded shape. The dashboard renders the observations and missing coverage
+/// without branching on a check ID.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SmartSourceConflictEvidence {
-    pub device_observed_at: String,
+pub struct DashboardSourceConflictEvidence {
+    pub schema: String,
+    pub observed_at: String,
     pub generation_id: i64,
     pub source_id: Option<String>,
-    pub smart_overall_passed: Option<bool>,
-    pub overall_status_covered: bool,
-    pub counters: Vec<DashboardSmartCounter>,
-    pub scsi_counters_covered: bool,
-    pub nvme_health_covered: bool,
+    pub observations: Vec<DashboardConflictObservation>,
     pub missing_coverage: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DashboardEvidence {
-    ErrorShift(ErrorShiftEvidence),
-    SmartSourceConflict(SmartSourceConflictEvidence),
+    StatisticalShift(DashboardStatisticalShiftEvidence),
+    SourceConflict(DashboardSourceConflictEvidence),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1125,10 +1147,10 @@ fn load_finding_evidence(
 ) -> anyhow::Result<Option<DashboardEvidence>> {
     match kind {
         "error_shift" => load_error_shift_evidence(conn, host, subject, expected_generation)
-            .map(|evidence| evidence.map(DashboardEvidence::ErrorShift)),
+            .map(|evidence| evidence.map(DashboardEvidence::StatisticalShift)),
         "smart_status_lies" => {
             load_smart_source_conflict_evidence(conn, host, subject, expected_generation)
-                .map(|evidence| evidence.map(DashboardEvidence::SmartSourceConflict))
+                .map(|evidence| evidence.map(DashboardEvidence::SourceConflict))
         }
         _ => Ok(None),
     }
@@ -1139,7 +1161,7 @@ fn load_error_shift_evidence(
     host: &str,
     source_id: &str,
     expected_generation: i64,
-) -> anyhow::Result<Option<ErrorShiftEvidence>> {
+) -> anyhow::Result<Option<DashboardStatisticalShiftEvidence>> {
     #[derive(Debug)]
     struct Current {
         window_start: String,
@@ -1228,30 +1250,33 @@ fn load_error_shift_evidence(
             ))
         },
     )?;
-    let baseline_average_error_ratio = if generation_samples >= 3 {
+    let baseline_average_ratio = if generation_samples >= 3 {
         raw_average
     } else {
         None
     };
     let (examples, examples_unparseable) = parse_log_examples(current.examples_json.as_deref());
 
-    Ok(Some(ErrorShiftEvidence {
+    Ok(Some(DashboardStatisticalShiftEvidence {
+        schema: DASHBOARD_STATISTICAL_SHIFT_EVIDENCE_SCHEMA.to_string(),
+        measurement_label: "error rate".to_string(),
+        matching_observation_label: "errors".to_string(),
+        sample_unit_label: "messages".to_string(),
         source_id: source_id.to_string(),
         source_observed_at: current.collected_at,
         window_start: current.window_start,
         window_end: current.window_end,
         current_generation: current.generation,
-        current_errors: current.errors,
-        current_total: current.total,
-        current_error_ratio: if current.total > 0 {
+        current_matching_observations: current.errors,
+        current_ratio: if current.total > 0 {
             Some(current.errors as f64 / current.total as f64)
         } else {
             None
         },
         current_sample_size: current.total,
-        baseline_average_error_ratio,
-        baseline_errors,
-        baseline_messages,
+        baseline_average_ratio,
+        baseline_matching_observations: baseline_errors,
+        baseline_sample_size: baseline_messages,
         baseline_window_samples: generation_samples,
         comparison_basis: DashboardComparisonBasis {
             description: "Average per-generation error ratio over the detector's trailing 12-generation window, excluding the latest generation; at least 3 generation samples are required.".to_string(),
@@ -1265,6 +1290,7 @@ fn load_error_shift_evidence(
             excludes_current_generation: true,
         },
         examples,
+        examples_caption: "Examples from the current source window".to_string(),
         examples_unparseable,
     }))
 }
@@ -1274,7 +1300,7 @@ fn load_smart_source_conflict_evidence(
     host: &str,
     subject: &str,
     expected_generation: i64,
-) -> anyhow::Result<Option<SmartSourceConflictEvidence>> {
+) -> anyhow::Result<Option<DashboardSourceConflictEvidence>> {
     #[allow(clippy::type_complexity)]
     let row: Option<(
         Option<i64>,
@@ -1352,7 +1378,17 @@ fn load_smart_source_conflict_evidence(
         return Ok(None);
     };
 
-    let mut counters = Vec::new();
+    let mut observations = vec![DashboardConflictObservation {
+        label: "Device self-assessment".to_string(),
+        value: match overall_passed {
+            Some(1) => "passed".to_string(),
+            Some(0) => "failed".to_string(),
+            Some(value) => format!("unrecognized value {value}"),
+            None => "unavailable".to_string(),
+        },
+        source_channel: "SMART overall status".to_string(),
+        coverage_present: overall_status_covered == 1,
+    }];
     if scsi_counters_covered == 1 {
         for (name, value) in [
             ("uncorrected read errors", read_errors),
@@ -1360,20 +1396,22 @@ fn load_smart_source_conflict_evidence(
             ("uncorrected verify errors", verify_errors),
         ] {
             if let Some(value) = value {
-                counters.push(DashboardSmartCounter {
-                    name: name.to_string(),
-                    value,
+                observations.push(DashboardConflictObservation {
+                    label: name.to_string(),
+                    value: value.to_string(),
                     source_channel: "raw SCSI error counters".to_string(),
+                    coverage_present: true,
                 });
             }
         }
     }
     if nvme_health_covered == 1 {
         if let Some(value) = media_errors {
-            counters.push(DashboardSmartCounter {
-                name: "media errors".to_string(),
-                value,
+            observations.push(DashboardConflictObservation {
+                label: "media errors".to_string(),
+                value: value.to_string(),
                 source_channel: "NVMe health log".to_string(),
+                coverage_present: true,
             });
         }
     }
@@ -1386,20 +1424,17 @@ fn load_smart_source_conflict_evidence(
         missing_coverage.push("raw error-counter testimony".to_string());
     }
 
-    Ok(Some(SmartSourceConflictEvidence {
-        device_observed_at,
+    Ok(Some(DashboardSourceConflictEvidence {
+        schema: DASHBOARD_SOURCE_CONFLICT_EVIDENCE_SCHEMA.to_string(),
+        observed_at: device_observed_at,
         generation_id,
         source_id,
-        smart_overall_passed: overall_passed.map(|value| value != 0),
-        overall_status_covered: overall_status_covered == 1,
-        counters,
-        scsi_counters_covered: scsi_counters_covered == 1,
-        nvme_health_covered: nvme_health_covered == 1,
+        observations,
         missing_coverage,
     }))
 }
 
-fn parse_log_examples(raw: Option<&str>) -> (Vec<DashboardLogExample>, bool) {
+fn parse_log_examples(raw: Option<&str>) -> (Vec<DashboardEvidenceExample>, bool) {
     let Some(raw) = raw.filter(|raw| !raw.trim().is_empty()) else {
         return (Vec::new(), false);
     };
@@ -1409,7 +1444,7 @@ fn parse_log_examples(raw: Option<&str>) -> (Vec<DashboardLogExample>, bool) {
     };
     let examples = values
         .into_iter()
-        .map(|value| DashboardLogExample {
+        .map(|value| DashboardEvidenceExample {
             timestamp: value
                 .get("ts")
                 .and_then(serde_json::Value::as_str)
@@ -1707,31 +1742,31 @@ mod tests {
 
         let read = open_ro(&path).unwrap();
         let overview = load_dashboard_overview(&read, now()).unwrap();
-        let Some(DashboardEvidence::ErrorShift(overview_evidence)) =
+        let Some(DashboardEvidence::StatisticalShift(overview_evidence)) =
             overview.monitored_findings[0].evidence.as_ref()
         else {
-            panic!("overview finding must carry basis-bound error-shift evidence");
+            panic!("overview finding must carry basis-bound statistical evidence");
         };
         assert_eq!(overview_evidence.current_sample_size, 10);
-        assert_eq!(overview_evidence.baseline_errors, 4);
-        assert_eq!(overview_evidence.baseline_messages, 40);
+        assert_eq!(overview_evidence.baseline_matching_observations, 4);
+        assert_eq!(overview_evidence.baseline_sample_size, 40);
         assert_eq!(overview_evidence.baseline_window_samples, 4);
 
         let detail = load_dashboard_finding(&read, &key, now()).unwrap();
         let DashboardFindingDetail::Current(detail) = detail else {
             panic!("expected current detail");
         };
-        let Some(DashboardEvidence::ErrorShift(evidence)) = detail.evidence else {
-            panic!("expected error-shift evidence");
+        let Some(DashboardEvidence::StatisticalShift(evidence)) = detail.evidence else {
+            panic!("expected statistical-shift evidence");
         };
 
-        assert_eq!(evidence.current_errors, 3);
+        assert_eq!(evidence.current_matching_observations, 3);
         assert_eq!(evidence.current_sample_size, 10);
-        assert_eq!(evidence.current_error_ratio, Some(0.3));
-        assert_eq!(evidence.baseline_errors, 4);
-        assert_eq!(evidence.baseline_messages, 40);
+        assert_eq!(evidence.current_ratio, Some(0.3));
+        assert_eq!(evidence.baseline_matching_observations, 4);
+        assert_eq!(evidence.baseline_sample_size, 40);
         assert_eq!(evidence.baseline_window_samples, 4);
-        assert!((evidence.baseline_average_error_ratio.unwrap() - 0.1).abs() < 1e-9);
+        assert!((evidence.baseline_average_ratio.unwrap() - 0.1).abs() < 1e-9);
         assert_eq!(
             evidence.comparison_basis.detector_window_start_generation,
             Some(-7)
