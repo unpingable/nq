@@ -1,0 +1,125 @@
+{
+  "evidence_context": {
+    "coverage_limits": [],
+    "premises": [],
+    "retained_contradictions": [],
+    "unenforceable_premises": [],
+    "unresolved_residuals": []
+  },
+  "expected_decision": "coverage_insufficient",
+  "name": "continuity_support_lost",
+  "note": "a later continuity evaluation that does not verify defeats reliance now without refuting the original claim; the primary stays verified and unrewritten",
+  "reliance_receipt": {
+    "caller_binding": "configured",
+    "caller_binding_disclosure": "consumer profile was selected from local configuration; this is not an authenticated consumer identity",
+    "claim": "docket_attempt_settled",
+    "consumer_profile_id": "nightshift-readonly-continuity",
+    "coverage_limits": [],
+    "decision": "coverage_insufficient",
+    "decision_id": "sha256:fe6f94f1b25e66e559cc4c2029c9a3564c330b36c1265b2b35f07f7a9ff2b596",
+    "does_not_establish": [
+      "this decision grants no execution authority",
+      "this decision is operational evidence, not sealed custody",
+      "this decision names no action and licenses no retry, clearing, or escalation",
+      "a reliance refusal is not a refutation of the underlying claim"
+    ],
+    "establishes": [],
+    "evidence_context_digest": "sha256:6afc100b53dd4b58c2963ccfd2b6c07fc7e0a6c8ff6817be527c2705a0225b87",
+    "generated_at": "2026-07-26T00:00:00Z",
+    "policy_version": "v1",
+    "premises": [],
+    "purpose": "continue_observing",
+    "receipt_content_hash": "sha256:f44b879dcf72a660286731a9f507f15bace230c94c4ba307dcbc239820a60d17",
+    "refusal_reasons": [
+      "required supporting claim \"continuity_rely_eligible\" is NotVerified, not verified; a supporting refusal is not the negation of the original claim, and it does not permit reliance now"
+    ],
+    "request_digest": "sha256:fe6f94f1b25e66e559cc4c2029c9a3564c330b36c1265b2b35f07f7a9ff2b596",
+    "retained_contradictions": [],
+    "schema": "nq.reliance.receipt.v1",
+    "supporting_receipts": [
+      {
+        "claim": "continuity_rely_eligible",
+        "content_hash": "sha256:fb2d24e65063a3838b6de3966fe51caf44c5e9d0facebf2d7bfaa7f83ab8069f",
+        "status": "not_verified",
+        "subject": "attempt/1"
+      }
+    ],
+    "underlying_status": "verified",
+    "unresolved_residuals": [],
+    "witnesses": [
+      {
+        "custody_basis": "native_observation",
+        "digest": "sha256:aa",
+        "observed_at": "2026-07-26T00:00:00Z",
+        "witness_type": "docket_dossier"
+      }
+    ]
+  },
+  "request": {
+    "caller_binding": "configured",
+    "claim": "docket_attempt_settled",
+    "consumer_profile_id": "nightshift-readonly-continuity",
+    "policy_version": "v1",
+    "purpose": "continue_observing",
+    "receipt_content_hash": "sha256:f44b879dcf72a660286731a9f507f15bace230c94c4ba307dcbc239820a60d17",
+    "request_id": "req-cg-lost",
+    "schema": "nq.reliance.request.v1",
+    "supporting_receipt_hashes": [
+      "sha256:fb2d24e65063a3838b6de3966fe51caf44c5e9d0facebf2d7bfaa7f83ab8069f"
+    ]
+  },
+  "source_receipt": {
+    "cannot_testify": [],
+    "claim": "docket_attempt_settled",
+    "content_hash": "sha256:f44b879dcf72a660286731a9f507f15bace230c94c4ba307dcbc239820a60d17",
+    "evaluator": {
+      "evaluator": "claim_registry",
+      "version": 1
+    },
+    "generated_at": "2026-07-26T00:00:00Z",
+    "not_verified": [],
+    "schema": "nq.receipt.v1",
+    "status": "verified",
+    "status_reasons": [],
+    "subject": "attempt/1",
+    "suggested_weaker_claims": [],
+    "supported_status": "",
+    "verified": [],
+    "witnesses": [
+      {
+        "custody_basis": "native_observation",
+        "digest": "sha256:aa",
+        "observed_at": "2026-07-26T00:00:00Z",
+        "witness_type": "docket_dossier"
+      }
+    ]
+  },
+  "supporting_receipts": [
+    {
+      "cannot_testify": [],
+      "claim": "continuity_rely_eligible",
+      "content_hash": "sha256:fb2d24e65063a3838b6de3966fe51caf44c5e9d0facebf2d7bfaa7f83ab8069f",
+      "evaluator": {
+        "evaluator": "claim_registry",
+        "version": 1
+      },
+      "generated_at": "2026-07-26T00:00:00Z",
+      "not_verified": [],
+      "schema": "nq.receipt.v1",
+      "status": "not_verified",
+      "status_reasons": [],
+      "subject": "attempt/1",
+      "suggested_weaker_claims": [],
+      "supported_status": "",
+      "verified": [],
+      "witnesses": [
+        {
+          "custody_basis": "external_projection",
+          "digest": "sha256:cc",
+          "observed_at": "2026-07-26T00:00:00Z",
+          "witness_type": "continuity_rely_record"
+        }
+      ]
+    }
+  ]
+}

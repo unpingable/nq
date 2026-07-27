@@ -450,3 +450,207 @@ fn every_vector_declares_exactly_one_authorizing_outcome_shape() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Supporting-evaluation vectors (2026-07-26).
+//
+// A separate scenario table so the pre-supporting vectors above are generated
+// by exactly the code that always generated them — their bytes must never
+// depend on this section existing. These vectors pin the generic
+// supporting-evaluation law a profile with `required_supporting_claims`
+// exercises: the `nightshift-readonly-continuity` profile requires a current
+// `continuity_rely_eligible` evaluation for the primary receipt's subject.
+//
+// Note on subjects: the supporting receipts here are sealed for the primary's
+// subject (`attempt/1`) because the law binds support to the relied-upon
+// subject. A *live* Docket-primary positive additionally needs the
+// Docket→Continuity subject-identity contract (designed, not yet implemented);
+// these vectors pin decision law, not that mapping.
+// ---------------------------------------------------------------------------
+
+struct SupportingScenario {
+    name: &'static str,
+    note: &'static str,
+    request: RelianceRequest,
+    receipt: Receipt,
+    supporting: Vec<Receipt>,
+    evidence: EvidenceContext,
+    expected: RelianceOutcome,
+}
+
+fn continuity_support(status: Status) -> Receipt {
+    let mut r = Receipt::new("continuity_rely_eligible", "attempt/1", NOW);
+    r.status = status;
+    r.witnesses = vec![WitnessRef {
+        witness_type: "continuity_rely_record".to_string(),
+        digest: Some("sha256:cc".to_string()),
+        observed_at: Some(NOW.to_string()),
+        custody_basis: Some("external_projection".to_string()),
+    }];
+    r.seal(EvaluatorBinding {
+        evaluator: "claim_registry".into(),
+        version: 1,
+    })
+    .expect("seal");
+    r
+}
+
+fn supporting_request(receipt: &Receipt, supporting: &[Receipt], rid: &str) -> RelianceRequest {
+    let mut r = request(
+        "nightshift-readonly-continuity",
+        "continue_observing",
+        "docket_attempt_settled",
+        receipt,
+    );
+    r.request_id = rid.to_string();
+    r.supporting_receipt_hashes = supporting
+        .iter()
+        .map(|s| s.content_hash.clone().unwrap_or_default())
+        .collect();
+    r
+}
+
+fn supporting_scenarios() -> Vec<SupportingScenario> {
+    let settled = sealed(
+        "docket_attempt_settled",
+        Status::Verified,
+        vec![],
+        "native_observation",
+    );
+    let sup_ok = continuity_support(Status::Verified);
+    let sup_lost = continuity_support(Status::NotVerified);
+
+    vec![
+        SupportingScenario {
+            name: "continuity_gated_authorized",
+            note: "the continuity-gated profile authorizes only when a current \
+                   verified continuity_rely_eligible evaluation is bound for the \
+                   relied-upon subject; the supporting identity is disclosed on \
+                   the receipt",
+            request: supporting_request(&settled, std::slice::from_ref(&sup_ok), "req-cg-authorized"),
+            receipt: settled.clone(),
+            supporting: vec![sup_ok.clone()],
+            evidence: EvidenceContext::default(),
+            expected: RelianceOutcome::AuthorizedReliance,
+        },
+        SupportingScenario {
+            name: "continuity_support_missing",
+            note: "binding no supporting evaluation under a profile that requires \
+                   one refuses as coverage; absence of supporting testimony is \
+                   not evidence either way",
+            request: supporting_request(&settled, &[], "req-cg-missing"),
+            receipt: settled.clone(),
+            supporting: vec![],
+            evidence: EvidenceContext::default(),
+            expected: RelianceOutcome::CoverageInsufficient,
+        },
+        SupportingScenario {
+            name: "continuity_support_lost",
+            note: "a later continuity evaluation that does not verify defeats \
+                   reliance now without refuting the original claim; the primary \
+                   stays verified and unrewritten",
+            request: supporting_request(&settled, std::slice::from_ref(&sup_lost), "req-cg-lost"),
+            receipt: settled.clone(),
+            supporting: vec![sup_lost.clone()],
+            evidence: EvidenceContext::default(),
+            expected: RelianceOutcome::CoverageInsufficient,
+        },
+        SupportingScenario {
+            name: "continuity_support_stale",
+            note: "a current requirement needs current testimony; aged supporting \
+                   evidence refuses as staleness, not as refutation",
+            request: supporting_request(&settled, std::slice::from_ref(&sup_ok), "req-cg-stale"),
+            receipt: settled.clone(),
+            supporting: vec![sup_ok.clone()],
+            evidence: EvidenceContext {
+                supporting_evidence_age_s: Some(100_000),
+                ..Default::default()
+            },
+            expected: RelianceOutcome::StaleEvidence,
+        },
+    ]
+}
+
+#[test]
+fn supporting_conformance_vectors_match_the_shipped_decision_behaviour() {
+    let regenerate = std::env::var_os("NQ_RELIANCE_REGENERATE").is_some();
+    let dir = fixture_dir();
+    if regenerate {
+        std::fs::create_dir_all(&dir).expect("fixture dir");
+    }
+
+    for s in supporting_scenarios() {
+        let decided = decide(
+            &s.request,
+            &s.receipt,
+            &s.supporting,
+            &s.evidence,
+            &catalog(),
+            NOW,
+        )
+        .expect("decision must not fail");
+        assert_eq!(
+            decided.decision, s.expected,
+            "scenario {} decided {:?}, expected {:?}",
+            s.name, decided.decision, s.expected
+        );
+
+        // Same invariants as every vector.
+        assert!(
+            decided
+                .does_not_establish
+                .iter()
+                .any(|d| d.contains("grants no execution authority")),
+            "{}: every decision must disclaim execution authority",
+            s.name
+        );
+        let text = serde_json::to_string(&decided).expect("serialize");
+        for forbidden in ["\"action\"", "\"capability\"", "\"authenticated\""] {
+            assert!(
+                !text.contains(forbidden),
+                "{}: reliance receipt must not carry {forbidden}",
+                s.name
+            );
+        }
+
+        // Supporting-specific invariants: what the request bound is what the
+        // receipt discloses — identity for identity, never authority.
+        assert_eq!(
+            decided.supporting_receipts.len(),
+            s.supporting.len(),
+            "{}: every bound supporting evaluation is disclosed",
+            s.name
+        );
+        for (bound, sup) in decided.supporting_receipts.iter().zip(&s.supporting) {
+            assert_eq!(Some(bound.content_hash.as_str()), sup.content_hash.as_deref());
+            assert_eq!(bound.claim, sup.claim);
+            assert_eq!(bound.subject, sup.subject);
+        }
+
+        let vector = serde_json::json!({
+            "name": s.name,
+            "note": s.note,
+            "request": s.request,
+            "evidence_context": s.evidence,
+            "source_receipt": s.receipt,
+            "supporting_receipts": s.supporting,
+            "expected_decision": s.expected,
+            "reliance_receipt": decided,
+        });
+        let bytes = serde_json::to_vec_pretty(&vector).expect("serialize vector");
+        let path = dir.join(format!("{}.json", s.name));
+        if regenerate {
+            std::fs::write(&path, &bytes).expect("write vector");
+        } else {
+            let golden = std::fs::read(&path)
+                .unwrap_or_else(|e| panic!("missing golden vector {}: {e}", path.display()));
+            let golden_value: serde_json::Value =
+                serde_json::from_slice(&golden).expect("golden is JSON");
+            assert_eq!(
+                golden_value, vector,
+                "{}: shipped behaviour diverged from the golden vector",
+                s.name
+            );
+        }
+    }
+}
