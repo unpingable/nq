@@ -1,0 +1,8 @@
+{
+  "bind_addr": "127.0.0.1:9847",
+  "sqlite_paths": [],
+  "service_health_urls": [],
+  "prometheus_targets": [],
+  "log_sources": [],
+  "sqlite_wal_targets": []
+}

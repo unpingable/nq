@@ -4,7 +4,10 @@
 
 NQ is a local-first diagnostic monitor for Linux operators. It pulls bounded evidence from hosts, stores coherent generations in SQLite, classifies failure modes, and keeps loss of observability visible. A separate claim-verification surface can turn supplied evidence into reviewable receipts for CI and automation.
 
-Two binaries. One SQLite database. No external datastore or dashboard service required.
+The operational compatibility runtime is two binaries and one SQLite
+database. The decomposed constellation also has a composition planner and a
+standalone witness-artifact tool; neither is an undocumented third runtime
+service.
 
 ## Status (2026-07-26)
 
@@ -65,9 +68,22 @@ NQ does not infer business priority, ownership, SLA impact, or permission to act
 
 > **Pre-1.0:** NQ is at `v0.x`. Read the [compatibility policy](docs/architecture/COMPATIBILITY.md) before building automation against its surfaces.
 
-Linux release artifacts include both `nq-monitor` and `nq-witness` for AMD64 and ARM64, with SHA-256 checksum files. The [quickstart](docs/operator/quickstart.md) gives copy-and-paste download, checksum, configuration, and validation commands.
+Start with the
+[installation and first-run guide](docs/install/INSTALLATION_AND_FIRST_RUN.md).
+It identifies which package owns `nq-suite`, `nq-monitor`, the compatibility
+`nq-witness` executable, and `nq-witness-tool`; distinguishes required
+companions from optional packs; and covers clean source archives, strict
+configuration, failure recovery, upgrades, and archive-first removal.
 
-To build the workspace with the repository's pinned Rust toolchain:
+Do not assume that a GitHub “latest” release contains every declared binary.
+The 2026-07-27 clean-room baseline received HTTP 404 for the advertised
+`nq-monitor` asset, and no release bundle currently packages every decomposed
+component plus its configuration. A release installation is earned only when
+the named binary and checksum assets actually exist. Until then, use a pinned,
+reviewed source archive and preserve its revision and digest.
+
+For developer work, a clone can still build the entire workspace with the
+pinned Rust toolchain:
 
 ```bash
 git clone https://github.com/unpingable/nq.git
@@ -75,11 +91,21 @@ cd nq
 cargo build --release --locked
 ```
 
-The native build produces `target/release/nq-monitor` and `target/release/nq-witness` for the host Rust target, which is commonly glibc-linked on Linux. Published Linux musl artifacts are statically linked. To build a static artifact yourself, use the musl target command in [AGENTS.md](AGENTS.md). macOS and Windows are not supported deployment targets.
+Use the installation profiles instead of a workspace build when testing
+component independence. A native build uses the host Rust target and is
+commonly glibc-linked on Linux. A future published Linux musl artifact is
+expected to be static, but a source build does not establish that packaging
+property. To build a static artifact yourself, use the musl target command in
+[AGENTS.md](AGENTS.md). macOS and Windows are not supported deployment
+targets.
 
 ## Quick start
 
-Use the [single-host quickstart](docs/operator/quickstart.md) to run both processes on loopback without root or systemd. It verifies the witness response, monitor API, web UI, and SQL query path.
+Use the [single-host quickstart](docs/operator/quickstart.md) to run the
+compatibility pair on loopback without root or systemd. It verifies the
+witness response, monitor API, web UI, and SQL query path. A successful
+`nq-suite plan` is deliberately not substituted for this monitored-host
+result because the current composition root does not yet launch.
 
 For a durable install, use the [production deployment guide](docs/operator/deployment.md). It covers service accounts, permissions, systemd, backup and rollback, and multi-host network boundaries.
 

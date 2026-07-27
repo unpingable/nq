@@ -4,13 +4,16 @@ This gets one Linux host into NQ without root, systemd, an external exporter,
 or a writable system directory. It runs the witness and monitor on loopback and
 stores the trial database in the current directory.
 
+For a clean source archive, component selection, release-asset availability,
+missing prerequisites, recovery, upgrade, and removal, start with the
+[installation and first-run guide](../install/INSTALLATION_AND_FIRST_RUN.md).
 For service accounts, remote witnesses, firewalls, backups, and upgrades, use
 the [production deployment guide](deployment.md) after this walkthrough.
 
 ## 1. Get both binaries
 
-Releases provide static binaries for AMD64 and ARM64. Download the binary and
-its checksum as a pair:
+When the selected GitHub release actually contains the declared static AMD64
+or ARM64 assets, download each binary and its checksum as a pair:
 
 ```bash
 mkdir nq-quickstart || exit 1
@@ -41,7 +44,10 @@ cd nq-quickstart || exit 1
 
 Both checksum commands must report `OK`. A checksum downloaded from the same
 release detects a damaged or incomplete download; it is not an independent
-signature of the release publisher.
+signature of the release publisher. The 2026-07-27 clean-room baseline found
+the advertised latest asset absent (HTTP 404). Do not copy a developer binary
+or invent an asset name to bypass that failure; use a reviewed committed
+source archive as described in the installation guide.
 
 To build instead, Rust is pinned by `rust-toolchain.toml`:
 
@@ -64,6 +70,17 @@ current directory.
 The witness observes the local host and serves one endpoint. Empty optional
 collector lists are intentional: this first run needs no Docker socket,
 journal access, application database, or Prometheus exporter.
+
+If you built from the source archive, copy the checked-in specimens literally:
+
+```bash
+NQ_BUILD_ROOT='<absolute-path-to-extracted-source>'
+install -m 0600 "$NQ_BUILD_ROOT/deploy/quickstart/publisher.json" publisher.json
+install -m 0600 "$NQ_BUILD_ROOT/deploy/quickstart/aggregator.json" aggregator.json
+```
+
+The JSON below is the same content for inspection. Do not retype it when the
+packaged files are available.
 
 Save this as `publisher.json`:
 
@@ -121,6 +138,16 @@ will parse them:
 Both commands say `no state changed`. Validation does not bind a port, run a
 check, open or create `nq.db`, or contact a source. Unknown fields,
 misspellings, invalid values, and ambiguous check configuration are refused.
+
+Before first startup, also confirm that this path intentionally has no prior
+history:
+
+```bash
+./nq-monitor database compatibility --db ./nq.db --format human
+```
+
+An `absent` result says the first monitor startup will create a new evidence
+history. It does not search other directories for an older database.
 
 ## 3. Run it in two terminals
 

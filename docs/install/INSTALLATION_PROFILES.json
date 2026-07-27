@@ -1,0 +1,228 @@
+{
+  "schema": "nq.installation_profiles.v1",
+  "product": {
+    "name": "NQ",
+    "owner_repository": "https://github.com/unpingable/nq",
+    "supported_platform": "Linux",
+    "minimum_rust": "1.88"
+  },
+  "profiles": [
+    {
+      "id": "suite-minimal",
+      "status": "composition_plan_only",
+      "owner_package": "nq-suite",
+      "purpose": "Validate a conservative host-only constellation and emit its immutable assembly plan.",
+      "required_at_runtime": [
+        "nq-suite"
+      ],
+      "optional_components": [
+        "nq-monitor",
+        "nq-witness compatibility publisher",
+        "nq-witness-tool",
+        "nq-check-pack-storage",
+        "nq-check-pack-labelwatch"
+      ],
+      "source": {
+        "cargo_args": [
+          "build",
+          "--release",
+          "--locked",
+          "-p",
+          "nq-suite"
+        ],
+        "binaries": [
+          {
+            "name": "nq-suite",
+            "source": "target/release/nq-suite"
+          }
+        ]
+      },
+      "release": null,
+      "configuration": "crates/nq-suite/examples/minimal-public.json",
+      "first_use": "suite_plan",
+      "first_use_limit": "The current public monitor runtime does not accept a resolved suite plan, so this profile cannot yet produce a monitored-host observation."
+    },
+    {
+      "id": "legacy-operational",
+      "status": "compatibility_runtime",
+      "owner_package": "nq-monitor and nq-monitor-agent",
+      "purpose": "Run the current operational witness publisher, SQLite evaluator, dashboard, API, and SQL surface.",
+      "required_at_runtime": [
+        "nq-monitor",
+        "nq-witness compatibility publisher"
+      ],
+      "optional_components": [
+        "nq-suite",
+        "nq-witness-tool",
+        "application-specific check packs"
+      ],
+      "source": {
+        "cargo_args": [
+          "build",
+          "--release",
+          "--locked",
+          "-p",
+          "nq-monitor",
+          "-p",
+          "nq-monitor-agent",
+          "--bins"
+        ],
+        "binaries": [
+          {
+            "name": "nq-monitor",
+            "source": "target/release/nq-monitor"
+          },
+          {
+            "name": "nq-witness",
+            "source": "target/release/nq-witness"
+          }
+        ]
+      },
+      "release": {
+        "base": "https://github.com/unpingable/nq/releases/latest/download",
+        "assets": [
+          "nq-monitor-linux-{arch}",
+          "nq-witness-linux-{arch}"
+        ],
+        "checksums": true
+      },
+      "configuration": [
+        "deploy/quickstart/publisher.json",
+        "deploy/quickstart/aggregator.json"
+      ],
+      "first_use": "legacy_operational",
+      "first_use_limit": "This compatibility runtime still links generic host and optional storage collector families in one publisher package; it is not proof of final check-pack isolation."
+    },
+    {
+      "id": "monitor-dashboard-only",
+      "status": "independent_runtime_role_with_source_coupling",
+      "owner_package": "nq-monitor",
+      "purpose": "Install and run only the central monitor, dashboard, API, and SQL surface.",
+      "required_at_runtime": [
+        "nq-monitor"
+      ],
+      "optional_components": [
+        "remote nq-witness publishers",
+        "nq-suite",
+        "nq-witness-tool"
+      ],
+      "source": {
+        "cargo_args": [
+          "build",
+          "--release",
+          "--locked",
+          "-p",
+          "nq-monitor",
+          "--bin",
+          "nq-monitor"
+        ],
+        "binaries": [
+          {
+            "name": "nq-monitor",
+            "source": "target/release/nq-monitor"
+          }
+        ]
+      },
+      "release": {
+        "base": "https://github.com/unpingable/nq/releases/latest/download",
+        "assets": [
+          "nq-monitor-linux-{arch}"
+        ],
+        "checksums": true
+      },
+      "configuration": "deploy/quickstart/monitor-only.json",
+      "first_use": "monitor_surface",
+      "first_use_limit": "An empty source list proves only that the monitor surface can run independently; it supplies no monitored-system evidence and must not be rendered as universal health."
+    },
+    {
+      "id": "witness-artifact",
+      "status": "independent_artifact_tool",
+      "owner_package": "nq-witness",
+      "purpose": "Validate and identify immutable witness artifacts without the monitor runtime or NQ decision engine.",
+      "required_at_runtime": [
+        "nq-witness-tool"
+      ],
+      "optional_components": [
+        "nq-suite",
+        "nq-monitor",
+        "nq-witness compatibility publisher"
+      ],
+      "source": {
+        "cargo_args": [
+          "build",
+          "--release",
+          "--locked",
+          "-p",
+          "nq-witness",
+          "--bin",
+          "nq-witness-tool"
+        ],
+        "binaries": [
+          {
+            "name": "nq-witness-tool",
+            "source": "target/release/nq-witness-tool"
+          }
+        ]
+      },
+      "release": null,
+      "configuration": "crates/nq-witness/tests/fixtures/zab2nq-external-projection.json",
+      "first_use": "witness_validation",
+      "first_use_limit": "Structural acceptance does not establish occurrence, freshness, evidence sufficiency, or an NQ disposition."
+    }
+  ],
+  "durable_state": [
+    {
+      "kind": "monitor_database",
+      "configured_by": "aggregator db_path",
+      "examples": [
+        "./nq.db",
+        "/var/lib/nq/nq.db"
+      ],
+      "disposition": "durable_evidence",
+      "removal_rule": "Stop the monitor and archive the database together with any -wal and -shm sidecars before removal or reset."
+    },
+    {
+      "kind": "configuration",
+      "configured_by": "operator",
+      "examples": [
+        "publisher.json",
+        "aggregator.json",
+        "/etc/nq"
+      ],
+      "disposition": "durable_operator_record",
+      "removal_rule": "Archive before removal; configuration is required to reconstruct what was observed."
+    },
+    {
+      "kind": "liveness_export",
+      "configured_by": "aggregator liveness.path",
+      "examples": [
+        "./liveness.json"
+      ],
+      "disposition": "replaceable_derived_state",
+      "removal_rule": "May be recreated after the monitor database and configuration are preserved."
+    },
+    {
+      "kind": "installed_binaries",
+      "configured_by": "installation profile",
+      "examples": [
+        "nq-suite",
+        "nq-monitor",
+        "nq-witness",
+        "nq-witness-tool"
+      ],
+      "disposition": "replaceable_artifact",
+      "removal_rule": "Record versions first; removing binaries does not remove durable evidence."
+    },
+    {
+      "kind": "build_and_download_cache",
+      "configured_by": "Cargo, Rustup, and downloader",
+      "examples": [
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "target"
+      ],
+      "disposition": "disposable_cache",
+      "removal_rule": "May be deleted after confirming no operator-authored configuration or evidence was stored there."
+    }
+  ]
+}

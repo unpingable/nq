@@ -1,0 +1,24 @@
+{
+  "interval_s": 10,
+  "db_path": "./nq.db",
+  "bind_addr": "127.0.0.1:9848",
+  "sources": [
+    {
+      "name": "local-host",
+      "base_url": "http://127.0.0.1:9847",
+      "timeout_ms": 5000
+    }
+  ],
+  "retention": {
+    "max_generations": 360,
+    "prune_every_n_cycles": 60
+  },
+  "notifications": {
+    "channels": [],
+    "min_severity": "warning"
+  },
+  "liveness": {
+    "path": "./liveness.json",
+    "instance_id": "quickstart"
+  }
+}

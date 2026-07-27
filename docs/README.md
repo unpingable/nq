@@ -6,6 +6,7 @@ Where to start, by what you're trying to do.
 
 Start at `operator/` — install, run, read findings, interpret receipts.
 
+- [`install/INSTALLATION_AND_FIRST_RUN.md`](install/INSTALLATION_AND_FIRST_RUN.md) — component choice, clean source install, first use, recovery, upgrade, and archive-first removal
 - [`operator/quickstart.md`](operator/quickstart.md) — unprivileged single-host trial, verified end to end
 - [`operator/deployment.md`](operator/deployment.md) — production systemd, multi-host security, backup, and upgrade
 - [`operator/OPERATOR_GUIDE.md`](operator/OPERATOR_GUIDE.md) — install, deploy, configure, troubleshoot
@@ -22,6 +23,10 @@ Start at `operator/` — install, run, read findings, interpret receipts.
 - [`operator/detections.md`](operator/detections.md) — real things NQ has surfaced
 - [`operator/known-conditions.md`](operator/known-conditions.md) — substrate quirks that look like findings but aren't
 - [`operator/RELATIONSHIP_TO_PROMETHEUS.md`](operator/RELATIONSHIP_TO_PROMETHEUS.md) — what NQ does that metrics dashboards don't
+
+Installation campaign evidence and evaluator tooling live under `install/`.
+The harness is not an installer and its synthetic results are not a substitute
+for a real non-author trial.
 
 ## I want to understand NQ
 

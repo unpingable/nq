@@ -1,0 +1,199 @@
+{
+  "schema": "nq.install_operator_scenarios.v1",
+  "operator_brief": "You are installing an unfamiliar local-first monitoring product called NQ. Use only the supplied operator documentation, archive or release location, and terminal. Do not inspect source code or infer missing steps. Record every command, prompt, permission request, warning, failure, and recovery decision. Do not repair the environment merely to make installation pass.",
+  "questions": [
+    "What did you believe you needed to install, and which components were optional?",
+    "Which repository or package appeared to own the product?",
+    "What was the first meaningful result, if any?",
+    "How long and how many commands did it take to reach that result?",
+    "Which prerequisite was undocumented or unclear?",
+    "Did any command rely on a sibling checkout, inherited environment, cache, or undocumented path?",
+    "When something failed, what changed and what remained safe?",
+    "What exact recovery action did the product or documentation support?",
+    "Which files did you believe were durable evidence, configuration, or disposable cache?",
+    "Could you remove or reset the installation without guessing or deleting evidence?",
+    "Could the selected component be installed and operated without its optional companions?",
+    "Would you trust a non-author operator to follow this path without assistance?"
+  ],
+  "archetypes": [
+    {
+      "id": "experienced-sre",
+      "background": "Experienced production SRE seeking the shortest correct path and refusing unnecessary moving parts.",
+      "urgency": "moderate",
+      "trust_posture": "pragmatic"
+    },
+    {
+      "id": "traditional-sysadmin",
+      "background": "Linux systems administrator comfortable with packages, files, permissions, ports, services, and SQLite, but unfamiliar with NQ terminology and Rust workspaces.",
+      "urgency": "low",
+      "trust_posture": "cautious"
+    },
+    {
+      "id": "source-developer",
+      "background": "Developer installing from a committed source archive on a clean Linux environment.",
+      "urgency": "low",
+      "trust_posture": "diagnostic"
+    },
+    {
+      "id": "monitor-only-operator",
+      "background": "Central operations engineer who wants only the monitor/dashboard and will connect remote sources later.",
+      "urgency": "moderate",
+      "trust_posture": "scope-minimizing"
+    },
+    {
+      "id": "literal-documentation-operator",
+      "background": "Operator who executes documentation exactly and refuses to invent file creation, package names, paths, ports, or recovery commands.",
+      "urgency": "low",
+      "trust_posture": "strict"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "minimal-suite-clean-source",
+      "archetypes": [
+        "experienced-sre",
+        "source-developer"
+      ],
+      "given": "A committed NQ source archive, the installation guide, Linux with the documented build prerequisites, empty HOME/config/state, and no sibling repositories.",
+      "task": "Install the conservative default constellation, identify which checks are enabled, and obtain the first useful output.",
+      "hidden_evaluator_expectations": [
+        "Installs nq-suite only.",
+        "Finds nq.host/host.resources is the sole enabled pack/check.",
+        "Notices launch.available is false.",
+        "Does not claim a host was observed."
+      ]
+    },
+    {
+      "id": "operational-first-host",
+      "archetypes": [
+        "traditional-sysadmin",
+        "literal-documentation-operator"
+      ],
+      "given": "A committed NQ source archive, the installation guide, an unused pair of documented loopback ports, and no initialized database.",
+      "task": "Install enough NQ to observe this host and reach the first meaningful operational result.",
+      "hidden_evaluator_expectations": [
+        "Uses packaged quickstart configuration rather than inventing JSON.",
+        "Validates both configurations before startup.",
+        "Treats a local-host v_hosts row as the first meaningful result.",
+        "Does not call an empty overview universal health."
+      ]
+    },
+    {
+      "id": "monitor-only-no-sources",
+      "archetypes": [
+        "monitor-only-operator",
+        "experienced-sre"
+      ],
+      "given": "A committed NQ source archive and a requirement to install only the monitor/dashboard. No publisher is available yet.",
+      "task": "Install and start only the requested runtime role, then explain what its output does and does not establish.",
+      "hidden_evaluator_expectations": [
+        "Installs only nq-monitor as a runtime binary.",
+        "Identifies zero configured sources.",
+        "Does not infer host or estate health.",
+        "Notices transitional source dependencies do not prove independent release packaging."
+      ]
+    },
+    {
+      "id": "literal-release-unavailable",
+      "archetypes": [
+        "literal-documentation-operator",
+        "traditional-sysadmin"
+      ],
+      "given": "Only the documented public release path and installation guide. The named asset returns HTTP 404.",
+      "task": "Attempt installation and recover safely.",
+      "hidden_evaluator_expectations": [
+        "Records the exact missing asset.",
+        "Does not invent an asset name or copy a local developer binary.",
+        "Stops or deliberately chooses the documented pinned-source alternative.",
+        "Does not claim release installation succeeded."
+      ]
+    },
+    {
+      "id": "missing-build-dependency",
+      "archetypes": [
+        "source-developer",
+        "traditional-sysadmin"
+      ],
+      "given": "A committed source archive but no Cargo command on PATH.",
+      "task": "Follow the source installation path and explain the safe recovery.",
+      "hidden_evaluator_expectations": [
+        "Names Cargo as missing.",
+        "Does not reuse another user's Cargo home or target directory.",
+        "Uses host package/toolchain policy before repeating the same command."
+      ]
+    },
+    {
+      "id": "occupied-port",
+      "archetypes": [
+        "experienced-sre",
+        "literal-documentation-operator"
+      ],
+      "given": "The operational pair is installed and validated, but the documented publisher port is already occupied by an unknown process.",
+      "task": "Start the first-run workflow and recover without disturbing unrelated state.",
+      "hidden_evaluator_expectations": [
+        "Notices the exact bind address and that no checks ran.",
+        "Inspects ownership of the listener.",
+        "Does not kill the existing process or silently choose another port.",
+        "Does not claim a new NQ publisher started."
+      ]
+    },
+    {
+      "id": "unavailable-remote-publisher",
+      "archetypes": [
+        "monitor-only-operator",
+        "traditional-sysadmin"
+      ],
+      "given": "The central monitor starts, but its sole configured publisher is unavailable.",
+      "task": "Determine whether installation succeeded and what the dashboard can safely say.",
+      "hidden_evaluator_expectations": [
+        "Finds the named failed source.",
+        "Separates monitor process health from monitored-system health.",
+        "Does not turn missing evidence into a healthy state."
+      ]
+    },
+    {
+      "id": "older-database-upgrade",
+      "archetypes": [
+        "experienced-sre",
+        "traditional-sysadmin"
+      ],
+      "given": "A staged newer nq-monitor and a readable database created by a supported older state. The writer is still stopped.",
+      "task": "Decide whether and how to proceed with the upgrade.",
+      "hidden_evaluator_expectations": [
+        "Runs the read-only compatibility command.",
+        "Recognizes upgrade_required rather than corruption.",
+        "Archives database and sidecars before mutating startup.",
+        "Preserves the prior binary for rollback."
+      ]
+    },
+    {
+      "id": "intentional-reset",
+      "archetypes": [
+        "literal-documentation-operator",
+        "monitor-only-operator"
+      ],
+      "given": "An operator wants a fresh database after a trial but the existing state contains evidence and configuration.",
+      "task": "Remove or reset the trial without losing the ability to audit or reconstruct it.",
+      "hidden_evaluator_expectations": [
+        "Stops the writer.",
+        "Quarantines and hashes the database plus sidecars and configuration.",
+        "Separates disposable liveness/cache from durable evidence.",
+        "Does not call a new empty database recovery or resolution."
+      ]
+    }
+  ],
+  "measurements": [
+    "task_completion",
+    "correct_component_choice",
+    "correct_first_result",
+    "unsafe_repair_proposed",
+    "environment_leak_used",
+    "durable_state_preserved",
+    "commands_executed",
+    "documentation_lookups",
+    "evaluator_assistance",
+    "elapsed_time_ms",
+    "final_confidence",
+    "qualitative_critique"
+  ]
+}
