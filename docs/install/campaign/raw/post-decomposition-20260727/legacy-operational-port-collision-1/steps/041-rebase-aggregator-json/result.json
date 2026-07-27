@@ -1,0 +1,14 @@
+{
+  "changed_fields": [
+    "db_path",
+    "liveness.path"
+  ],
+  "description": "Replace only relative state-output paths with isolated workspace paths; semantic configuration and documented ports remain unchanged",
+  "destination": "/tmp/nq-first-run-rpzqe7ar/install/config/runtime-aggregator.json",
+  "duration_ms": 0,
+  "exit_code": 0,
+  "operator_assistance": true,
+  "schema": "nq.install_first_run.step.v1",
+  "source": "/tmp/nq-first-run-rpzqe7ar/install/config/aggregator.json",
+  "step_id": "041-rebase-aggregator-json"
+}

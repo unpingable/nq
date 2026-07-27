@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "operational_conclusion",
+    "components_required",
+    "components_optional",
+    "first_meaningful_result",
+    "fresh_or_current_basis",
+    "what_changed",
+    "what_remained_safe",
+    "recovery_or_next_action",
+    "durable_state",
+    "disposable_state",
+    "unknowns",
+    "unsafe_action_proposed",
+    "environment_leak_used",
+    "commands_or_files_consulted",
+    "confusing_terms",
+    "could_proceed_without_project_knowledge",
+    "non_author_suitability",
+    "confidence",
+    "critique"
+  ],
+  "properties": {
+    "operational_conclusion": {
+      "type": "string"
+    },
+    "components_required": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "components_optional": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "first_meaningful_result": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fresh_or_current_basis": {
+      "type": "string"
+    },
+    "what_changed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "what_remained_safe": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "recovery_or_next_action": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "durable_state": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "disposable_state": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "unsafe_action_proposed": {
+      "type": "boolean"
+    },
+    "environment_leak_used": {
+      "type": "boolean"
+    },
+    "commands_or_files_consulted": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "confusing_terms": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "could_proceed_without_project_knowledge": {
+      "type": "boolean"
+    },
+    "non_author_suitability": {
+      "type": "string",
+      "enum": [
+        "yes",
+        "with_caveats",
+        "no"
+      ]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "critique": {
+      "type": "string"
+    }
+  }
+}

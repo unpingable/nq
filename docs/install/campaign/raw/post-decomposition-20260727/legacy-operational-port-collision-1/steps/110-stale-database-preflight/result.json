@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+    "database",
+    "compatibility",
+    "--db",
+    "/tmp/nq-first-run-rpzqe7ar/install/state/schema-v7.db",
+    "--format",
+    "json"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+  "description": "Inspect a deterministic older NQ schema marker read-only; the preflight must disclose migration and leave bytes unchanged",
+  "duration_ms": 8,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:45:08.182Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:45:08.174Z",
+  "stderr": "steps/110-stale-database-preflight/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/110-stale-database-preflight/stdout.log",
+  "step_id": "110-stale-database-preflight",
+  "timed_out": false
+}

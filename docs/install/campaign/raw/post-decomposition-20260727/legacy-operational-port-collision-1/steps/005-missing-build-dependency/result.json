@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "/usr/bin/env",
+    "cargo",
+    "--version"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/work",
+  "description": "Exercise a missing Cargo prerequisite without installing it or falling back to the evaluator's PATH",
+  "duration_ms": 0,
+  "exit_code": 127,
+  "finished_at": "2026-07-27T07:42:52.479Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:42:52.478Z",
+  "stderr": "steps/005-missing-build-dependency/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/005-missing-build-dependency/stdout.log",
+  "step_id": "005-missing-build-dependency",
+  "timed_out": false
+}

@@ -1,0 +1,460 @@
+{
+  "blocker": null,
+  "dependency_mode": "isolated-online",
+  "duration_ms": 61111,
+  "finished_at": "2026-07-27T07:42:04.514Z",
+  "observations": {
+    "discovery": {
+      "first_use_limit": "The current public monitor runtime does not accept a resolved suite plan, so this profile cannot yet produce a monitored-host observation.",
+      "optional_components": [
+        "nq-monitor",
+        "nq-witness compatibility publisher",
+        "nq-witness-tool",
+        "nq-check-pack-storage",
+        "nq-check-pack-labelwatch"
+      ],
+      "owner_package": "nq-suite",
+      "owner_repository": "https://github.com/unpingable/nq",
+      "profile_contract": "docs/install/INSTALLATION_PROFILES.json",
+      "profile_contract_basis": "inside_committed_source_archive",
+      "profile_contract_sha256": "e6bfada08a1b2d54b2f5774294f3a38049747b19e31a2cb371aa04346816f8c1",
+      "profile_status": "composition_plan_only",
+      "purpose": "Validate a conservative host-only constellation and emit its immutable assembly plan.",
+      "required_at_runtime": [
+        "nq-suite"
+      ],
+      "status": "completed"
+    },
+    "environment_leaks": {
+      "developer_target_reused": false,
+      "inherited_environment_variable_count": 0,
+      "path_dependencies_outside_source_archive": [],
+      "sibling_checkout_used": false,
+      "status": "not_detected"
+    },
+    "failure_and_recovery": {
+      "malformed_configuration": {
+        "exit_code": 1,
+        "expected_message_fragments": {
+          "no listener": true,
+          "unknown field": true
+        },
+        "status": "safe_refusal",
+        "step": "101-malformed-configuration",
+        "timed_out": false
+      },
+      "permission_failure": {
+        "exit_code": 1,
+        "expected_message_fragments": {
+          "cannot read": true,
+          "no state": true
+        },
+        "status": "safe_refusal",
+        "step": "102-permission-denied-config",
+        "timed_out": false
+      },
+      "stale_database": {
+        "reason": "This profile does not install nq-monitor.",
+        "status": "not_applicable"
+      },
+      "unavailable_pack": {
+        "exit_code": 1,
+        "expected_message_fragments": {
+          "no listener": true,
+          "unavailable": true
+        },
+        "status": "safe_refusal",
+        "step": "105-unavailable-pack",
+        "timed_out": false
+      },
+      "unavailable_sibling_service": {
+        "reason": "This profile does not install nq-monitor.",
+        "status": "not_applicable"
+      },
+      "unknown_check": {
+        "exit_code": 1,
+        "expected_message_fragments": {
+          "no listener": true,
+          "unknown check": true
+        },
+        "status": "safe_refusal",
+        "step": "104-unknown-check",
+        "timed_out": false
+      },
+      "unknown_pack": {
+        "exit_code": 1,
+        "expected_message_fragments": {
+          "no listener": true,
+          "unknown pack": true
+        },
+        "status": "safe_refusal",
+        "step": "103-unknown-pack",
+        "timed_out": false
+      },
+      "wrong_path": {
+        "exit_code": 1,
+        "expected_message_fragments": {
+          "cannot read": true,
+          "no state was changed": true
+        },
+        "status": "safe_refusal",
+        "step": "100-wrong-config-path",
+        "timed_out": false
+      }
+    },
+    "first_use": {
+      "conservative_host_only": true,
+      "enabled_packs": [
+        "nq.host"
+      ],
+      "host_observation_produced": false,
+      "kind": "composition_plan",
+      "launch_available": false,
+      "status": "profile_result",
+      "unknown_preserved": "No check ran; validation and planning do not establish an observation."
+    },
+    "installation": {
+      "installed_binaries": [
+        "nq-suite"
+      ],
+      "prefix": "/tmp/nq-first-run-c53h22of/install",
+      "prompt_response_supplied": false,
+      "status": "installed",
+      "system_permission_required": false
+    },
+    "installed_versions": {
+      "nq-suite": {
+        "binary_sha256": "f7173f8d05f4e6587f0aee557fad196c7bad4b10507ccb485afecb29319b4b08",
+        "exit_code": 0,
+        "reported": "nq-suite 0.1.0"
+      }
+    },
+    "missing_dependency": {
+      "actionability": "The operating system names the missing command. NQ ships no installer preflight that enumerates source-build prerequisites.",
+      "exit_code": 127,
+      "message_present": true,
+      "product_installer_preflight_available": false,
+      "status": "observed"
+    },
+    "removal_and_reset": {
+      "durable_evidence_count": 0,
+      "inventory_count": 8,
+      "plan": "removal-reset-plan.json",
+      "status": "classified_without_deletion"
+    },
+    "upgrade": {
+      "reason": "No supported prior release artifact/database is available and the harness does not manufacture a passing prior state.",
+      "required_input": "--prior-database",
+      "status": "not_run"
+    }
+  },
+  "profile": "suite-minimal",
+  "raw_evidence_policy": "Step stdout and stderr are unedited. Curated conclusions are stored separately in this manifest and the failure matrix.",
+  "schema": "nq.install_first_run.campaign.v1",
+  "started_at": "2026-07-27T07:41:03.402Z",
+  "status": "profile_first_use_completed",
+  "steps": [
+    {
+      "argv": [
+        "/usr/bin/env",
+        "cargo",
+        "--version"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/work",
+      "description": "Exercise a missing Cargo prerequisite without installing it or falling back to the evaluator's PATH",
+      "duration_ms": 0,
+      "exit_code": 127,
+      "finished_at": "2026-07-27T07:41:03.404Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:41:03.403Z",
+      "stderr": "steps/005-missing-build-dependency/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/005-missing-build-dependency/stdout.log",
+      "step_id": "005-missing-build-dependency",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/usr/bin/cargo",
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "nq-suite"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/work/source/nq",
+      "description": "Build the suite-minimal profile exactly as declared by the versioned installation profile",
+      "duration_ms": 60835,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:42:04.402Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:41:03.566Z",
+      "stderr": "steps/020-source-build/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/020-source-build/stdout.log",
+      "step_id": "020-source-build",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/usr/bin/install",
+        "-m",
+        "0755",
+        "/tmp/nq-first-run-c53h22of/work/source/nq/target/release/nq-suite",
+        "/tmp/nq-first-run-c53h22of/install/bin/nq-suite"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/work/source/nq",
+      "description": "Install only nq-suite into the isolated profile prefix; no system directory or sibling package is used",
+      "duration_ms": 3,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:42:04.405Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:04.402Z",
+      "stderr": "steps/021-install-nq-suite/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/021-install-nq-suite/stdout.log",
+      "step_id": "021-install-nq-suite",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/usr/bin/cargo",
+        "metadata",
+        "--format-version",
+        "1",
+        "--no-deps",
+        "--locked"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/work/source/nq",
+      "description": "Record workspace package and binary identities after the build; path dependencies must remain inside the extracted archive",
+      "duration_ms": 64,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:42:04.470Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:04.406Z",
+      "stderr": "steps/029-source-package-metadata/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/029-source-package-metadata/stdout.log",
+      "step_id": "029-source-package-metadata",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+        "--version"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/install",
+      "description": "Record the installed nq-suite version using its own CLI",
+      "duration_ms": 2,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:42:04.476Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:04.474Z",
+      "stderr": "steps/030-version-00-nq-suite/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/030-version-00-nq-suite/stdout.log",
+      "step_id": "030-version-00-nq-suite",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/usr/bin/install",
+        "-m",
+        "0600",
+        "/tmp/nq-first-run-c53h22of/work/source/nq/crates/nq-suite/examples/minimal-public.json",
+        "/tmp/nq-first-run-c53h22of/install/config/nq-suite.json"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/work/source/nq",
+      "description": "Copy the literal packaged configuration crates/nq-suite/examples/minimal-public.json; no JSON is inferred or repaired",
+      "duration_ms": 3,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:42:04.489Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:04.486Z",
+      "stderr": "steps/040-copy-nq-suite-json/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/040-copy-nq-suite-json/stdout.log",
+      "step_id": "040-copy-nq-suite-json",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+        "config",
+        "validate",
+        "--config",
+        "/tmp/nq-first-run-c53h22of/install/config/nq-suite.json"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/install",
+      "description": "Validate the packaged minimal host-only suite configuration",
+      "duration_ms": 2,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:42:04.493Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:04.491Z",
+      "stderr": "steps/050-suite-config-validation/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/050-suite-config-validation/stdout.log",
+      "step_id": "050-suite-config-validation",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+        "plan",
+        "--config",
+        "/tmp/nq-first-run-c53h22of/install/config/nq-suite.json",
+        "--pretty"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/install",
+      "description": "Emit the deterministic composition plan without launching checks",
+      "duration_ms": 1,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:42:04.495Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:04.493Z",
+      "stderr": "steps/051-suite-plan/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/051-suite-plan/stdout.log",
+      "step_id": "051-suite-plan",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+        "config",
+        "validate",
+        "--config",
+        "/tmp/nq-first-run-c53h22of/install/config/missing.json"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/install",
+      "description": "Exercise a configuration path that does not exist",
+      "duration_ms": 1,
+      "exit_code": 1,
+      "finished_at": "2026-07-27T07:42:04.497Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:04.495Z",
+      "stderr": "steps/100-wrong-config-path/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/100-wrong-config-path/stdout.log",
+      "step_id": "100-wrong-config-path",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+        "config",
+        "validate",
+        "--config",
+        "/tmp/nq-first-run-c53h22of/install/config/malformed.json"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/install",
+      "description": "Exercise a syntactically valid but structurally unknown configuration",
+      "duration_ms": 1,
+      "exit_code": 1,
+      "finished_at": "2026-07-27T07:42:04.499Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:04.497Z",
+      "stderr": "steps/101-malformed-configuration/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/101-malformed-configuration/stdout.log",
+      "step_id": "101-malformed-configuration",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+        "config",
+        "validate",
+        "--config",
+        "/tmp/nq-first-run-c53h22of/install/config/permission-denied.json"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/install",
+      "description": "Exercise an unreadable configuration without changing ownership",
+      "duration_ms": 1,
+      "exit_code": 1,
+      "finished_at": "2026-07-27T07:42:04.500Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:04.499Z",
+      "stderr": "steps/102-permission-denied-config/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/102-permission-denied-config/stdout.log",
+      "step_id": "102-permission-denied-config",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+        "config",
+        "validate",
+        "--config",
+        "/tmp/nq-first-run-c53h22of/install/config/unknown-pack.json"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/install",
+      "description": "Exercise an unknown pack ID; no best-effort fallback is allowed",
+      "duration_ms": 1,
+      "exit_code": 1,
+      "finished_at": "2026-07-27T07:42:04.503Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:04.501Z",
+      "stderr": "steps/103-unknown-pack/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/103-unknown-pack/stdout.log",
+      "step_id": "103-unknown-pack",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+        "config",
+        "validate",
+        "--config",
+        "/tmp/nq-first-run-c53h22of/install/config/unknown-check.json"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/install",
+      "description": "Exercise an unknown check ID; typo tolerance is forbidden",
+      "duration_ms": 1,
+      "exit_code": 1,
+      "finished_at": "2026-07-27T07:42:04.505Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:04.503Z",
+      "stderr": "steps/104-unknown-check/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/104-unknown-check/stdout.log",
+      "step_id": "104-unknown-check",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+        "config",
+        "validate",
+        "--config",
+        "/tmp/nq-first-run-c53h22of/install/config/unavailable-pack.json"
+      ],
+      "cwd": "/tmp/nq-first-run-c53h22of/install",
+      "description": "Exercise a known optional pack absent from the default feature graph; compiling it elsewhere must not enable it",
+      "duration_ms": 1,
+      "exit_code": 1,
+      "finished_at": "2026-07-27T07:42:04.507Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:04.505Z",
+      "stderr": "steps/105-unavailable-pack/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/105-unavailable-pack/stdout.log",
+      "step_id": "105-unavailable-pack",
+      "timed_out": false
+    }
+  ],
+  "time_to_first_meaningful_host_result_ms": null,
+  "time_to_first_profile_result_ms": 61093,
+  "track": "source-archive",
+  "verdicts": {
+    "composable": true,
+    "recoverable": true,
+    "self_contained": false,
+    "suitable_for_non_author": false
+  },
+  "workspace": null,
+  "workspace_retained": false
+}

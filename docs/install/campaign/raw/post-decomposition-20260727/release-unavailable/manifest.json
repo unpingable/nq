@@ -1,0 +1,114 @@
+{
+  "blocker": {
+    "code": "release_asset_unavailable",
+    "detail": "https://github.com/unpingable/nq/releases/latest/download/nq-monitor-linux-amd64",
+    "phase": "installation"
+  },
+  "dependency_mode": "isolated-online",
+  "duration_ms": 985,
+  "finished_at": "2026-07-27T07:48:40.980Z",
+  "observations": {
+    "discovery": {
+      "first_use_limit": "This compatibility runtime still links generic host and optional storage collector families in one publisher package; it is not proof of final check-pack isolation.",
+      "optional_components": [
+        "nq-suite",
+        "nq-witness-tool",
+        "application-specific check packs"
+      ],
+      "owner_package": "nq-monitor and nq-monitor-agent",
+      "owner_repository": "https://github.com/unpingable/nq",
+      "profile_contract": "docs/install/INSTALLATION_PROFILES.json",
+      "profile_contract_basis": "evaluator_contract_not_packaged_in_release",
+      "profile_contract_sha256": "e6bfada08a1b2d54b2f5774294f3a38049747b19e31a2cb371aa04346816f8c1",
+      "profile_status": "compatibility_runtime",
+      "purpose": "Run the current operational witness publisher, SQLite evaluator, dashboard, API, and SQL surface.",
+      "required_at_runtime": [
+        "nq-monitor",
+        "nq-witness compatibility publisher"
+      ],
+      "status": "completed"
+    },
+    "installation": {
+      "installed_binaries": [],
+      "prefix": "/tmp/nq-first-run-jljwj7db/install",
+      "prompt_response_supplied": false,
+      "status": "blocked",
+      "system_permission_required": false
+    },
+    "missing_dependency": {
+      "actionability": "The operating system names the missing command. NQ ships no installer preflight that enumerates source-build prerequisites.",
+      "exit_code": 127,
+      "message_present": true,
+      "product_installer_preflight_available": false,
+      "status": "observed"
+    },
+    "removal_and_reset": {
+      "durable_evidence_count": 0,
+      "inventory_count": 0,
+      "plan": "removal-reset-plan.json",
+      "status": "classified_without_deletion"
+    },
+    "upgrade": {
+      "reason": "Installation did not produce nq-monitor.",
+      "status": "not_run"
+    }
+  },
+  "profile": "legacy-operational",
+  "raw_evidence_policy": "Step stdout and stderr are unedited. Curated conclusions are stored separately in this manifest and the failure matrix.",
+  "schema": "nq.install_first_run.campaign.v1",
+  "started_at": "2026-07-27T07:48:39.995Z",
+  "status": "blocked",
+  "steps": [
+    {
+      "argv": [
+        "/usr/bin/env",
+        "cargo",
+        "--version"
+      ],
+      "cwd": "/tmp/nq-first-run-jljwj7db/work",
+      "description": "Exercise a missing Cargo prerequisite without installing it or falling back to the evaluator's PATH",
+      "duration_ms": 0,
+      "exit_code": 127,
+      "finished_at": "2026-07-27T07:48:39.996Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:48:39.995Z",
+      "stderr": "steps/005-missing-build-dependency/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/005-missing-build-dependency/stdout.log",
+      "step_id": "005-missing-build-dependency",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/usr/bin/curl",
+        "-fL",
+        "https://github.com/unpingable/nq/releases/latest/download/nq-monitor-linux-amd64",
+        "-o",
+        "/tmp/nq-first-run-jljwj7db/work/release/nq-monitor-linux-amd64"
+      ],
+      "cwd": "/tmp/nq-first-run-jljwj7db/work/release",
+      "description": "Download the exact release asset declared by the installation profile",
+      "duration_ms": 979,
+      "exit_code": 22,
+      "finished_at": "2026-07-27T07:48:40.977Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:48:39.997Z",
+      "stderr": "steps/010a-download-nq-monitor/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/010a-download-nq-monitor/stdout.log",
+      "step_id": "010a-download-nq-monitor",
+      "timed_out": false
+    }
+  ],
+  "time_to_first_meaningful_host_result_ms": null,
+  "time_to_first_profile_result_ms": null,
+  "track": "release",
+  "verdicts": {
+    "composable": false,
+    "recoverable": false,
+    "self_contained": false,
+    "suitable_for_non_author": false
+  },
+  "workspace": null,
+  "workspace_retained": false
+}

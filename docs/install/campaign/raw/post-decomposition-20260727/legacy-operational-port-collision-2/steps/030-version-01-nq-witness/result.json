@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-o4dtbhep/install/bin/nq-witness",
+    "--version"
+  ],
+  "cwd": "/tmp/nq-first-run-o4dtbhep/install",
+  "description": "Record the installed nq-witness version using its own CLI",
+  "duration_ms": 2,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:48:00.724Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:48:00.721Z",
+  "stderr": "steps/030-version-01-nq-witness/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/030-version-01-nq-witness/stdout.log",
+  "step_id": "030-version-01-nq-witness",
+  "timed_out": false
+}

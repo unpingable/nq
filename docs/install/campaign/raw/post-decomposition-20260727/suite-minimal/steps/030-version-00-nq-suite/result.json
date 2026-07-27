@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+    "--version"
+  ],
+  "cwd": "/tmp/nq-first-run-c53h22of/install",
+  "description": "Record the installed nq-suite version using its own CLI",
+  "duration_ms": 2,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:42:04.476Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:42:04.474Z",
+  "stderr": "steps/030-version-00-nq-suite/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/030-version-00-nq-suite/stdout.log",
+  "step_id": "030-version-00-nq-suite",
+  "timed_out": false
+}

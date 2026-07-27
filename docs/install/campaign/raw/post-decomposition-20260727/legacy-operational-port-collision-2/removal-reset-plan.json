@@ -1,0 +1,115 @@
+{
+  "action_executed": false,
+  "archive_first": true,
+  "generated_at": "2026-07-27T07:48:03.039Z",
+  "items": [
+    {
+      "bytes": 19492992,
+      "classification": "replaceable_artifact",
+      "path": "bin/nq-monitor",
+      "removal_rule": "record version and digest; removal does not reset evidence",
+      "sha256": "14de3c5b84913e3aa33b6b0049dfb9f1e1da61e82dbabfdf60630d3fa9fafb62"
+    },
+    {
+      "bytes": 8480312,
+      "classification": "replaceable_artifact",
+      "path": "bin/nq-witness",
+      "removal_rule": "record version and digest; removal does not reset evidence",
+      "sha256": "65581782d9a16892fd077869bdccea8b22f853fad7a2d45e930465fa4283dacb"
+    },
+    {
+      "bytes": 449,
+      "classification": "durable_operator_record",
+      "path": "config/aggregator.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "8f31a4b3fb09bbad0031db2b622bec1a54281f233d96beb826f3712240a62d25"
+    },
+    {
+      "bytes": 21,
+      "classification": "durable_operator_record",
+      "path": "config/malformed.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "38d17786a590ffb0600bce5291b7a7697ad7efcacda49ad6cc36fdfb987d5eef"
+    },
+    {
+      "bytes": 163,
+      "classification": "durable_operator_record",
+      "path": "config/occupied-monitor.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "dbd0f6feb935986a269f8353bd768f67c29189b54abbdbc495ada342b492ff6f"
+    },
+    {
+      "bytes": 165,
+      "classification": "durable_operator_record",
+      "path": "config/occupied-witness.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "c6e0166eefe29bff4d5601890593d887dc5693783efe0e5d6f18d1924f5dc329"
+    },
+    {
+      "bytes": 3,
+      "classification": "durable_operator_record",
+      "path": "config/permission-denied.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+    },
+    {
+      "bytes": 164,
+      "classification": "durable_operator_record",
+      "path": "config/publisher.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "f61e7bd815820b3752a0e43b7c7b1add0260b3285b6170db221526fc87cf99dd"
+    },
+    {
+      "bytes": 527,
+      "classification": "durable_operator_record",
+      "path": "config/runtime-aggregator.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "93662495a6c539f692be5bdb32f1b1b3190ced24469bc02486713f9a40b43354"
+    },
+    {
+      "bytes": 272,
+      "classification": "durable_operator_record",
+      "path": "config/unavailable-source.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "05ef462b3bc503ca8807a2b579be7692003648aa9f24861ba86d4e410a30e2a0"
+    },
+    {
+      "bytes": 8192,
+      "classification": "durable_evidence",
+      "path": "state/schema-v7.db",
+      "removal_rule": "archive database and sidecars as one stopped-writer set",
+      "sha256": "8fb801fba4125d7d78fcf59875dfa044328e098ce694dfae5f1992e061ae380c"
+    },
+    {
+      "bytes": 4096,
+      "classification": "durable_evidence",
+      "path": "state/unavailable-source.db",
+      "removal_rule": "archive database and sidecars as one stopped-writer set",
+      "sha256": "204f9b3c487346c1a41195dfb82bb3014d9725af5bc2ac3cc4fa41f63bc03565"
+    },
+    {
+      "bytes": 32768,
+      "classification": "durable_evidence",
+      "path": "state/unavailable-source.db-shm",
+      "removal_rule": "archive database and sidecars as one stopped-writer set",
+      "sha256": "51bec9009763286d70866a72fd422c198dc0cd1a757d2eea26dd84dd2dcadbb5"
+    },
+    {
+      "bytes": 2072392,
+      "classification": "durable_evidence",
+      "path": "state/unavailable-source.db-wal",
+      "removal_rule": "archive database and sidecars as one stopped-writer set",
+      "sha256": "b70690a30c9fe10544687bf38e3acbacb4a4a7242f3f28799109ca047af8212c"
+    }
+  ],
+  "refusal": "The campaign does not delete or reset durable evidence merely to make installation or first use pass.",
+  "safe_sequence": [
+    "stop writers",
+    "record binary versions and configuration paths",
+    "archive configuration and the database plus matching sidecars",
+    "verify the archive independently",
+    "move the live set to a dated quarantine",
+    "start a new database only when loss of prior operational history is intentional"
+  ],
+  "schema": "nq.install_first_run.removal_plan.v1"
+}

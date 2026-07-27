@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/usr/bin/install",
+    "-m",
+    "0755",
+    "/tmp/nq-first-run-rpzqe7ar/work/source/nq/target/release/nq-witness",
+    "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-witness"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/work/source/nq",
+  "description": "Install only nq-witness into the isolated profile prefix; no system directory or sibling package is used",
+  "duration_ms": 6,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:45:05.855Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:45:05.849Z",
+  "stderr": "steps/022-install-nq-witness/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/022-install-nq-witness/stdout.log",
+  "step_id": "022-install-nq-witness",
+  "timed_out": false
+}

@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-o4dtbhep/install/bin/nq-witness",
+    "--config",
+    "/tmp/nq-first-run-o4dtbhep/install/config/publisher.json"
+  ],
+  "cwd": "/tmp/nq-first-run-o4dtbhep/install",
+  "description": "Start the compatibility local host publisher on the documented loopback port",
+  "duration_ms": 21,
+  "exit_code": 1,
+  "finished_at": "2026-07-27T07:48:00.775Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:48:00.754Z",
+  "stderr": "steps/052-witness-process/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/052-witness-process/stdout.log",
+  "step_id": "052-witness-process",
+  "timed_out": false
+}

@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+    "config",
+    "validate",
+    "--config",
+    "/tmp/nq-first-run-c53h22of/install/config/missing.json"
+  ],
+  "cwd": "/tmp/nq-first-run-c53h22of/install",
+  "description": "Exercise a configuration path that does not exist",
+  "duration_ms": 1,
+  "exit_code": 1,
+  "finished_at": "2026-07-27T07:42:04.497Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:42:04.495Z",
+  "stderr": "steps/100-wrong-config-path/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/100-wrong-config-path/stdout.log",
+  "step_id": "100-wrong-config-path",
+  "timed_out": false
+}

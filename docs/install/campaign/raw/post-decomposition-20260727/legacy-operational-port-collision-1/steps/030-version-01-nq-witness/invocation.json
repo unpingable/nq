@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-witness",
+    "--version"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+  "description": "Record the installed nq-witness version using its own CLI",
+  "environment": {
+    "CARGO_HOME": "/tmp/nq-first-run-rpzqe7ar/home/.cargo",
+    "GIT_TERMINAL_PROMPT": "0",
+    "HOME": "/tmp/nq-first-run-rpzqe7ar/home",
+    "LANG": "C",
+    "LC_ALL": "C",
+    "NO_PROXY": "127.0.0.1,localhost",
+    "PATH": "/tmp/nq-first-run-rpzqe7ar/install/bin:/usr/local/bin:/usr/bin:/bin",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "RUSTUP_HOME": "/tmp/nq-first-run-rpzqe7ar/home/.rustup",
+    "TMPDIR": "/tmp/nq-first-run-rpzqe7ar/tmp",
+    "TZ": "UTC",
+    "XDG_CACHE_HOME": "/tmp/nq-first-run-rpzqe7ar/home/.cache",
+    "XDG_CONFIG_HOME": "/tmp/nq-first-run-rpzqe7ar/home/.config"
+  },
+  "schema": "nq.install_first_run.step.v1",
+  "stdin": "null_device",
+  "timeout_ms": 15000
+}

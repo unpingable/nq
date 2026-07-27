@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/usr/bin/install",
+    "-m",
+    "0755",
+    "/tmp/nq-first-run-rpzqe7ar/work/source/nq/target/release/nq-monitor",
+    "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/work/source/nq",
+  "description": "Install only nq-monitor into the isolated profile prefix; no system directory or sibling package is used",
+  "duration_ms": 10,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:45:05.849Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:45:05.838Z",
+  "stderr": "steps/021-install-nq-monitor/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/021-install-nq-monitor/stdout.log",
+  "step_id": "021-install-nq-monitor",
+  "timed_out": false
+}

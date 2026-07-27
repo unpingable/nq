@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "/usr/bin/cargo",
+    "build",
+    "--release",
+    "--locked",
+    "-p",
+    "nq-suite"
+  ],
+  "cwd": "/tmp/nq-first-run-c53h22of/work/source/nq",
+  "description": "Build the suite-minimal profile exactly as declared by the versioned installation profile",
+  "duration_ms": 60835,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:42:04.402Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:41:03.566Z",
+  "stderr": "steps/020-source-build/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/020-source-build/stdout.log",
+  "step_id": "020-source-build",
+  "timed_out": false
+}

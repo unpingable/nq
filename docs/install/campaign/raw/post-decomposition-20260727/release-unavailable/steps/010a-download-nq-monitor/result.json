@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/usr/bin/curl",
+    "-fL",
+    "https://github.com/unpingable/nq/releases/latest/download/nq-monitor-linux-amd64",
+    "-o",
+    "/tmp/nq-first-run-jljwj7db/work/release/nq-monitor-linux-amd64"
+  ],
+  "cwd": "/tmp/nq-first-run-jljwj7db/work/release",
+  "description": "Download the exact release asset declared by the installation profile",
+  "duration_ms": 979,
+  "exit_code": 22,
+  "finished_at": "2026-07-27T07:48:40.977Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:48:39.997Z",
+  "stderr": "steps/010a-download-nq-monitor/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/010a-download-nq-monitor/stdout.log",
+  "step_id": "010a-download-nq-monitor",
+  "timed_out": false
+}

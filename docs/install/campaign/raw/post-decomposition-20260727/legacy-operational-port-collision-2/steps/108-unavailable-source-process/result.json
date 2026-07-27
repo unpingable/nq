@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-o4dtbhep/install/bin/nq-monitor",
+    "serve",
+    "--config",
+    "/tmp/nq-first-run-o4dtbhep/install/config/unavailable-source.json"
+  ],
+  "cwd": "/tmp/nq-first-run-o4dtbhep/install",
+  "description": "Run the monitor with one explicitly unavailable witness source",
+  "duration_ms": 2151,
+  "exit_code": -15,
+  "finished_at": "2026-07-27T07:48:02.944Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:48:00.792Z",
+  "stderr": "steps/108-unavailable-source-process/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/108-unavailable-source-process/stdout.log",
+  "step_id": "108-unavailable-source-process",
+  "timed_out": false
+}

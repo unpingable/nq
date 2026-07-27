@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+    "config",
+    "validate",
+    "--config",
+    "/tmp/nq-first-run-rpzqe7ar/install/config/permission-denied.json"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+  "description": "Exercise an unreadable configuration without changing ownership",
+  "duration_ms": 2,
+  "exit_code": 1,
+  "finished_at": "2026-07-27T07:45:06.011Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:45:06.009Z",
+  "stderr": "steps/102-permission-denied-config/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/102-permission-denied-config/stdout.log",
+  "step_id": "102-permission-denied-config",
+  "timed_out": false
+}

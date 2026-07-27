@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+    "query",
+    "--remote",
+    "http://127.0.0.1:48941",
+    "SELECT source, last_status, last_error FROM v_sources ORDER BY source"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+  "description": "Inspect the durable source outcome rather than treating absence as health",
+  "duration_ms": 7,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:45:08.152Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:45:08.145Z",
+  "stderr": "steps/109-unavailable-source-query/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/109-unavailable-source-query/stdout.log",
+  "step_id": "109-unavailable-source-query",
+  "timed_out": false
+}

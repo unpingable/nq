@@ -1,0 +1,577 @@
+{
+  "blocker": {
+    "code": "witness_http_not_ready",
+    "detail": "The literal port may be occupied; it was not changed.",
+    "phase": "first_use"
+  },
+  "dependency_mode": "isolated-online",
+  "duration_ms": 135785,
+  "finished_at": "2026-07-27T07:45:08.263Z",
+  "observations": {
+    "discovery": {
+      "first_use_limit": "This compatibility runtime still links generic host and optional storage collector families in one publisher package; it is not proof of final check-pack isolation.",
+      "optional_components": [
+        "nq-suite",
+        "nq-witness-tool",
+        "application-specific check packs"
+      ],
+      "owner_package": "nq-monitor and nq-monitor-agent",
+      "owner_repository": "https://github.com/unpingable/nq",
+      "profile_contract": "docs/install/INSTALLATION_PROFILES.json",
+      "profile_contract_basis": "inside_committed_source_archive",
+      "profile_contract_sha256": "e6bfada08a1b2d54b2f5774294f3a38049747b19e31a2cb371aa04346816f8c1",
+      "profile_status": "compatibility_runtime",
+      "purpose": "Run the current operational witness publisher, SQLite evaluator, dashboard, API, and SQL surface.",
+      "required_at_runtime": [
+        "nq-monitor",
+        "nq-witness compatibility publisher"
+      ],
+      "status": "completed"
+    },
+    "environment_leaks": {
+      "developer_target_reused": false,
+      "inherited_environment_variable_count": 0,
+      "path_dependencies_outside_source_archive": [],
+      "sibling_checkout_used": false,
+      "status": "not_detected"
+    },
+    "failure_and_recovery": {
+      "malformed_configuration": {
+        "exit_code": 1,
+        "expected_message_fragments": {
+          "no state": false,
+          "unknown field": true
+        },
+        "status": "non_actionable_or_unexpected",
+        "step": "101-malformed-configuration",
+        "timed_out": false
+      },
+      "occupied_monitor_port": {
+        "database_created": false,
+        "exit_code": 1,
+        "expected_message_fragments": {
+          "cannot bind monitor listener": true,
+          "no database was opened": true
+        },
+        "status": "safe_refusal",
+        "step": "107-occupied-monitor-port",
+        "timed_out": false
+      },
+      "occupied_witness_port": {
+        "exit_code": 1,
+        "expected_message_fragments": {
+          "cannot bind publisher listener": true,
+          "no checks ran": true
+        },
+        "status": "safe_refusal",
+        "step": "106-occupied-witness-port",
+        "timed_out": false
+      },
+      "permission_failure": {
+        "exit_code": 1,
+        "expected_message_fragments": {
+          "cannot read": true,
+          "no state": true
+        },
+        "status": "safe_refusal",
+        "step": "102-permission-denied-config",
+        "timed_out": false
+      },
+      "stale_database": {
+        "bytes_unchanged": true,
+        "reported_state": "upgrade_required",
+        "shm_created": false,
+        "status": "upgrade_disclosed_without_mutation",
+        "wal_created": false
+      },
+      "unavailable_sibling_service": {
+        "exit_code": 0,
+        "failure_visible": true,
+        "source_identity_visible": true,
+        "status": "unavailability_visible",
+        "underlying_service_changed": false
+      },
+      "wrong_path": {
+        "exit_code": 1,
+        "expected_message_fragments": {
+          "cannot read": true,
+          "no state was changed": true
+        },
+        "status": "safe_refusal",
+        "step": "100-wrong-config-path",
+        "timed_out": false
+      }
+    },
+    "installation": {
+      "installed_binaries": [
+        "nq-monitor",
+        "nq-witness"
+      ],
+      "prefix": "/tmp/nq-first-run-rpzqe7ar/install",
+      "prompt_response_supplied": false,
+      "status": "installed",
+      "system_permission_required": false
+    },
+    "installed_versions": {
+      "nq-monitor": {
+        "binary_sha256": "8f187c53d7e44ea5cbaccce2bccc27c4c4c8642b0a9cafd1ff98c135f79eebe5",
+        "exit_code": 0,
+        "reported": "nq-monitor 0.1.0"
+      },
+      "nq-witness": {
+        "binary_sha256": "304b500811ae39246c6e8b8ae1449a0413522d537fb9d63a48db7e3e20f09ba5",
+        "exit_code": 0,
+        "reported": "nq-witness 0.1.0"
+      }
+    },
+    "missing_dependency": {
+      "actionability": "The operating system names the missing command. NQ ships no installer preflight that enumerates source-build prerequisites.",
+      "exit_code": 127,
+      "message_present": true,
+      "product_installer_preflight_available": false,
+      "status": "observed"
+    },
+    "removal_and_reset": {
+      "durable_evidence_count": 4,
+      "inventory_count": 14,
+      "plan": "removal-reset-plan.json",
+      "status": "classified_without_deletion"
+    },
+    "upgrade": {
+      "reason": "No supported prior release artifact/database is available and the harness does not manufacture a passing prior state.",
+      "required_input": "--prior-database",
+      "status": "not_run"
+    }
+  },
+  "profile": "legacy-operational",
+  "raw_evidence_policy": "Step stdout and stderr are unedited. Curated conclusions are stored separately in this manifest and the failure matrix.",
+  "schema": "nq.install_first_run.campaign.v1",
+  "started_at": "2026-07-27T07:42:52.477Z",
+  "status": "blocked",
+  "steps": [
+    {
+      "argv": [
+        "/usr/bin/env",
+        "cargo",
+        "--version"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/work",
+      "description": "Exercise a missing Cargo prerequisite without installing it or falling back to the evaluator's PATH",
+      "duration_ms": 0,
+      "exit_code": 127,
+      "finished_at": "2026-07-27T07:42:52.479Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:52.478Z",
+      "stderr": "steps/005-missing-build-dependency/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/005-missing-build-dependency/stdout.log",
+      "step_id": "005-missing-build-dependency",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/usr/bin/cargo",
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "nq-monitor",
+        "-p",
+        "nq-monitor-agent",
+        "--bins"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/work/source/nq",
+      "description": "Build the legacy-operational profile exactly as declared by the versioned installation profile",
+      "duration_ms": 133200,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:45:05.837Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:42:52.636Z",
+      "stderr": "steps/020-source-build/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/020-source-build/stdout.log",
+      "step_id": "020-source-build",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/usr/bin/install",
+        "-m",
+        "0755",
+        "/tmp/nq-first-run-rpzqe7ar/work/source/nq/target/release/nq-monitor",
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/work/source/nq",
+      "description": "Install only nq-monitor into the isolated profile prefix; no system directory or sibling package is used",
+      "duration_ms": 10,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:45:05.849Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:05.838Z",
+      "stderr": "steps/021-install-nq-monitor/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/021-install-nq-monitor/stdout.log",
+      "step_id": "021-install-nq-monitor",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/usr/bin/install",
+        "-m",
+        "0755",
+        "/tmp/nq-first-run-rpzqe7ar/work/source/nq/target/release/nq-witness",
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-witness"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/work/source/nq",
+      "description": "Install only nq-witness into the isolated profile prefix; no system directory or sibling package is used",
+      "duration_ms": 6,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:45:05.855Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:05.849Z",
+      "stderr": "steps/022-install-nq-witness/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/022-install-nq-witness/stdout.log",
+      "step_id": "022-install-nq-witness",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/usr/bin/cargo",
+        "metadata",
+        "--format-version",
+        "1",
+        "--no-deps",
+        "--locked"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/work/source/nq",
+      "description": "Record workspace package and binary identities after the build; path dependencies must remain inside the extracted archive",
+      "duration_ms": 47,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:45:05.904Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:05.856Z",
+      "stderr": "steps/029-source-package-metadata/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/029-source-package-metadata/stdout.log",
+      "step_id": "029-source-package-metadata",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+        "--version"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+      "description": "Record the installed nq-monitor version using its own CLI",
+      "duration_ms": 2,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:45:05.908Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:05.906Z",
+      "stderr": "steps/030-version-00-nq-monitor/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/030-version-00-nq-monitor/stdout.log",
+      "step_id": "030-version-00-nq-monitor",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-witness",
+        "--version"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+      "description": "Record the installed nq-witness version using its own CLI",
+      "duration_ms": 2,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:45:05.951Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:05.949Z",
+      "stderr": "steps/030-version-01-nq-witness/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/030-version-01-nq-witness/stdout.log",
+      "step_id": "030-version-01-nq-witness",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/usr/bin/install",
+        "-m",
+        "0600",
+        "/tmp/nq-first-run-rpzqe7ar/work/source/nq/deploy/quickstart/publisher.json",
+        "/tmp/nq-first-run-rpzqe7ar/install/config/publisher.json"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/work/source/nq",
+      "description": "Copy the literal packaged configuration deploy/quickstart/publisher.json; no JSON is inferred or repaired",
+      "duration_ms": 2,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:45:05.971Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:05.969Z",
+      "stderr": "steps/040-copy-publisher-json/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/040-copy-publisher-json/stdout.log",
+      "step_id": "040-copy-publisher-json",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/usr/bin/install",
+        "-m",
+        "0600",
+        "/tmp/nq-first-run-rpzqe7ar/work/source/nq/deploy/quickstart/aggregator.json",
+        "/tmp/nq-first-run-rpzqe7ar/install/config/aggregator.json"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/work/source/nq",
+      "description": "Copy the literal packaged configuration deploy/quickstart/aggregator.json; no JSON is inferred or repaired",
+      "duration_ms": 2,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:45:05.974Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:05.972Z",
+      "stderr": "steps/040-copy-aggregator-json/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/040-copy-aggregator-json/stdout.log",
+      "step_id": "040-copy-aggregator-json",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-witness",
+        "config",
+        "validate",
+        "--config",
+        "/tmp/nq-first-run-rpzqe7ar/install/config/publisher.json"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+      "description": "Validate the literal publisher configuration with no checks or listener",
+      "duration_ms": 1,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:45:05.977Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:05.975Z",
+      "stderr": "steps/050-witness-config-validation/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/050-witness-config-validation/stdout.log",
+      "step_id": "050-witness-config-validation",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+        "config",
+        "validate",
+        "--config",
+        "/tmp/nq-first-run-rpzqe7ar/install/config/runtime-aggregator.json"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+      "description": "Validate the literal aggregator configuration without opening the database",
+      "duration_ms": 2,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:45:05.980Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:05.977Z",
+      "stderr": "steps/051-monitor-config-validation/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/051-monitor-config-validation/stdout.log",
+      "step_id": "051-monitor-config-validation",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-witness",
+        "--config",
+        "/tmp/nq-first-run-rpzqe7ar/install/config/publisher.json"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+      "description": "Start the compatibility local host publisher on the documented loopback port",
+      "duration_ms": 21,
+      "exit_code": 1,
+      "finished_at": "2026-07-27T07:45:06.002Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:05.981Z",
+      "stderr": "steps/052-witness-process/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/052-witness-process/stdout.log",
+      "step_id": "052-witness-process",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+        "config",
+        "validate",
+        "--config",
+        "/tmp/nq-first-run-rpzqe7ar/install/config/missing.json"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+      "description": "Exercise a configuration path that does not exist",
+      "duration_ms": 2,
+      "exit_code": 1,
+      "finished_at": "2026-07-27T07:45:06.005Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:06.002Z",
+      "stderr": "steps/100-wrong-config-path/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/100-wrong-config-path/stdout.log",
+      "step_id": "100-wrong-config-path",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+        "config",
+        "validate",
+        "--config",
+        "/tmp/nq-first-run-rpzqe7ar/install/config/malformed.json"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+      "description": "Exercise a syntactically valid but structurally unknown configuration",
+      "duration_ms": 2,
+      "exit_code": 1,
+      "finished_at": "2026-07-27T07:45:06.008Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:06.006Z",
+      "stderr": "steps/101-malformed-configuration/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/101-malformed-configuration/stdout.log",
+      "step_id": "101-malformed-configuration",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+        "config",
+        "validate",
+        "--config",
+        "/tmp/nq-first-run-rpzqe7ar/install/config/permission-denied.json"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+      "description": "Exercise an unreadable configuration without changing ownership",
+      "duration_ms": 2,
+      "exit_code": 1,
+      "finished_at": "2026-07-27T07:45:06.011Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:06.009Z",
+      "stderr": "steps/102-permission-denied-config/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/102-permission-denied-config/stdout.log",
+      "step_id": "102-permission-denied-config",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-witness",
+        "--config",
+        "/tmp/nq-first-run-rpzqe7ar/install/config/occupied-witness.json"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+      "description": "Exercise an occupied publisher port without running any check",
+      "duration_ms": 2,
+      "exit_code": 1,
+      "finished_at": "2026-07-27T07:45:06.014Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:06.012Z",
+      "stderr": "steps/106-occupied-witness-port/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/106-occupied-witness-port/stdout.log",
+      "step_id": "106-occupied-witness-port",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+        "serve",
+        "--config",
+        "/tmp/nq-first-run-rpzqe7ar/install/config/occupied-monitor.json"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+      "description": "Exercise an occupied monitor port before database initialization",
+      "duration_ms": 2,
+      "exit_code": 1,
+      "finished_at": "2026-07-27T07:45:06.017Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:06.015Z",
+      "stderr": "steps/107-occupied-monitor-port/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/107-occupied-monitor-port/stdout.log",
+      "step_id": "107-occupied-monitor-port",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+        "query",
+        "--remote",
+        "http://127.0.0.1:48941",
+        "SELECT source, last_status, last_error FROM v_sources ORDER BY source"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+      "description": "Inspect the durable source outcome rather than treating absence as health",
+      "duration_ms": 7,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:45:08.152Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:08.145Z",
+      "stderr": "steps/109-unavailable-source-query/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/109-unavailable-source-query/stdout.log",
+      "step_id": "109-unavailable-source-query",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+        "serve",
+        "--config",
+        "/tmp/nq-first-run-rpzqe7ar/install/config/unavailable-source.json"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+      "description": "Run the monitor with one explicitly unavailable witness source",
+      "duration_ms": 2138,
+      "exit_code": -15,
+      "finished_at": "2026-07-27T07:45:08.157Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:06.018Z",
+      "stderr": "steps/108-unavailable-source-process/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/108-unavailable-source-process/stdout.log",
+      "step_id": "108-unavailable-source-process",
+      "timed_out": false
+    },
+    {
+      "argv": [
+        "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+        "database",
+        "compatibility",
+        "--db",
+        "/tmp/nq-first-run-rpzqe7ar/install/state/schema-v7.db",
+        "--format",
+        "json"
+      ],
+      "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+      "description": "Inspect a deterministic older NQ schema marker read-only; the preflight must disclose migration and leave bytes unchanged",
+      "duration_ms": 8,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T07:45:08.182Z",
+      "schema": "nq.install_first_run.step.v1",
+      "started_at": "2026-07-27T07:45:08.174Z",
+      "stderr": "steps/110-stale-database-preflight/stderr.log",
+      "stdin": "null_device",
+      "stdout": "steps/110-stale-database-preflight/stdout.log",
+      "step_id": "110-stale-database-preflight",
+      "timed_out": false
+    }
+  ],
+  "time_to_first_meaningful_host_result_ms": null,
+  "time_to_first_profile_result_ms": null,
+  "track": "source-archive",
+  "verdicts": {
+    "composable": false,
+    "recoverable": false,
+    "self_contained": false,
+    "suitable_for_non_author": false
+  },
+  "workspace": null,
+  "workspace_retained": false
+}

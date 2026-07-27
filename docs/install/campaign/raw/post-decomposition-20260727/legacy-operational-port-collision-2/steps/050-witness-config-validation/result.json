@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-o4dtbhep/install/bin/nq-witness",
+    "config",
+    "validate",
+    "--config",
+    "/tmp/nq-first-run-o4dtbhep/install/config/publisher.json"
+  ],
+  "cwd": "/tmp/nq-first-run-o4dtbhep/install",
+  "description": "Validate the literal publisher configuration with no checks or listener",
+  "duration_ms": 1,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:48:00.750Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:48:00.748Z",
+  "stderr": "steps/050-witness-config-validation/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/050-witness-config-validation/stdout.log",
+  "step_id": "050-witness-config-validation",
+  "timed_out": false
+}

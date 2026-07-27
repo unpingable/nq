@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/usr/bin/install",
+    "-m",
+    "0755",
+    "/tmp/nq-first-run-c53h22of/work/source/nq/target/release/nq-suite",
+    "/tmp/nq-first-run-c53h22of/install/bin/nq-suite"
+  ],
+  "cwd": "/tmp/nq-first-run-c53h22of/work/source/nq",
+  "description": "Install only nq-suite into the isolated profile prefix; no system directory or sibling package is used",
+  "duration_ms": 3,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:42:04.405Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:42:04.402Z",
+  "stderr": "steps/021-install-nq-suite/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/021-install-nq-suite/stdout.log",
+  "step_id": "021-install-nq-suite",
+  "timed_out": false
+}

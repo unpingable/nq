@@ -1,0 +1,67 @@
+{
+  "malformed_configuration": {
+    "exit_code": 1,
+    "expected_message_fragments": {
+      "no state": false,
+      "unknown field": true
+    },
+    "status": "non_actionable_or_unexpected",
+    "step": "101-malformed-configuration",
+    "timed_out": false
+  },
+  "occupied_monitor_port": {
+    "database_created": false,
+    "exit_code": 1,
+    "expected_message_fragments": {
+      "cannot bind monitor listener": true,
+      "no database was opened": true
+    },
+    "status": "safe_refusal",
+    "step": "107-occupied-monitor-port",
+    "timed_out": false
+  },
+  "occupied_witness_port": {
+    "exit_code": 1,
+    "expected_message_fragments": {
+      "cannot bind publisher listener": true,
+      "no checks ran": true
+    },
+    "status": "safe_refusal",
+    "step": "106-occupied-witness-port",
+    "timed_out": false
+  },
+  "permission_failure": {
+    "exit_code": 1,
+    "expected_message_fragments": {
+      "cannot read": true,
+      "no state": true
+    },
+    "status": "safe_refusal",
+    "step": "102-permission-denied-config",
+    "timed_out": false
+  },
+  "stale_database": {
+    "bytes_unchanged": true,
+    "reported_state": "upgrade_required",
+    "shm_created": false,
+    "status": "upgrade_disclosed_without_mutation",
+    "wal_created": false
+  },
+  "unavailable_sibling_service": {
+    "exit_code": 0,
+    "failure_visible": true,
+    "source_identity_visible": true,
+    "status": "unavailability_visible",
+    "underlying_service_changed": false
+  },
+  "wrong_path": {
+    "exit_code": 1,
+    "expected_message_fragments": {
+      "cannot read": true,
+      "no state was changed": true
+    },
+    "status": "safe_refusal",
+    "step": "100-wrong-config-path",
+    "timed_out": false
+  }
+}

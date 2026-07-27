@@ -1,0 +1,73 @@
+{
+  "operational_conclusion": "The committed-source suite-minimal run successfully built and installed nq-suite 0.1.0, validated the packaged configuration, and produced a plan enabling only nq.host / host.resources. This is a composition result only: launch.available is false, no check ran, no listener or database was opened, and no host was observed. The path safely avoids false health claims but is not an operational first run suitable for a non-author.",
+  "components_required": [
+    "nq-suite"
+  ],
+  "components_optional": [
+    "nq-monitor",
+    "nq-witness compatibility publisher",
+    "nq-witness-tool",
+    "nq-check-pack-storage",
+    "nq-check-pack-labelwatch"
+  ],
+  "first_meaningful_result": "A validated immutable composition plan enabling exactly the nq.host pack and host.resources check; no meaningful monitored-host result was produced.",
+  "fresh_or_current_basis": "The profile result was generated during the recorded clean-room campaign ending 2026-07-27T07:42:04.514Z from a committed source archive with locked dependencies. There is no freshness or current-state basis for any host claim because collection never launched.",
+  "what_changed": [
+    "nq-suite was built from the committed source archive and installed in an isolated temporary prefix.",
+    "The packaged minimal-public configuration was copied into the installation prefix and validated.",
+    "A deterministic composition plan was emitted.",
+    "The campaign workspace was not retained, so the transcript does not establish that the temporary installed files remain present."
+  ],
+  "what_remained_safe": [
+    "No system permission was required and no inherited environment variables, sibling checkout, external path dependency, or developer target directory was used.",
+    "Wrong-path, malformed, unreadable, unknown-pack, unknown-check, and unavailable-pack inputs all refused with exit code 1 without launching listeners or changing operational state.",
+    "No monitor database, WAL, SHM, liveness export, monitored-host evidence, or durable operational evidence was created.",
+    "Removal/reset was classified without deletion.",
+    "No upgrade was attempted without a real prior database."
+  ],
+  "recovery_or_next_action": [
+    "If composition inspection was the goal, stop here and retain the plan and configuration as operator records; do not interpret them as observations.",
+    "To obtain an actual host result, follow the documented compatibility-runtime path using both nq-witness and nq-monitor, then wait for a local-host row in v_hosts; process readiness or an empty overview is insufficient.",
+    "Because the documented release baseline received HTTP 404 and no release bundle supplies nq-suite, use a reviewed committed source revision unless the declared checksummed release artifacts are first verified to exist.",
+    "Install any missing build prerequisite through the host's package policy and repeat the same documented build; do not reuse a developer build tree."
+  ],
+  "durable_state": [
+    "No durable monitored evidence was produced; the manifest records durable_evidence_count as 0.",
+    "The copied nq-suite configuration and emitted plan are operator/deployment records worth preserving, but the campaign reports that its workspace was not retained."
+  ],
+  "disposable_state": [
+    "The installed nq-suite binary is a replaceable artifact after recording its version and digest.",
+    "Cargo, Rustup, and target build caches are disposable after checking that they contain no misplaced operator records.",
+    "The isolated temporary build/install workspace was not retained."
+  ],
+  "unknowns": [
+    "Current host load, memory pressure, filesystem use, uptime, and platform state are unknown because host.resources did not run.",
+    "Application impact is not established by the planned host check.",
+    "Operating-system-specific field coverage is unknown.",
+    "Listener binding, source polling, database initialization, dashboard behavior, and generation advancement were not exercised by this profile.",
+    "Storage and Labelwatch packs were neither installed nor enabled, so they provide no evidence.",
+    "Database upgrade behavior was not exercised because no supported prior database was supplied."
+  ],
+  "unsafe_action_proposed": false,
+  "environment_leak_used": false,
+  "commands_or_files_consulted": [
+    "sed -n '1,240p' SCENARIO.md (cwd: /tmp/nq-install-operator-specimen-f853180/scenarios/minimal-suite)",
+    "sed -n '1,260p' ../../docs/INSTALLATION_AND_FIRST_RUN.md (cwd: /tmp/nq-install-operator-specimen-f853180/scenarios/minimal-suite)",
+    "sed -n '1,260p' ../../docs/INSTALLATION_PROFILES.json (cwd: /tmp/nq-install-operator-specimen-f853180/scenarios/minimal-suite)",
+    "sed -n '1,260p' manifest.json (cwd: /tmp/nq-install-operator-specimen-f853180/scenarios/minimal-suite)",
+    "sed -n '1,320p' plan.json (cwd: /tmp/nq-install-operator-specimen-f853180/scenarios/minimal-suite)",
+    "sed -n '1,320p' /tmp/nq-install-operator-response.schema.json (cwd: /tmp/nq-install-operator-specimen-f853180/scenarios/minimal-suite)",
+    "sed -n '261,520p' ../../docs/INSTALLATION_AND_FIRST_RUN.md (cwd: /tmp/nq-install-operator-specimen-f853180/scenarios/minimal-suite)",
+    "sed -n '261,520p' manifest.json (cwd: /tmp/nq-install-operator-specimen-f853180/scenarios/minimal-suite)"
+  ],
+  "confusing_terms": [
+    "runtime_mode is full even though launch.available is false and no runtime can be started from the plan.",
+    "host_resources is true and the check metadata describes an operator claim in the past tense, although these are planned capabilities and no observation occurred.",
+    "profile_first_use_completed and profile_result can sound operational even though only validation and planning completed.",
+    "The nq-witness executable is owned by nq-monitor-agent, while the nq-witness package builds nq-witness-tool."
+  ],
+  "could_proceed_without_project_knowledge": false,
+  "non_author_suitability": "no",
+  "confidence": 0.99,
+  "critique": "The minimal route is conservative and its failure behavior is safe, but it ends before monitoring and therefore does not satisfy an operator seeking a first host result. The missing installer preflight, absent suite release artifact, unavailable launch seam, and overloaded completion/runtime terminology make the profile non-self-contained for a first-time non-author despite the guide's clear warnings."
+}

@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-o4dtbhep/install/bin/nq-monitor",
+    "config",
+    "validate",
+    "--config",
+    "/tmp/nq-first-run-o4dtbhep/install/config/runtime-aggregator.json"
+  ],
+  "cwd": "/tmp/nq-first-run-o4dtbhep/install",
+  "description": "Validate the literal aggregator configuration without opening the database",
+  "duration_ms": 2,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:48:00.753Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:48:00.750Z",
+  "stderr": "steps/051-monitor-config-validation/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/051-monitor-config-validation/stdout.log",
+  "step_id": "051-monitor-config-validation",
+  "timed_out": false
+}

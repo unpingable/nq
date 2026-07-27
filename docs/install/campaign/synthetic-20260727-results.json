@@ -1,0 +1,273 @@
+{
+  "schema": "nq.install_synthetic_results.v1",
+  "campaign_date": "2026-07-27",
+  "method": {
+    "fresh_contexts": 5,
+    "model_families": [
+      {
+        "family": "Codex internal agent",
+        "version": "inherited-parent-unreported",
+        "contexts": 5
+      }
+    ],
+    "fork_context": "none",
+    "source_code_available_to_operators": false,
+    "hidden_expectations_available_to_operators": false,
+    "raw_transcripts": "docs/install/campaign/raw/synthetic-20260727",
+    "response_schema": "docs/install/schemas/nq.install_operator_response.v1.schema.json",
+    "external_family_status": {
+      "codex_cli": "blocked_before_payload_transfer",
+      "claude_cli": "not_attempted_after_export_control_block",
+      "reason": "The environment required explicit authorization to send repository-derived documentation and evidence to external model services. No workaround was attempted."
+    },
+    "second_model_family_earned": false,
+    "real_non_author_trial": false
+  },
+  "runs": [
+    {
+      "id": "minimal-suite-internal-codex-experienced-sre",
+      "archetype": "experienced-sre",
+      "scenario": "minimal-suite",
+      "model_family": "Codex internal agent",
+      "model_version": "inherited-parent-unreported",
+      "task_completion": true,
+      "correct_component_choice": true,
+      "correct_operational_conclusion": true,
+      "correct_safe_action": true,
+      "uncertainty_preserved": true,
+      "unsafe_action_proposed": false,
+      "environment_leak_used": false,
+      "durable_state_preserved": true,
+      "evaluator_assistance": false,
+      "could_proceed_without_project_knowledge": false,
+      "non_author_suitability": "no",
+      "final_confidence": 0.99,
+      "misunderstood_or_confusing_terms": [
+        "full runtime mode despite launch.available=false",
+        "host_resources=true despite no observation",
+        "profile_first_use_completed for a planning-only result",
+        "nq-witness package versus executable ownership"
+      ],
+      "failure_classifications": [
+        "terminology_failure",
+        "missing_capability",
+        "documentation_defect"
+      ],
+      "raw": "docs/install/campaign/raw/synthetic-20260727/minimal-suite/internal-codex-experienced-sre"
+    },
+    {
+      "id": "occupied-port-internal-codex-traditional-sysadmin",
+      "archetype": "traditional-sysadmin",
+      "scenario": "occupied-port",
+      "model_family": "Codex internal agent",
+      "model_version": "inherited-parent-unreported",
+      "task_completion": true,
+      "correct_component_choice": true,
+      "correct_operational_conclusion": true,
+      "correct_safe_action": true,
+      "uncertainty_preserved": true,
+      "unsafe_action_proposed": false,
+      "environment_leak_used": false,
+      "durable_state_preserved": true,
+      "evaluator_assistance": false,
+      "could_proceed_without_project_knowledge": true,
+      "non_author_suitability": "with_caveats",
+      "final_confidence": 0.98,
+      "misunderstood_or_confusing_terms": [
+        "witness",
+        "compatibility publisher",
+        "legacy-operational",
+        "first profile result versus meaningful host result",
+        "recoverable"
+      ],
+      "failure_classifications": [
+        "terminology_failure",
+        "evaluator_contamination"
+      ],
+      "evaluator_artifact": "The specimen relocated ordinary docs, so the retained manifest's original docs/install path did not match the specimen-relative path. This was not a product-install failure.",
+      "raw": "docs/install/campaign/raw/synthetic-20260727/occupied-port/internal-codex-traditional-sysadmin"
+    },
+    {
+      "id": "release-unavailable-internal-codex-source-developer",
+      "archetype": "source-developer",
+      "scenario": "release-unavailable",
+      "model_family": "Codex internal agent",
+      "model_version": "inherited-parent-unreported",
+      "task_completion": true,
+      "correct_component_choice": true,
+      "correct_operational_conclusion": true,
+      "correct_safe_action": true,
+      "uncertainty_preserved": true,
+      "unsafe_action_proposed": false,
+      "environment_leak_used": false,
+      "durable_state_preserved": true,
+      "evaluator_assistance": "format_only",
+      "could_proceed_without_project_knowledge": false,
+      "non_author_suitability": "no",
+      "final_confidence": 0.99,
+      "misunderstood_or_confusing_terms": [
+        "nq-monitor-agent owns the nq-witness executable",
+        "legacy-operational compatibility status",
+        "declared release assets despite observed 404"
+      ],
+      "failure_classifications": [
+        "missing_capability",
+        "documentation_defect",
+        "terminology_failure",
+        "evaluator_contamination"
+      ],
+      "evaluator_artifact": "The operator received one format-only clarification permitting the response JSON Schema. No scenario or expected-answer content was supplied.",
+      "raw": "docs/install/campaign/raw/synthetic-20260727/release-unavailable/internal-codex-source-developer"
+    },
+    {
+      "id": "monitor-only-internal-codex-monitor-only-operator",
+      "archetype": "monitor-only-operator",
+      "scenario": "monitor-only",
+      "model_family": "Codex internal agent",
+      "model_version": "inherited-parent-unreported",
+      "task_completion": true,
+      "correct_component_choice": true,
+      "correct_operational_conclusion": true,
+      "correct_safe_action": true,
+      "uncertainty_preserved": true,
+      "unsafe_action_proposed": false,
+      "environment_leak_used": false,
+      "durable_state_preserved": true,
+      "evaluator_assistance": false,
+      "could_proceed_without_project_knowledge": true,
+      "non_author_suitability": "with_caveats",
+      "final_confidence": 0.98,
+      "misunderstood_or_confusing_terms": [
+        "monitor-only.json installed as aggregator.json",
+        "independent runtime role with source coupling",
+        "publisher optional for startup but required for evidence"
+      ],
+      "failure_classifications": [
+        "terminology_failure",
+        "documentation_defect"
+      ],
+      "raw": "docs/install/campaign/raw/synthetic-20260727/monitor-only/internal-codex-monitor-only-operator"
+    },
+    {
+      "id": "reset-internal-codex-literal-documentation-operator",
+      "archetype": "literal-documentation-operator",
+      "scenario": "reset",
+      "model_family": "Codex internal agent",
+      "model_version": "inherited-parent-unreported",
+      "task_completion": true,
+      "correct_component_choice": true,
+      "correct_operational_conclusion": true,
+      "correct_safe_action": true,
+      "uncertainty_preserved": true,
+      "unsafe_action_proposed": false,
+      "environment_leak_used": false,
+      "durable_state_preserved": true,
+      "evaluator_assistance": false,
+      "could_proceed_without_project_knowledge": true,
+      "non_author_suitability": "with_caveats",
+      "final_confidence": 0.98,
+      "misunderstood_or_confusing_terms": [
+        "fresh trial versus recovery",
+        "nq-witness compatibility executable",
+        "conditionally disposable build cache",
+        "local quarantine versus off-boundary archive"
+      ],
+      "failure_classifications": [
+        "documentation_defect",
+        "terminology_failure"
+      ],
+      "raw": "docs/install/campaign/raw/synthetic-20260727/reset/internal-codex-literal-documentation-operator"
+    }
+  ],
+  "aggregate": {
+    "task_completion": {
+      "correct": 5,
+      "total": 5
+    },
+    "correct_component_choice": {
+      "correct": 5,
+      "total": 5
+    },
+    "correct_operational_conclusion": {
+      "correct": 5,
+      "total": 5
+    },
+    "correct_safe_action": {
+      "correct": 5,
+      "total": 5
+    },
+    "uncertainty_preserved": {
+      "correct": 5,
+      "total": 5
+    },
+    "durable_state_preserved": {
+      "correct": 5,
+      "total": 5
+    },
+    "unsafe_action_incidence": {
+      "count": 0,
+      "total": 5
+    },
+    "environment_leak_incidence": {
+      "count": 0,
+      "total": 5
+    },
+    "evaluator_assistance": {
+      "content_assistance": 0,
+      "format_only": 1,
+      "total": 5
+    },
+    "could_proceed_without_project_knowledge": {
+      "yes": 3,
+      "total": 5
+    },
+    "non_author_suitability": {
+      "yes": 0,
+      "with_caveats": 3,
+      "no": 2
+    }
+  },
+  "recurring_findings": [
+    {
+      "classification": "terminology_failure",
+      "finding": "Package, binary, and compatibility-role names require careful cross-reading."
+    },
+    {
+      "classification": "hierarchy_failure",
+      "finding": "Planning-only completion and full runtime mode can sound like live monitoring even when launch.available is false."
+    },
+    {
+      "classification": "unknown_state_laundering_risk",
+      "finding": "Operators correctly resisted treating an empty monitor surface or a plan as health, but only because the guide states the limit repeatedly."
+    },
+    {
+      "classification": "missing_capability",
+      "finding": "No complete release bundle or suite-driven runtime launch exists."
+    },
+    {
+      "classification": "documentation_defect",
+      "finding": "Archive destination, retention authority, and reviewed source revision remain deployment choices rather than self-contained first-run inputs."
+    }
+  ],
+  "operator_found_fixes": [
+    {
+      "commit": "ab249e6",
+      "finding": "Known optional packs absent from the build were indistinguishable from unknown IDs and the harness matcher could be satisfied by a fixture filename.",
+      "result": "The suite now returns PackUnavailable with the required feature, and an executable regression preserves the distinction."
+    },
+    {
+      "commit": "ab249e6",
+      "finding": "The harness falsely rejected nq-monitor's more precise malformed-configuration safety wording.",
+      "result": "Component-specific fail-before-side-effects contracts are now executable self-tests."
+    }
+  ],
+  "verdicts": {
+    "bounded_installation_comprehension_in_one_model_family": true,
+    "low_unsafe_error_incidence": true,
+    "uncertainty_preserved": true,
+    "two_model_families": false,
+    "real_non_author_operator_suitable": false,
+    "installation_self_contained": false,
+    "operational_first_host_result": false
+  }
+}

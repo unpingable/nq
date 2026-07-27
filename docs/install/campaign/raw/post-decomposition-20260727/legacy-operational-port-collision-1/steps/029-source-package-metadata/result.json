@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "/usr/bin/cargo",
+    "metadata",
+    "--format-version",
+    "1",
+    "--no-deps",
+    "--locked"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/work/source/nq",
+  "description": "Record workspace package and binary identities after the build; path dependencies must remain inside the extracted archive",
+  "duration_ms": 47,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:45:05.904Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:45:05.856Z",
+  "stderr": "steps/029-source-package-metadata/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/029-source-package-metadata/stdout.log",
+  "step_id": "029-source-package-metadata",
+  "timed_out": false
+}

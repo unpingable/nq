@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-o4dtbhep/install/bin/nq-monitor",
+    "--version"
+  ],
+  "cwd": "/tmp/nq-first-run-o4dtbhep/install",
+  "description": "Record the installed nq-monitor version using its own CLI",
+  "duration_ms": 2,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:48:00.680Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:48:00.677Z",
+  "stderr": "steps/030-version-00-nq-monitor/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/030-version-00-nq-monitor/stdout.log",
+  "step_id": "030-version-00-nq-monitor",
+  "timed_out": false
+}

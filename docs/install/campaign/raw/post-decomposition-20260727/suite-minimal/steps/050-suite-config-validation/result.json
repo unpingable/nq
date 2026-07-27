@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+    "config",
+    "validate",
+    "--config",
+    "/tmp/nq-first-run-c53h22of/install/config/nq-suite.json"
+  ],
+  "cwd": "/tmp/nq-first-run-c53h22of/install",
+  "description": "Validate the packaged minimal host-only suite configuration",
+  "duration_ms": 2,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:42:04.493Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:42:04.491Z",
+  "stderr": "steps/050-suite-config-validation/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/050-suite-config-validation/stdout.log",
+  "step_id": "050-suite-config-validation",
+  "timed_out": false
+}

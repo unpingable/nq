@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-witness",
+    "--config",
+    "/tmp/nq-first-run-rpzqe7ar/install/config/occupied-witness.json"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+  "description": "Exercise an occupied publisher port without running any check",
+  "duration_ms": 2,
+  "exit_code": 1,
+  "finished_at": "2026-07-27T07:45:06.014Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:45:06.012Z",
+  "stderr": "steps/106-occupied-witness-port/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/106-occupied-witness-port/stdout.log",
+  "step_id": "106-occupied-witness-port",
+  "timed_out": false
+}

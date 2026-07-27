@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+    "config",
+    "validate",
+    "--config",
+    "/tmp/nq-first-run-c53h22of/install/config/unavailable-pack.json"
+  ],
+  "cwd": "/tmp/nq-first-run-c53h22of/install",
+  "description": "Exercise a known optional pack absent from the default feature graph; compiling it elsewhere must not enable it",
+  "duration_ms": 1,
+  "exit_code": 1,
+  "finished_at": "2026-07-27T07:42:04.507Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:42:04.505Z",
+  "stderr": "steps/105-unavailable-pack/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/105-unavailable-pack/stdout.log",
+  "step_id": "105-unavailable-pack",
+  "timed_out": false
+}

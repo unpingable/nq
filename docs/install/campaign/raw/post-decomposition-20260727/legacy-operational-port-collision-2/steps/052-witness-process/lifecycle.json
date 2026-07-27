@@ -1,0 +1,4 @@
+{
+  "process_group_isolated": true,
+  "terminated_by_harness": false
+}

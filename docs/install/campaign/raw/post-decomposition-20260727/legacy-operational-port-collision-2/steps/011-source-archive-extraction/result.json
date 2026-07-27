@@ -1,0 +1,10 @@
+{
+  "description": "Extract the accepted source archive into the isolated workspace",
+  "duration_ms": 88,
+  "exit_code": 0,
+  "git_checkout_present": false,
+  "schema": "nq.install_first_run.step.v1",
+  "sibling_checkout_present": false,
+  "source_root": "/tmp/nq-first-run-o4dtbhep/work/source/nq",
+  "step_id": "011-source-archive-extraction"
+}

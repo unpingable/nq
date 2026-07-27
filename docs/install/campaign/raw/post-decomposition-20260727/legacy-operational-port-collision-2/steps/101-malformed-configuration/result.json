@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-o4dtbhep/install/bin/nq-monitor",
+    "config",
+    "validate",
+    "--config",
+    "/tmp/nq-first-run-o4dtbhep/install/config/malformed.json"
+  ],
+  "cwd": "/tmp/nq-first-run-o4dtbhep/install",
+  "description": "Exercise a syntactically valid but structurally unknown configuration",
+  "duration_ms": 2,
+  "exit_code": 1,
+  "finished_at": "2026-07-27T07:48:00.782Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:48:00.779Z",
+  "stderr": "steps/101-malformed-configuration/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/101-malformed-configuration/stdout.log",
+  "step_id": "101-malformed-configuration",
+  "timed_out": false
+}

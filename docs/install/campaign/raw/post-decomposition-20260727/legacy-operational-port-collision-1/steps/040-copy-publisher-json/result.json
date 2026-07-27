@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/usr/bin/install",
+    "-m",
+    "0600",
+    "/tmp/nq-first-run-rpzqe7ar/work/source/nq/deploy/quickstart/publisher.json",
+    "/tmp/nq-first-run-rpzqe7ar/install/config/publisher.json"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/work/source/nq",
+  "description": "Copy the literal packaged configuration deploy/quickstart/publisher.json; no JSON is inferred or repaired",
+  "duration_ms": 2,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:45:05.971Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:45:05.969Z",
+  "stderr": "steps/040-copy-publisher-json/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/040-copy-publisher-json/stdout.log",
+  "step_id": "040-copy-publisher-json",
+  "timed_out": false
+}

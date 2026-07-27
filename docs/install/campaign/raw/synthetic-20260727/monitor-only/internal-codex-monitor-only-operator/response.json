@@ -1,0 +1,72 @@
+{
+  "operational_conclusion": "Install only the `nq-monitor` runtime from a reviewed source revision. With `NQ_BUILD_ROOT` set to the extracted archive and `NQ_PREFIX` set to the installation prefix, run `install -d -m 0755 \"$NQ_PREFIX/bin\" \"$NQ_PREFIX/etc\" \"$NQ_PREFIX/state\"`; from `$NQ_BUILD_ROOT`, run `cargo build --release --locked -p nq-monitor --bin nq-monitor`; run `install -m 0755 target/release/nq-monitor \"$NQ_PREFIX/bin/nq-monitor\"`; install the packaged `deploy/quickstart/monitor-only.json` as `$NQ_PREFIX/etc/aggregator.json`; then, from `$NQ_PREFIX/state`, run `../bin/nq-monitor config validate --config ../etc/aggregator.json` followed by `../bin/nq-monitor serve --config ../etc/aggregator.json`. The documented release asset returned HTTP 404 in the 2026-07-27 baseline, so this source-build result must not be represented as a successful release installation.",
+  "components_required": [
+    "`nq-monitor` binary from package `nq-monitor`",
+    "Packaged monitor-only configuration installed as `aggregator.json`",
+    "Linux, Rust/Cargo 1.88 or the pinned Rustup toolchain, a native C compiler/linker, and the documented source-build utilities"
+  ],
+  "components_optional": [
+    "Remote `nq-witness` publishers are optional for starting the monitor surface but required before it can contain monitored-system evidence",
+    "`nq-suite`",
+    "`nq-witness-tool`"
+  ],
+  "first_meaningful_result": "For this profile, the first meaningful result is a successfully validated configuration followed by a reachable monitor/dashboard surface. Because `sources` is empty, that result establishes only that the `nq-monitor` process and empty configuration can run independently; it is not a monitored-host result.",
+  "fresh_or_current_basis": "There is no evidence-freshness basis: `monitor-only.json` contains `\"sources\": []`. Fresh or current system evidence can be established only after a remote publisher is configured, its source is visible, and its generations are observed advancing.",
+  "what_changed": [
+    "The source build creates `target/release/nq-monitor`, and installation copies that one runtime binary under `$NQ_PREFIX/bin`.",
+    "The packaged monitor-only configuration is preserved under `$NQ_PREFIX/etc/aggregator.json`.",
+    "Starting `serve` binds the configured loopback address `127.0.0.1:9848` and may create or update relative state under `$NQ_PREFIX/state`, including `nq.db` and `liveness.json`.",
+    "No publisher executable is installed and no source is configured."
+  ],
+  "what_remained_safe": [
+    "Configuration validation alone does not bind a listener, collect data, contact a source, create a database, or migrate an existing database.",
+    "No local checks or collectors run in this profile.",
+    "No remote host is contacted while the source list remains empty.",
+    "An empty dashboard or absence of issues is not interpreted as health of this host, another host, or any service.",
+    "The monitor-only runtime separation does not establish final independent release packaging because the source package retains transitional source dependencies."
+  ],
+  "recovery_or_next_action": [
+    "Use a reviewed full commit identity or reviewed release tag and retain the downloaded archive digest with the installation record.",
+    "Validate the configuration before every startup.",
+    "If port 9848 is occupied, inspect it with `ss -ltnp 'sport = :9848'`; do not change the port merely to hide the collision.",
+    "When monitoring is needed, add an explicitly configured remote `nq-witness` publisher and verify a named source plus advancing generations before drawing any health conclusion.",
+    "Before reset or removal, stop the monitor and archive `nq.db` together with any `nq.db-wal` and `nq.db-shm` files, plus the configuration.",
+    "Keep the release-install path blocked until the declared, checksummed `nq-monitor-linux-{arch}` artifact actually exists."
+  ],
+  "durable_state": [
+    "`$NQ_PREFIX/state/nq.db` and matching `nq.db-wal` and `nq.db-shm` files are durable operational evidence and must be preserved as one stopped-writer set.",
+    "`$NQ_PREFIX/etc/aggregator.json` is a durable operator/deployment record.",
+    "Installation version, source revision, and archive or binary digests should be retained as installation records."
+  ],
+  "disposable_state": [
+    "`liveness.json` is replaceable derived state after durable database and configuration records are preserved.",
+    "Cargo, Rustup, download, and `target` caches are disposable after confirming that they contain no operator-authored configuration or evidence.",
+    "The installed binary is replaceable after its version and digest are recorded; removing it does not remove durable evidence."
+  ],
+  "unknowns": [
+    "The reviewed source revision or tag to install was not supplied.",
+    "Host prerequisite availability, filesystem permissions, free resources, and port 9848 availability were not tested.",
+    "No remote publisher endpoint, identity, routing, or evidence freshness exists yet.",
+    "The guide records a 2026-07-27 release-asset 404; no new network check was performed to establish later artifact availability.",
+    "No process was started, so dashboard reachability and state-file creation were not observed."
+  ],
+  "unsafe_action_proposed": false,
+  "environment_leak_used": false,
+  "commands_or_files_consulted": [
+    "`sed -n '1,240p' SCENARIO.md` in `/tmp/nq-install-operator-specimen-f853180/scenarios/monitor-only`; consulted `SCENARIO.md`",
+    "`sed -n '1,1000p' ../../docs/INSTALLATION_AND_FIRST_RUN.md` in `/tmp/nq-install-operator-specimen-f853180/scenarios/monitor-only`; consulted `/tmp/nq-install-operator-specimen-f853180/docs/INSTALLATION_AND_FIRST_RUN.md`",
+    "`sed -n '1,1000p' ../../docs/INSTALLATION_PROFILES.json` in `/tmp/nq-install-operator-specimen-f853180/scenarios/monitor-only`; consulted `/tmp/nq-install-operator-specimen-f853180/docs/INSTALLATION_PROFILES.json`",
+    "`sed -n '1,1000p' monitor-only.json` in `/tmp/nq-install-operator-specimen-f853180/scenarios/monitor-only`; consulted `monitor-only.json`",
+    "`sed -n '1,1000p' /tmp/nq-install-operator-response.schema.json` in `/tmp/nq-install-operator-specimen-f853180/scenarios/monitor-only`; consulted `/tmp/nq-install-operator-response.schema.json`"
+  ],
+  "confusing_terms": [
+    "The packaged file is named `monitor-only.json` but is installed and passed to the CLI as `aggregator.json`.",
+    "`independent_runtime_role_with_source_coupling` means one runtime binary is sufficient, not that source or release packaging is fully independent.",
+    "A remote publisher is optional for dashboard startup but required for monitored-system evidence.",
+    "An empty surface showing no issues means no evidence is present, not that all systems are healthy."
+  ],
+  "could_proceed_without_project_knowledge": true,
+  "non_author_suitability": "with_caveats",
+  "confidence": 0.98,
+  "critique": "The monitor-only instructions clearly identify the single runtime binary, exact build and startup commands, packaged configuration, and the semantic limit of an empty source list. The main operational caveat is that the declared release asset was unavailable in the recorded baseline, forcing a reviewed source build with Rust and native build prerequisites. The `aggregator.json` naming and the phrase about independent runtime role versus source coupling may also confuse a new operator."
+}

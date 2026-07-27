@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+    "--version"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+  "description": "Record the installed nq-monitor version using its own CLI",
+  "duration_ms": 2,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:45:05.908Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:45:05.906Z",
+  "stderr": "steps/030-version-00-nq-monitor/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/030-version-00-nq-monitor/stdout.log",
+  "step_id": "030-version-00-nq-monitor",
+  "timed_out": false
+}

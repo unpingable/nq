@@ -1,0 +1,15 @@
+{
+  "archive": "/tmp/nq-f853180-install.tar",
+  "committed_source_basis": true,
+  "description": "Validate the immutable source archive before extraction; links, devices, unsafe paths, and checkout metadata are refused",
+  "duration_ms": 0,
+  "exit_code": 0,
+  "git_archive_commit": "f853180cfa6b3368f1a0335d257ddf1be7b50be3",
+  "member_count": 990,
+  "origin_limit": "A Git archive commit header binds the tree to a commit.",
+  "schema": "nq.install_first_run.step.v1",
+  "sha256": "507396f50c138e22e904f74b712c6012f7273f4700518621f82e55cbbc99bad3",
+  "step_id": "010-source-archive-inspection",
+  "top_level": "nq",
+  "uncompressed_bytes": 17204328
+}

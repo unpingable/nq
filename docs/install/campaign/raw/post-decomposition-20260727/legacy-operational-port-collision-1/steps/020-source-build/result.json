@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "/usr/bin/cargo",
+    "build",
+    "--release",
+    "--locked",
+    "-p",
+    "nq-monitor",
+    "-p",
+    "nq-monitor-agent",
+    "--bins"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/work/source/nq",
+  "description": "Build the legacy-operational profile exactly as declared by the versioned installation profile",
+  "duration_ms": 133200,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:45:05.837Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:42:52.636Z",
+  "stderr": "steps/020-source-build/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/020-source-build/stdout.log",
+  "step_id": "020-source-build",
+  "timed_out": false
+}

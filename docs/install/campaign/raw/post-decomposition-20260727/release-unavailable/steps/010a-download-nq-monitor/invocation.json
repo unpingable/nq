@@ -1,0 +1,29 @@
+{
+  "argv": [
+    "/usr/bin/curl",
+    "-fL",
+    "https://github.com/unpingable/nq/releases/latest/download/nq-monitor-linux-amd64",
+    "-o",
+    "/tmp/nq-first-run-jljwj7db/work/release/nq-monitor-linux-amd64"
+  ],
+  "cwd": "/tmp/nq-first-run-jljwj7db/work/release",
+  "description": "Download the exact release asset declared by the installation profile",
+  "environment": {
+    "CARGO_HOME": "/tmp/nq-first-run-jljwj7db/home/.cargo",
+    "GIT_TERMINAL_PROMPT": "0",
+    "HOME": "/tmp/nq-first-run-jljwj7db/home",
+    "LANG": "C",
+    "LC_ALL": "C",
+    "NO_PROXY": "127.0.0.1,localhost",
+    "PATH": "/tmp/nq-first-run-jljwj7db/install/bin:/usr/local/bin:/usr/bin:/bin",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "RUSTUP_HOME": "/tmp/nq-first-run-jljwj7db/home/.rustup",
+    "TMPDIR": "/tmp/nq-first-run-jljwj7db/tmp",
+    "TZ": "UTC",
+    "XDG_CACHE_HOME": "/tmp/nq-first-run-jljwj7db/home/.cache",
+    "XDG_CONFIG_HOME": "/tmp/nq-first-run-jljwj7db/home/.config"
+  },
+  "schema": "nq.install_first_run.step.v1",
+  "stdin": "null_device",
+  "timeout_ms": 120000
+}

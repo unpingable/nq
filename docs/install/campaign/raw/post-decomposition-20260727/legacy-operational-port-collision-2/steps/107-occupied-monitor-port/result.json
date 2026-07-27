@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-o4dtbhep/install/bin/nq-monitor",
+    "serve",
+    "--config",
+    "/tmp/nq-first-run-o4dtbhep/install/config/occupied-monitor.json"
+  ],
+  "cwd": "/tmp/nq-first-run-o4dtbhep/install",
+  "description": "Exercise an occupied monitor port before database initialization",
+  "duration_ms": 2,
+  "exit_code": 1,
+  "finished_at": "2026-07-27T07:48:00.791Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:48:00.788Z",
+  "stderr": "steps/107-occupied-monitor-port/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/107-occupied-monitor-port/stdout.log",
+  "step_id": "107-occupied-monitor-port",
+  "timed_out": false
+}

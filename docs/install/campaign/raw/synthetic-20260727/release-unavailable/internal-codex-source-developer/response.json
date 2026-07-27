@@ -1,0 +1,71 @@
+{
+  "operational_conclusion": "The legacy-operational public-release installation is blocked. The exact declared nq-monitor asset returned HTTP 404 with curl exit code 22, so installation produced no binaries. The required nq-witness asset was not reached. A documented source fallback is also not immediately runnable in the captured isolated environment because cargo --version exited 127.",
+  "components_required": [
+    "nq-monitor",
+    "nq-witness compatibility publisher"
+  ],
+  "components_optional": [
+    "nq-suite",
+    "nq-witness-tool",
+    "application-specific check packs"
+  ],
+  "first_meaningful_result": "Not reached. For this profile, the first meaningful result would be a local-host row in v_hosts after the witness publisher and monitor have exchanged and evaluated a generation; process startup, an empty overview, or database creation would not suffice.",
+  "fresh_or_current_basis": "The captured attempt used the profile's mutable releases/latest/download URL and recorded HTTP 404 on 2026-07-27. The installation guide independently records the same clean-room baseline date and result. No claim is made about availability after that captured attempt.",
+  "what_changed": [
+    "A transient HTTP request was made for https://github.com/unpingable/nq/releases/latest/download/nq-monitor-linux-amd64.",
+    "No NQ binary was installed; installed_binaries is empty.",
+    "No profile result or meaningful host result was produced.",
+    "The campaign's temporary workspace was not retained."
+  ],
+  "what_remained_safe": [
+    "No monitor or witness process was started.",
+    "No checks ran, no listener was bound, and no monitor database was opened.",
+    "No durable evidence or installation inventory was created.",
+    "No system permission was required.",
+    "Removal/reset was classified without deleting anything.",
+    "No undeclared asset, developer binary, or checkout was used."
+  ],
+  "recovery_or_next_action": [
+    "Keep the release path blocked; do not guess another asset name or copy a binary from a developer target directory.",
+    "Verify that a release actually publishes the exact required profile artifacts and independent checksums before retrying the release installation.",
+    "If installation is needed before a complete release exists, select a full reviewed commit or reviewed tag, obtain its committed source archive through the documented source path, record its digest, and follow Path B.",
+    "Before using the source path in this environment, deliberately install Cargo/Rust 1.88 and any other named build prerequisites through the host's package policy, then repeat the documented command."
+  ],
+  "durable_state": [
+    "None recorded: durable_evidence_count and inventory_count were both zero, and no database, configuration, backup, or witness/decision artifact was created."
+  ],
+  "disposable_state": [
+    "Only the campaign's temporary work/download area was implicated; the manifest says it was not retained."
+  ],
+  "unknowns": [
+    "Whether nq-witness-linux-amd64 was available, because the attempt stopped after the required nq-monitor asset failed.",
+    "Whether either declared release asset or its checksum became available after the captured attempt.",
+    "Whether the native compiler, linker, tar, install, SHA-256 tooling, memory, and disk prerequisites are present; they were not exercised.",
+    "Which full commit or reviewed tag an operator should select for the source fallback.",
+    "Whether curl briefly created an empty or partial destination file before the temporary workspace was removed."
+  ],
+  "unsafe_action_proposed": false,
+  "environment_leak_used": false,
+  "commands_or_files_consulted": [
+    "sed -n '1,240p' SCENARIO.md",
+    "sed -n '1,260p' ../../docs/INSTALLATION_AND_FIRST_RUN.md",
+    "sed -n '1,260p' ../../docs/INSTALLATION_PROFILES.json",
+    "sed -n '1,260p' manifest.json",
+    "sed -n '1,260p' download.stderr",
+    "sed -n '261,520p' ../../docs/INSTALLATION_AND_FIRST_RUN.md",
+    "sed -n '261,520p' ../../docs/INSTALLATION_PROFILES.json",
+    "sed -n '261,520p' manifest.json",
+    "sed -n '261,520p' download.stderr",
+    "sed -n '1,260p' /tmp/nq-install-operator-response.schema.json"
+  ],
+  "confusing_terms": [
+    "The nq-witness compatibility executable is owned by package nq-monitor-agent, while package nq-witness builds nq-witness-tool.",
+    "legacy-operational is described as a compatibility runtime, which makes its support status less obvious from the profile name.",
+    "The profile declares release assets and checksums even though the documented baseline says the advertised nq-monitor asset is absent.",
+    "The manifest names docs/install/INSTALLATION_PROFILES.json as its profile contract, while the supplied ordinary guide points to docs/INSTALLATION_PROFILES.json."
+  ],
+  "could_proceed_without_project_knowledge": false,
+  "non_author_suitability": "no",
+  "confidence": 0.99,
+  "critique": "The failure is explicit and safely bounded, but the documented public distribution path cannot currently deliver the selected runtime. The release contract advertises artifacts that the captured latest release does not provide, supplies no complete independent bundle of binaries, configurations, and checksums, and the fallback requires an operator-selected reviewed revision that is not named. A non-author can understand why they must stop, but cannot complete installation from the public release path as documented."
+}

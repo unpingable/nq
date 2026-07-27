@@ -1,0 +1,717 @@
+{
+  "schema": "nq.install_campaign_curated_result.v1",
+  "campaign_date": "2026-07-27",
+  "source_basis": {
+    "commit": "f853180cfa6b3368f1a0335d257ddf1be7b50be3",
+    "archive_path_at_execution": "/tmp/nq-f853180-install.tar",
+    "archive_sha256": "507396f50c138e22e904f74b712c6012f7273f4700518621f82e55cbbc99bad3",
+    "git_archive_commit_header": "f853180cfa6b3368f1a0335d257ddf1be7b50be3",
+    "member_count": 990,
+    "uncompressed_bytes": 17204328,
+    "top_level": "nq",
+    "committed_source_basis": true,
+    "git_checkout_present_after_extraction": false,
+    "sibling_checkout_present_after_extraction": false
+  },
+  "outer_invocation_recording_limit": {
+    "raw_outer_python_argv_retained": false,
+    "statement": "The raw evidence begins inside the harness. Reproduction commands use the exact recorded track, profile, archive, dependency mode, and output inputs, but are not represented as a retained outer-shell transcript.",
+    "reproduction_argv": [
+      [
+        "python3",
+        "scripts/install-first-run-campaign.py",
+        "--track",
+        "source-archive",
+        "--profile",
+        "suite-minimal",
+        "--source-archive",
+        "/tmp/nq-f853180-install.tar",
+        "--dependency-mode",
+        "isolated-online",
+        "--output",
+        "/tmp/nq-f853180-suite-online-evidence"
+      ],
+      [
+        "python3",
+        "scripts/install-first-run-campaign.py",
+        "--track",
+        "source-archive",
+        "--profile",
+        "legacy-operational",
+        "--source-archive",
+        "/tmp/nq-f853180-install.tar",
+        "--dependency-mode",
+        "isolated-online",
+        "--output",
+        "/tmp/nq-f853180-operational-online-evidence"
+      ],
+      [
+        "python3",
+        "scripts/install-first-run-campaign.py",
+        "--track",
+        "source-archive",
+        "--profile",
+        "legacy-operational",
+        "--source-archive",
+        "/tmp/nq-f853180-install.tar",
+        "--dependency-mode",
+        "isolated-online",
+        "--output",
+        "/tmp/nq-f853180-operational-online-second-specimen"
+      ],
+      [
+        "python3",
+        "scripts/install-first-run-campaign.py",
+        "--track",
+        "release",
+        "--profile",
+        "legacy-operational",
+        "--dependency-mode",
+        "isolated-online",
+        "--output",
+        "/tmp/nq-f853180-release-evidence"
+      ]
+    ]
+  },
+  "evidence_policy": {
+    "raw_files_copied_into_repository": true,
+    "retained_raw_root": "docs/install/campaign/raw/post-decomposition-20260727",
+    "raw_execution_workspaces_removed": true,
+    "all_product_step_argv_recorded_in_retained_manifests": true,
+    "synthetic_operator_run_performed_separately": true,
+    "synthetic_operator_evidence_root": "docs/install/campaign/raw/synthetic-20260727",
+    "non_author_human_trial_performed": false,
+    "claim_limit": "No synthetic-usability, non-author-success, public-release-success, or operational-host-success claim is supported."
+  },
+  "runs": [
+    {
+      "id": "suite-online",
+      "evidence_directory": "/tmp/nq-f853180-suite-online-evidence",
+      "retained_evidence_directory": "docs/install/campaign/raw/post-decomposition-20260727/suite-minimal",
+      "manifest_sha256": "750502db7ab3c7fd81924dbdb6a0a9526240acf90cacfb934dbe7f8ea5171a87",
+      "track": "source-archive",
+      "profile": "suite-minimal",
+      "dependency_mode": "isolated-online",
+      "status": "profile_first_use_completed",
+      "started_at": "2026-07-27T07:41:03.402Z",
+      "finished_at": "2026-07-27T07:42:04.514Z",
+      "duration_ms": 61111,
+      "step_count": 14,
+      "build_duration_ms": 60835,
+      "time_to_first_profile_result_ms": 61093,
+      "time_to_first_meaningful_host_result_ms": null,
+      "installed": [
+        {
+          "package": "nq-suite",
+          "binary": "nq-suite",
+          "reported_version": "nq-suite 0.1.0",
+          "binary_sha256": "f7173f8d05f4e6587f0aee557fad196c7bad4b10507ccb485afecb29319b4b08"
+        }
+      ],
+      "source_build_workspace_packages": [
+        "nq",
+        "nq-check-pack-host",
+        "nq-core",
+        "nq-monitor-check",
+        "nq-protocol",
+        "nq-suite",
+        "nq-witness"
+      ],
+      "principal_exact_steps": [
+        {
+          "step": "020-source-build",
+          "cwd": "/tmp/nq-first-run-c53h22of/work/source/nq",
+          "argv": [
+            "/usr/bin/cargo",
+            "build",
+            "--release",
+            "--locked",
+            "-p",
+            "nq-suite"
+          ],
+          "exit_code": 0,
+          "duration_ms": 60835
+        },
+        {
+          "step": "050-suite-config-validation",
+          "cwd": "/tmp/nq-first-run-c53h22of/install",
+          "argv": [
+            "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+            "config",
+            "validate",
+            "--config",
+            "/tmp/nq-first-run-c53h22of/install/config/nq-suite.json"
+          ],
+          "exit_code": 0,
+          "duration_ms": 2
+        },
+        {
+          "step": "051-suite-plan",
+          "cwd": "/tmp/nq-first-run-c53h22of/install",
+          "argv": [
+            "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+            "plan",
+            "--config",
+            "/tmp/nq-first-run-c53h22of/install/config/nq-suite.json",
+            "--pretty"
+          ],
+          "exit_code": 0,
+          "duration_ms": 1
+        }
+      ],
+      "result": {
+        "kind": "composition_plan",
+        "enabled_packs": [
+          "nq.host"
+        ],
+        "enabled_checks": [
+          "host.resources"
+        ],
+        "launch_available": false,
+        "host_observation_produced": false,
+        "unknown_preserved": "No check ran; validation and planning do not establish an observation."
+      },
+      "profile_verdicts": {
+        "self_contained": false,
+        "composable_for_planning_only": true,
+        "recoverable_for_exercised_config_refusals": true,
+        "suitable_for_non_author": false
+      }
+    },
+    {
+      "id": "operational-online-1",
+      "evidence_directory": "/tmp/nq-f853180-operational-online-evidence",
+      "retained_evidence_directory": "docs/install/campaign/raw/post-decomposition-20260727/legacy-operational-port-collision-1",
+      "manifest_sha256": "5264188634b73c3f825c8c757d60cca9c15817ce51d81b83d6644df65d291a6b",
+      "track": "source-archive",
+      "profile": "legacy-operational",
+      "dependency_mode": "isolated-online",
+      "status": "blocked",
+      "started_at": "2026-07-27T07:42:52.477Z",
+      "finished_at": "2026-07-27T07:45:08.263Z",
+      "duration_ms": 135785,
+      "step_count": 20,
+      "build_duration_ms": 133200,
+      "time_to_first_profile_result_ms": null,
+      "time_to_first_meaningful_host_result_ms": null,
+      "blocker": {
+        "code": "witness_http_not_ready",
+        "direct_process_result": "cannot bind publisher listener `127.0.0.1:9847`; no checks ran and no state was changed",
+        "exit_code": 1
+      },
+      "installed": [
+        {
+          "package": "nq-monitor",
+          "binary": "nq-monitor",
+          "reported_version": "nq-monitor 0.1.0",
+          "binary_sha256": "8f187c53d7e44ea5cbaccce2bccc27c4c4c8642b0a9cafd1ff98c135f79eebe5"
+        },
+        {
+          "package": "nq-monitor-agent",
+          "binary": "nq-witness",
+          "reported_version": "nq-witness 0.1.0",
+          "binary_sha256": "304b500811ae39246c6e8b8ae1449a0413522d537fb9d63a48db7e3e20f09ba5"
+        }
+      ],
+      "source_build_workspace_packages": [
+        "nq",
+        "nq-check-pack-host",
+        "nq-check-pack-storage",
+        "nq-core",
+        "nq-db",
+        "nq-monitor",
+        "nq-monitor-agent",
+        "nq-monitor-check",
+        "nq-protocol",
+        "nq-witness",
+        "nq-witness-api"
+      ],
+      "evaluator_assistance": {
+        "performed": true,
+        "change": "Only db_path and liveness.path were rebased into the isolated workspace; semantic configuration and documented ports were unchanged."
+      },
+      "principal_exact_steps": [
+        {
+          "step": "020-source-build",
+          "cwd": "/tmp/nq-first-run-rpzqe7ar/work/source/nq",
+          "argv": [
+            "/usr/bin/cargo",
+            "build",
+            "--release",
+            "--locked",
+            "-p",
+            "nq-monitor",
+            "-p",
+            "nq-monitor-agent",
+            "--bins"
+          ],
+          "exit_code": 0,
+          "duration_ms": 133200
+        },
+        {
+          "step": "050-witness-config-validation",
+          "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+          "argv": [
+            "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-witness",
+            "config",
+            "validate",
+            "--config",
+            "/tmp/nq-first-run-rpzqe7ar/install/config/publisher.json"
+          ],
+          "exit_code": 0,
+          "duration_ms": 1
+        },
+        {
+          "step": "051-monitor-config-validation",
+          "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+          "argv": [
+            "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+            "config",
+            "validate",
+            "--config",
+            "/tmp/nq-first-run-rpzqe7ar/install/config/runtime-aggregator.json"
+          ],
+          "exit_code": 0,
+          "duration_ms": 2
+        },
+        {
+          "step": "052-witness-process",
+          "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+          "argv": [
+            "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-witness",
+            "--config",
+            "/tmp/nq-first-run-rpzqe7ar/install/config/publisher.json"
+          ],
+          "exit_code": 1,
+          "duration_ms": 21
+        }
+      ],
+      "operational_host_result": null
+    },
+    {
+      "id": "operational-online-2",
+      "evidence_directory": "/tmp/nq-f853180-operational-online-second-specimen",
+      "retained_evidence_directory": "docs/install/campaign/raw/post-decomposition-20260727/legacy-operational-port-collision-2",
+      "manifest_sha256": "f824dcfa09aecdc11ea2b609dd42f97133f551c490b653c07c90ae1b942a9cc6",
+      "track": "source-archive",
+      "profile": "legacy-operational",
+      "dependency_mode": "isolated-online",
+      "status": "blocked",
+      "started_at": "2026-07-27T07:45:42.324Z",
+      "finished_at": "2026-07-27T07:48:03.040Z",
+      "duration_ms": 140715,
+      "step_count": 20,
+      "build_duration_ms": 138123,
+      "time_to_first_profile_result_ms": null,
+      "time_to_first_meaningful_host_result_ms": null,
+      "blocker": {
+        "code": "witness_http_not_ready",
+        "direct_process_result": "cannot bind publisher listener `127.0.0.1:9847`; no checks ran and no state was changed",
+        "exit_code": 1
+      },
+      "installed": [
+        {
+          "package": "nq-monitor",
+          "binary": "nq-monitor",
+          "reported_version": "nq-monitor 0.1.0",
+          "binary_sha256": "14de3c5b84913e3aa33b6b0049dfb9f1e1da61e82dbabfdf60630d3fa9fafb62"
+        },
+        {
+          "package": "nq-monitor-agent",
+          "binary": "nq-witness",
+          "reported_version": "nq-witness 0.1.0",
+          "binary_sha256": "65581782d9a16892fd077869bdccea8b22f853fad7a2d45e930465fa4283dacb"
+        }
+      ],
+      "evaluator_assistance": {
+        "performed": true,
+        "change": "Only db_path and liveness.path were rebased into the isolated workspace; semantic configuration and documented ports were unchanged."
+      },
+      "principal_exact_steps": [
+        {
+          "step": "020-source-build",
+          "cwd": "/tmp/nq-first-run-o4dtbhep/work/source/nq",
+          "argv": [
+            "/usr/bin/cargo",
+            "build",
+            "--release",
+            "--locked",
+            "-p",
+            "nq-monitor",
+            "-p",
+            "nq-monitor-agent",
+            "--bins"
+          ],
+          "exit_code": 0,
+          "duration_ms": 138123
+        },
+        {
+          "step": "052-witness-process",
+          "cwd": "/tmp/nq-first-run-o4dtbhep/install",
+          "argv": [
+            "/tmp/nq-first-run-o4dtbhep/install/bin/nq-witness",
+            "--config",
+            "/tmp/nq-first-run-o4dtbhep/install/config/publisher.json"
+          ],
+          "exit_code": 1,
+          "duration_ms": 21
+        }
+      ],
+      "operational_host_result": null
+    },
+    {
+      "id": "release-online",
+      "evidence_directory": "/tmp/nq-f853180-release-evidence",
+      "retained_evidence_directory": "docs/install/campaign/raw/post-decomposition-20260727/release-unavailable",
+      "manifest_sha256": "37da681ed50e7dc3cfc9745ad19f8ba5c754d12c4458170dc990476884731108",
+      "track": "release",
+      "profile": "legacy-operational",
+      "dependency_mode": "isolated-online",
+      "status": "blocked",
+      "started_at": "2026-07-27T07:48:39.995Z",
+      "finished_at": "2026-07-27T07:48:40.980Z",
+      "duration_ms": 985,
+      "step_count": 2,
+      "time_to_first_profile_result_ms": null,
+      "time_to_first_meaningful_host_result_ms": null,
+      "blocker": {
+        "code": "release_asset_unavailable",
+        "asset": "https://github.com/unpingable/nq/releases/latest/download/nq-monitor-linux-amd64",
+        "transport_result": "HTTP 404",
+        "exit_code": 22
+      },
+      "principal_exact_steps": [
+        {
+          "step": "010a-download-nq-monitor",
+          "cwd": "/tmp/nq-first-run-jljwj7db/work/release",
+          "argv": [
+            "/usr/bin/curl",
+            "-fL",
+            "https://github.com/unpingable/nq/releases/latest/download/nq-monitor-linux-amd64",
+            "-o",
+            "/tmp/nq-first-run-jljwj7db/work/release/nq-monitor-linux-amd64"
+          ],
+          "exit_code": 22,
+          "duration_ms": 979
+        }
+      ],
+      "installed_binaries": []
+    }
+  ],
+  "host_port_context": {
+    "ports_owned_by_preexisting_host_nq_processes_during_run": [
+      9847,
+      9848
+    ],
+    "processes_disturbed": false,
+    "normal_path_directly_reached": [
+      9847
+    ],
+    "normal_path_not_reached": [
+      9848
+    ],
+    "operational_host_success": false,
+    "interpretation": "The 9847 bind refusal is direct product evidence. The normal path stopped there. A separate campaign-owned occupied-monitor specimen tested fail-before-database behavior without touching the pre-existing 9848 listener."
+  },
+  "environment": {
+    "platform": {
+      "system": "Linux",
+      "machine": "x86_64",
+      "kernel": "6.8.0-136-generic",
+      "effective_uid": 1000,
+      "effective_gid": 1000
+    },
+    "effective_command_paths": {
+      "bash": "/usr/bin/bash",
+      "cargo": "/usr/bin/cargo",
+      "curl": "/usr/bin/curl",
+      "git": "/usr/bin/git",
+      "install": "/usr/bin/install",
+      "rustc": "/usr/bin/rustc",
+      "sha256sum": "/usr/bin/sha256sum",
+      "tar": "/usr/bin/tar"
+    },
+    "isolation": {
+      "empty_home": true,
+      "empty_cargo_home": true,
+      "empty_rustup_home": true,
+      "inherited_environment_variable_count": 0,
+      "credential_or_proxy_inheritance": false,
+      "developer_target_reuse": false,
+      "sibling_checkout_used": false,
+      "path_dependencies_outside_archive": []
+    },
+    "observed_ephemeral_bytes": {
+      "suite": {
+        "rustup": 1185729027,
+        "cargo": 40088606,
+        "target": 139092212
+      },
+      "operational_1": {
+        "rustup": 1185729027,
+        "cargo": 140697403,
+        "target": 537823661
+      }
+    }
+  },
+  "undocumented_or_non_preflighted_prerequisites": [
+    "Linux x86_64 in the executed specimens",
+    "Rustup proxy or a complete Rust and Cargo 1.88 toolchain",
+    "network access to Rust distribution endpoints when the pinned toolchain is absent",
+    "network access to the crates.io index and locked crate downloads",
+    "network access to GitHub release assets for the release track",
+    "native C compiler and linker usable by bundled SQLite",
+    "Bash, curl, tar, install, and SHA-256 tooling",
+    "approximately 1.9 GB of observed temporary dependency and build state for the operational source specimen",
+    "unoccupied loopback ports 9847 and 9848 for the literal operational example"
+  ],
+  "environment_and_distribution_leaks": {
+    "execution_environment_leak_detected": false,
+    "source_distribution_content_leaks": [
+      {
+        "path": "rust-toolchain.toml",
+        "detail": "Comment cites author-local ~/git/cartography/... material.",
+        "used_by_installation": false
+      },
+      {
+        "path": "deploy/examples/caddy-proxy.service",
+        "detail": "Contains author-owned paths, a private deployment IP, and estate-specific service names.",
+        "used_by_installation": false
+      },
+      {
+        "path": "scripts/beacon/beacon-emit.sh and scripts/beacon/README.md",
+        "detail": "Default acquisition target and documentation name an estate-specific host and an author-local SSH-key path.",
+        "used_by_installation": false
+      },
+      {
+        "path": "detections/ and test fixtures",
+        "detail": "Historical and test material includes real deployment names and paths; it was not enabled by the minimal suite plan.",
+        "used_by_installation": false
+      }
+    ]
+  },
+  "packaging_and_composability": {
+    "suite_runtime_installs_as_one_binary": true,
+    "suite_can_launch_monitoring": false,
+    "suite_default_enabled_packs": [
+      "nq.host"
+    ],
+    "optional_labelwatch_enabled_by_default": false,
+    "operational_pair_builds_without_external_sibling_checkout": true,
+    "operational_nq_witness_binary_owner_package": "nq-monitor-agent",
+    "witness_artifact_owner_package": "nq-witness",
+    "independent_registry_or_release_install_proved": false,
+    "release_artifacts_available": false,
+    "same_archive_reproducible_binary_digests_proved": false,
+    "digest_difference": {
+      "nq-monitor": [
+        "8f187c53d7e44ea5cbaccce2bccc27c4c4c8642b0a9cafd1ff98c135f79eebe5",
+        "14de3c5b84913e3aa33b6b0049dfb9f1e1da61e82dbabfdf60630d3fa9fafb62"
+      ],
+      "nq-witness": [
+        "304b500811ae39246c6e8b8ae1449a0413522d537fb9d63a48db7e3e20f09ba5",
+        "65581782d9a16892fd077869bdccea8b22f853fad7a2d45e930465fa4283dacb"
+      ]
+    }
+  },
+  "failure_and_recovery": [
+    {
+      "failure": "missing_cargo",
+      "exact_argv": [
+        "/usr/bin/env",
+        "cargo",
+        "--version"
+      ],
+      "exit_code": 127,
+      "message": "/usr/bin/env: 'cargo': No such file or directory",
+      "safe": true,
+      "actionable": "partial",
+      "gap": "Names Cargo but does not preflight the compiler, linker, network, or disk requirements."
+    },
+    {
+      "failure": "wrong_configuration_path",
+      "exact_argv_suffix": [
+        "config",
+        "validate",
+        "--config",
+        "<isolated-prefix>/config/missing.json"
+      ],
+      "exit_code": 1,
+      "safe": true,
+      "actionable": true,
+      "observed_message_elements": [
+        "exact path",
+        "cannot read",
+        "no state was changed",
+        "No such file or directory"
+      ]
+    },
+    {
+      "failure": "malformed_suite_configuration",
+      "exact_argv_suffix": [
+        "config",
+        "validate",
+        "--config",
+        "<isolated-prefix>/config/malformed.json"
+      ],
+      "exit_code": 1,
+      "safe": true,
+      "actionable": true,
+      "observed_message_elements": [
+        "unknown field unexpected",
+        "expected top-level fields",
+        "no listener, database, source, or check was touched"
+      ]
+    },
+    {
+      "failure": "known_but_unavailable_pack",
+      "exact_argv_suffix": [
+        "config",
+        "validate",
+        "--config",
+        "<isolated-prefix>/config/unavailable-pack.json"
+      ],
+      "exit_code": 1,
+      "safe": true,
+      "actionable": false,
+      "actual_message": "unknown pack `nq.labelwatch`; available packs: [PackId(\"nq.host\")]",
+      "harness_evaluation_defect": "The expected word unavailable matched the fixture filename, causing a false-positive safe_refusal actionability classification.",
+      "post_specimen_fix": {
+        "commit": "ab249e6",
+        "product_contract": "A known pack absent from this build is reported as unavailable and names the Cargo feature required to make it available.",
+        "harness_contract": "The unavailable assertion is satisfied by product wording, not a fixture path.",
+        "raw_specimen_reclassified": false,
+        "rerun_claimed": false
+      }
+    },
+    {
+      "failure": "malformed_operational_configuration",
+      "exit_code": 1,
+      "safe": true,
+      "actionable": true,
+      "actual_message": "aggregator configuration was refused; no database was opened and no listener was started; unknown field `unexpected`",
+      "harness_evaluation_defect": "The f853180 harness expected the literal phrase no state and recorded a false negative despite the more precise product safety statement.",
+      "post_specimen_fix": {
+        "commit": "ab249e6",
+        "path": "scripts/install-first-run-campaign.py",
+        "new_contract": [
+          "unknown field",
+          "no database was opened",
+          "no listener was started"
+        ],
+        "raw_specimen_reclassified": false,
+        "rerun_claimed": false
+      }
+    },
+    {
+      "failure": "permission_denied_configuration",
+      "exit_code": 1,
+      "safe": true,
+      "actionable": true,
+      "observed_message_elements": [
+        "exact path",
+        "cannot read",
+        "no state was changed",
+        "Permission denied"
+      ]
+    },
+    {
+      "failure": "occupied_publisher_port",
+      "exit_code": 1,
+      "safe": true,
+      "actionable": "partial",
+      "observed_message_elements": [
+        "exact address",
+        "no checks ran",
+        "no state was changed",
+        "Address already in use"
+      ],
+      "gap": "Product output gives no process-inspection command."
+    },
+    {
+      "failure": "occupied_monitor_port",
+      "exit_code": 1,
+      "safe": true,
+      "actionable": "partial",
+      "database_created": false,
+      "observed_message_elements": [
+        "exact address",
+        "no database was opened",
+        "no observation task was started",
+        "Address already in use"
+      ],
+      "gap": "Product output gives no process-inspection command."
+    },
+    {
+      "failure": "unavailable_source",
+      "safe": true,
+      "actionable": "partial",
+      "source_identity_visible": true,
+      "source_failure_visible": true,
+      "underlying_service_changed": false,
+      "subject_health_inferred": false,
+      "gap": "The v_sources row preserves the error but truncates the displayed URL and does not print a recovery action."
+    },
+    {
+      "failure": "older_database_schema",
+      "safe": true,
+      "actionable": true,
+      "reported_state": "upgrade_required",
+      "found_version": 7,
+      "supported_version": 64,
+      "database_bytes_unchanged": true,
+      "wal_created": false,
+      "shm_created": false,
+      "next_action": "Back up the durable database and its SQLite sidecars, then start the compatible binary to apply forward migrations. This check did not migrate or repair anything.",
+      "upgrade_limit": "No supported prior release binary/configuration pair was available, so a real upgrade was not executed."
+    },
+    {
+      "failure": "release_asset_unavailable",
+      "exit_code": 22,
+      "safe": true,
+      "actionable": false,
+      "actual_message": "curl: (22) The requested URL returned error: 404",
+      "gap": "No NQ-specific explanation, supported source fallback, or release discovery action appears in product output."
+    }
+  ],
+  "removal_and_reset": {
+    "deletion_performed": false,
+    "archive_first": true,
+    "classifications": {
+      "installed_binaries": "replaceable_artifact",
+      "configuration": "durable_operator_record",
+      "monitor_database_and_sqlite_sidecars": "durable_evidence"
+    },
+    "safe_sequence": [
+      "stop writers",
+      "record binary versions and configuration paths",
+      "archive configuration and the database plus matching sidecars",
+      "verify the archive independently",
+      "move the live set to a dated quarantine",
+      "start a new database only when loss of prior operational history is intentional"
+    ]
+  },
+  "recommended_changes": [
+    "Publish versioned, checksummed component artifacts; stop advertising absent latest assets.",
+    "Add an executable prerequisite and disk-space preflight for source installation.",
+    "Retain the ab249e6 distinction between known-but-unavailable packs and unknown IDs.",
+    "Retain the ab249e6 harness contracts that prevent fixture paths from satisfying assertions and verify component-specific malformed-config safety wording.",
+    "Add a public runtime start seam that executes only the suite plan's enabled typed adapters.",
+    "Align package and binary ownership names, especially nq-monitor-agent versus nq-witness.",
+    "Remove author-local paths and private deployment material from stranger-facing source distributions.",
+    "Publish a supported prior-state fixture and exact archive-first upgrade procedure.",
+    "Run the literal operational first-success path in a disposable host or network namespace without disturbing existing NQ processes.",
+    "Investigate and document why clean builds of one archive produced different binary digests.",
+    "Perform fresh non-author trials only after a release or self-contained installation path exists."
+  ],
+  "verdicts": {
+    "source_archive_independent_of_sibling_checkouts": true,
+    "suite_conservative_plan_first_result": true,
+    "installation_self_contained": false,
+    "installation_composable": false,
+    "installation_recoverable": false,
+    "installation_suitable_for_non_author": false,
+    "clean_room_operational_first_run": false,
+    "time_to_first_meaningful_host_result_earned": false
+  }
+}

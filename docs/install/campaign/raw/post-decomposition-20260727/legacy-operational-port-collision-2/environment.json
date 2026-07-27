@@ -1,0 +1,50 @@
+{
+  "captured_at": "2026-07-27T07:45:42.324Z",
+  "effective_environment": {
+    "CARGO_HOME": "/tmp/nq-first-run-o4dtbhep/home/.cargo",
+    "GIT_TERMINAL_PROMPT": "0",
+    "HOME": "/tmp/nq-first-run-o4dtbhep/home",
+    "LANG": "C",
+    "LC_ALL": "C",
+    "NO_PROXY": "127.0.0.1,localhost",
+    "PATH": "/tmp/nq-first-run-o4dtbhep/install/bin:/usr/local/bin:/usr/bin:/bin",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "RUSTUP_HOME": "/tmp/nq-first-run-o4dtbhep/home/.rustup",
+    "TMPDIR": "/tmp/nq-first-run-o4dtbhep/tmp",
+    "TZ": "UTC",
+    "XDG_CACHE_HOME": "/tmp/nq-first-run-o4dtbhep/home/.cache",
+    "XDG_CONFIG_HOME": "/tmp/nq-first-run-o4dtbhep/home/.config"
+  },
+  "inherited_environment_variable_count": 0,
+  "network_policy": "isolated-online",
+  "platform": {
+    "effective_gid": 1000,
+    "effective_uid": 1000,
+    "machine": "x86_64",
+    "python": "3.12.3",
+    "release": "6.8.0-136-generic",
+    "system": "Linux"
+  },
+  "schema": "nq.install_first_run.campaign.v1",
+  "visible_commands": {
+    "bash": "/usr/bin/bash",
+    "cargo": "/usr/bin/cargo",
+    "curl": "/usr/bin/curl",
+    "git": "/usr/bin/git",
+    "install": "/usr/bin/install",
+    "rustc": "/usr/bin/rustc",
+    "sha256sum": "/usr/bin/sha256sum",
+    "tar": "/usr/bin/tar"
+  },
+  "workspace": "/tmp/nq-first-run-o4dtbhep",
+  "workspace_isolation": {
+    "credential_or_proxy_inheritance": false,
+    "developer_target_reuse": false,
+    "empty_cargo_home": true,
+    "empty_home": true,
+    "empty_rustup_home": true,
+    "sibling_checkout_search_roots": [
+      "/tmp/nq-first-run-o4dtbhep"
+    ]
+  }
+}

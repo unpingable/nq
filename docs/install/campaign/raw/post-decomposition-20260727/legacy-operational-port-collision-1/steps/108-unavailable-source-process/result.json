@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-rpzqe7ar/install/bin/nq-monitor",
+    "serve",
+    "--config",
+    "/tmp/nq-first-run-rpzqe7ar/install/config/unavailable-source.json"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/install",
+  "description": "Run the monitor with one explicitly unavailable witness source",
+  "duration_ms": 2138,
+  "exit_code": -15,
+  "finished_at": "2026-07-27T07:45:08.157Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:45:06.018Z",
+  "stderr": "steps/108-unavailable-source-process/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/108-unavailable-source-process/stdout.log",
+  "step_id": "108-unavailable-source-process",
+  "timed_out": false
+}

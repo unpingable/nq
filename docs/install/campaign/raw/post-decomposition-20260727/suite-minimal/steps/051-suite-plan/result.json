@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+    "plan",
+    "--config",
+    "/tmp/nq-first-run-c53h22of/install/config/nq-suite.json",
+    "--pretty"
+  ],
+  "cwd": "/tmp/nq-first-run-c53h22of/install",
+  "description": "Emit the deterministic composition plan without launching checks",
+  "duration_ms": 1,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:42:04.495Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:42:04.493Z",
+  "stderr": "steps/051-suite-plan/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/051-suite-plan/stdout.log",
+  "step_id": "051-suite-plan",
+  "timed_out": false
+}

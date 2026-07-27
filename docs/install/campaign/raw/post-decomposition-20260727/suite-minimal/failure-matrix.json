@@ -1,0 +1,70 @@
+{
+  "malformed_configuration": {
+    "exit_code": 1,
+    "expected_message_fragments": {
+      "no listener": true,
+      "unknown field": true
+    },
+    "status": "safe_refusal",
+    "step": "101-malformed-configuration",
+    "timed_out": false
+  },
+  "permission_failure": {
+    "exit_code": 1,
+    "expected_message_fragments": {
+      "cannot read": true,
+      "no state": true
+    },
+    "status": "safe_refusal",
+    "step": "102-permission-denied-config",
+    "timed_out": false
+  },
+  "stale_database": {
+    "reason": "This profile does not install nq-monitor.",
+    "status": "not_applicable"
+  },
+  "unavailable_pack": {
+    "exit_code": 1,
+    "expected_message_fragments": {
+      "no listener": true,
+      "unavailable": true
+    },
+    "status": "safe_refusal",
+    "step": "105-unavailable-pack",
+    "timed_out": false
+  },
+  "unavailable_sibling_service": {
+    "reason": "This profile does not install nq-monitor.",
+    "status": "not_applicable"
+  },
+  "unknown_check": {
+    "exit_code": 1,
+    "expected_message_fragments": {
+      "no listener": true,
+      "unknown check": true
+    },
+    "status": "safe_refusal",
+    "step": "104-unknown-check",
+    "timed_out": false
+  },
+  "unknown_pack": {
+    "exit_code": 1,
+    "expected_message_fragments": {
+      "no listener": true,
+      "unknown pack": true
+    },
+    "status": "safe_refusal",
+    "step": "103-unknown-pack",
+    "timed_out": false
+  },
+  "wrong_path": {
+    "exit_code": 1,
+    "expected_message_fragments": {
+      "cannot read": true,
+      "no state was changed": true
+    },
+    "status": "safe_refusal",
+    "step": "100-wrong-config-path",
+    "timed_out": false
+  }
+}

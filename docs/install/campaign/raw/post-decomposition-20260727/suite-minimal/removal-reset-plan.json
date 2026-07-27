@@ -1,0 +1,73 @@
+{
+  "action_executed": false,
+  "archive_first": true,
+  "generated_at": "2026-07-27T07:42:04.514Z",
+  "items": [
+    {
+      "bytes": 1900520,
+      "classification": "replaceable_artifact",
+      "path": "bin/nq-suite",
+      "removal_rule": "record version and digest; removal does not reset evidence",
+      "sha256": "f7173f8d05f4e6587f0aee557fad196c7bad4b10507ccb485afecb29319b4b08"
+    },
+    {
+      "bytes": 21,
+      "classification": "durable_operator_record",
+      "path": "config/malformed.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "38d17786a590ffb0600bce5291b7a7697ad7efcacda49ad6cc36fdfb987d5eef"
+    },
+    {
+      "bytes": 831,
+      "classification": "durable_operator_record",
+      "path": "config/nq-suite.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "1df27c20a2ffa12cf5e7d808d8bd94fa14243804859b986ba96711f98fc48ecd"
+    },
+    {
+      "bytes": 3,
+      "classification": "durable_operator_record",
+      "path": "config/permission-denied.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+    },
+    {
+      "bytes": 831,
+      "classification": "durable_operator_record",
+      "path": "config/suite-failure-base.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "433825efeb52adb759e026e212434efd072d6d1ce738241ba708cdf42ef24da4"
+    },
+    {
+      "bytes": 881,
+      "classification": "durable_operator_record",
+      "path": "config/unavailable-pack.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "4776b298ba5a3751554f982e42ae4c90a78d094e2d31deb0e391383ab6000aa6"
+    },
+    {
+      "bytes": 826,
+      "classification": "durable_operator_record",
+      "path": "config/unknown-check.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "9b2833acc57a2fd8bcc0ceb025ba76731a77a8134e661a9a1cf3b25e57c368f3"
+    },
+    {
+      "bytes": 831,
+      "classification": "durable_operator_record",
+      "path": "config/unknown-pack.json",
+      "removal_rule": "archive to preserve the observation and deployment basis",
+      "sha256": "e1de82a9b309cb181c7736b025ea81228247a907aaaa59797bc8449c90a13859"
+    }
+  ],
+  "refusal": "The campaign does not delete or reset durable evidence merely to make installation or first use pass.",
+  "safe_sequence": [
+    "stop writers",
+    "record binary versions and configuration paths",
+    "archive configuration and the database plus matching sidecars",
+    "verify the archive independently",
+    "move the live set to a dated quarantine",
+    "start a new database only when loss of prior operational history is intentional"
+  ],
+  "schema": "nq.install_first_run.removal_plan.v1"
+}

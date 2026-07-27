@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/usr/bin/install",
+    "-m",
+    "0600",
+    "/tmp/nq-first-run-rpzqe7ar/work/source/nq/deploy/quickstart/aggregator.json",
+    "/tmp/nq-first-run-rpzqe7ar/install/config/aggregator.json"
+  ],
+  "cwd": "/tmp/nq-first-run-rpzqe7ar/work/source/nq",
+  "description": "Copy the literal packaged configuration deploy/quickstart/aggregator.json; no JSON is inferred or repaired",
+  "duration_ms": 2,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:45:05.974Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:45:05.972Z",
+  "stderr": "steps/040-copy-aggregator-json/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/040-copy-aggregator-json/stdout.log",
+  "step_id": "040-copy-aggregator-json",
+  "timed_out": false
+}

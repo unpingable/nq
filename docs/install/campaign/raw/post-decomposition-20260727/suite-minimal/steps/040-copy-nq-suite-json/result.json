@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/usr/bin/install",
+    "-m",
+    "0600",
+    "/tmp/nq-first-run-c53h22of/work/source/nq/crates/nq-suite/examples/minimal-public.json",
+    "/tmp/nq-first-run-c53h22of/install/config/nq-suite.json"
+  ],
+  "cwd": "/tmp/nq-first-run-c53h22of/work/source/nq",
+  "description": "Copy the literal packaged configuration crates/nq-suite/examples/minimal-public.json; no JSON is inferred or repaired",
+  "duration_ms": 3,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T07:42:04.489Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:42:04.486Z",
+  "stderr": "steps/040-copy-nq-suite-json/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/040-copy-nq-suite-json/stdout.log",
+  "step_id": "040-copy-nq-suite-json",
+  "timed_out": false
+}

@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+    "config",
+    "validate",
+    "--config",
+    "/tmp/nq-first-run-c53h22of/install/config/unknown-pack.json"
+  ],
+  "cwd": "/tmp/nq-first-run-c53h22of/install",
+  "description": "Exercise an unknown pack ID; no best-effort fallback is allowed",
+  "duration_ms": 1,
+  "exit_code": 1,
+  "finished_at": "2026-07-27T07:42:04.503Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:42:04.501Z",
+  "stderr": "steps/103-unknown-pack/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/103-unknown-pack/stdout.log",
+  "step_id": "103-unknown-pack",
+  "timed_out": false
+}

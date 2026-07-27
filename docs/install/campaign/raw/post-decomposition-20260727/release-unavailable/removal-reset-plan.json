@@ -1,0 +1,16 @@
+{
+  "action_executed": false,
+  "archive_first": true,
+  "generated_at": "2026-07-27T07:48:40.980Z",
+  "items": [],
+  "refusal": "The campaign does not delete or reset durable evidence merely to make installation or first use pass.",
+  "safe_sequence": [
+    "stop writers",
+    "record binary versions and configuration paths",
+    "archive configuration and the database plus matching sidecars",
+    "verify the archive independently",
+    "move the live set to a dated quarantine",
+    "start a new database only when loss of prior operational history is intentional"
+  ],
+  "schema": "nq.install_first_run.removal_plan.v1"
+}

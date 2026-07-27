@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+    "config",
+    "validate",
+    "--config",
+    "/tmp/nq-first-run-c53h22of/install/config/unknown-check.json"
+  ],
+  "cwd": "/tmp/nq-first-run-c53h22of/install",
+  "description": "Exercise an unknown check ID; typo tolerance is forbidden",
+  "duration_ms": 1,
+  "exit_code": 1,
+  "finished_at": "2026-07-27T07:42:04.505Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:42:04.503Z",
+  "stderr": "steps/104-unknown-check/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/104-unknown-check/stdout.log",
+  "step_id": "104-unknown-check",
+  "timed_out": false
+}

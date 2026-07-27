@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/tmp/nq-first-run-c53h22of/install/bin/nq-suite",
+    "config",
+    "validate",
+    "--config",
+    "/tmp/nq-first-run-c53h22of/install/config/permission-denied.json"
+  ],
+  "cwd": "/tmp/nq-first-run-c53h22of/install",
+  "description": "Exercise an unreadable configuration without changing ownership",
+  "duration_ms": 1,
+  "exit_code": 1,
+  "finished_at": "2026-07-27T07:42:04.500Z",
+  "schema": "nq.install_first_run.step.v1",
+  "started_at": "2026-07-27T07:42:04.499Z",
+  "stderr": "steps/102-permission-denied-config/stderr.log",
+  "stdin": "null_device",
+  "stdout": "steps/102-permission-denied-config/stdout.log",
+  "step_id": "102-permission-denied-config",
+  "timed_out": false
+}

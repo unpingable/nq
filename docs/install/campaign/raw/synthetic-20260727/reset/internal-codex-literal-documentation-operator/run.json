@@ -1,0 +1,9 @@
+{
+  "archetype": "literal-documentation-operator",
+  "scenario": "reset",
+  "model_family": "Codex internal agent",
+  "model_version": "inherited-parent-unreported",
+  "fork_context": "none",
+  "evaluator_assistance": false,
+  "note": "External CLI model-family evaluation was not used."
+}
