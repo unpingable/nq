@@ -1,4 +1,4 @@
-//! `nq-witness` binary entry point. Reads a `PublisherConfig` from a
+//! `nq-witness` compatibility binary entry point. Reads a `PublisherConfig` from a
 //! JSON file and serves the witness's `/state` HTTP endpoint until
 //! killed. One config, one HTTP server, no subcommands.
 
@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
     let bind_addr = config.bind_addr.clone();
     let config = Arc::new(config);
 
-    let app = nq_witness::server::build_router(config);
+    let app = nq_monitor_agent::server::build_router(config);
 
     info!(bind = %bind_addr, "nq-witness starting");
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;

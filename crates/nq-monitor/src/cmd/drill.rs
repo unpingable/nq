@@ -53,7 +53,7 @@ use nq_db::{
     export_findings, migrate, open_ro, open_rw, publish_batch,
     update_warning_state_with_origin_mode, DetectorConfig, EscalationConfig, ExportFilter,
 };
-use nq_witness::collect::sqlite_health;
+use nq_monitor_agent::collect::sqlite_health;
 use std::path::PathBuf;
 use time::OffsetDateTime;
 

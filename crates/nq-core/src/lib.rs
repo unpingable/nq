@@ -65,8 +65,9 @@ pub use projection_receipt::{
     ProjectionContradictionStatus, ProjectionMappingProfile, ProjectionReceipt,
     ProjectionReceiptMapping, ProjectionReceiptPacket, ProjectionReceiptReplay,
     ProjectionReceiptSource, ProjectionReceiptSubstitution, ProjectionReceiptValidationError,
-    ProjectionSourceSystem, PROJECTION_RECEIPT_DOES_NOT_ESTABLISH,
-    PROJECTION_RECEIPT_ESTABLISHES, PROJECTION_RECEIPT_SCHEMA,
+    ProjectionReceiptValidationFailure, ProjectionSourceSystem,
+    PROJECTION_RECEIPT_DOES_NOT_ESTABLISH, PROJECTION_RECEIPT_ESTABLISHES,
+    PROJECTION_RECEIPT_SCHEMA,
 };
 pub use receipt::{NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef, RECEIPT_SCHEMA};
 pub use render::{render_human, render_json, render_jsonl, render_markdown};

@@ -24,7 +24,7 @@
 
 use nq_core::wire::{PublisherState, PUBLISHER_STATE_SCHEMA};
 use nq_core::PublisherConfig;
-use nq_witness::collect::collect_state;
+use nq_monitor_agent::collect::collect_state;
 use std::sync::Arc;
 
 /// Build a PublisherConfig that exercises every collector but

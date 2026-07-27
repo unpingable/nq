@@ -163,9 +163,12 @@ external profile report currently named `nq.witness.v0`.
 the exact supporting witness identities in its decision receipt.
 
 Unsupported schema versions, malformed packets, invalid digests, ambiguous
-projection positions, missing provenance, contradictory packet sets, and
-unavailable catalog entries are typed refusals.  They are not normalized into
-an empty evidence set.
+projection positions, missing provenance, and unavailable catalog entries are
+typed refusals.  They are not normalized into an empty evidence set.  The
+witness artifact contract does not invent a generic contradiction relation:
+it preserves distinct valid packets, while producer-specific substitution
+rules and NQ's claim-context evaluation own contradiction where their
+contracts define it.
 
 Authority that does not cross: witness validation never authorizes an NQ
 claim.  NQ remains free—and required—to decide that a valid packet is stale,

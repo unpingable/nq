@@ -103,6 +103,13 @@ Monitored host(s)                         Monitor host
 
 At runtime the witness and monitor are separate processes connected through the HTTP/wire contract. A single-host deployment runs both on loopback; a fleet runs a witness on each observed host and one or more independently scoped monitors.
 
+During the pre-1.0 decomposition, installed binary compatibility and Cargo
+package ownership are intentionally distinct: the `nq-witness` binary is
+built by `nq-monitor-agent` and executes local checks, while the
+`nq-witness` library package owns immutable witness artifact validation and
+identity. See [Constellation architecture](CONSTELLATION_ARCHITECTURE.md) for
+the migration boundary and removal conditions.
+
 Each monitor cycle is deliberately boring:
 
 1. Pull all declared witness sources into memory.

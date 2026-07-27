@@ -940,6 +940,7 @@ name = "nq-core"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "nq-witness",
  "serde",
  "serde_jcs",
  "serde_json",
@@ -975,7 +976,7 @@ dependencies = [
  "hex",
  "nq-core",
  "nq-db",
- "nq-witness",
+ "nq-monitor-agent",
  "nq-witness-api",
  "reqwest",
  "rusqlite",
@@ -994,16 +995,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nq-protocol"
-version = "0.1.0"
-dependencies = [
- "serde",
- "thiserror 2.0.18",
- "time",
-]
-
-[[package]]
-name = "nq-witness"
+name = "nq-monitor-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1026,12 +1018,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "nq-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
+ "time",
+]
+
+[[package]]
+name = "nq-witness"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "nq-protocol",
+ "serde",
+ "serde_jcs",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "time",
+]
+
+[[package]]
 name = "nq-witness-api"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "hex",
  "nq-core",
+ "nq-witness",
  "reqwest",
  "serde",
  "serde_json",

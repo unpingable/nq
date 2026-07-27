@@ -1,5 +1,5 @@
-//! Wire contract between `nq-witness` (testimony producer) and any
-//! consumer that wants to ingest its `/state` payload.
+//! Compatibility wire contract between the `nq-witness` monitor-agent binary
+//! and a consumer that wants to ingest its `/state` payload.
 //!
 //! This crate owns the *consumer-facing* surface: the endpoint path,
 //! the HTTP client, the deserialized type, the typed vocabulary
@@ -30,7 +30,7 @@
 //! Today's in-workspace consumers:
 //! - `nq-monitor::pull` calls [`fetch_state`] on the publisher pull path.
 //! - `nq-monitor::nq_evaluator_probe` imports [`fixtures::ALL_FIXTURES`] for the per-kind evaluator-liveness probe.
-//! - `nq-witness::server` uses [`STATE_PATH`] as the route constant on the server side.
+//! - `nq-monitor-agent::server` uses [`STATE_PATH`] as the route constant on the server side.
 //!
 //! The [`WitnessPosition`] and [`ClaimRefusal`] / [`RefusalKind`]
 //! re-exports are the surface external consumers (Nightshift,
@@ -50,8 +50,8 @@ pub mod fixtures;
 use nq_core::wire::PublisherState;
 
 /// Producer-declared layer of the stack a witness observes. Re-exported
-/// from [`nq_core::witness`] (where it lives next to `WitnessPacket`)
-/// so consumers can bind via the contract crate.
+/// directly from the witness artifact owner so consumers bind to one
+/// authoritative wire definition.
 ///
 /// Wire shape is additive: the underlying packet field is
 /// `Option<WitnessPosition>` with `skip_serializing_if = Option::is_none`.
@@ -59,10 +59,10 @@ use nq_core::wire::PublisherState;
 /// (unclassified). Production constructions set `Some(...)` explicitly;
 /// there is no silent default to `Substrate`.
 ///
-/// See the type docstring in `nq-core::witness` for the per-variant
+/// See the type docstring in `nq-witness` for the per-variant
 /// substrate / application-internal / platform definitions and the
 /// position cut-over history.
-pub use nq_core::witness::WitnessPosition;
+pub use nq_witness::WitnessPosition;
 
 /// Typed refusal vocabulary carried on the preflight + receipt
 /// surface (`PreflightResult.cannot_testify` and `Receipt.cannot_testify`).

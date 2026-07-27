@@ -1,0 +1,43 @@
+{
+  "schema": "nq.projection_receipt.v1",
+  "receipt_id": "sha256:f3a4c8c9df2c5b7189ee11ab3bb4f1f2ffdcc79a1255806b1bdd732382ce0cba",
+  "source": {
+    "system": "continuity",
+    "schema": "continuity.rely_export.v0",
+    "snapshot_identity": "mem_fixture@2026-07-26T22:00:00.000000+00:00",
+    "raw_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "core_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "record_ref": "continuity:memory:mem_fixture@2026-07-26T22:00:00.000000+00:00 export=continuity.rely_export.v0 sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "mapping": {
+    "profile": "continuity_record",
+    "profile_version": "sha256:a68e97a31da6ee55c4ba2560fd318f40bcd4c10dc309219db91e8659cd12e348"
+  },
+  "custody_basis": "external_projection",
+  "packet": {
+    "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "witness_type": "continuity_rely_record",
+    "subject": "gwr:ref-continuity:v0:repo_demo#refs/heads/main@4444444444444444444444444444444444444444"
+  },
+  "premises_as_coverage": [
+    "coverage bounded by continuity premise: depends_on mem_p (hard, active)",
+    "continuity rely result is source testimony; not an nq disposition"
+  ],
+  "projection_limits": [
+    "native_witness_custody",
+    "source assertions not independently verified"
+  ],
+  "replay": {
+    "outcome": "imported"
+  },
+  "imported_at": "2026-07-26T22:10:00Z",
+  "establishes": "this import occurred, through this profile, with these digests and limits",
+  "does_not_establish": [
+    "this receipt does not upgrade custody",
+    "this receipt does not establish source truth",
+    "this receipt does not establish admissibility",
+    "this receipt is not a claim or claim evaluation",
+    "this receipt does not establish or authorize reliance",
+    "this receipt authorizes nothing and mints no authority or continuity"
+  ]
+}

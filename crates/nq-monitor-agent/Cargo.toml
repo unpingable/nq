@@ -1,0 +1,39 @@
+[package]
+name = "nq-monitor-agent"
+edition.workspace = true
+version = "0.1.0"
+rust-version = "1.88"
+description = "Local check execution and /state transport for the NQ monitor"
+license = "Apache-2.0"
+repository = "https://github.com/unpingable/nq"
+readme = "README.md"
+
+[lib]
+name = "nq_monitor_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nq-witness"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+nq-core = { path = "../nq-core", version = "0.1.0" }
+nq-witness-api = { path = "../nq-witness-api", version = "0.1.0" }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+clap = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+reqwest = { workspace = true }
+rusqlite = { workspace = true }
+hostname = "0.4"
+libc = "0.2"
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

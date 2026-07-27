@@ -1,25 +1,19 @@
 [package]
 name = "nq-witness"
-edition.workspace = true
-version.workspace = true
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Versioned witness artifacts, validation, identity, and projection adoption for NQ"
+license = "Apache-2.0"
+repository = "https://github.com/unpingable/nq"
+readme = "README.md"
 
 [dependencies]
-nq-core = { path = "../nq-core" }
-nq-witness-api = { path = "../nq-witness-api" }
-anyhow = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-time = { workspace = true }
-clap = { workspace = true }
-axum = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-reqwest = { workspace = true }
-rusqlite = { workspace = true }
-hostname = "0.4"
-libc = "0.2"
-sha2 = { workspace = true }
-
-[dev-dependencies]
-tempfile = "3"
+nq-protocol = { version = "0.1.0", path = "../nq-protocol" }
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_jcs = "0.2"
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "parsing"] }

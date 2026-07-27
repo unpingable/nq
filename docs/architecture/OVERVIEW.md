@@ -116,13 +116,20 @@ See the [Claim Catalog](../operator/CLAIM_CATALOG.md), [Verdict Vocabulary](../o
 
 | Crate | Responsibility |
 |---|---|
-| `nq-core` | Shared configuration, wire types, witness/receipt types, claim vocabulary, and status enums. |
-| `nq-witness-api` | Consumer-facing `/state` contract, client, and shared evaluator fixtures. |
-| `nq-witness` | Local collectors and the witness HTTP server/binary. |
+| `nq-protocol` | Small shared leaf for versioned identifiers, artifact references, timestamps, and bounded refusals. |
+| `nq-witness` | Authoritative `nq.witness.v1` and projection-receipt artifact schemas, validation, identity, custody, and adoption. |
+| `nq-core` | Transitional facade plus configuration, monitor wire types, claim/decision vocabulary, and rendering pending further extraction. |
+| `nq-witness-api` | Compatibility `/state` contract, client, and shared evaluator fixtures. |
+| `nq-monitor-agent` | Local collectors and the compatibility `nq-witness` HTTP server/binary. |
 | `nq-db` | SQLite migrations, publish transaction, detectors, lifecycle, notification selection, preflight evaluators, exports, and views. |
 | `nq-monitor` | CLI, pull/serve loops, HTTP/UI routes, operator commands, probes, inquiries, receipt commands, and bounded drills. |
 
-The runtime witness/evaluator boundary is the HTTP contract. `nq-monitor` also links the witness library for explicitly bounded in-process drill/test paths; that build-time dependency does not merge the two production roles.
+The runtime monitor-agent/evaluator boundary is the compatibility HTTP
+contract. `nq-monitor` still links `nq-monitor-agent` for explicitly bounded
+in-process drill/test paths; that dependency is a named migration adapter,
+removed when those paths use the public monitor check-pack contract. The
+installed compatibility binary remains named `nq-witness`, but that binary
+name does not own witness artifact semantics.
 
 ## Operator interfaces
 

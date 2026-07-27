@@ -1,0 +1,58 @@
+{
+  "schema": "nq.witness.v1",
+  "witness_type": "zab2nq_monitor_definition",
+  "subject": "zab2nq:record:zbx:trigger:fixture",
+  "access_path": "archive_read",
+  "observed_at": "2026-07-27T03:34:17Z",
+  "generated_at": "2026-07-27T03:34:17Z",
+  "observations": [
+    {
+      "type": "zab2nq_monitor_definition",
+      "source_record_id": "zbx:trigger:fixture",
+      "source_record_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "source_content_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "source_schema": {
+        "id": "zab2nq/record.schema.json",
+        "sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "corpus_tag": "zabbix-7.4.8"
+      },
+      "source_provenance": {
+        "upstream_url": "https://github.com/zabbix/zabbix.git",
+        "upstream_tag": "7.4.8",
+        "upstream_commit": "6b0f6b25da00d2c2a0dc2035ba2285aa51c85865",
+        "provenance_sha256": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "upstream_manifest_sha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "conversion": {
+        "schema": "zab2nq.monitor-to-witness.v1",
+        "version": "1.0.0",
+        "converter_sha256": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+        "config_sha256": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "residuals": [
+        {
+          "code": "runtime_occurrence_absent",
+          "disposition": "absent",
+          "detail": "the preserved trigger definition does not establish a runtime occurrence"
+        }
+      ],
+      "record": {
+        "id": "zbx:trigger:fixture",
+        "corpus_tag": "zabbix-7.4.8"
+      }
+    }
+  ],
+  "coverage_limits": [
+    "archive projection of a descriptive trigger definition; not a runtime Zabbix observation"
+  ],
+  "dependencies": [
+    "zabbix-upstream:7.4.8@6b0f6b25da00d2c2a0dc2035ba2285aa51c85865"
+  ],
+  "custody_basis": "external_projection",
+  "source_finding_ref": "zab2nq:record:zbx:trigger:fixture@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "projection_limits": [
+    "native_witness_custody",
+    "runtime_occurrence"
+  ],
+  "position": "platform"
+}

@@ -156,8 +156,7 @@ ownership. In particular:
   verification, and deterministic replay;
 - `reliance.rs`: consumer profiles, policies, outcomes, and reliance receipts;
 - `inquiry.rs`, `intent.rs`: inquiry decisions, typed refusals, grants,
-  transition admission, ratchets, and intent compilation;
-- `time_basis.rs`: decision-relevant time-basis classification.
+  transition admission, ratchets, and intent compilation.
 
 The claim registry includes constellation/application names such as
 `continuity_rely_eligible`, `docket_attempt_settled`, `ready_for_review`, and
@@ -180,7 +179,10 @@ ability to add decision law.
   ZFS/SMART/GPU report structures;
 - `status.rs`: collector, source, service, platform, and generation status;
 - `config.rs`: aggregator, collector, detector, notification, retention,
-  coverage, and deployment configuration.
+  coverage, and deployment configuration;
+- `time_basis.rs`: currently inert, annotation-only receiver time-basis
+  mechanics. It does not mint, refuse, downgrade, mutate, or notify; the
+  decision-side time interpretation in `preflight.rs` is a separate concern.
 
 **Presentation/convenience**
 

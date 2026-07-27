@@ -1,10 +1,11 @@
 [workspace]
 members = [
     "crates/nq-protocol",
+    "crates/nq-witness",
     "crates/nq-core",
     "crates/nq-db",
     "crates/nq-witness-api",
-    "crates/nq-witness",
+    "crates/nq-monitor-agent",
     "crates/nq-monitor",
 ]
 resolver = "2"

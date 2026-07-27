@@ -5,6 +5,7 @@ version.workspace = true
 
 [dependencies]
 nq-core = { path = "../nq-core" }
+nq-witness = { path = "../nq-witness", version = "0.1.0" }
 anyhow = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }

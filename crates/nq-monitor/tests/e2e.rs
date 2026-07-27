@@ -2501,7 +2501,7 @@ fn sqlite_wal_probe_pipeline_end_to_end_smoke() {
     use nq_db::sqlite_wal_state::{
         load_recent_wal_observations, ObservationStatus, SqliteWalTarget,
     };
-    use nq_witness::collect::sqlite_wal_probe;
+    use nq_monitor_agent::collect::sqlite_wal_probe;
     use std::str::FromStr;
 
     // Tempdir with two declared targets: one real (existing .db with
