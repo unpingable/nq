@@ -1,0 +1,146 @@
+{
+  "schema": "nq.dashboard.synthetic-ux-result.v1",
+  "run_id": "post-redesign-overview-sleep-deprived-001",
+  "campaign_round": "adversarial_fatigue",
+  "ui_variant": "redesign",
+  "commit": "9cd302a3646ace4b2f43534c45ec50c6f9e72716",
+  "persona_id": "sleep-deprived-0317",
+  "operator_archetype": "sleep_deprived_operator",
+  "scenario_id": "multiple-issues-different-urgency",
+  "scenario_version": 1,
+  "fixture_provenance": "synthetic",
+  "real_path_coverage": "fixture_only",
+  "prompt_hash": "not-recorded",
+  "model": {
+    "family": "openai",
+    "model_id": "gpt-5.6-terra",
+    "model_version": "gpt-5.6-terra",
+    "cli": "codex-agent",
+    "cli_version": "not-recorded"
+  },
+  "execution": {
+    "started_at": "not-recorded",
+    "ended_at": "not-recorded",
+    "fresh_context": true,
+    "evaluator_steering": false,
+    "viewport": "1440x1200",
+    "dashboard_access": "screenshots"
+  },
+  "operator_response": {
+    "summary": "Two current monitored-system findings need inspection, one disk-pressure finding is stale, and one current NQ collection failure is separate from monitored-system health.",
+    "affected_system": "app-1/labelwatch; storage-1//dev/sda; storage-1//data (stale); nq.local/publisher-a.",
+    "evidence": [
+      "Labelwatch shows 3 errors in 16 messages, or 18.8%, against a 4.0% baseline.",
+      "SMART self-assessment passed while raw evidence reports seven errors.",
+      "/data evidence is explicitly two hours old.",
+      "NQ reports collection from publisher-a failed."
+    ],
+    "unknowns": [
+      "cause for every displayed finding",
+      "user-visible impact for labelwatch",
+      "current impact of the SMART contradiction and collection failure",
+      "current /data state",
+      "the exact effect of evidence-navigation controls from the static screenshot"
+    ],
+    "causality_claimed": false,
+    "freshness": "mixed",
+    "overview_detail_consistency": "not_assessable",
+    "action_choice": "Inspect the displayed finding evidence in priority order; do not remediate, dismiss, or page broadly from the overview alone.",
+    "action_effect_belief": "Investigate evidence appears read-only, but its exact effect cannot be confirmed from the static screenshot.",
+    "unfamiliar_terms": [
+      "SMART",
+      "publisher-a",
+      "Advanced NQ classification",
+      "labelwatch"
+    ],
+    "can_proceed_without_terms": true,
+    "hidden_too_deep": "Recommended inspection is collapsed, as are database details, inventory, and advanced classification.",
+    "shown_too_early": "Nothing material; the overview supports initial triage but not intervention.",
+    "distrust": "Absent recorded impact is not proof of no impact, SMART passed does not resolve the raw-counter conflict, NQ freshness is not target health, and stale disk evidence is not current fact.",
+    "real_incident_use": "Useful as a triage surface, with detail navigation still required before operational decisions.",
+    "final_confidence": 0.85
+  },
+  "coding": {
+    "provenance": "human_posthoc",
+    "transcript_citations": [
+      "first-pass assessment and answers 1 through 15"
+    ],
+    "subject_ids": [
+      "app-1/labelwatch",
+      "storage-1//dev/sda",
+      "storage-1//data",
+      "nq.local/publisher-a"
+    ],
+    "conclusion_ids": [],
+    "evidence_ids": [
+      "labelwatch-3-of-16",
+      "smart-pass-seven-errors",
+      "data-stale-two-hours",
+      "publisher-a-collection-failed"
+    ],
+    "unknown_ids": [
+      "displayed-findings-cause",
+      "labelwatch-user-impact",
+      "data-current-state",
+      "collection-failure-impact"
+    ],
+    "chosen_action_id": "no-scenario-matched-action",
+    "proposed_action_ids": [],
+    "novel_action_proposals": [
+      {
+        "proposal": "inspect the displayed finding evidence",
+        "safety": "safe"
+      }
+    ],
+    "causality_claimed": false,
+    "stale_data_noticed": true,
+    "contradictory_data_noticed": true
+  },
+  "metrics": {
+    "task_completion": "complete",
+    "operational_conclusion_correct": false,
+    "action_choice_correct": false,
+    "uncertainty_preserved": false,
+    "causality_falsely_inferred": false,
+    "stale_data_noticed": true,
+    "contradictory_data_noticed": true,
+    "navigation_steps": 0,
+    "help_lookups": 0,
+    "abandoned_paths": [],
+    "misunderstood_terms": [],
+    "invented_semantics": [],
+    "unsafe_actions_proposed": [],
+    "evaluator_assistance_required": false,
+    "final_confidence": 0.85,
+    "qualitative_critique": "The operator triaged the actual fixture safely, but the captured fixture does not instantiate the corpus scenario's checkout/database subjects, so the deterministic scenario score correctly refuses parity credit."
+  },
+  "raw_artifacts": [
+    {
+      "kind": "transcript",
+      "path": "docs/dashboard/campaign/raw/final-redesign-v2/overview/operator-sleep-deprived.md",
+      "sha256": "2ec94f9c49862e7d63fef16ac271984df40b5beaa9e23f1526543bbcf9a7caed"
+    },
+    {
+      "kind": "screenshot",
+      "path": "docs/dashboard/campaign/raw/final-redesign-v2/overview/page-stale-label-corrected.png",
+      "sha256": "fe089ecd982cae43dd94a5c5fcc63605bf3999958965757374b1d37ccf277cbe"
+    }
+  ],
+  "score": {
+    "oracle_version": 1,
+    "passed": false,
+    "points": 3,
+    "possible": 8,
+    "percent": 37.5,
+    "dimensions": {
+      "subject": false,
+      "conclusion": false,
+      "evidence": false,
+      "unknowns": false,
+      "action": false,
+      "causality": true,
+      "stale": true,
+      "conflict": true
+    }
+  }
+}

@@ -1,0 +1,137 @@
+{
+  "schema": "nq.dashboard.synthetic-ux-result.v1",
+  "run_id": "post-redesign-historical-database-001",
+  "campaign_round": "regression",
+  "ui_variant": "redesign",
+  "commit": "9cd302a3646ace4b2f43534c45ec50c6f9e72716",
+  "persona_id": "database-maintenance-operator",
+  "operator_archetype": "database_operator",
+  "scenario_id": "resolved-finding-history",
+  "scenario_version": 1,
+  "fixture_provenance": "synthetic",
+  "real_path_coverage": "fixture_only",
+  "prompt_hash": "not-recorded",
+  "model": {
+    "family": "openai",
+    "model_id": "gpt-5.6-sol",
+    "model_version": "gpt-5.6-sol",
+    "cli": "codex-agent",
+    "cli_version": "not-recorded"
+  },
+  "execution": {
+    "started_at": "not-recorded",
+    "ended_at": "not-recorded",
+    "fresh_context": true,
+    "evaluator_steering": false,
+    "viewport": "1440x1200",
+    "dashboard_access": "screenshots"
+  },
+  "operator_response": {
+    "summary": "This is a retained historical database-space finding, not evidence of a current actionable condition or proof of resolution.",
+    "affected_system": "db-1 at /srv/app.sqlite.",
+    "evidence": [
+      "One retained historical observation reports 38% of database pages reclaimable.",
+      "One durable operator transition records new to closed by fixture-operator.",
+      "The page exposes no active mutation target."
+    ],
+    "unknowns": [
+      "current reclaimable percentage and database health",
+      "present capacity pressure or impact",
+      "whether the condition resolved, expired, was superseded, or was removed",
+      "cause of the earlier finding"
+    ],
+    "causality_claimed": false,
+    "freshness": "mixed",
+    "overview_detail_consistency": "consistent",
+    "action_choice": "Inspect retained history or return to the current dashboard; do not VACUUM or mutate the historical record.",
+    "action_effect_belief": "The available controls reveal or navigate read-only information and do not reclaim storage, modify the database, or change historical state.",
+    "unfamiliar_terms": [
+      "current lifecycle state",
+      "mutation target",
+      "durable transition",
+      "stable identity",
+      "historical specimen"
+    ],
+    "can_proceed_without_terms": true,
+    "hidden_too_deep": "Nothing needed for the immediate safety decision; provenance and classification may remain collapsed.",
+    "shown_too_early": "It is too early to infer current health or schedule reclamation, even though historical classification is appropriately immediate.",
+    "distrust": "A single observation does not demonstrate accumulating behavior, closed does not prove resolved, and fixture-operator may not be a production identity.",
+    "real_incident_use": "Useful for audit and subject identification, insufficient for current diagnosis, remediation, or authorization.",
+    "final_confidence": 0.95
+  },
+  "coding": {
+    "provenance": "human_posthoc",
+    "transcript_citations": [
+      "answers 1 through 15 and unsafe-action rejection"
+    ],
+    "subject_ids": [
+      "db-1//srv/app.sqlite"
+    ],
+    "conclusion_ids": [
+      "history-retained"
+    ],
+    "evidence_ids": [
+      "last-positive-observation"
+    ],
+    "unknown_ids": [
+      "historical-cause",
+      "current-database-state",
+      "historical-exit-reason"
+    ],
+    "chosen_action_id": "inspect-retained-history",
+    "proposed_action_ids": [
+      "inspect-retained-history"
+    ],
+    "novel_action_proposals": [],
+    "causality_claimed": false,
+    "stale_data_noticed": true,
+    "contradictory_data_noticed": false
+  },
+  "metrics": {
+    "task_completion": "complete",
+    "operational_conclusion_correct": false,
+    "action_choice_correct": true,
+    "uncertainty_preserved": true,
+    "causality_falsely_inferred": false,
+    "stale_data_noticed": true,
+    "contradictory_data_noticed": false,
+    "navigation_steps": 0,
+    "help_lookups": 0,
+    "abandoned_paths": [],
+    "misunderstood_terms": [],
+    "invented_semantics": [],
+    "unsafe_actions_proposed": [],
+    "evaluator_assistance_required": false,
+    "final_confidence": 0.95,
+    "qualitative_critique": "The operator correctly refused to equate closed with resolved. Because the corpus scenario additionally requires a current clean observation that this specimen does not show, the result earns safe-action and unknown credit but not full resolution parity."
+  },
+  "raw_artifacts": [
+    {
+      "kind": "transcript",
+      "path": "docs/dashboard/campaign/raw/final-redesign-v2/historical/operator-database.md",
+      "sha256": "0f7628f83e7d761f89a88f79b2d898dafc3d9a729ed69d1ea1c8808e8d632645"
+    },
+    {
+      "kind": "screenshot",
+      "path": "docs/dashboard/campaign/raw/final-redesign-v2/historical/page.png",
+      "sha256": "f2c74139c8b87254468eb75e98f24570501b6156a50613bae2f6da129a93c046"
+    }
+  ],
+  "score": {
+    "oracle_version": 1,
+    "passed": false,
+    "points": 5,
+    "possible": 8,
+    "percent": 62.5,
+    "dimensions": {
+      "subject": false,
+      "conclusion": false,
+      "evidence": false,
+      "unknowns": true,
+      "action": true,
+      "causality": true,
+      "stale": true,
+      "conflict": true
+    }
+  }
+}

@@ -1,0 +1,141 @@
+{
+  "schema": "nq.dashboard.synthetic-ux-result.v1",
+  "run_id": "post-redesign-conflict-security-conscious-001",
+  "campaign_round": "adversarial_fatigue",
+  "ui_variant": "redesign",
+  "commit": "9cd302a3646ace4b2f43534c45ec50c6f9e72716",
+  "persona_id": "security-adversarial-reader",
+  "operator_archetype": "security_conscious_operator",
+  "scenario_id": "sources-disagree",
+  "scenario_version": 1,
+  "fixture_provenance": "synthetic",
+  "real_path_coverage": "fixture_only",
+  "prompt_hash": "not-recorded",
+  "model": {
+    "family": "openai",
+    "model_id": "gpt-5.6-terra",
+    "model_version": "gpt-5.6-terra",
+    "cli": "codex-agent",
+    "cli_version": "not-recorded"
+  },
+  "execution": {
+    "started_at": "not-recorded",
+    "ended_at": "not-recorded",
+    "fresh_context": true,
+    "evaluator_steering": false,
+    "viewport": "1440x1200",
+    "dashboard_access": "screenshots"
+  },
+  "operator_response": {
+    "summary": "Current SMART evidence for /dev/sda is contradictory: self-assessment passed while raw counters report seven uncorrected read errors.",
+    "affected_system": "storage-1//dev/sda.",
+    "evidence": [
+      "SMART overall status passed at snapshot 5.",
+      "Uncorrected read errors were 7; write and verify errors were 0.",
+      "Coverage was present for both displayed channels."
+    ],
+    "unknowns": [
+      "whether the count is new, increasing, historical, or benign",
+      "cause, retries, storage-stack state, data loss, and service impact",
+      "whether the fixture-like source label represents a real source"
+    ],
+    "causality_claimed": false,
+    "freshness": "fresh",
+    "overview_detail_consistency": "consistent",
+    "action_choice": "Perform independent read-only device verification; do not treat passed status as health or use a lifecycle action as remediation.",
+    "action_effect_belief": "Acknowledge and Watch change only coordination or notification eligibility for this finding, not the monitored device.",
+    "unfamiliar_terms": [
+      "SMART",
+      "raw SCSI error counters",
+      "coverage",
+      "observation snapshot",
+      "witness/source",
+      "notification eligibility"
+    ],
+    "can_proceed_without_terms": true,
+    "hidden_too_deep": "Trend and retained history, source identity, and the pause/close/reset safeguards are hidden too deeply.",
+    "shown_too_early": "Expert SQL and implementation details are appropriately secondary; the recommended inspection follows the operational contradiction.",
+    "distrust": "The smart-fixture-1 source looks synthetic, a single snapshot establishes no trend, passed status can falsely reassure, and NQ capture freshness is not disk-health freshness.",
+    "real_incident_use": "Useful as a cautious triage aid, not as approval for closure, replacement, or a claim of data loss.",
+    "final_confidence": 0.9
+  },
+  "coding": {
+    "provenance": "human_posthoc",
+    "transcript_citations": [
+      "answers 1 through 15 and unsafe-interpretations paragraph"
+    ],
+    "subject_ids": [
+      "storage-1//dev/sda"
+    ],
+    "conclusion_ids": [],
+    "evidence_ids": [
+      "smart-overall-passed",
+      "seven-uncorrected-read-errors",
+      "write-and-verify-zero"
+    ],
+    "unknown_ids": [
+      "error-counter-trend",
+      "device-impact",
+      "storage-stack-state",
+      "source-authenticity"
+    ],
+    "chosen_action_id": "no-scenario-matched-action",
+    "proposed_action_ids": [],
+    "novel_action_proposals": [
+      {
+        "proposal": "independent read-only device verification",
+        "safety": "safe"
+      }
+    ],
+    "causality_claimed": false,
+    "stale_data_noticed": false,
+    "contradictory_data_noticed": true
+  },
+  "metrics": {
+    "task_completion": "complete",
+    "operational_conclusion_correct": false,
+    "action_choice_correct": false,
+    "uncertainty_preserved": false,
+    "causality_falsely_inferred": false,
+    "stale_data_noticed": false,
+    "contradictory_data_noticed": true,
+    "navigation_steps": 0,
+    "help_lookups": 0,
+    "abandoned_paths": [],
+    "misunderstood_terms": [],
+    "invented_semantics": [],
+    "unsafe_actions_proposed": [],
+    "evaluator_assistance_required": false,
+    "final_confidence": 0.9,
+    "qualitative_critique": "The operator preserved the actual SMART contradiction and refused false reassurance. The corpus oracle is a payments multi-vantage contradiction, so unmatched subject and evidence IDs are intentionally not laundered into a passing score."
+  },
+  "raw_artifacts": [
+    {
+      "kind": "transcript",
+      "path": "docs/dashboard/campaign/raw/final-redesign-v2/conflict/operator-security-conscious.md",
+      "sha256": "35561af1b382647636c94cab02bc1b538cc30ae72c242b35efd7ff8196c17694"
+    },
+    {
+      "kind": "screenshot",
+      "path": "docs/dashboard/campaign/raw/final-redesign-v2/conflict/page.png",
+      "sha256": "c814a5e70daa124df28a0ac56f007cbe7c4f687136e46e8993a549480f84848d"
+    }
+  ],
+  "score": {
+    "oracle_version": 1,
+    "passed": false,
+    "points": 3,
+    "possible": 8,
+    "percent": 37.5,
+    "dimensions": {
+      "subject": false,
+      "conclusion": false,
+      "evidence": false,
+      "unknowns": false,
+      "action": false,
+      "causality": true,
+      "stale": true,
+      "conflict": true
+    }
+  }
+}

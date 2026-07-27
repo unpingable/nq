@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nq.dashboard.synthetic-ux-failure.v1.schema.json",
+  "title": "NQ dashboard synthetic UX failure record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "failure_id",
+    "taxonomy",
+    "scenario_ids",
+    "run_ids",
+    "reproduced_by_multiple_fresh_operators",
+    "interface_is_prime_suspect",
+    "description",
+    "evidence_paths",
+    "root_cause",
+    "status",
+    "remediation",
+    "regression_test"
+  ],
+  "properties": {
+    "schema": {
+      "const": "nq.dashboard.synthetic-ux-failure.v1"
+    },
+    "failure_id": {
+      "type": "string",
+      "pattern": "^UXF-[0-9]{4}$"
+    },
+    "taxonomy": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "state-coherence defect",
+          "stale-data presentation defect",
+          "route identity defect",
+          "action-semantics defect",
+          "terminology failure",
+          "hierarchy failure",
+          "evidence presentation failure",
+          "unknown-state laundering",
+          "causality overclaim",
+          "self-health confusion",
+          "historical/current conflation",
+          "excessive implementation leakage",
+          "missing capability",
+          "documentation defect",
+          "model-specific operator error",
+          "scenario ambiguity",
+          "evaluator contamination"
+        ]
+      }
+    },
+    "scenario_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "run_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "reproduced_by_multiple_fresh_operators": {
+      "type": "boolean"
+    },
+    "interface_is_prime_suspect": {
+      "type": "boolean"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 10
+    },
+    "evidence_paths": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "root_cause": {
+      "type": "string",
+      "minLength": 5
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "fixed",
+        "mitigated",
+        "accepted",
+        "scenario_defect"
+      ]
+    },
+    "remediation": {
+      "type": "string",
+      "minLength": 5
+    },
+    "regression_test": {
+      "type": "string",
+      "minLength": 2
+    }
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nq.dashboard.operator-response.v1.schema.json",
+  "title": "Uncoached synthetic operator response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "affected_system",
+    "evidence",
+    "unknowns",
+    "causality_claimed",
+    "freshness",
+    "overview_detail_consistency",
+    "action_choice",
+    "action_effect_belief",
+    "unfamiliar_terms",
+    "can_proceed_without_terms",
+    "hidden_too_deep",
+    "shown_too_early",
+    "distrust",
+    "real_incident_use",
+    "final_confidence"
+  ],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "affected_system": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "causality_claimed": {
+      "type": "boolean"
+    },
+    "freshness": {
+      "type": "string",
+      "enum": [
+        "fresh",
+        "stale",
+        "mixed",
+        "unknown"
+      ]
+    },
+    "overview_detail_consistency": {
+      "type": "string",
+      "enum": [
+        "consistent",
+        "inconsistent",
+        "not_assessable"
+      ]
+    },
+    "action_choice": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action_effect_belief": {
+      "type": "string",
+      "minLength": 1
+    },
+    "unfamiliar_terms": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "can_proceed_without_terms": {
+      "type": "boolean"
+    },
+    "hidden_too_deep": {
+      "type": "string"
+    },
+    "shown_too_early": {
+      "type": "string"
+    },
+    "distrust": {
+      "type": "string"
+    },
+    "real_incident_use": {
+      "type": "string"
+    },
+    "final_confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  }
+}

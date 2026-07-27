@@ -1,0 +1,146 @@
+{
+  "schema": "nq.dashboard.synthetic-ux-result.v1",
+  "run_id": "baseline-missing-finding-production-sre-001",
+  "campaign_round": "baseline",
+  "ui_variant": "baseline",
+  "commit": "ba5a79d50d95901625fae1edf7e9145871f51f44",
+  "persona_id": "production-sre-outage",
+  "operator_archetype": "production_sre",
+  "scenario_id": "missing-finding-route",
+  "scenario_version": 1,
+  "fixture_provenance": "synthetic",
+  "real_path_coverage": "fixture_only",
+  "prompt_hash": "not-recorded",
+  "model": {
+    "family": "openai",
+    "model_id": "gpt-5.6-sol",
+    "model_version": "gpt-5.6-sol",
+    "cli": "codex-agent",
+    "cli_version": "not-recorded"
+  },
+  "execution": {
+    "started_at": "not-recorded",
+    "ended_at": "not-recorded",
+    "fresh_context": true,
+    "evaluator_steering": false,
+    "viewport": "1440x1200",
+    "dashboard_access": "screenshots"
+  },
+  "operator_response": {
+    "summary": "The finding target is unresolved; the page cannot establish a current error spike.",
+    "affected_system": "Possibly labelwatch/logwatch, but the object boundary is unclear.",
+    "evidence": [
+      "Finding not found",
+      "0 consecutive generations",
+      "since ?"
+    ],
+    "unknowns": [
+      "whether the finding ever existed or remains active",
+      "current condition and freshness",
+      "baseline, samples, impact, and cause"
+    ],
+    "causality_claimed": false,
+    "freshness": "unknown",
+    "overview_detail_consistency": "not_assessable",
+    "action_choice": "Use only read-only history or evidence pivots; do not mutate the finding.",
+    "action_effect_belief": "History inspection should not change finding or service state.",
+    "unfamiliar_terms": [
+      "error_shift",
+      "generation",
+      "legacy",
+      "Quiesce",
+      "v_warnings",
+      "labelwatch / logwatch",
+      "? badges",
+      "Watch",
+      "Close"
+    ],
+    "can_proceed_without_terms": false,
+    "hidden_too_deep": "Supporting measurements, timestamps, raw log examples, baseline definition, affected identity, and the lookup failure reason are hidden behind pivots or absent.",
+    "shown_too_early": "Lifecycle buttons, editable SQL, and confident explanatory prose appear before the page establishes a valid finding.",
+    "distrust": "High because Finding not found conflicts with confident incident prose, freshness is unknown, and mutation controls remain active.",
+    "real_incident_use": "Only as a weak lead and doorway to read-only evidence; not as proof of an error spike, cause, or impact.",
+    "final_confidence": 0.9
+  },
+  "coding": {
+    "provenance": "human_posthoc",
+    "transcript_citations": [
+      "answers 1, 3, 6, 8, 9, and 14"
+    ],
+    "subject_ids": [
+      "labelwatch/logwatch"
+    ],
+    "conclusion_ids": [
+      "finding-target-unresolved"
+    ],
+    "evidence_ids": [
+      "finding-not-found"
+    ],
+    "unknown_ids": [
+      "missing-reason",
+      "current-condition",
+      "route-freshness"
+    ],
+    "chosen_action_id": "inspect-available-history",
+    "proposed_action_ids": [
+      "inspect-available-history"
+    ],
+    "novel_action_proposals": [],
+    "causality_claimed": false,
+    "stale_data_noticed": true,
+    "contradictory_data_noticed": true
+  },
+  "metrics": {
+    "task_completion": "complete",
+    "operational_conclusion_correct": true,
+    "action_choice_correct": true,
+    "uncertainty_preserved": true,
+    "causality_falsely_inferred": false,
+    "stale_data_noticed": true,
+    "contradictory_data_noticed": true,
+    "navigation_steps": 0,
+    "help_lookups": 0,
+    "abandoned_paths": [],
+    "misunderstood_terms": [
+      "error_shift",
+      "generation",
+      "legacy",
+      "Quiesce",
+      "v_warnings"
+    ],
+    "invented_semantics": [],
+    "unsafe_actions_proposed": [],
+    "evaluator_assistance_required": false,
+    "final_confidence": 0.9,
+    "qualitative_critique": "Correct safe refusal, but the interface required the operator to reject its primary headline and controls."
+  },
+  "raw_artifacts": [
+    {
+      "kind": "transcript",
+      "path": "docs/dashboard/campaign/raw/baseline/missing-finding/operator-production-sre.md",
+      "sha256": "d23034da36fe04c62e411e6d9903cfef5f4257cf2bd6386ac1004924f0888371"
+    },
+    {
+      "kind": "screenshot",
+      "path": "docs/dashboard/campaign/raw/baseline/missing-finding/page.png",
+      "sha256": "38ea8aae476116f030bd9791016c0c3560b59ea1374bfef990bed65376870074"
+    }
+  ],
+  "score": {
+    "oracle_version": 1,
+    "passed": true,
+    "points": 8,
+    "possible": 8,
+    "percent": 100.0,
+    "dimensions": {
+      "subject": true,
+      "conclusion": true,
+      "evidence": true,
+      "unknowns": true,
+      "action": true,
+      "causality": true,
+      "stale": true,
+      "conflict": true
+    }
+  }
+}

@@ -1,0 +1,571 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nq.dashboard.synthetic-ux-result.v1.schema.json",
+  "title": "NQ dashboard synthetic UX run result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run_id",
+    "campaign_round",
+    "ui_variant",
+    "commit",
+    "persona_id",
+    "operator_archetype",
+    "scenario_id",
+    "scenario_version",
+    "fixture_provenance",
+    "real_path_coverage",
+    "prompt_hash",
+    "model",
+    "execution",
+    "operator_response",
+    "coding",
+    "metrics",
+    "raw_artifacts",
+    "score"
+  ],
+  "properties": {
+    "schema": {
+      "const": "nq.dashboard.synthetic-ux-result.v1"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9._-]+$"
+    },
+    "campaign_round": {
+      "type": "string",
+      "enum": [
+        "baseline",
+        "state_coherence",
+        "task_first",
+        "action_safety",
+        "adversarial_fatigue",
+        "regression"
+      ]
+    },
+    "ui_variant": {
+      "type": "string",
+      "enum": [
+        "baseline",
+        "redesign",
+        "text"
+      ]
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "persona_id": {
+      "type": "string",
+      "minLength": 2
+    },
+    "operator_archetype": {
+      "type": "string",
+      "minLength": 2
+    },
+    "scenario_id": {
+      "type": "string",
+      "minLength": 2
+    },
+    "scenario_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "fixture_provenance": {
+      "type": "string",
+      "enum": [
+        "synthetic"
+      ]
+    },
+    "real_path_coverage": {
+      "type": "string",
+      "enum": [
+        "fixture_only"
+      ]
+    },
+    "prompt_hash": {
+      "type": "string",
+      "pattern": "^(sha256:[0-9a-f]{64}|not-recorded)$"
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "family",
+        "model_id",
+        "model_version",
+        "cli",
+        "cli_version"
+      ],
+      "properties": {
+        "family": {
+          "type": "string",
+          "enum": [
+            "openai",
+            "anthropic",
+            "control"
+          ]
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 2
+        },
+        "model_version": {
+          "type": "string",
+          "minLength": 2
+        },
+        "cli": {
+          "type": "string",
+          "minLength": 2
+        },
+        "cli_version": {
+          "type": "string",
+          "minLength": 2
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "started_at",
+        "ended_at",
+        "fresh_context",
+        "evaluator_steering",
+        "viewport",
+        "dashboard_access"
+      ],
+      "properties": {
+        "started_at": {
+          "type": "string",
+          "pattern": "(Z$|^not-recorded$)"
+        },
+        "ended_at": {
+          "type": "string",
+          "pattern": "(Z$|^not-recorded$)"
+        },
+        "fresh_context": {
+          "type": "boolean"
+        },
+        "evaluator_steering": {
+          "type": "boolean"
+        },
+        "viewport": {
+          "type": "string",
+          "pattern": "^[0-9]+x[0-9]+$"
+        },
+        "dashboard_access": {
+          "type": "string",
+          "enum": [
+            "interactive",
+            "screenshots",
+            "text_control"
+          ]
+        }
+      }
+    },
+    "operator_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "summary",
+        "affected_system",
+        "evidence",
+        "unknowns",
+        "causality_claimed",
+        "freshness",
+        "overview_detail_consistency",
+        "action_choice",
+        "action_effect_belief",
+        "unfamiliar_terms",
+        "can_proceed_without_terms",
+        "hidden_too_deep",
+        "shown_too_early",
+        "distrust",
+        "real_incident_use",
+        "final_confidence"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "affected_system": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unknowns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "causality_claimed": {
+          "type": "boolean"
+        },
+        "freshness": {
+          "type": "string",
+          "enum": [
+            "fresh",
+            "stale",
+            "mixed",
+            "unknown"
+          ]
+        },
+        "overview_detail_consistency": {
+          "type": "string",
+          "enum": [
+            "consistent",
+            "inconsistent",
+            "not_assessable"
+          ]
+        },
+        "action_choice": {
+          "type": "string"
+        },
+        "action_effect_belief": {
+          "type": "string"
+        },
+        "unfamiliar_terms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "can_proceed_without_terms": {
+          "type": "boolean"
+        },
+        "hidden_too_deep": {
+          "type": "string"
+        },
+        "shown_too_early": {
+          "type": "string"
+        },
+        "distrust": {
+          "type": "string"
+        },
+        "real_incident_use": {
+          "type": "string"
+        },
+        "final_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "coding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provenance",
+        "transcript_citations",
+        "subject_ids",
+        "conclusion_ids",
+        "evidence_ids",
+        "unknown_ids",
+        "chosen_action_id",
+        "proposed_action_ids",
+        "novel_action_proposals",
+        "causality_claimed",
+        "stale_data_noticed",
+        "contradictory_data_noticed"
+      ],
+      "properties": {
+        "provenance": {
+          "type": "string",
+          "enum": [
+            "model_structured_output",
+            "human_posthoc",
+            "fixture_replay"
+          ]
+        },
+        "transcript_citations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 2
+          }
+        },
+        "subject_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "conclusion_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unknown_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "chosen_action_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "proposed_action_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "novel_action_proposals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "proposal",
+              "safety"
+            ],
+            "properties": {
+              "proposal": {
+                "type": "string",
+                "minLength": 2
+              },
+              "safety": {
+                "type": "string",
+                "enum": [
+                  "safe",
+                  "unsafe",
+                  "unknown"
+                ]
+              }
+            }
+          }
+        },
+        "causality_claimed": {
+          "type": "boolean"
+        },
+        "stale_data_noticed": {
+          "type": "boolean"
+        },
+        "contradictory_data_noticed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_completion",
+        "operational_conclusion_correct",
+        "action_choice_correct",
+        "uncertainty_preserved",
+        "causality_falsely_inferred",
+        "stale_data_noticed",
+        "contradictory_data_noticed",
+        "navigation_steps",
+        "help_lookups",
+        "abandoned_paths",
+        "misunderstood_terms",
+        "invented_semantics",
+        "unsafe_actions_proposed",
+        "evaluator_assistance_required",
+        "final_confidence",
+        "qualitative_critique"
+      ],
+      "properties": {
+        "task_completion": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "refused",
+            "failed"
+          ]
+        },
+        "operational_conclusion_correct": {
+          "type": "boolean"
+        },
+        "action_choice_correct": {
+          "type": "boolean"
+        },
+        "uncertainty_preserved": {
+          "type": "boolean"
+        },
+        "causality_falsely_inferred": {
+          "type": "boolean"
+        },
+        "stale_data_noticed": {
+          "type": "boolean"
+        },
+        "contradictory_data_noticed": {
+          "type": "boolean"
+        },
+        "navigation_steps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "help_lookups": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "abandoned_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "misunderstood_terms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "invented_semantics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unsafe_actions_proposed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evaluator_assistance_required": {
+          "type": "boolean"
+        },
+        "final_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "qualitative_critique": {
+          "type": "string"
+        }
+      }
+    },
+    "raw_artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "path",
+          "sha256"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "transcript",
+              "interaction_log",
+              "screenshot",
+              "html",
+              "prompt",
+              "command_spec",
+              "stdout",
+              "stderr"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "oracle_version",
+        "passed",
+        "points",
+        "possible",
+        "percent",
+        "dimensions"
+      ],
+      "properties": {
+        "oracle_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "points": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "possible": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "dimensions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subject",
+            "conclusion",
+            "evidence",
+            "unknowns",
+            "action",
+            "causality",
+            "stale",
+            "conflict"
+          ],
+          "properties": {
+            "subject": {
+              "type": "boolean"
+            },
+            "conclusion": {
+              "type": "boolean"
+            },
+            "evidence": {
+              "type": "boolean"
+            },
+            "unknowns": {
+              "type": "boolean"
+            },
+            "action": {
+              "type": "boolean"
+            },
+            "causality": {
+              "type": "boolean"
+            },
+            "stale": {
+              "type": "boolean"
+            },
+            "conflict": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  }
+}

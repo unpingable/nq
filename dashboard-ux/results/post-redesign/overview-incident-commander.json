@@ -1,0 +1,146 @@
+{
+  "schema": "nq.dashboard.synthetic-ux-result.v1",
+  "run_id": "post-redesign-overview-incident-commander-001",
+  "campaign_round": "task_first",
+  "ui_variant": "redesign",
+  "commit": "c926a7389c5a11b260dd42b9ebffe9c58feecf10",
+  "persona_id": "incident-commander-scope",
+  "operator_archetype": "incident_commander",
+  "scenario_id": "multiple-issues-different-urgency",
+  "scenario_version": 1,
+  "fixture_provenance": "synthetic",
+  "real_path_coverage": "fixture_only",
+  "prompt_hash": "not-recorded",
+  "model": {
+    "family": "openai",
+    "model_id": "gpt-5.6-sol",
+    "model_version": "gpt-5.6-sol",
+    "cli": "codex-agent",
+    "cli_version": "not-recorded"
+  },
+  "execution": {
+    "started_at": "not-recorded",
+    "ended_at": "not-recorded",
+    "fresh_context": true,
+    "evaluator_steering": false,
+    "viewport": "1440x1200",
+    "dashboard_access": "screenshots"
+  },
+  "operator_response": {
+    "summary": "The overview shows two fresh conditions requiring investigation and one stale disk condition that blocks a current-state decision; none establishes cause or operational impact.",
+    "affected_system": "app-1/labelwatch; storage-1//dev/sda; storage-1//data.",
+    "evidence": [
+      "Labelwatch reports 3 of 16 messages as errors, or 18.8%, against a displayed 4.0% baseline.",
+      "SMART overall status passed while raw media error counters are nonzero.",
+      "/data was 91.2% used two hours earlier and is explicitly stale."
+    ],
+    "unknowns": [
+      "customer or SLO effects and all causes",
+      "error-window meaning, trend duration, and wider scope",
+      "the SMART counters' magnitude and history",
+      "current /data use, storage topology, and evidence coverage"
+    ],
+    "causality_claimed": false,
+    "freshness": "mixed",
+    "overview_detail_consistency": "not_assessable",
+    "action_choice": "Assign app, storage, and monitoring owners to gather independent current evidence; do not mitigate or escalate from the overview alone.",
+    "action_effect_belief": "The proposed inspections gather evidence and assign ownership; they do not remediate systems or establish impact.",
+    "unfamiliar_terms": [
+      "NQ",
+      "operational claim",
+      "expert classification",
+      "snapshot 5",
+      "Advanced NQ classification",
+      "labelwatch",
+      "raw media error counters"
+    ],
+    "can_proceed_without_terms": true,
+    "hidden_too_deep": "Ordering rationale, ownership, trend duration, confidence, and evidence previews are absent or deeper than the overview.",
+    "shown_too_early": "Snapshot number and framework language add little to first-minute triage; advanced classification is appropriately collapsed.",
+    "distrust": "The precise error percentage has a denominator of only 16, passed SMART status can falsely reassure, and complete publish status does not establish target health.",
+    "real_incident_use": "Useful for a cautious first-minute queue, but insufficient for prioritization, escalation, mitigation, or impact declaration.",
+    "final_confidence": 0.88
+  },
+  "coding": {
+    "provenance": "human_posthoc",
+    "transcript_citations": [
+      "Situation statement through Confidence sections"
+    ],
+    "subject_ids": [
+      "app-1/labelwatch",
+      "storage-1//dev/sda",
+      "storage-1//data"
+    ],
+    "conclusion_ids": [],
+    "evidence_ids": [
+      "labelwatch-3-of-16",
+      "smart-pass-nonzero-errors",
+      "data-91.2-stale"
+    ],
+    "unknown_ids": [
+      "customer-impact",
+      "displayed-findings-cause",
+      "smart-counter-trend",
+      "data-current-state",
+      "evidence-coverage"
+    ],
+    "chosen_action_id": "no-scenario-matched-action",
+    "proposed_action_ids": [],
+    "novel_action_proposals": [
+      {
+        "proposal": "assign owners and gather independent current evidence",
+        "safety": "safe"
+      }
+    ],
+    "causality_claimed": false,
+    "stale_data_noticed": true,
+    "contradictory_data_noticed": true
+  },
+  "metrics": {
+    "task_completion": "complete",
+    "operational_conclusion_correct": false,
+    "action_choice_correct": false,
+    "uncertainty_preserved": false,
+    "causality_falsely_inferred": false,
+    "stale_data_noticed": true,
+    "contradictory_data_noticed": true,
+    "navigation_steps": 0,
+    "help_lookups": 0,
+    "abandoned_paths": [],
+    "misunderstood_terms": [],
+    "invented_semantics": [],
+    "unsafe_actions_proposed": [],
+    "evaluator_assistance_required": false,
+    "final_confidence": 0.88,
+    "qualitative_critique": "The incident commander preserved scope, stale state, contradiction, and unknown impact in the actual fixture. The canonical multi-issue oracle uses different checkout, database, and NQ self-health subjects, so parity credit is intentionally withheld."
+  },
+  "raw_artifacts": [
+    {
+      "kind": "transcript",
+      "path": "docs/dashboard/campaign/raw/post-redesign/overview/operator-incident-commander.md",
+      "sha256": "082583eebc692ec86d9f74ae655c030f2daf0cc55b42647140a55fd6af7c1047"
+    },
+    {
+      "kind": "screenshot",
+      "path": "docs/dashboard/campaign/raw/post-redesign/overview/page.png",
+      "sha256": "edcc16e17d1b95835812314b2c4aa7007c7ef849bda9575e1dd2b9301d711ddd"
+    }
+  ],
+  "score": {
+    "oracle_version": 1,
+    "passed": false,
+    "points": 3,
+    "possible": 8,
+    "percent": 37.5,
+    "dimensions": {
+      "subject": false,
+      "conclusion": false,
+      "evidence": false,
+      "unknowns": false,
+      "action": false,
+      "causality": true,
+      "stale": true,
+      "conflict": true
+    }
+  }
+}

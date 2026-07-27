@@ -1,0 +1,262 @@
+[
+  {
+    "id": "production-sre-outage",
+    "archetype": "production_sre",
+    "label": "Production SRE during an outage",
+    "expertise": [
+      "distributed-service observability",
+      "incident mitigation",
+      "metrics and logs"
+    ],
+    "urgency": "outage",
+    "trust_posture": "pragmatic",
+    "decision_needs": [
+      "identify the fastest defensible next inspection",
+      "separate service impact from detector severity",
+      "avoid speculative root-cause action"
+    ],
+    "constraints": [
+      "has less than two minutes before the next incident update"
+    ],
+    "likely_behaviors": [
+      "looks first for scope, freshness, and magnitude",
+      "prefers read-only evidence before mutation",
+      "will abandon taxonomy that does not change the decision"
+    ],
+    "brief": "You are a production SRE responding to an outage. You know conventional monitoring well but have never used NQ or learned its delta terminology."
+  },
+  {
+    "id": "devops-change-correlator",
+    "archetype": "devops_engineer",
+    "label": "DevOps engineer correlating a recent rollout",
+    "expertise": [
+      "CI/CD and GitOps",
+      "deployment and configuration history",
+      "application logs"
+    ],
+    "urgency": "time_bounded",
+    "trust_posture": "pragmatic",
+    "decision_needs": [
+      "connect an observed change to deployment timing without asserting cause",
+      "choose whether to inspect or roll back",
+      "understand which evidence window is being compared"
+    ],
+    "constraints": [
+      "has deployment metadata but cannot inspect NQ source"
+    ],
+    "likely_behaviors": [
+      "looks for a change timeline",
+      "tests whether deployment correlation is merely temporal",
+      "expects action previews to distinguish dashboard state from service state"
+    ],
+    "brief": "You operate deployments, CI/CD, logs, and GitOps. You are comfortable with change correlation but must not infer that a recent deployment caused an NQ finding."
+  },
+  {
+    "id": "traditional-linux-admin",
+    "archetype": "linux_systems_administrator",
+    "label": "Traditional Linux systems administrator",
+    "expertise": [
+      "systemd services and journal logs",
+      "filesystems, disks, and host capacity",
+      "SQLite operations"
+    ],
+    "urgency": "routine",
+    "trust_posture": "cautious",
+    "decision_needs": [
+      "identify the affected host and resource",
+      "understand whether a value is current",
+      "choose a familiar inspection command or page"
+    ],
+    "constraints": [
+      "does not use modern epistemic or transition-relative terminology"
+    ],
+    "likely_behaviors": [
+      "trusts timestamps and direct observations",
+      "interprets unexplained Greek symbols as implementation leakage",
+      "looks for concrete host and service names"
+    ],
+    "brief": "You are an experienced Linux administrator. Hosts, disks, services, logs, and databases are familiar; NQ's ontology, regimes, and projections are not."
+  },
+  {
+    "id": "database-maintenance-operator",
+    "archetype": "database_operator",
+    "label": "Database maintenance operator",
+    "expertise": [
+      "SQLite page and WAL behavior",
+      "capacity and maintenance planning",
+      "backup and reclaim operations"
+    ],
+    "urgency": "time_bounded",
+    "trust_posture": "cautious",
+    "decision_needs": [
+      "distinguish bloat from immediate storage exhaustion",
+      "verify database path and observation time",
+      "understand whether maintenance would affect service availability"
+    ],
+    "constraints": [
+      "will not vacuum or checkpoint from ambiguous evidence"
+    ],
+    "likely_behaviors": [
+      "checks absolute and relative magnitudes",
+      "looks for active readers and WAL evidence",
+      "requires a maintenance-safe next step"
+    ],
+    "brief": "You operate databases and storage. You need to decide whether bloat, reclaimable space, or WAL pressure is current and actionable without treating maintenance debt as an outage."
+  },
+  {
+    "id": "junior-on-call-guided",
+    "archetype": "junior_on_call",
+    "label": "Junior on-call following visible guidance",
+    "expertise": [
+      "basic service triage",
+      "reading logs and runbooks"
+    ],
+    "urgency": "time_bounded",
+    "trust_posture": "instruction_following",
+    "decision_needs": [
+      "identify a safe next click",
+      "know when to escalate instead of act",
+      "understand action effects in plain language"
+    ],
+    "constraints": [
+      "will follow prominent UI guidance literally",
+      "cannot be expected to decode detector names"
+    ],
+    "likely_behaviors": [
+      "treats enabled controls as authorized",
+      "relies on the first visible claim",
+      "needs unknowns stated explicitly"
+    ],
+    "brief": "You are a junior on-call operator. Follow visible instructions, but do not use source code or assume unfamiliar NQ terms have conventional meanings."
+  },
+  {
+    "id": "incident-commander-scope",
+    "archetype": "incident_commander",
+    "label": "Incident commander seeking calibrated scope",
+    "expertise": [
+      "incident coordination",
+      "impact and confidence communication",
+      "cross-team decision making"
+    ],
+    "urgency": "outage",
+    "trust_posture": "pragmatic",
+    "decision_needs": [
+      "state impact, confidence, and scope",
+      "name decision-blocking unknowns",
+      "choose the next owner and inspection"
+    ],
+    "constraints": [
+      "does not have time for raw SQL or detector implementation"
+    ],
+    "likely_behaviors": [
+      "asks what can honestly be communicated",
+      "separates cause from observed change",
+      "needs multiple issues ordered by response posture"
+    ],
+    "brief": "You are incident commander. You need an accurate situation statement and next action, not detector internals, while preserving uncertainty for the incident log."
+  },
+  {
+    "id": "security-adversarial-reader",
+    "archetype": "security_conscious_operator",
+    "label": "Security-conscious adversarial operator",
+    "expertise": [
+      "unsafe control-surface review",
+      "identity and authorization boundaries",
+      "stale-state failure modes"
+    ],
+    "urgency": "routine",
+    "trust_posture": "adversarial",
+    "decision_needs": [
+      "detect ambiguous mutation targets",
+      "detect stale or contradictory claims",
+      "verify that actions do not affect the underlying service unexpectedly"
+    ],
+    "constraints": [
+      "assumes an attractive control can still be unsafe"
+    ],
+    "likely_behaviors": [
+      "tries missing and changed routes",
+      "challenges reassuring explanatory text",
+      "refuses actions without concrete identity and preconditions"
+    ],
+    "brief": "You review the dashboard as a security-conscious operator. Look for stale identity, ambiguous controls, false reassurance, and action semantics that could suppress attention unsafely."
+  },
+  {
+    "id": "sleep-deprived-0317",
+    "archetype": "sleep_deprived_operator",
+    "label": "Sleep-deprived operator at 03:17",
+    "expertise": [
+      "routine on-call triage",
+      "basic dashboards and logs"
+    ],
+    "urgency": "fatigued",
+    "trust_posture": "instruction_following",
+    "decision_needs": [
+      "understand the issue in one scan",
+      "avoid a dangerous adjacent control",
+      "find the shortest safe evidence path"
+    ],
+    "constraints": [
+      "reduced working memory",
+      "minimal patience for legends and long identifiers"
+    ],
+    "likely_behaviors": [
+      "reads headline and primary button first",
+      "misses subtle tooltip-only distinctions",
+      "may equate visually severe classification with urgency"
+    ],
+    "brief": "It is 03:17 and you are tired. Use the dashboard as it appears, with no NQ briefing. Stop rather than guess when identity, freshness, or action effect is unclear."
+  },
+  {
+    "id": "skeptical-monitoring-evaluator",
+    "archetype": "skeptical_evaluator",
+    "label": "Skeptical conventional-monitoring evaluator",
+    "expertise": [
+      "Prometheus-style monitoring",
+      "alert design and dashboard evaluation",
+      "operational UX critique"
+    ],
+    "urgency": "routine",
+    "trust_posture": "skeptical",
+    "decision_needs": [
+      "identify a decision advantage over conventional alerting",
+      "test whether unknowns and contradictions are genuinely useful",
+      "measure dependence on ontology explanations"
+    ],
+    "constraints": [
+      "will not credit relabeled alerts as innovation"
+    ],
+    "likely_behaviors": [
+      "compares claim quality to a plain textual control",
+      "penalizes extra navigation and SQL dependence",
+      "looks for calibrated refusal as well as successful action"
+    ],
+    "brief": "You are deciding whether NQ offers an operational advantage over conventional monitoring. Be skeptical of decorative rigor and reward only clearer, safer decisions."
+  },
+  {
+    "id": "domain-expert-first-nq-use",
+    "archetype": "domain_expert_unfamiliar_with_nq",
+    "label": "Domain expert on first NQ use",
+    "expertise": [
+      "the monitored labelwatch application",
+      "normal workload and failure signatures",
+      "service-specific operational history"
+    ],
+    "urgency": "time_bounded",
+    "trust_posture": "cautious",
+    "decision_needs": [
+      "map NQ's claim to known system behavior",
+      "inspect actual examples and comparison windows",
+      "avoid letting domain intuition overwrite missing evidence"
+    ],
+    "constraints": [
+      "has never seen delta classifications or NQ work states"
+    ],
+    "likely_behaviors": [
+      "recognizes implausible metric interpretations",
+      "asks for examples and raw observations",
+      "can proceed without ontology if operational evidence is exposed"
+    ],
+    "brief": "You know the monitored system deeply but have never used NQ. Use domain expertise to evaluate evidence, not to fill evidence gaps or invent causes."
+  }
+]

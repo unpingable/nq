@@ -1,0 +1,2834 @@
+[
+  {
+    "id": "error-rate-increased",
+    "version": 1,
+    "title": "Error rate increased relative to baseline",
+    "requirement": 1,
+    "task_type": "investigate",
+    "operator_context": "Labelwatch is serving traffic. Determine whether its recent log error rate needs attention and what to inspect next.",
+    "operator_task": "Identify the observed change, comparison basis, evidence strength, unknown impact, and safest next inspection.",
+    "start_route": "/",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-error-shift-001",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "logs-current",
+          "source": "labelwatch/journal",
+          "observed_at": "2026-07-26T07:16:45Z",
+          "generation": 4200,
+          "tense": "current"
+        },
+        {
+          "id": "logs-baseline",
+          "source": "labelwatch/journal",
+          "observed_at": "2026-07-26T06:46:45Z",
+          "generation": 4170,
+          "tense": "historical"
+        }
+      ],
+      "notes": "Two explicit windows; deterministic 3/16 current errors and 40/1000 baseline errors."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "error-rate-increased",
+          "text": "Labelwatch recent log error rate is 18.8%, above a 4.0% established baseline."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "current-error-sample",
+          "text": "3 errors in 16 recent messages.",
+          "basis_id": "logs-current"
+        },
+        {
+          "id": "baseline-error-sample",
+          "text": "40 errors in 1000 baseline messages.",
+          "basis_id": "logs-baseline"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "service-impact",
+          "text": "User-visible service impact has not been established."
+        },
+        {
+          "id": "cause",
+          "text": "The observations establish change, not its cause."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "inspect-error-examples",
+          "label": "Inspect error examples",
+          "available": true,
+          "effect": [
+            "opens retained examples from the same current observation"
+          ],
+          "does_not": [
+            "change labelwatch or finding state"
+          ],
+          "reversible": true,
+          "precondition": "Current observation remains resolvable.",
+          "target": "retained labelwatch error examples for the current observation",
+          "state_transition": "No state transition; opens retained evidence.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future detector observations continue normally.",
+          "recording": "No finding lifecycle transition is recorded."
+        },
+        {
+          "id": "compare-recent-changes",
+          "label": "Compare recent changes",
+          "available": true,
+          "effect": [
+            "opens a time-aligned change inspection"
+          ],
+          "does_not": [
+            "claim a deployment caused the errors"
+          ],
+          "reversible": true,
+          "precondition": "Change metadata is available.",
+          "target": "time-aligned deployment and configuration evidence",
+          "state_transition": "No state transition; opens a comparison view.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future detector observations continue normally.",
+          "recording": "No finding lifecycle transition is recorded."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "investigate",
+      "required_subject_ids": [
+        "labelwatch"
+      ],
+      "required_conclusion_ids": [
+        "error-rate-increased"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "error-rate-increased",
+          "text": "The recent observed error proportion is above baseline."
+        },
+        {
+          "id": "small-current-window",
+          "text": "The current window contains only 16 messages."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "deployment-caused-errors",
+          "text": "A deployment caused the increase."
+        },
+        {
+          "id": "outage-proven",
+          "text": "The service is in an outage."
+        }
+      ],
+      "required_evidence_ids": [
+        "current-error-sample",
+        "baseline-error-sample"
+      ],
+      "required_unknown_ids": [
+        "service-impact",
+        "cause"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "inspect-error-examples",
+        "compare-recent-changes"
+      ],
+      "unsafe_action_ids": [
+        "close-finding",
+        "rollback-deployment"
+      ],
+      "action_expectation": "Inspect examples or time-aligned changes; do not close, suppress, or roll back from this evidence alone."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "statistical-shift",
+      "unknown-impact",
+      "vertical-slice"
+    ]
+  },
+  {
+    "id": "disk-pressure-conflicting-views",
+    "version": 1,
+    "title": "Disk pressure with conflicting overview and detail values",
+    "requirement": 2,
+    "task_type": "refuse",
+    "operator_context": "The overview and a disk detail page show materially different utilization for the same host.",
+    "operator_task": "Determine which value is current, explain the discrepancy, and decide whether immediate disk action is justified.",
+    "start_route": "/finding/disk-pressure/storage-01/root",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-disk-conflict-002",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "host-current",
+          "source": "storage-01/host",
+          "observed_at": "2026-07-26T07:16:40Z",
+          "generation": 4200,
+          "tense": "current"
+        },
+        {
+          "id": "host-old-detail",
+          "source": "storage-01/host-history",
+          "observed_at": "2026-07-26T06:57:00Z",
+          "generation": 4180,
+          "tense": "historical"
+        }
+      ],
+      "notes": "Overview is 91% at generation 4200; detail value is 63% and explicitly historical at generation 4180."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "current-disk-pressure",
+          "text": "The current host observation reports root filesystem use at 91%."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "overview-disk-91",
+          "text": "Overview: 91% used, observed 20 seconds ago.",
+          "basis_id": "host-current"
+        },
+        {
+          "id": "detail-disk-63-history",
+          "text": "Historical detail: 63% used, observed 20 minutes earlier.",
+          "basis_id": "host-old-detail"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "growth-cause",
+          "text": "The cause of the 28 percentage-point change is not established."
+        }
+      ],
+      "conflicts": [
+        {
+          "id": "disk-values-different-bases",
+          "text": "The two values differ because they come from different observation times and generations."
+        }
+      ],
+      "actions": [
+        {
+          "id": "inspect-current-disk",
+          "label": "Inspect current disk evidence",
+          "available": true,
+          "effect": [
+            "opens filesystems and capacity evidence tied to generation 4200"
+          ],
+          "does_not": [
+            "delete files or change the host"
+          ],
+          "reversible": true,
+          "precondition": "Generation 4200 remains available.",
+          "target": "generation 4200 filesystem and capacity evidence",
+          "state_transition": "No state transition; opens current disk evidence.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future disk observations continue normally.",
+          "recording": "No finding lifecycle transition is recorded."
+        },
+        {
+          "id": "dismiss-using-old-value",
+          "label": "Dismiss as 63%",
+          "available": false,
+          "effect": [
+            "would treat a historical value as current"
+          ],
+          "does_not": [
+            "establish current safety"
+          ],
+          "reversible": false,
+          "precondition": "Never valid while the current 91% observation exists.",
+          "target": "the current disk-pressure decision",
+          "state_transition": "Unavailable; no state transition occurs.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future disk observations continue normally.",
+          "recording": "No transition is recorded because the action is unavailable."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "investigate",
+      "required_subject_ids": [
+        "storage-01/root"
+      ],
+      "required_conclusion_ids": [
+        "current-disk-pressure"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "current-disk-pressure",
+          "text": "The current basis reports 91% disk use."
+        },
+        {
+          "id": "historical-value-not-current",
+          "text": "The 63% value is historical, not a competing current measurement."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "disk-safe-at-63",
+          "text": "The disk is safe because detail shows 63%."
+        },
+        {
+          "id": "files-may-be-deleted",
+          "text": "NQ has identified files safe to delete."
+        }
+      ],
+      "required_evidence_ids": [
+        "overview-disk-91",
+        "detail-disk-63-history"
+      ],
+      "required_unknown_ids": [
+        "growth-cause"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": true,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "inspect-current-disk"
+      ],
+      "unsafe_action_ids": [
+        "dismiss-using-old-value",
+        "delete-files"
+      ],
+      "action_expectation": "Use the current basis and inspect capacity; never silently average or prefer the reassuring historical value."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "state-coherence",
+      "historical-current",
+      "conflict"
+    ]
+  },
+  {
+    "id": "database-reclaimable-space",
+    "version": 1,
+    "title": "Database reclaimable-space maintenance finding",
+    "requirement": 3,
+    "task_type": "investigate",
+    "operator_context": "A production SQLite database has accumulated reclaimable pages but the service is responding normally.",
+    "operator_task": "Decide whether this is immediate storage pressure, planned maintenance, or safe to dismiss.",
+    "start_route": "/finding/freelist-bloat/db-01/%2Fvar%2Flib%2Flabelwatch.db",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-db-bloat-003",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "sqlite-current",
+          "source": "db-01/sqlite-health",
+          "observed_at": "2026-07-26T07:16:35Z",
+          "generation": 4200,
+          "tense": "current"
+        }
+      ],
+      "notes": "Database is 8.0 GiB; 2.6 GiB or 32.5% is reclaimable; host has 120 GiB free."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "reclaimable-space-maintenance",
+          "text": "labelwatch.db has 2.6 GiB reclaimable space, a maintenance condition without observed service impact."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "freelist-size",
+          "text": "2.6 GiB reclaimable of an 8.0 GiB database (32.5%).",
+          "basis_id": "sqlite-current"
+        },
+        {
+          "id": "host-free-space",
+          "text": "The host currently has 120 GiB free.",
+          "basis_id": "sqlite-current"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "vacuum-window-impact",
+          "text": "The service impact of a future VACUUM has not been assessed."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "plan-db-maintenance",
+          "label": "Plan database maintenance",
+          "available": true,
+          "effect": [
+            "opens backup, reader, and maintenance-window checks"
+          ],
+          "does_not": [
+            "run VACUUM or checkpoint the database"
+          ],
+          "reversible": true,
+          "precondition": "A current database identity and observation are resolved.",
+          "target": "the database maintenance decision and its prerequisites",
+          "state_transition": "No database transition; opens maintenance planning checks.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future database observations continue normally.",
+          "recording": "No NQ finding lifecycle transition is recorded."
+        },
+        {
+          "id": "vacuum-now",
+          "label": "VACUUM now",
+          "available": false,
+          "effect": [
+            "would participate in the production database"
+          ],
+          "does_not": [
+            "guarantee no service interruption"
+          ],
+          "reversible": false,
+          "precondition": "Requires an external maintenance plan and authority.",
+          "target": "the production SQLite database",
+          "state_transition": "Unavailable; no database transition occurs.",
+          "underlying_system_affected": true,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "NQ would continue observing after externally authorized maintenance.",
+          "recording": "NQ records no transition because this action is unavailable here."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "investigate",
+      "required_subject_ids": [
+        "db-01/labelwatch.db"
+      ],
+      "required_conclusion_ids": [
+        "reclaimable-space-maintenance"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "reclaimable-space-maintenance",
+          "text": "The database has material reclaimable space suited to planned maintenance."
+        },
+        {
+          "id": "not-current-storage-emergency",
+          "text": "Current host free space does not indicate an immediate storage emergency."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "database-outage",
+          "text": "The database is failing."
+        },
+        {
+          "id": "vacuum-safe-now",
+          "text": "It is safe to VACUUM immediately."
+        }
+      ],
+      "required_evidence_ids": [
+        "freelist-size",
+        "host-free-space"
+      ],
+      "required_unknown_ids": [
+        "vacuum-window-impact"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "plan-db-maintenance"
+      ],
+      "unsafe_action_ids": [
+        "vacuum-now",
+        "close-as-healthy"
+      ],
+      "action_expectation": "Plan maintenance after backup and reader checks; do not run invasive database work from the finding alone."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "database",
+      "maintenance",
+      "low-immediacy"
+    ]
+  },
+  {
+    "id": "current-finding-impact-incomplete",
+    "version": 1,
+    "title": "Current finding with incomplete impact evidence",
+    "requirement": 4,
+    "task_type": "investigate",
+    "operator_context": "A current API error shift is well supported, while synthetic health checks still pass.",
+    "operator_task": "Explain what changed and whether customer impact can honestly be claimed.",
+    "start_route": "/finding/error-shift/api-01/api-journal",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-impact-incomplete-004",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "api-logs-current",
+          "source": "api-01/journal",
+          "observed_at": "2026-07-26T07:16:50Z",
+          "generation": 4200,
+          "tense": "current"
+        },
+        {
+          "id": "api-health-current",
+          "source": "edge/synthetic-check",
+          "observed_at": "2026-07-26T07:16:52Z",
+          "generation": 4200,
+          "tense": "current"
+        }
+      ],
+      "notes": "39 errors in 140 log messages; synthetic check passes; no request-success or customer-impact witness."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "api-errors-increased",
+          "text": "API error-bearing log messages increased in the current window."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "api-log-count",
+          "text": "39 errors in 140 recent log messages.",
+          "basis_id": "api-logs-current"
+        },
+        {
+          "id": "health-check-passing",
+          "text": "The edge synthetic health check currently passes.",
+          "basis_id": "api-health-current"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "customer-impact",
+          "text": "Customer impact is not established by these witnesses."
+        },
+        {
+          "id": "error-cause",
+          "text": "The source of the errors is unknown."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "inspect-api-exemplars",
+          "label": "Inspect API error examples",
+          "available": true,
+          "effect": [
+            "opens examples tied to the current log observation"
+          ],
+          "does_not": [
+            "declare customer impact or cause"
+          ],
+          "reversible": true,
+          "precondition": "Examples were retained.",
+          "target": "retained examples from the current API log observation",
+          "state_transition": "No state transition; opens retained evidence.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future API observations continue normally.",
+          "recording": "No finding lifecycle transition is recorded."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "investigate",
+      "required_subject_ids": [
+        "api-01"
+      ],
+      "required_conclusion_ids": [
+        "api-errors-increased"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "api-errors-increased",
+          "text": "Error-bearing log messages increased."
+        },
+        {
+          "id": "health-check-still-passes",
+          "text": "A separate current health check passes."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "customers-impacted",
+          "text": "Customers are definitely impacted."
+        },
+        {
+          "id": "service-healthy",
+          "text": "The passing check proves the service is healthy."
+        }
+      ],
+      "required_evidence_ids": [
+        "api-log-count",
+        "health-check-passing"
+      ],
+      "required_unknown_ids": [
+        "customer-impact",
+        "error-cause"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "inspect-api-exemplars"
+      ],
+      "unsafe_action_ids": [
+        "declare-outage",
+        "close-as-healthy"
+      ],
+      "action_expectation": "Investigate the errors while preserving that passing reachability and unknown customer impact can coexist."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "unknown-impact",
+      "multiple-witnesses"
+    ]
+  },
+  {
+    "id": "stale-finding",
+    "version": 1,
+    "title": "Stale finding that cannot describe present state",
+    "requirement": 5,
+    "task_type": "refuse",
+    "operator_context": "A disk-pressure finding was last observed six hours ago and its source has not reported since.",
+    "operator_task": "Decide what can be said about current disk state and which controls, if any, are safe.",
+    "start_route": "/finding/disk-pressure/worker-07/root",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-stale-finding-005",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "disk-stale",
+          "source": "worker-07/host",
+          "observed_at": "2026-07-26T01:17:00Z",
+          "generation": 3840,
+          "tense": "stale"
+        }
+      ],
+      "notes": "Last value was 94%; current source coverage is absent and no current disk value exists."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "disk-state-currently-unknown",
+          "text": "Worker-07 disk pressure was observed six hours ago; current disk state is unknown."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "last-disk-observation",
+          "text": "Last observation: 94% used at 01:17 UTC.",
+          "basis_id": "disk-stale"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "current-disk-value",
+          "text": "No current disk utilization is available."
+        },
+        {
+          "id": "source-absence-cause",
+          "text": "Why the source stopped reporting is unknown."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "inspect-source-coverage",
+          "label": "Inspect source coverage",
+          "available": true,
+          "effect": [
+            "opens collection-path evidence"
+          ],
+          "does_not": [
+            "assert the disk recovered or remains full"
+          ],
+          "reversible": true,
+          "precondition": "Source history is retained.",
+          "target": "the stale disk source's collection-path evidence",
+          "state_transition": "No state transition; opens source coverage evidence.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future observations remain eligible if collection resumes.",
+          "recording": "No finding lifecycle transition is recorded."
+        },
+        {
+          "id": "close-stale-finding",
+          "label": "Close",
+          "available": false,
+          "effect": [
+            "would change only operator coordination"
+          ],
+          "does_not": [
+            "establish current disk health"
+          ],
+          "reversible": true,
+          "precondition": "Disabled while no concrete current target is resolvable.",
+          "target": "a concrete current disk finding",
+          "state_transition": "Unavailable; no coordination transition occurs.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future detector observations continue normally.",
+          "recording": "No transition is recorded because the action is unavailable."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "refuse",
+      "required_subject_ids": [
+        "worker-07/root"
+      ],
+      "required_conclusion_ids": [
+        "disk-state-currently-unknown"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "disk-state-currently-unknown",
+          "text": "Only the historical pressure and present observation gap are established."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "disk-still-94",
+          "text": "The disk is currently 94% used."
+        },
+        {
+          "id": "disk-recovered",
+          "text": "The disk recovered because the finding is stale."
+        }
+      ],
+      "required_evidence_ids": [
+        "last-disk-observation"
+      ],
+      "required_unknown_ids": [
+        "current-disk-value",
+        "source-absence-cause"
+      ],
+      "must_notice_stale": true,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "inspect-source-coverage"
+      ],
+      "unsafe_action_ids": [
+        "close-stale-finding",
+        "declare-disk-healthy"
+      ],
+      "action_expectation": "Refuse a current disk conclusion and investigate lost coverage; mutation controls must remain disabled."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "stale",
+      "unknown-current-state",
+      "fail-safe"
+    ]
+  },
+  {
+    "id": "missing-finding-route",
+    "version": 1,
+    "title": "Missing finding route",
+    "requirement": 6,
+    "task_type": "refuse",
+    "operator_context": "A saved link requests an error-shift finding that no longer resolves to a current finding record.",
+    "operator_task": "Determine whether an error spike is current and whether any mutation action is safe from this page.",
+    "start_route": "/finding/error_shift/labelwatch/logwatch",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-missing-route-006",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "route-lookup",
+          "source": "dashboard/warning-state-lookup",
+          "observed_at": "2026-07-26T07:17:00Z",
+          "generation": 4200,
+          "tense": "current"
+        }
+      ],
+      "notes": "The requested tuple is absent from warning_state; retained history may or may not exist."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "finding-target-unresolved",
+          "text": "The requested finding cannot be resolved; absence does not establish service health."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "finding-not-found",
+          "text": "No current finding matches the requested stable route target.",
+          "basis_id": "route-lookup"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "missing-reason",
+          "text": "It is not yet known whether the finding resolved, expired, was superseded, or never existed."
+        },
+        {
+          "id": "current-condition",
+          "text": "The underlying current service condition is not established by route absence."
+        },
+        {
+          "id": "route-freshness",
+          "text": "No finding observation time is available."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "inspect-available-history",
+          "label": "Inspect available history",
+          "available": true,
+          "effect": [
+            "searches retained history for the requested identity"
+          ],
+          "does_not": [
+            "mutate a finding or assert current health"
+          ],
+          "reversible": true,
+          "precondition": "History lookup is read-only.",
+          "target": "retained history for the requested finding identity",
+          "state_transition": "No state transition; searches retained history.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future observations are unaffected.",
+          "recording": "No finding lifecycle transition is recorded."
+        },
+        {
+          "id": "mutate-missing-finding",
+          "label": "Finding lifecycle controls",
+          "available": false,
+          "effect": [
+            "none because no concrete target is resolved"
+          ],
+          "does_not": [
+            "change any finding or service"
+          ],
+          "reversible": true,
+          "precondition": "Unavailable until a concrete finding identity resolves.",
+          "target": "an unresolved finding identity",
+          "state_transition": "Unavailable; no lifecycle transition occurs.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future observations are unaffected.",
+          "recording": "No transition is recorded because no target resolves."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "refuse",
+      "required_subject_ids": [
+        "labelwatch/logwatch"
+      ],
+      "required_conclusion_ids": [
+        "finding-target-unresolved"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "finding-target-unresolved",
+          "text": "The finding route is unresolved and cannot support an active error-spike claim."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "error-spike-current",
+          "text": "The missing page proves a current error spike."
+        },
+        {
+          "id": "service-healthy-because-missing",
+          "text": "The service is healthy because the finding is absent."
+        }
+      ],
+      "required_evidence_ids": [
+        "finding-not-found"
+      ],
+      "required_unknown_ids": [
+        "missing-reason",
+        "current-condition",
+        "route-freshness"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "inspect-available-history"
+      ],
+      "unsafe_action_ids": [
+        "mutate-missing-finding",
+        "ack-missing",
+        "close-missing"
+      ],
+      "action_expectation": "Fail safe: explain the unresolved identity, offer only history, and disable every mutation control."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "missing",
+      "route-identity",
+      "unsafe-retained-controls",
+      "baseline-evidence"
+    ]
+  },
+  {
+    "id": "resolved-finding-history",
+    "version": 1,
+    "title": "Resolved finding with retained history",
+    "requirement": 7,
+    "task_type": "identify",
+    "operator_context": "An error-rate finding cleared fifty generations ago, and its evidence and work history remain available.",
+    "operator_task": "Determine whether it needs current attention and explain what history was retained.",
+    "start_route": "/history/finding/local%2Fapi-02%2Ferror-shift%2Fjournal",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-resolved-history-007",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "finding-history",
+          "source": "api-02/journal",
+          "observed_at": "2026-07-26T06:27:00Z",
+          "generation": 4150,
+          "tense": "historical"
+        },
+        {
+          "id": "current-clear",
+          "source": "api-02/journal",
+          "observed_at": "2026-07-26T07:16:40Z",
+          "generation": 4200,
+          "tense": "current"
+        }
+      ],
+      "notes": "The detector stopped emitting after generation 4150; clean recovery completed and history remains immutable."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "finding-resolved-historical",
+          "text": "The prior API error shift is no longer observed; this page is retained history."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "last-positive-observation",
+          "text": "Last positive finding observation was generation 4150.",
+          "basis_id": "finding-history"
+        },
+        {
+          "id": "current-clean-observation",
+          "text": "Current observation at generation 4200 does not emit the finding.",
+          "basis_id": "current-clear"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "historical-cause",
+          "text": "The cause of the earlier error shift was never established."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "inspect-retained-history",
+          "label": "Inspect retained evidence and transitions",
+          "available": true,
+          "effect": [
+            "opens immutable observations and coordination history"
+          ],
+          "does_not": [
+            "reopen or mutate the current system"
+          ],
+          "reversible": true,
+          "precondition": "History remains retained.",
+          "target": "retained evidence and work history for the resolved finding",
+          "state_transition": "No state transition; opens immutable history.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future observations remain separate from this history.",
+          "recording": "No finding lifecycle transition is recorded."
+        },
+        {
+          "id": "no-action",
+          "label": "No current action",
+          "available": true,
+          "effect": [
+            "leaves the resolved historical record unchanged"
+          ],
+          "does_not": [
+            "delete evidence"
+          ],
+          "reversible": true,
+          "precondition": "No current finding exists.",
+          "target": "the resolved historical record",
+          "state_transition": "No state transition; leaves history unchanged.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "A future recurrence would be observed independently.",
+          "recording": "No finding lifecycle transition is recorded."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "no_action",
+      "required_subject_ids": [
+        "api-02/journal"
+      ],
+      "required_conclusion_ids": [
+        "finding-resolved-historical"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "finding-resolved-historical",
+          "text": "The finding is historical and no longer observed."
+        },
+        {
+          "id": "history-retained",
+          "text": "Evidence and transitions remain auditable."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "current-api-incident",
+          "text": "The historical finding is a current incident."
+        },
+        {
+          "id": "history-deleted",
+          "text": "Resolution deleted prior evidence."
+        }
+      ],
+      "required_evidence_ids": [
+        "last-positive-observation",
+        "current-clean-observation"
+      ],
+      "required_unknown_ids": [
+        "historical-cause"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "no-action",
+        "inspect-retained-history"
+      ],
+      "unsafe_action_ids": [
+        "suppress-history",
+        "delete-history"
+      ],
+      "action_expectation": "Treat it as retained history, not current work; inspection is safe and evidence must remain."
+    },
+    "comparison_eligible": false,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "resolved",
+      "history",
+      "audit"
+    ]
+  },
+  {
+    "id": "nq-self-health-failure",
+    "version": 1,
+    "title": "NQ self-health observation failure",
+    "requirement": 8,
+    "task_type": "investigate",
+    "operator_context": "NQ's evaluator heartbeat has stopped while the last monitored-service observations are otherwise unremarkable.",
+    "operator_task": "Determine what is unhealthy, what NQ can no longer claim, and whether a production-service incident is established.",
+    "start_route": "/#nq-system-health",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-self-health-008",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "nq-heartbeat-old",
+          "source": "nq/evaluator-heartbeat",
+          "observed_at": "2026-07-26T07:07:00Z",
+          "generation": 4190,
+          "tense": "stale"
+        },
+        {
+          "id": "service-last",
+          "source": "app-01/services",
+          "observed_at": "2026-07-26T07:06:55Z",
+          "generation": 4190,
+          "tense": "stale"
+        }
+      ],
+      "notes": "The self-health failure means NQ cannot refresh monitored-system claims; it is not evidence that app-01 failed."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "nq-observation-loop-stale",
+          "text": "NQ's observation/evaluation loop has not reported for ten minutes."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "heartbeat-age",
+          "text": "Last evaluator heartbeat was generation 4190 at 07:07 UTC.",
+          "basis_id": "nq-heartbeat-old"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "monitored-systems-current",
+          "text": "Current monitored-system state cannot be established until NQ observation resumes."
+        },
+        {
+          "id": "nq-loop-cause",
+          "text": "The reason the NQ loop stopped is unknown."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "inspect-nq-system-health",
+          "label": "Inspect NQ system health",
+          "available": true,
+          "effect": [
+            "opens ingestion, evaluator, and dashboard/API health evidence"
+          ],
+          "does_not": [
+            "restart NQ or monitored services"
+          ],
+          "reversible": true,
+          "precondition": "Self-health history is readable.",
+          "target": "NQ ingestion, evaluator, dashboard, and API health evidence",
+          "state_transition": "No state transition; opens NQ self-health evidence.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future self-health and monitored-system observations are unaffected.",
+          "recording": "No finding lifecycle transition is recorded."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "investigate",
+      "required_subject_ids": [
+        "nq/observation-loop"
+      ],
+      "required_conclusion_ids": [
+        "nq-observation-loop-stale"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "nq-observation-loop-stale",
+          "text": "NQ self-observation is stale."
+        },
+        {
+          "id": "service-claims-unrefreshable",
+          "text": "Current service claims cannot be refreshed."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "app-down",
+          "text": "The monitored application is down."
+        },
+        {
+          "id": "last-green-is-current",
+          "text": "The last unremarkable service observation proves current health."
+        }
+      ],
+      "required_evidence_ids": [
+        "heartbeat-age"
+      ],
+      "required_unknown_ids": [
+        "monitored-systems-current",
+        "nq-loop-cause"
+      ],
+      "must_notice_stale": true,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "inspect-nq-system-health"
+      ],
+      "unsafe_action_ids": [
+        "restart-app",
+        "declare-app-healthy"
+      ],
+      "action_expectation": "Investigate NQ separately and downgrade confidence in monitored-system currentness; do not impersonate this as an app incident."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "self-health",
+      "stale",
+      "separation"
+    ]
+  },
+  {
+    "id": "sources-disagree",
+    "version": 1,
+    "title": "Independent sources disagree about service state",
+    "requirement": 9,
+    "task_type": "refuse",
+    "operator_context": "A service-manager witness reports payments active while an external probe reports connection refusal in the same minute.",
+    "operator_task": "Determine the present service state, show the contradiction, and choose the next inspection.",
+    "start_route": "/finding/source-disagreement/payments-01/payments",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-source-conflict-009",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "systemd-current",
+          "source": "payments-01/systemd",
+          "observed_at": "2026-07-26T07:16:40Z",
+          "generation": 4200,
+          "tense": "current"
+        },
+        {
+          "id": "external-probe-current",
+          "source": "edge-02/tcp-probe",
+          "observed_at": "2026-07-26T07:16:44Z",
+          "generation": 4200,
+          "tense": "current"
+        }
+      ],
+      "notes": "Both observations are current and concern different vantage points; neither may overwrite the other."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "payments-state-contradictory",
+          "text": "Current sources disagree: the process is active locally, but the external port refused a connection."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "systemd-active",
+          "text": "systemd reports payments.service active/running.",
+          "basis_id": "systemd-current"
+        },
+        {
+          "id": "edge-refused",
+          "text": "edge-02 received connection refused on the service port.",
+          "basis_id": "external-probe-current"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "end-to-end-availability",
+          "text": "End-to-end availability is not established."
+        },
+        {
+          "id": "disagreement-cause",
+          "text": "Binding, firewall, routing, timing, and service faults remain possible."
+        }
+      ],
+      "conflicts": [
+        {
+          "id": "local-up-external-refused",
+          "text": "Local process state and external reachability disagree."
+        }
+      ],
+      "actions": [
+        {
+          "id": "inspect-vantage-path",
+          "label": "Compare local listener and external path",
+          "available": true,
+          "effect": [
+            "opens both observations and path checks"
+          ],
+          "does_not": [
+            "restart the service or choose one source as truth"
+          ],
+          "reversible": true,
+          "precondition": "Both source observations are retained.",
+          "target": "the local listener and external path observations",
+          "state_transition": "No state transition; opens both vantage points.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Both sources continue to be observed independently.",
+          "recording": "No finding lifecycle transition is recorded."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "refuse",
+      "required_subject_ids": [
+        "payments-01/payments"
+      ],
+      "required_conclusion_ids": [
+        "payments-state-contradictory"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "payments-state-contradictory",
+          "text": "The sources establish a contradiction across vantages."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "payments-healthy",
+          "text": "The service is healthy because systemd says active."
+        },
+        {
+          "id": "payments-process-down",
+          "text": "The process is down because the external probe was refused."
+        }
+      ],
+      "required_evidence_ids": [
+        "systemd-active",
+        "edge-refused"
+      ],
+      "required_unknown_ids": [
+        "end-to-end-availability",
+        "disagreement-cause"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": true,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "inspect-vantage-path"
+      ],
+      "unsafe_action_ids": [
+        "restart-payments",
+        "declare-healthy"
+      ],
+      "action_expectation": "Preserve both observations as a contradiction and inspect the listener/path before acting."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "contradiction",
+      "multiple-vantages",
+      "refusal"
+    ]
+  },
+  {
+    "id": "change-detected-cause-unknown",
+    "version": 1,
+    "title": "Change detected while cause remains unknown",
+    "requirement": 10,
+    "task_type": "investigate",
+    "operator_context": "API latency shifted upward in the same observation window as a configuration revision.",
+    "operator_task": "Explain what NQ can say about the latency transition and whether the configuration revision caused it.",
+    "start_route": "/finding/resource-drift/api-03/latency",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-cause-unknown-010",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "latency-current",
+          "source": "api-03/metrics",
+          "observed_at": "2026-07-26T07:16:30Z",
+          "generation": 4200,
+          "tense": "current"
+        },
+        {
+          "id": "config-history",
+          "source": "api-03/config-revision",
+          "observed_at": "2026-07-26T07:10:00Z",
+          "generation": 4193,
+          "tense": "historical"
+        }
+      ],
+      "notes": "p95 rose 180ms to 410ms; config revision changed seven minutes earlier; no causal witness exists."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "latency-increased",
+          "text": "API-03 p95 latency increased from its trailing baseline."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "latency-comparison",
+          "text": "Current p95 is 410ms versus a 180ms trailing baseline.",
+          "basis_id": "latency-current"
+        },
+        {
+          "id": "config-temporal-neighbor",
+          "text": "Configuration revision 7c21 landed seven minutes earlier.",
+          "basis_id": "config-history"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "latency-cause",
+          "text": "The latency increase has no established cause."
+        },
+        {
+          "id": "latency-impact",
+          "text": "User-visible consequence is not established."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "compare-config-and-dependencies",
+          "label": "Compare configuration and dependency evidence",
+          "available": true,
+          "effect": [
+            "opens time-aligned evidence"
+          ],
+          "does_not": [
+            "label the configuration revision causal"
+          ],
+          "reversible": true,
+          "precondition": "Both timelines remain available.",
+          "target": "time-aligned configuration and dependency evidence",
+          "state_transition": "No state transition; opens a comparison view.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future latency and change observations continue normally.",
+          "recording": "No finding lifecycle transition is recorded."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "investigate",
+      "required_subject_ids": [
+        "api-03/latency"
+      ],
+      "required_conclusion_ids": [
+        "latency-increased"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "latency-increased",
+          "text": "A latency transition is observed."
+        },
+        {
+          "id": "config-change-preceded",
+          "text": "A configuration change preceded it temporally."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "config-caused-latency",
+          "text": "The configuration revision caused the latency increase."
+        },
+        {
+          "id": "rollback-required",
+          "text": "Rollback is justified by NQ alone."
+        }
+      ],
+      "required_evidence_ids": [
+        "latency-comparison",
+        "config-temporal-neighbor"
+      ],
+      "required_unknown_ids": [
+        "latency-cause",
+        "latency-impact"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "compare-config-and-dependencies"
+      ],
+      "unsafe_action_ids": [
+        "rollback-config",
+        "declare-config-cause"
+      ],
+      "action_expectation": "Inspect time-aligned configuration and dependencies without promoting temporal correlation to cause."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "causality",
+      "change-correlation",
+      "drift"
+    ]
+  },
+  {
+    "id": "low-sample-size",
+    "version": 1,
+    "title": "High observed proportion with too little data",
+    "requirement": 11,
+    "task_type": "refuse",
+    "operator_context": "A new worker emitted five log messages; two matched the error classifier against a 4% historical baseline.",
+    "operator_task": "Decide whether NQ has enough evidence to claim an error-rate shift and what should happen next.",
+    "start_route": "/finding/error-shift/worker-new/journal",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-low-sample-011",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "five-message-window",
+          "source": "worker-new/journal",
+          "observed_at": "2026-07-26T07:16:50Z",
+          "generation": 4200,
+          "tense": "current"
+        }
+      ],
+      "notes": "The observed proportion is 40%, but five messages is below the configured evidence floor."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "shift-not-established",
+          "text": "The current error proportion is elevated, but the five-message sample is insufficient to establish a shift."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "two-of-five",
+          "text": "2 of 5 recent messages matched the error classifier.",
+          "basis_id": "five-message-window"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "representative-window",
+          "text": "It is unknown whether this tiny window represents normal traffic."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "collect-more-samples",
+          "label": "Continue observation",
+          "available": true,
+          "effect": [
+            "waits for the configured evidence floor"
+          ],
+          "does_not": [
+            "declare the service healthy or failed"
+          ],
+          "reversible": true,
+          "precondition": "The source continues reporting.",
+          "target": "the current low-sample observation window",
+          "state_transition": "No lifecycle transition; waits for the configured evidence floor.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "New samples accumulate into later observation windows.",
+          "recording": "No finding lifecycle transition is recorded."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "refuse",
+      "required_subject_ids": [
+        "worker-new/journal"
+      ],
+      "required_conclusion_ids": [
+        "shift-not-established"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "shift-not-established",
+          "text": "The observed proportion is notable but insufficient."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "forty-percent-shift-proven",
+          "text": "A durable 40% error-rate shift is established."
+        }
+      ],
+      "required_evidence_ids": [
+        "two-of-five"
+      ],
+      "required_unknown_ids": [
+        "representative-window"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "collect-more-samples"
+      ],
+      "unsafe_action_ids": [
+        "page-outage",
+        "close-as-healthy"
+      ],
+      "action_expectation": "Preserve insufficient coverage and gather more observations rather than promote a noisy proportion."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "sample-size",
+      "insufficient-evidence",
+      "refusal"
+    ]
+  },
+  {
+    "id": "no-current-issue",
+    "version": 1,
+    "title": "No current issue with fresh coverage",
+    "requirement": 12,
+    "task_type": "identify",
+    "operator_context": "All configured sources completed a fresh observation and no current finding is open.",
+    "operator_task": "Determine whether anything needs attention without claiming the system can never fail.",
+    "start_route": "/",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-no-issue-012",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "complete-current-generation",
+          "source": "nq/generation",
+          "observed_at": "2026-07-26T07:16:55Z",
+          "generation": 4200,
+          "tense": "current"
+        }
+      ],
+      "notes": "Fresh complete coverage and zero current findings; one resolved finding exists only in history."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "no-current-findings",
+          "text": "No current issue needs attention in the latest complete observation."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "complete-zero-open",
+          "text": "Generation 4200 completed across all configured sources with zero open findings.",
+          "basis_id": "complete-current-generation"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "unobserved-future",
+          "text": "This observation cannot guarantee future health or cover undeclared systems."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "no-action",
+          "label": "No action",
+          "available": true,
+          "effect": [
+            "leaves current state unchanged"
+          ],
+          "does_not": [
+            "assert permanent health"
+          ],
+          "reversible": true,
+          "precondition": "Latest coverage remains complete and fresh.",
+          "target": "the current no-issue dashboard state",
+          "state_transition": "No state transition; leaves current state unchanged.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future observations continue and may create new findings.",
+          "recording": "No finding lifecycle transition is recorded."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "no_action",
+      "required_subject_ids": [
+        "monitored-systems"
+      ],
+      "required_conclusion_ids": [
+        "no-current-findings"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "no-current-findings",
+          "text": "Nothing currently needs attention within declared fresh coverage."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "everything-permanently-healthy",
+          "text": "Every system is healthy and will remain so."
+        }
+      ],
+      "required_evidence_ids": [
+        "complete-zero-open"
+      ],
+      "required_unknown_ids": [
+        "unobserved-future"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "no-action"
+      ],
+      "unsafe_action_ids": [
+        "disable-monitoring"
+      ],
+      "action_expectation": "Take no action while bounding the statement to current declared coverage."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "healthy-current",
+      "calibrated-no-action"
+    ]
+  },
+  {
+    "id": "multiple-issues-different-urgency",
+    "version": 1,
+    "title": "Multiple issues with different response needs",
+    "requirement": 13,
+    "task_type": "act",
+    "operator_context": "Checkout is directly observed down, a database has slow-growing bloat, and NQ self-health is five minutes old.",
+    "operator_task": "Prioritize the queue and state which issue should be handled first without collapsing severity and impact.",
+    "start_route": "/",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-multi-issue-013",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "checkout-current",
+          "source": "checkout-01/systemd",
+          "observed_at": "2026-07-26T07:16:50Z",
+          "generation": 4200,
+          "tense": "current"
+        },
+        {
+          "id": "db-current",
+          "source": "db-02/sqlite-health",
+          "observed_at": "2026-07-26T07:16:40Z",
+          "generation": 4200,
+          "tense": "current"
+        },
+        {
+          "id": "nq-self-old",
+          "source": "nq/evaluator",
+          "observed_at": "2026-07-26T07:12:00Z",
+          "generation": 4195,
+          "tense": "stale"
+        }
+      ],
+      "notes": "Direct service outage outranks maintenance bloat; NQ self-health is separate and visibly aged."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "checkout-down-first",
+          "text": "Checkout is directly observed down and needs immediate investigation."
+        },
+        {
+          "id": "db-bloat-secondary",
+          "text": "Database bloat is maintenance work with no current service impact."
+        },
+        {
+          "id": "nq-self-health-separate",
+          "text": "NQ self-health is stale and belongs in a separate queue."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "checkout-failed",
+          "text": "checkout.service is failed in the current host observation.",
+          "basis_id": "checkout-current"
+        },
+        {
+          "id": "db-bloat-no-impact",
+          "text": "DB reclaimable space is 31%; checkout does not use this DB.",
+          "basis_id": "db-current"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "checkout-failure-cause",
+          "text": "The reason checkout failed is unknown."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "inspect-checkout-now",
+          "label": "Investigate checkout now",
+          "available": true,
+          "effect": [
+            "opens service status and recent logs"
+          ],
+          "does_not": [
+            "restart the service"
+          ],
+          "reversible": true,
+          "precondition": "Current checkout evidence is available.",
+          "target": "the current checkout service evidence",
+          "state_transition": "No state transition; opens service status and logs.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future checkout observations continue normally.",
+          "recording": "No finding lifecycle transition is recorded."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "act",
+      "required_subject_ids": [
+        "checkout-01/checkout",
+        "db-02/app.db",
+        "nq/evaluator"
+      ],
+      "required_conclusion_ids": [
+        "checkout-down-first",
+        "db-bloat-secondary",
+        "nq-self-health-separate"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "checkout-down-first",
+          "text": "Checkout is the first operational issue."
+        },
+        {
+          "id": "db-bloat-secondary",
+          "text": "Database bloat can wait for maintenance."
+        },
+        {
+          "id": "nq-self-health-separate",
+          "text": "NQ health is separate and aged."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "db-critical-first",
+          "text": "Persistence-derived critical database bloat outranks the observed checkout outage."
+        }
+      ],
+      "required_evidence_ids": [
+        "checkout-failed",
+        "db-bloat-no-impact"
+      ],
+      "required_unknown_ids": [
+        "checkout-failure-cause"
+      ],
+      "must_notice_stale": true,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "inspect-checkout-now"
+      ],
+      "unsafe_action_ids": [
+        "vacuum-db-first",
+        "restart-checkout-without-inspection"
+      ],
+      "action_expectation": "Start with checkout evidence, queue bloat for maintenance, and keep NQ self-health visibly separate."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "prioritization",
+      "self-health",
+      "severity-not-urgency"
+    ]
+  },
+  {
+    "id": "severe-classification-low-impact",
+    "version": 1,
+    "title": "Severe internal classification with low operational impact",
+    "requirement": 14,
+    "task_type": "identify",
+    "operator_context": "A freelist-bloat finding has persisted for 500 generations and therefore carries critical severity.",
+    "operator_task": "Determine its operational urgency and whether the classification proves immediate impact.",
+    "start_route": "/finding/freelist-bloat/archive-db/archive.db",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-severe-low-impact-014",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "archive-db-current",
+          "source": "archive-db/sqlite-health",
+          "observed_at": "2026-07-26T07:16:45Z",
+          "generation": 4200,
+          "tense": "current"
+        }
+      ],
+      "notes": "Critical means persistence policy; service impact is none_current and response is business-hours investigation."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "persistent-maintenance-low-impact",
+          "text": "Archive database bloat is long-lived maintenance debt with no observed current service impact."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "persistence-and-impact",
+          "text": "Present for 500 generations; impact none current; host has 800 GiB free.",
+          "basis_id": "archive-db-current"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "future-growth",
+          "text": "Future growth and ideal maintenance timing remain unknown."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "schedule-business-hours-review",
+          "label": "Schedule business-hours review",
+          "available": true,
+          "effect": [
+            "records a planned inspection"
+          ],
+          "does_not": [
+            "change the database or claim an incident"
+          ],
+          "reversible": true,
+          "precondition": "The finding remains current.",
+          "target": "the business-hours review plan for the current maintenance finding",
+          "state_transition": "Records a planned inspection without changing the database.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future database observations continue normally.",
+          "recording": "The planned review is recorded as operator coordination."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "no_action",
+      "required_subject_ids": [
+        "archive-db/archive.db"
+      ],
+      "required_conclusion_ids": [
+        "persistent-maintenance-low-impact"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "persistent-maintenance-low-impact",
+          "text": "The condition is persistent maintenance, not immediate incident impact."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "critical-means-outage",
+          "text": "Critical classification proves immediate outage."
+        }
+      ],
+      "required_evidence_ids": [
+        "persistence-and-impact"
+      ],
+      "required_unknown_ids": [
+        "future-growth"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "schedule-business-hours-review"
+      ],
+      "unsafe_action_ids": [
+        "page-now",
+        "vacuum-now"
+      ],
+      "action_expectation": "Translate severity and impact separately; schedule rather than page or mutate."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "severity-not-urgency",
+      "maintenance",
+      "terminology"
+    ]
+  },
+  {
+    "id": "mild-metric-immediate-evidence",
+    "version": 1,
+    "title": "Mild capacity metric with immediate storage evidence",
+    "requirement": 15,
+    "task_type": "act",
+    "operator_context": "Disk use is only 82%, but SMART uncorrected sectors and ZFS checksum errors both increased in the current cycle.",
+    "operator_task": "Determine whether the mild utilization number makes this safe to defer and what immediate inspection is justified.",
+    "start_route": "/finding/smart-uncorrected-errors-rising/nas-01/disk2",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-mild-immediate-015",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "storage-current",
+          "source": "nas-01/storage-witnesses",
+          "observed_at": "2026-07-26T07:16:35Z",
+          "generation": 4200,
+          "tense": "current"
+        }
+      ],
+      "notes": "Utilization is not the load-bearing signal; independent error counters rose."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "storage-errors-need-immediate-investigation",
+          "text": "Rising device and pool error counters need immediate investigation despite moderate utilization."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "smart-rise",
+          "text": "SMART uncorrected sectors rose from 0 to 8.",
+          "basis_id": "storage-current"
+        },
+        {
+          "id": "zfs-checksum-rise",
+          "text": "ZFS checksum errors rose from 2 to 19.",
+          "basis_id": "storage-current"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "data-loss",
+          "text": "Data loss, physical death, and replacement need are not established."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "inspect-redundancy-and-backups",
+          "label": "Inspect redundancy and backup state now",
+          "available": true,
+          "effect": [
+            "opens scoped storage evidence and recovery readiness"
+          ],
+          "does_not": [
+            "replace a drive or claim data loss"
+          ],
+          "reversible": true,
+          "precondition": "Current storage witnesses are available.",
+          "target": "current storage redundancy and backup-readiness evidence",
+          "state_transition": "No state transition; opens scoped storage evidence.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future storage observations continue normally.",
+          "recording": "No finding lifecycle transition is recorded."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "act",
+      "required_subject_ids": [
+        "nas-01/disk2"
+      ],
+      "required_conclusion_ids": [
+        "storage-errors-need-immediate-investigation"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "storage-errors-need-immediate-investigation",
+          "text": "Rising counters warrant immediate inspection."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "disk-dead",
+          "text": "The physical drive is dead and must be replaced."
+        },
+        {
+          "id": "safe-because-82",
+          "text": "The condition is safe because utilization is only 82%."
+        }
+      ],
+      "required_evidence_ids": [
+        "smart-rise",
+        "zfs-checksum-rise"
+      ],
+      "required_unknown_ids": [
+        "data-loss"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "inspect-redundancy-and-backups"
+      ],
+      "unsafe_action_ids": [
+        "replace-drive",
+        "dismiss-at-82"
+      ],
+      "action_expectation": "Investigate redundancy and backups now while refusing physical-death, replacement, or data-loss conclusions."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "storage",
+      "mild-metric",
+      "immediate-inspection"
+    ]
+  },
+  {
+    "id": "suppression-versus-resolution",
+    "version": 1,
+    "title": "Suppression is not resolution",
+    "requirement": 16,
+    "task_type": "act",
+    "operator_context": "A current error-shift finding is understood and an operator wants to mute its notifications for a bounded investigation window.",
+    "operator_task": "Choose a bounded action and explain exactly what it changes, retains, and does not resolve.",
+    "start_route": "/finding/error-shift/api-04/journal",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-suppress-vs-resolve-016",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "api04-current",
+          "source": "api-04/journal",
+          "observed_at": "2026-07-26T07:16:50Z",
+          "generation": 4200,
+          "tense": "current"
+        }
+      ],
+      "notes": "The finding remains open and observed before and after a 24-hour work-state suppression."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "condition-open-suppression-available",
+          "text": "The condition remains open; a 24-hour notification suppression is available as operator coordination."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "finding-still-observed",
+          "text": "The current detector observation continues to emit the finding.",
+          "basis_id": "api04-current"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "resolution-time",
+          "text": "When the underlying condition will clear is unknown."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "suppress-24h",
+          "label": "Suppress notifications for 24 hours",
+          "available": true,
+          "effect": [
+            "sets this finding's work state to suppressed for 24 hours",
+            "records an audited transition"
+          ],
+          "does_not": [
+            "change the service, detector, evidence, or open condition"
+          ],
+          "reversible": true,
+          "precondition": "A concrete current finding and 24-hour expiry are resolved.",
+          "target": "the concrete current API finding's notification work state",
+          "state_transition": "Changes work state to suppressed for 24 hours.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Detector observations continue while notifications remain suppressed until expiry.",
+          "recording": "The suppression transition and expiry are recorded in durable finding history."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "act",
+      "required_subject_ids": [
+        "api-04/journal"
+      ],
+      "required_conclusion_ids": [
+        "condition-open-suppression-available"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "condition-open-suppression-available",
+          "text": "Suppression mutes finding notifications while observation and evidence continue."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "suppression-resolves-condition",
+          "text": "Suppressing resolves the underlying condition."
+        }
+      ],
+      "required_evidence_ids": [
+        "finding-still-observed"
+      ],
+      "required_unknown_ids": [
+        "resolution-time"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "suppress-24h"
+      ],
+      "unsafe_action_ids": [
+        "suppress-forever",
+        "mark-resolved"
+      ],
+      "action_expectation": "A bounded suppression is safe only with an exact target and preview that explicitly preserves evidence and open condition."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "action-semantics",
+      "suppression",
+      "audit"
+    ]
+  },
+  {
+    "id": "reset-semantics",
+    "version": 1,
+    "title": "Reset restores work intake without erasing evidence",
+    "requirement": 17,
+    "task_type": "act",
+    "operator_context": "A finding's work state is suppressed, the suppression window is no longer wanted, and the detector still emits the condition.",
+    "operator_task": "Determine what Reset will change and verify that it will not erase evidence or repair the service.",
+    "start_route": "/finding/error-shift/api-05/journal",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-reset-017",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "api05-current",
+          "source": "api-05/journal",
+          "observed_at": "2026-07-26T07:16:48Z",
+          "generation": 4200,
+          "tense": "current"
+        }
+      ],
+      "notes": "Reset transitions work_state suppressed to new; observations and transition history remain."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "reset-restores-new-work-state",
+          "text": "Reset will return operator work state to new and restore normal notification eligibility."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "suppressed-open-finding",
+          "text": "The finding is open and observed while work state is suppressed.",
+          "basis_id": "api05-current"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "future-notification-timing",
+          "text": "The exact next notification depends on notification policy."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "reset-to-new",
+          "label": "Reset to new",
+          "available": true,
+          "effect": [
+            "sets work state to new and records the transition"
+          ],
+          "does_not": [
+            "delete evidence, clear the detector condition, or change the service"
+          ],
+          "reversible": true,
+          "precondition": "The exact suppressed finding is resolved.",
+          "target": "the exact suppressed finding's operator work state",
+          "state_transition": "Changes work state from suppressed to new.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future observations continue and the finding returns to normal work intake.",
+          "recording": "The reset transition is recorded in durable finding history."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "act",
+      "required_subject_ids": [
+        "api-05/journal"
+      ],
+      "required_conclusion_ids": [
+        "reset-restores-new-work-state"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "reset-restores-new-work-state",
+          "text": "Reset changes coordination state and preserves evidence."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "reset-erases-evidence",
+          "text": "Reset deletes observations or history."
+        },
+        {
+          "id": "reset-fixes-service",
+          "text": "Reset repairs the monitored system."
+        }
+      ],
+      "required_evidence_ids": [
+        "suppressed-open-finding"
+      ],
+      "required_unknown_ids": [
+        "future-notification-timing"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "reset-to-new"
+      ],
+      "unsafe_action_ids": [
+        "delete-evidence"
+      ],
+      "action_expectation": "Reset only the exact finding's work state; retain detector observation, evidence, and audit history."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "action-semantics",
+      "reset",
+      "evidence-retention"
+    ]
+  },
+  {
+    "id": "old-observation-current-inventory",
+    "version": 1,
+    "title": "Old finding beside current inventory",
+    "requirement": 18,
+    "task_type": "refuse",
+    "operator_context": "Current inventory reports 55% disk use, while a retained two-day-old pressure observation reports 96%.",
+    "operator_task": "Explain both values without combining them into a single current claim and decide whether disk pressure is current.",
+    "start_route": "/host/worker-09",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-old-current-018",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "inventory-current",
+          "source": "worker-09/host",
+          "observed_at": "2026-07-26T07:16:40Z",
+          "generation": 4200,
+          "tense": "current"
+        },
+        {
+          "id": "pressure-history",
+          "source": "worker-09/host-history",
+          "observed_at": "2026-07-24T07:15:00Z",
+          "generation": 1320,
+          "tense": "historical"
+        }
+      ],
+      "notes": "The old pressure finding is retained history and must not inherit the page's current load time."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "current-disk-normal-old-pressure-historical",
+          "text": "Current disk use is 55%; the 96% pressure observation is explicitly historical."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "current-55",
+          "text": "Current inventory: 55% at generation 4200.",
+          "basis_id": "inventory-current"
+        },
+        {
+          "id": "historical-96",
+          "text": "Historical finding: 96% at generation 1320 two days earlier.",
+          "basis_id": "pressure-history"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "historical-pressure-cause",
+          "text": "The cause and resolution of the historical pressure are not established here."
+        }
+      ],
+      "conflicts": [
+        {
+          "id": "values-different-times",
+          "text": "The values differ across time and are not competing current observations."
+        }
+      ],
+      "actions": [
+        {
+          "id": "inspect-pressure-history",
+          "label": "Inspect historical pressure",
+          "available": true,
+          "effect": [
+            "opens the old observation timeline"
+          ],
+          "does_not": [
+            "mark current disk pressure"
+          ],
+          "reversible": true,
+          "precondition": "Historical evidence is retained.",
+          "target": "the old disk-pressure observation timeline",
+          "state_transition": "No state transition; opens historical evidence.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future disk observations remain separate and current.",
+          "recording": "No finding lifecycle transition is recorded."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "no_action",
+      "required_subject_ids": [
+        "worker-09/root"
+      ],
+      "required_conclusion_ids": [
+        "current-disk-normal-old-pressure-historical"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "current-disk-normal-old-pressure-historical",
+          "text": "Current and historical disk values are separately labeled."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "current-disk-96",
+          "text": "The disk is currently 96% used."
+        },
+        {
+          "id": "average-disk-75",
+          "text": "The two observations can be averaged into current state."
+        }
+      ],
+      "required_evidence_ids": [
+        "current-55",
+        "historical-96"
+      ],
+      "required_unknown_ids": [
+        "historical-pressure-cause"
+      ],
+      "must_notice_stale": true,
+      "must_notice_conflict": true,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "inspect-pressure-history"
+      ],
+      "unsafe_action_ids": [
+        "free-disk-now"
+      ],
+      "action_expectation": "Treat current inventory and retained history as distinct observations; no current disk intervention is justified."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "historical-current",
+      "stale",
+      "inventory"
+    ]
+  },
+  {
+    "id": "compare-two-periods",
+    "version": 1,
+    "title": "Compare two explicit time periods",
+    "requirement": 19,
+    "task_type": "compare",
+    "operator_context": "An operator must compare yesterday's and today's equally sized log windows for the reports service.",
+    "operator_task": "Quantify the change, name both periods and sample sizes, and preserve unknown cause and impact.",
+    "start_route": "/finding/error-shift/reports/journal/evidence",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-period-compare-019",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "today-window",
+          "source": "reports/journal",
+          "observed_at": "2026-07-26T07:00:00Z",
+          "generation": 4183,
+          "tense": "current"
+        },
+        {
+          "id": "yesterday-window",
+          "source": "reports/journal",
+          "observed_at": "2026-07-25T07:00:00Z",
+          "generation": 2743,
+          "tense": "historical"
+        }
+      ],
+      "notes": "Today is 70/1000 errors (7%); yesterday is 40/1000 (4%): +3 percentage points, +75% relative."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "reports-errors-higher-today",
+          "text": "Reports errors rose from 4% yesterday to 7% today in equal 1000-message windows."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "today-70-of-1000",
+          "text": "Today 06:30–07:00 UTC: 70 errors in 1000 messages.",
+          "basis_id": "today-window"
+        },
+        {
+          "id": "yesterday-40-of-1000",
+          "text": "Yesterday 06:30–07:00 UTC: 40 errors in 1000 messages.",
+          "basis_id": "yesterday-window"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "period-change-cause",
+          "text": "The comparison does not establish cause."
+        },
+        {
+          "id": "period-change-impact",
+          "text": "Service impact is not established."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "inspect-period-exemplars",
+          "label": "Compare error examples",
+          "available": true,
+          "effect": [
+            "opens examples from both named windows"
+          ],
+          "does_not": [
+            "claim why the rate changed"
+          ],
+          "reversible": true,
+          "precondition": "Examples exist for both periods.",
+          "target": "retained error examples from both named periods",
+          "state_transition": "No state transition; opens a period comparison.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future observations do not alter the fixed compared windows.",
+          "recording": "No finding lifecycle transition is recorded."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "investigate",
+      "required_subject_ids": [
+        "reports/journal"
+      ],
+      "required_conclusion_ids": [
+        "reports-errors-higher-today"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "reports-errors-higher-today",
+          "text": "The error rate rose three percentage points or 75% relative."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "reports-outage",
+          "text": "The comparison proves an outage."
+        }
+      ],
+      "required_evidence_ids": [
+        "today-70-of-1000",
+        "yesterday-40-of-1000"
+      ],
+      "required_unknown_ids": [
+        "period-change-cause",
+        "period-change-impact"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "inspect-period-exemplars"
+      ],
+      "unsafe_action_ids": [
+        "declare-root-cause"
+      ],
+      "action_expectation": "State both windows and sample sizes, then inspect examples without adding causal or impact claims."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "time-comparison",
+      "sample-size",
+      "evidence"
+    ]
+  },
+  {
+    "id": "safe-to-ignore",
+    "version": 1,
+    "title": "Is a low-impact condition safe to ignore",
+    "requirement": 20,
+    "task_type": "refuse",
+    "operator_context": "A WAL is 800 MiB on a 200 GiB database, has been stable for six hours, and has no observed service impact.",
+    "operator_task": "Answer whether the condition is safe to ignore, including the bounds and future checks that make deferral defensible.",
+    "start_route": "/finding/wal-bloat/analytics/warehouse.db",
+    "fixture": {
+      "provenance": "synthetic",
+      "seed_id": "ux-safe-ignore-020",
+      "clock": "2026-07-26T07:17:00Z",
+      "current_generation": 4200,
+      "real_path_coverage": "fixture_only",
+      "observation_bases": [
+        {
+          "id": "wal-current",
+          "source": "analytics/sqlite-health",
+          "observed_at": "2026-07-26T07:16:30Z",
+          "generation": 4200,
+          "tense": "current"
+        }
+      ],
+      "notes": "WAL is 0.4% of DB, host has 600 GiB free, trend stable, next review is explicitly bounded to four hours."
+    },
+    "visible_state": {
+      "decision_claims": [
+        {
+          "id": "wal-safe-to-defer-not-ignore",
+          "text": "The stable low-relative WAL can be watched for four hours; it is not justified as safe to ignore indefinitely."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "wal-relative-and-trend",
+          "text": "800 MiB is 0.4% of the 200 GiB DB and has not grown for six hours.",
+          "basis_id": "wal-current"
+        },
+        {
+          "id": "wal-host-margin",
+          "text": "The host has 600 GiB free and no observed service impact.",
+          "basis_id": "wal-current"
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "future-wal-growth",
+          "text": "Future WAL growth and reader behavior are not guaranteed."
+        }
+      ],
+      "conflicts": [],
+      "actions": [
+        {
+          "id": "watch-four-hours",
+          "label": "Watch for four hours",
+          "available": true,
+          "effect": [
+            "records bounded observation and a review horizon"
+          ],
+          "does_not": [
+            "resolve the condition or disable future observation"
+          ],
+          "reversible": true,
+          "precondition": "Fresh WAL and host-margin observations remain available.",
+          "target": "the current WAL finding's bounded watch coordination",
+          "state_transition": "Records a four-hour watch and review horizon.",
+          "underlying_system_affected": false,
+          "evidence_policy": "retained",
+          "detector_observation": "continues",
+          "future_observations": "Future WAL and host-margin observations continue during the watch.",
+          "recording": "The bounded watch and review horizon are recorded as operator coordination."
+        }
+      ]
+    },
+    "oracle": {
+      "outcome": "no_action",
+      "required_subject_ids": [
+        "analytics/warehouse.db"
+      ],
+      "required_conclusion_ids": [
+        "wal-safe-to-defer-not-ignore"
+      ],
+      "allowed_conclusions": [
+        {
+          "id": "wal-safe-to-defer-not-ignore",
+          "text": "Bounded watching is defensible under current margin and stable trend."
+        }
+      ],
+      "forbidden_conclusions": [
+        {
+          "id": "wal-safe-forever",
+          "text": "The condition is safe to ignore indefinitely."
+        },
+        {
+          "id": "wal-resolved",
+          "text": "Watching resolves the WAL condition."
+        }
+      ],
+      "required_evidence_ids": [
+        "wal-relative-and-trend",
+        "wal-host-margin"
+      ],
+      "required_unknown_ids": [
+        "future-wal-growth"
+      ],
+      "must_notice_stale": false,
+      "must_notice_conflict": false,
+      "causality": "not_established",
+      "safe_action_ids": [
+        "watch-four-hours"
+      ],
+      "unsafe_action_ids": [
+        "ignore-forever",
+        "close-as-resolved"
+      ],
+      "action_expectation": "Permit bounded deferral with a review horizon; refuse the stronger claim that it is safe to ignore."
+    },
+    "comparison_eligible": true,
+    "variants": [
+      "baseline",
+      "redesign",
+      "text"
+    ],
+    "tags": [
+      "safe-to-ignore",
+      "bounded-watch",
+      "calibrated-trust"
+    ]
+  }
+]

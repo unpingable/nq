@@ -1,0 +1,510 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nq.dashboard.scenario-corpus.v1.schema.json",
+  "title": "NQ dashboard deterministic synthetic UX scenario corpus",
+  "type": "array",
+  "minItems": 20,
+  "maxItems": 20,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "version",
+      "title",
+      "requirement",
+      "task_type",
+      "operator_context",
+      "operator_task",
+      "start_route",
+      "fixture",
+      "visible_state",
+      "oracle",
+      "comparison_eligible",
+      "variants",
+      "tags"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]+$"
+      },
+      "version": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "title": {
+        "type": "string",
+        "minLength": 5
+      },
+      "requirement": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20
+      },
+      "task_type": {
+        "type": "string",
+        "enum": [
+          "identify",
+          "investigate",
+          "act",
+          "refuse",
+          "compare"
+        ]
+      },
+      "operator_context": {
+        "type": "string",
+        "minLength": 20
+      },
+      "operator_task": {
+        "type": "string",
+        "minLength": 20
+      },
+      "start_route": {
+        "type": "string",
+        "pattern": "^/"
+      },
+      "fixture": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provenance",
+          "seed_id",
+          "clock",
+          "current_generation",
+          "real_path_coverage",
+          "observation_bases",
+          "notes"
+        ],
+        "properties": {
+          "provenance": {
+            "type": "string",
+            "enum": [
+              "synthetic"
+            ]
+          },
+          "seed_id": {
+            "type": "string",
+            "pattern": "^ux-"
+          },
+          "clock": {
+            "type": "string",
+            "pattern": "Z$"
+          },
+          "current_generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "real_path_coverage": {
+            "type": "string",
+            "enum": [
+              "fixture_only",
+              "real_publish_path_with_synthetic_input",
+              "real_route_with_synthetic_database"
+            ]
+          },
+          "observation_bases": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "source",
+                "observed_at",
+                "generation",
+                "tense"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "source": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "observed_at": {
+                  "type": "string",
+                  "pattern": "Z$"
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "tense": {
+                  "type": "string",
+                  "enum": [
+                    "current",
+                    "historical",
+                    "stale"
+                  ]
+                }
+              }
+            }
+          },
+          "notes": {
+            "type": "string",
+            "minLength": 10
+          }
+        }
+      },
+      "visible_state": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision_claims",
+          "evidence",
+          "unknowns",
+          "conflicts",
+          "actions"
+        ],
+        "properties": {
+          "decision_claims": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "text"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 3
+                }
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "text",
+                "basis_id"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 3
+                },
+                "basis_id": {
+                  "type": "string",
+                  "minLength": 2
+                }
+              }
+            }
+          },
+          "unknowns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "text"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 3
+                }
+              }
+            }
+          },
+          "conflicts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "text"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 3
+                }
+              }
+            }
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "label",
+                "available",
+                "target",
+                "state_transition",
+                "effect",
+                "does_not",
+                "underlying_system_affected",
+                "evidence_policy",
+                "detector_observation",
+                "reversible",
+                "precondition",
+                "future_observations",
+                "recording"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "available": {
+                  "type": "boolean"
+                },
+                "target": {
+                  "type": "string",
+                  "minLength": 3
+                },
+                "state_transition": {
+                  "type": "string",
+                  "minLength": 3
+                },
+                "effect": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 3
+                  }
+                },
+                "does_not": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 3
+                  }
+                },
+                "underlying_system_affected": {
+                  "type": "boolean"
+                },
+                "evidence_policy": {
+                  "type": "string",
+                  "enum": [
+                    "retained",
+                    "not_applicable"
+                  ]
+                },
+                "detector_observation": {
+                  "type": "string",
+                  "enum": [
+                    "continues",
+                    "stops",
+                    "not_applicable"
+                  ]
+                },
+                "reversible": {
+                  "type": "boolean"
+                },
+                "precondition": {
+                  "type": "string",
+                  "minLength": 3
+                },
+                "future_observations": {
+                  "type": "string",
+                  "minLength": 3
+                },
+                "recording": {
+                  "type": "string",
+                  "minLength": 3
+                }
+              }
+            }
+          }
+        }
+      },
+      "oracle": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "outcome",
+          "required_subject_ids",
+          "required_conclusion_ids",
+          "allowed_conclusions",
+          "forbidden_conclusions",
+          "required_evidence_ids",
+          "required_unknown_ids",
+          "must_notice_stale",
+          "must_notice_conflict",
+          "causality",
+          "safe_action_ids",
+          "unsafe_action_ids",
+          "action_expectation"
+        ],
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "act",
+              "investigate",
+              "refuse",
+              "no_action"
+            ]
+          },
+          "required_subject_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 2
+            }
+          },
+          "required_conclusion_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 2
+            }
+          },
+          "allowed_conclusions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "text"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 3
+                }
+              }
+            }
+          },
+          "forbidden_conclusions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "text"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 3
+                }
+              }
+            }
+          },
+          "required_evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 2
+            }
+          },
+          "required_unknown_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 2
+            }
+          },
+          "must_notice_stale": {
+            "type": "boolean"
+          },
+          "must_notice_conflict": {
+            "type": "boolean"
+          },
+          "causality": {
+            "type": "string",
+            "enum": [
+              "established",
+              "not_established",
+              "partially_established"
+            ]
+          },
+          "safe_action_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 2
+            }
+          },
+          "unsafe_action_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 2
+            }
+          },
+          "action_expectation": {
+            "type": "string",
+            "minLength": 10
+          }
+        }
+      },
+      "comparison_eligible": {
+        "type": "boolean"
+      },
+      "variants": {
+        "type": "array",
+        "minItems": 3,
+        "items": {
+          "type": "string",
+          "enum": [
+            "baseline",
+            "redesign",
+            "text"
+          ]
+        }
+      },
+      "tags": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string",
+          "minLength": 2
+        }
+      }
+    }
+  }
+}

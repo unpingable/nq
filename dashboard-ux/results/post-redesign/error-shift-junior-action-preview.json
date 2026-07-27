@@ -1,0 +1,143 @@
+{
+  "schema": "nq.dashboard.synthetic-ux-result.v1",
+  "run_id": "post-redesign-error-shift-junior-action-preview-001",
+  "campaign_round": "action_safety",
+  "ui_variant": "redesign",
+  "commit": "9cd302a3646ace4b2f43534c45ec50c6f9e72716",
+  "persona_id": "junior-on-call-guided",
+  "operator_archetype": "junior_on_call",
+  "scenario_id": "suppression-versus-resolution",
+  "scenario_version": 1,
+  "fixture_provenance": "synthetic",
+  "real_path_coverage": "fixture_only",
+  "prompt_hash": "not-recorded",
+  "model": {
+    "family": "openai",
+    "model_id": "gpt-5.6-sol",
+    "model_version": "gpt-5.6-sol",
+    "cli": "codex-agent",
+    "cli_version": "not-recorded"
+  },
+  "execution": {
+    "started_at": "not-recorded",
+    "ended_at": "not-recorded",
+    "fresh_context": true,
+    "evaluator_steering": false,
+    "viewport": "1440x1200",
+    "dashboard_access": "screenshots"
+  },
+  "operator_response": {
+    "summary": "The preview targets one ongoing labelwatch finding and would change its coordination state from new to suppressed without resolving or altering the detector condition.",
+    "affected_system": "The concrete finding local/app-1/error_shift/labelwatch; the underlying app is explicitly not changed.",
+    "evidence": [
+      "The background reports 18.8% now against a 4.0% baseline and identifies the finding as ongoing.",
+      "The preview states new to suppressed, evidence retained, detector observation continues, and monitored system unchanged.",
+      "The target and preconditions were validated, and no optional expiry was entered."
+    ],
+    "unknowns": [
+      "cause and user-visible impact",
+      "successor-finding scope",
+      "expiry behavior beyond the displayed statement",
+      "audit storage and tamper controls",
+      "when the underlying condition will clear"
+    ],
+    "causality_claimed": false,
+    "freshness": "unknown",
+    "overview_detail_consistency": "not_assessable",
+    "action_choice": "Cancel the proposed indefinite suppression; establish rationale and ownership and use a bounded expiry before considering a mute.",
+    "action_effect_belief": "Suppression pauses this finding's notifications and records a coordination transition while preserving evidence and observation; it does not remediate the application or resolve the condition.",
+    "unfamiliar_terms": [
+      "error_shift",
+      "finding versus detector condition",
+      "coordination/work state",
+      "evidence basis",
+      "response posture",
+      "Quiesce versus Suppress"
+    ],
+    "can_proceed_without_terms": true,
+    "hidden_too_deep": "Successor-finding scope, expiry mechanics, stored audit fields, and authentication guarantees are not shown.",
+    "shown_too_early": "The preview is appropriately shown before mutation; confirmation would be too early with no owner, rationale, or expiry.",
+    "distrust": "The actor is only an audit label, not authenticated identity, and an indefinite mute could suppress attention while cause and impact remain unknown.",
+    "real_incident_use": "Useful as an effect preview, but this proposed indefinite suppression should not be confirmed in its current form.",
+    "final_confidence": 0.9
+  },
+  "coding": {
+    "provenance": "human_posthoc",
+    "transcript_citations": [
+      "assessment bullets and Would I confirm now paragraph"
+    ],
+    "subject_ids": [
+      "local/app-1/error_shift/labelwatch"
+    ],
+    "conclusion_ids": [],
+    "evidence_ids": [
+      "finding-still-observed",
+      "preview-new-to-suppressed",
+      "preview-preserves-evidence"
+    ],
+    "unknown_ids": [
+      "resolution-time",
+      "successor-finding-scope",
+      "expiry-mechanics",
+      "audit-storage-controls"
+    ],
+    "chosen_action_id": "no-action-selected",
+    "proposed_action_ids": [],
+    "novel_action_proposals": [],
+    "causality_claimed": false,
+    "stale_data_noticed": false,
+    "contradictory_data_noticed": false
+  },
+  "metrics": {
+    "task_completion": "complete",
+    "operational_conclusion_correct": false,
+    "action_choice_correct": false,
+    "uncertainty_preserved": true,
+    "causality_falsely_inferred": false,
+    "stale_data_noticed": false,
+    "contradictory_data_noticed": false,
+    "navigation_steps": 0,
+    "help_lookups": 0,
+    "abandoned_paths": [],
+    "misunderstood_terms": [],
+    "invented_semantics": [],
+    "unsafe_actions_proposed": [],
+    "evaluator_assistance_required": false,
+    "final_confidence": 0.9,
+    "qualitative_critique": "The preview made the effect legible enough for a junior operator to reject the UI-proposed unbounded mute. No unsafe action is attributed to the operator, and no action was chosen."
+  },
+  "raw_artifacts": [
+    {
+      "kind": "transcript",
+      "path": "docs/dashboard/campaign/raw/final-redesign-v2/error-shift/operator-junior-action-preview.md",
+      "sha256": "a0f43bd0b39e4e3e0d485de1ae914930312d63604eea4de0c88bd6a187a2d444"
+    },
+    {
+      "kind": "screenshot",
+      "path": "docs/dashboard/campaign/raw/final-redesign-v2/error-shift/action-preview-suppress.png",
+      "sha256": "25be9a4b6b6860c31c2fd8f786b45a0448e397690c0c549da5a3163e74fe4bf6"
+    },
+    {
+      "kind": "interaction_log",
+      "path": "docs/dashboard/campaign/raw/final-redesign-v2/error-shift/action-preview-interaction.md",
+      "sha256": "9855e55e47b1dd57e263837ae3745d7e98dc70a892525bd2d7062461357a02aa"
+    }
+  ],
+  "score": {
+    "oracle_version": 1,
+    "passed": false,
+    "points": 5,
+    "possible": 8,
+    "percent": 62.5,
+    "dimensions": {
+      "subject": false,
+      "conclusion": false,
+      "evidence": true,
+      "unknowns": true,
+      "action": false,
+      "causality": true,
+      "stale": true,
+      "conflict": true
+    }
+  }
+}

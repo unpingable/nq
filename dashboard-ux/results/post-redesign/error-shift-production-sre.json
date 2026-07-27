@@ -1,0 +1,147 @@
+{
+  "schema": "nq.dashboard.synthetic-ux-result.v1",
+  "run_id": "post-redesign-error-shift-production-sre-001",
+  "campaign_round": "task_first",
+  "ui_variant": "redesign",
+  "commit": "c926a7389c5a11b260dd42b9ebffe9c58feecf10",
+  "persona_id": "production-sre-outage",
+  "operator_archetype": "production_sre",
+  "scenario_id": "error-rate-increased",
+  "scenario_version": 1,
+  "fixture_provenance": "synthetic",
+  "real_path_coverage": "fixture_only",
+  "prompt_hash": "not-recorded",
+  "model": {
+    "family": "openai",
+    "model_id": "gpt-5.6-sol",
+    "model_version": "gpt-5.6-sol",
+    "cli": "codex-agent",
+    "cli_version": "not-recorded"
+  },
+  "execution": {
+    "started_at": "not-recorded",
+    "ended_at": "not-recorded",
+    "fresh_context": true,
+    "evaluator_steering": false,
+    "viewport": "1440x1200",
+    "dashboard_access": "screenshots"
+  },
+  "operator_response": {
+    "summary": "Labelwatch's recent error proportion increased to 18.8% from a 4.0% comparison, which warrants prompt read-only investigation but does not prove impact or cause.",
+    "affected_system": "app-1/labelwatch.",
+    "evidence": [
+      "The current one-minute window contains 3 errors among 16 messages.",
+      "The comparison contains 40 errors among 1000 messages across four prior windows.",
+      "Two retained examples say upstream timeout and request failed after retry.",
+      "The observation is roughly 50 seconds old and publish status is complete."
+    ],
+    "unknowns": [
+      "user-visible impact and cause",
+      "traffic, latency, success-rate, SLO, endpoint, and customer scope",
+      "whether the increase persists in later windows",
+      "the third error, exact timestamps, baseline variance, and independent deployment or dependency facts"
+    ],
+    "causality_claimed": false,
+    "freshness": "fresh",
+    "overview_detail_consistency": "consistent",
+    "action_choice": "Inspect complete current and adjacent error examples, then compare independent service, deployment, and upstream evidence.",
+    "action_effect_belief": "Evidence inspection is read-only. Acknowledge or Watch would change only coordination state; no monitored-service change is justified.",
+    "unfamiliar_terms": [
+      "observation basis",
+      "generation",
+      "coordination",
+      "quiesce",
+      "epistemic",
+      "expert classification",
+      "attached expert SQL"
+    ],
+    "can_proceed_without_terms": true,
+    "hidden_too_deep": "The recent adjacent-window trend, complete raw errors, exact event times, retained history, and provenance are collapsed or unavailable.",
+    "shown_too_early": "The six-card coordination matrix is prominent before persistence or impact has been verified.",
+    "distrust": "The current sample is very small, only two of three examples are shown, event times are unavailable, and no independent traffic or impact signal corroborates the metric.",
+    "real_incident_use": "Usable within two minutes for bounded triage, but not for declaring an incident, cause, or impact.",
+    "final_confidence": 0.88
+  },
+  "coding": {
+    "provenance": "human_posthoc",
+    "transcript_citations": [
+      "Decision through Confidence paragraphs"
+    ],
+    "subject_ids": [
+      "labelwatch"
+    ],
+    "conclusion_ids": [
+      "error-rate-increased",
+      "small-current-window"
+    ],
+    "evidence_ids": [
+      "current-error-sample",
+      "baseline-error-sample"
+    ],
+    "unknown_ids": [
+      "service-impact",
+      "cause"
+    ],
+    "chosen_action_id": "inspect-error-examples",
+    "proposed_action_ids": [
+      "inspect-error-examples",
+      "compare-recent-changes"
+    ],
+    "novel_action_proposals": [],
+    "causality_claimed": false,
+    "stale_data_noticed": false,
+    "contradictory_data_noticed": false
+  },
+  "metrics": {
+    "task_completion": "complete",
+    "operational_conclusion_correct": true,
+    "action_choice_correct": true,
+    "uncertainty_preserved": true,
+    "causality_falsely_inferred": false,
+    "stale_data_noticed": false,
+    "contradictory_data_noticed": false,
+    "navigation_steps": 0,
+    "help_lookups": 0,
+    "abandoned_paths": [],
+    "misunderstood_terms": [],
+    "invented_semantics": [],
+    "unsafe_actions_proposed": [],
+    "evaluator_assistance_required": false,
+    "final_confidence": 0.88,
+    "qualitative_critique": "The operator identified the exact statistical shift, noticed the low sample, preserved impact and cause unknowns, and selected only read-only evidence paths without requiring NQ terminology."
+  },
+  "raw_artifacts": [
+    {
+      "kind": "transcript",
+      "path": "docs/dashboard/campaign/raw/post-redesign/error-shift/operator-production-sre.md",
+      "sha256": "6027883aee67084c3a47e284e029bc96a64c4b98e336d5127108daa100e1c8a2"
+    },
+    {
+      "kind": "screenshot",
+      "path": "docs/dashboard/campaign/raw/post-redesign/overview/page.png",
+      "sha256": "edcc16e17d1b95835812314b2c4aa7007c7ef849bda9575e1dd2b9301d711ddd"
+    },
+    {
+      "kind": "screenshot",
+      "path": "docs/dashboard/campaign/raw/post-redesign/error-shift/page.png",
+      "sha256": "13398cc7b33cf9aa6ad774d9bedeb620aef9ade610cca9c8fdc1aa136148f138"
+    }
+  ],
+  "score": {
+    "oracle_version": 1,
+    "passed": true,
+    "points": 8,
+    "possible": 8,
+    "percent": 100.0,
+    "dimensions": {
+      "subject": true,
+      "conclusion": true,
+      "evidence": true,
+      "unknowns": true,
+      "action": true,
+      "causality": true,
+      "stale": true,
+      "conflict": true
+    }
+  }
+}

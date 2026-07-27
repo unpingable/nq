@@ -1,0 +1,146 @@
+{
+  "schema": "nq.dashboard.synthetic-ux-result.v1",
+  "run_id": "baseline-missing-finding-sleep-deprived-001",
+  "campaign_round": "baseline",
+  "ui_variant": "baseline",
+  "commit": "ba5a79d50d95901625fae1edf7e9145871f51f44",
+  "persona_id": "sleep-deprived-0317",
+  "operator_archetype": "sleep_deprived_operator",
+  "scenario_id": "missing-finding-route",
+  "scenario_version": 1,
+  "fixture_provenance": "synthetic",
+  "real_path_coverage": "fixture_only",
+  "prompt_hash": "not-recorded",
+  "model": {
+    "family": "openai",
+    "model_id": "gpt-5.6-terra",
+    "model_version": "gpt-5.6-terra",
+    "cli": "codex-agent",
+    "cli_version": "not-recorded"
+  },
+  "execution": {
+    "started_at": "not-recorded",
+    "ended_at": "not-recorded",
+    "fresh_context": true,
+    "evaluator_steering": false,
+    "viewport": "1440x1200",
+    "dashboard_access": "screenshots"
+  },
+  "operator_response": {
+    "summary": "The error-spike headline conflicts with Finding not found, so no active incident can be trusted from this page.",
+    "affected_system": "labelwatch/logwatch, with host versus service scope unclear.",
+    "evidence": [
+      "Finding not found",
+      "0 consecutive generations",
+      "since ?"
+    ],
+    "unknowns": [
+      "whether the incident exists now",
+      "freshness, scope, samples, impact, and cause"
+    ],
+    "causality_claimed": false,
+    "freshness": "unknown",
+    "overview_detail_consistency": "not_assessable",
+    "action_choice": "Inspect retained examples or history; avoid lifecycle controls.",
+    "action_effect_belief": "Evidence inspection should be read-only, while control effects are too unclear to use safely.",
+    "unfamiliar_terms": [
+      "error_shift",
+      "generation",
+      "legacy",
+      "threshold alert",
+      "finding",
+      "quiesce",
+      "suppress",
+      "reset",
+      "SQL"
+    ],
+    "can_proceed_without_terms": false,
+    "hidden_too_deep": "The evidence is behind clicks despite the page showing no evidence, and whether the finding exists is missing.",
+    "shown_too_early": "Mutable-looking incident controls appear before the page establishes an actual, fresh finding.",
+    "distrust": "High because a followed link says Finding not found while urgent stale-looking narrative and unknown freshness remain.",
+    "real_incident_use": "Poor in this state; it cannot support a reliable escalation or control decision in under a minute.",
+    "final_confidence": 0.9
+  },
+  "coding": {
+    "provenance": "human_posthoc",
+    "transcript_citations": [
+      "raw read paragraphs 1 through 15"
+    ],
+    "subject_ids": [
+      "labelwatch/logwatch"
+    ],
+    "conclusion_ids": [
+      "finding-target-unresolved"
+    ],
+    "evidence_ids": [
+      "finding-not-found"
+    ],
+    "unknown_ids": [
+      "missing-reason",
+      "current-condition",
+      "route-freshness"
+    ],
+    "chosen_action_id": "inspect-available-history",
+    "proposed_action_ids": [
+      "inspect-available-history"
+    ],
+    "novel_action_proposals": [],
+    "causality_claimed": false,
+    "stale_data_noticed": true,
+    "contradictory_data_noticed": true
+  },
+  "metrics": {
+    "task_completion": "complete",
+    "operational_conclusion_correct": true,
+    "action_choice_correct": true,
+    "uncertainty_preserved": true,
+    "causality_falsely_inferred": false,
+    "stale_data_noticed": true,
+    "contradictory_data_noticed": true,
+    "navigation_steps": 0,
+    "help_lookups": 0,
+    "abandoned_paths": [],
+    "misunderstood_terms": [
+      "error_shift",
+      "generation",
+      "legacy",
+      "quiesce",
+      "suppress",
+      "reset"
+    ],
+    "invented_semantics": [],
+    "unsafe_actions_proposed": [],
+    "evaluator_assistance_required": false,
+    "final_confidence": 0.9,
+    "qualitative_critique": "The fatigue persona still refused safely, but only by overriding an urgent headline and unexplained controls."
+  },
+  "raw_artifacts": [
+    {
+      "kind": "transcript",
+      "path": "docs/dashboard/campaign/raw/baseline/missing-finding/operator-sleep-deprived.md",
+      "sha256": "828fca227823d5faf1f7985e0b6b0f65636df812e790d566d2826494aa44e051"
+    },
+    {
+      "kind": "screenshot",
+      "path": "docs/dashboard/campaign/raw/baseline/missing-finding/page.png",
+      "sha256": "38ea8aae476116f030bd9791016c0c3560b59ea1374bfef990bed65376870074"
+    }
+  ],
+  "score": {
+    "oracle_version": 1,
+    "passed": true,
+    "points": 8,
+    "possible": 8,
+    "percent": 100.0,
+    "dimensions": {
+      "subject": true,
+      "conclusion": true,
+      "evidence": true,
+      "unknowns": true,
+      "action": true,
+      "causality": true,
+      "stale": true,
+      "conflict": true
+    }
+  }
+}
