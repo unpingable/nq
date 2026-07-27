@@ -49,7 +49,7 @@ run_gate "check-coverage-manifest" ./scripts/check-coverage-manifest.sh
 # 6. Targeted integration suites, named explicitly. The full suite already runs
 #    these; naming them means a rename or accidental deletion surfaces as a
 #    missing target instead of hiding inside a slightly smaller total.
-run_gate "docket dossier v1/v2 profile" \
+run_gate "docket dossier v1/v2/v3 profile" \
     cargo test -p nq-monitor --test docket_dossier_import
 run_gate "consumer reliance" cargo test -p nq-core --lib reliance
 run_gate "reliance conformance vectors" \
