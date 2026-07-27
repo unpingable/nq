@@ -1,0 +1,16 @@
+[package]
+name = "nq-check-pack-labelwatch"
+edition.workspace = true
+version.workspace = true
+rust-version = "1.88"
+description = "Optional Labelwatch monitoring assembly for NQ"
+license = "Apache-2.0"
+repository = "https://github.com/unpingable/nq"
+readme = "README.md"
+
+[dependencies]
+nq-monitor-check = { path = "../nq-monitor-check", version = "0.1.0" }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

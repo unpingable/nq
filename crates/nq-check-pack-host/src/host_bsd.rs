@@ -3,7 +3,7 @@
 //! A shared BSD-ish host-fact reader for macOS and FreeBSD. The two
 //! layers are kept apart on purpose:
 //!
-//! - [`read_bsd_facts`] is the ONLY place that does syscalls (raw
+//! - `read_bsd_facts` is the ONLY place that does syscalls (raw
 //!   `libc`: `getloadavg`, `statvfs`, `sysctl`). It is `cfg`-gated to
 //!   the BSD targets and is therefore lab-verified on the real
 //!   substrates, never on Linux CI.
@@ -18,12 +18,12 @@
 //! Scope: host only. No services, logs, launchd, rc.d, or unified
 //! logging. macOS/FreeBSD are NOT claimed as full Tier-3 support.
 
-use nq_core::wire::{CollectorPayload, HostData, HostField};
-use nq_core::CollectorStatus;
+use nq_monitor_check::wire::{CollectorPayload, HostData, HostField};
+use nq_monitor_check::CollectorStatus;
 use time::OffsetDateTime;
 
 /// Which BSD produced a [`BsdHostFacts`] — selects the per-OS deltas
-/// (MIB names, boot-id availability). Set by [`read_bsd_facts`] at
+/// (MIB names, boot-id availability). Set by `read_bsd_facts` at
 /// compile time, or by a test fixture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BsdOs {

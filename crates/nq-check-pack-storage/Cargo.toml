@@ -1,0 +1,20 @@
+[package]
+name = "nq-check-pack-storage"
+edition.workspace = true
+version.workspace = true
+rust-version = "1.88"
+description = "Optional ZFS, SMART, and GPU observation pack for NQ monitor"
+license = "Apache-2.0"
+repository = "https://github.com/unpingable/nq"
+readme = "README.md"
+
+[dependencies]
+nq-monitor-check = { path = "../nq-monitor-check", version = "0.1.0" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+hostname = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

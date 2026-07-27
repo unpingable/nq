@@ -19,6 +19,9 @@ doc = false
 
 [dependencies]
 nq-core = { path = "../nq-core", version = "0.1.0" }
+nq-monitor-check = { path = "../nq-monitor-check", version = "0.1.0" }
+nq-check-pack-host = { path = "../nq-check-pack-host", version = "0.1.0" }
+nq-check-pack-storage = { path = "../nq-check-pack-storage", version = "0.1.0" }
 nq-witness-api = { path = "../nq-witness-api", version = "0.1.0" }
 anyhow = { workspace = true }
 serde = { workspace = true }

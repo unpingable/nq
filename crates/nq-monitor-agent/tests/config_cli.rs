@@ -95,6 +95,35 @@ fn startup_uses_the_same_strict_configuration_parser() {
 }
 
 #[test]
+fn legacy_storage_paths_are_refused_by_config_validation() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("publisher.json");
+    write(
+        &config,
+        r#"{
+              "bind_addr": "127.0.0.1:9847",
+              "zfs_witness": {
+                "helper_path": "relative/nq-zfs-witness",
+                "timeout_ms": 100
+              }
+            }"#,
+    );
+
+    let validation = witness()
+        .args(["config", "validate", "--config"])
+        .arg(&config)
+        .output()
+        .expect("run publisher config validator");
+    assert!(!validation.status.success());
+    let stderr = String::from_utf8_lossy(&validation.stderr);
+    assert!(
+        stderr.contains("zfs_witness.helper_path"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("no checks ran"), "stderr: {stderr}");
+}
+
+#[test]
 fn occupied_port_runs_no_checks() {
     let held = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = held.local_addr().unwrap();

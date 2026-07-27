@@ -14,10 +14,11 @@
 //! those are surfaced to storage and reconciled (if ever) by detectors
 //! added in a later phase.
 //!
-//! See `~/git/nq-witness/profiles/smart.md` for the contract.
+//! The supported schema and profile constants below pin the public contract.
 
-use nq_core::wire::{CollectorPayload, SmartWitnessReport};
-use nq_core::{CollectorStatus, PublisherConfig, SmartWitnessConfig};
+use crate::{SmartWitnessConfig, StoragePackConfig};
+use nq_monitor_check::wire::{CollectorPayload, SmartWitnessReport};
+use nq_monitor_check::CollectorStatus;
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -28,7 +29,7 @@ const SUPPORTED_SCHEMA: &str = "nq.witness.v0";
 const SUPPORTED_PROFILE: &str = "nq.witness.smart.v0";
 const KILL_GRACE: Duration = Duration::from_millis(500);
 
-pub fn collect(config: &PublisherConfig) -> CollectorPayload<SmartWitnessReport> {
+pub fn collect(config: &StoragePackConfig) -> CollectorPayload<SmartWitnessReport> {
     let now = OffsetDateTime::now_utc();
 
     let Some(smart_cfg) = config.smart_witness.as_ref() else {
@@ -153,9 +154,7 @@ fn run_witness(cfg: &SmartWitnessConfig) -> Result<SmartWitnessReport, CollectEr
     if !status.success() {
         let trimmed = truncate_for_error(&stderr_text, 400);
         return Err(CollectError::Exit(format!(
-            "exit={}, stderr={:?}",
-            status,
-            trimmed
+            "exit={status}, stderr={trimmed:?}"
         )));
     }
 
@@ -214,23 +213,14 @@ mod tests {
         path.to_string_lossy().to_string()
     }
 
-    fn cfg(helper_path: String, timeout_ms: u64) -> PublisherConfig {
-        PublisherConfig {
-            bind_addr: "127.0.0.1:0".into(),
-            sqlite_paths: vec![],
-            service_health_urls: vec![],
-            prometheus_targets: vec![],
-            log_sources: vec![],
-            zfs_witness: None,
+    fn cfg(helper_path: String, timeout_ms: u64) -> StoragePackConfig {
+        StoragePackConfig {
             smart_witness: Some(SmartWitnessConfig {
                 helper_path,
                 wrapper: vec![],
                 timeout_ms,
             }),
-            gpu_witness: None,
-            sqlite_wal_targets: vec![],
-            sqlite_wal_proc_locks_enabled: false,
-            nq_binary_path: None,
+            ..StoragePackConfig::default()
         }
     }
 
@@ -293,10 +283,7 @@ mod tests {
     fn conforming_report_is_accepted() {
         let _lock = super::super::test_support::subprocess_lock();
         let tmp = tempfile::tempdir().unwrap();
-        let body = format!(
-            "#!/bin/sh\ncat <<'EOF'\n{}\nEOF\n",
-            CONFORMING_REPORT
-        );
+        let body = format!("#!/bin/sh\ncat <<'EOF'\n{CONFORMING_REPORT}\nEOF\n");
         let script = write_script(&tmp, "nq-smart-witness", &body);
         let payload = collect(&cfg(script, 2000));
         assert_eq!(payload.status, CollectorStatus::Ok, "payload: {payload:?}");
@@ -311,7 +298,7 @@ mod tests {
         let _lock = super::super::test_support::subprocess_lock();
         let tmp = tempfile::tempdir().unwrap();
         let bad = CONFORMING_REPORT.replace("nq.witness.v0", "nq.witness.v99");
-        let body = format!("#!/bin/sh\ncat <<'EOF'\n{}\nEOF\n", bad);
+        let body = format!("#!/bin/sh\ncat <<'EOF'\n{bad}\nEOF\n");
         let script = write_script(&tmp, "nq-smart-witness", &body);
         let payload = collect(&cfg(script, 2000));
         assert_eq!(payload.status, CollectorStatus::Error);
@@ -326,7 +313,7 @@ mod tests {
         let _lock = super::super::test_support::subprocess_lock();
         let tmp = tempfile::tempdir().unwrap();
         let bad = CONFORMING_REPORT.replace("nq.witness.smart.v0", "nq.witness.smart.v99");
-        let body = format!("#!/bin/sh\ncat <<'EOF'\n{}\nEOF\n", bad);
+        let body = format!("#!/bin/sh\ncat <<'EOF'\n{bad}\nEOF\n");
         let script = write_script(&tmp, "nq-smart-witness", &body);
         let payload = collect(&cfg(script, 2000));
         assert_eq!(payload.status, CollectorStatus::Error);
@@ -357,19 +344,7 @@ mod tests {
 
     #[test]
     fn disabled_collector_is_skipped() {
-        let config = PublisherConfig {
-            bind_addr: "127.0.0.1:0".into(),
-            sqlite_paths: vec![],
-            service_health_urls: vec![],
-            prometheus_targets: vec![],
-            log_sources: vec![],
-            zfs_witness: None,
-            smart_witness: None,
-            gpu_witness: None,
-            sqlite_wal_targets: vec![],
-            sqlite_wal_proc_locks_enabled: false,
-            nq_binary_path: None,
-        };
+        let config = StoragePackConfig::default();
         let payload = collect(&config);
         assert_eq!(payload.status, CollectorStatus::Skipped);
     }

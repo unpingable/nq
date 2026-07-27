@@ -62,18 +62,14 @@ Headline: the kernel makes NQ's testimony more *exact*, never more *powerful*. A
 
 ## Known test flakes
 
-### ETXTBSY on ZFS / SMART witness collector tests
+### ETXTBSY on storage check-pack subprocess tests
 
-`crates/nq/src/collect/zfs.rs` and `crates/nq/src/collect/smart.rs` tests build small per-test helper scripts in `tempfile::tempdir()` and `Command::spawn` them. Under parallel `cargo test`, occasional `helper spawn failed: <path>: Text file busy (os error 26)` failures land. Linux `ETXTBSY`: a concurrent test's `fork()` inherits a still-writable fd to the helper, so the kernel refuses the `execve`.
+`crates/nq-check-pack-storage/src/{zfs,smart,gpu}.rs` tests build small per-test helper scripts in `tempfile::tempdir()` and `Command::spawn` them. Historically, parallel tests could occasionally report `helper spawn failed: <path>: Text file busy (os error 26)`. Linux `ETXTBSY`: a concurrent test's `fork()` can inherit a still-writable fd to a helper, so the kernel refuses the `execve`.
 
-- **Symptom:** intermittent failure of `collect::zfs::tests::*` or `collect::smart::tests::*`. Passes on retry.
+- **Symptom:** an intermittent failure in a helper-spawning ZFS, SMART, or GPU pack test. Passes on retry.
 - **Diagnosis:** test infra, not detector logic. The detectors themselves and the witness contract are unaffected.
-- **Mitigations (deferred — boring remedies, none yet applied):**
-  - run those tests with `--test-threads=1`
-  - explicitly `drop(File)` and `fsync` before `Command::spawn` (already drop, but the fd-inheritance race is across threads, not within one)
-  - use a copy-once immutable fixture binary instead of writing per-test
-  - move helper-script tests to a single-threaded integration test harness
-- **Decision:** do not let it block detector-slice work. If it starts failing on a non-trivial fraction of normal runs, file a real fix.
+- **Current mitigation:** helper-spawning tests in the extracted storage pack acquire one shared subprocess mutex (`test_support::subprocess_lock`) before creating and executing fixtures. Fast missing-binary tests do not fork a helper and do not take the lock.
+- **Fallback:** if the kernel race reappears, rerun `cargo test -p nq-check-pack-storage -- --test-threads=1` and record it as infrastructure evidence rather than a detector failure.
 
 ## Coding conventions
 

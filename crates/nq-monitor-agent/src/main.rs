@@ -47,8 +47,7 @@ enum ConfigAction {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -63,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
     }) = cli.command
     {
         let config_text = read_config(&config)?;
-        PublisherConfig::from_json_str(&config_text).with_context(|| {
+        parse_and_validate_publisher_config(&config_text).with_context(|| {
             format!(
                 "publisher configuration `{}` was refused; no listener was started and no checks ran",
                 config.display()
@@ -82,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
         )
     })?;
     let config_text = read_config(&config_path)?;
-    let config = PublisherConfig::from_json_str(&config_text).with_context(|| {
+    let config = parse_and_validate_publisher_config(&config_text).with_context(|| {
         format!(
             "publisher configuration `{}` was refused; no listener was started and no checks ran",
             config_path.display()
@@ -90,6 +89,8 @@ async fn main() -> anyhow::Result<()> {
     })?;
     let bind_addr = config.bind_addr.clone();
     let config = Arc::new(config);
+    let app = nq_monitor_agent::server::build_router(config)
+        .context("publisher configuration was refused before the listener started")?;
 
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
@@ -98,11 +99,16 @@ async fn main() -> anyhow::Result<()> {
                 "cannot bind publisher listener `{bind_addr}`; no checks ran and no state was changed"
             )
         })?;
-    let app = nq_monitor_agent::server::build_router(config);
 
     info!(bind = %bind_addr, "nq-witness starting");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn parse_and_validate_publisher_config(input: &str) -> anyhow::Result<PublisherConfig> {
+    let config = PublisherConfig::from_json_str(input)?;
+    nq_monitor_agent::collect::validate_legacy_storage_config(&config)?;
+    Ok(config)
 }
 
 fn read_config(path: &Path) -> anyhow::Result<String> {
@@ -112,4 +118,29 @@ fn read_config(path: &Path) -> anyhow::Result<String> {
             path.display()
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_parser_applies_storage_pack_preconditions() {
+        let input = r#"{
+          "bind_addr": "127.0.0.1:9847",
+          "gpu_witness": {
+            "nvidia_smi_path": "relative/nvidia-smi",
+            "timeout_ms": 100
+          }
+        }"#;
+        PublisherConfig::from_json_str(input)
+            .expect("the legacy publisher parser historically accepts this path");
+
+        let error = parse_and_validate_publisher_config(input)
+            .expect_err("startup must apply the extracted storage-pack contract");
+        assert!(
+            error.to_string().contains("gpu_witness.nvidia_smi_path"),
+            "error: {error:#}"
+        );
+    }
 }

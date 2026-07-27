@@ -1,6 +1,6 @@
 use super::host_bsd;
-use nq_core::wire::{CollectorPayload, HostData};
-use nq_core::{CollectorStatus, Platform};
+use nq_monitor_check::wire::{CollectorPayload, HostData};
+use nq_monitor_check::{CollectorStatus, Platform};
 use time::OffsetDateTime;
 
 pub fn collect() -> CollectorPayload<HostData> {
@@ -122,6 +122,9 @@ fn parse_meminfo_kb(meminfo: &str, key: &str) -> Option<u64> {
 /// `(block_size, total_blocks, avail_blocks)` for `path` via POSIX
 /// `statvfs`. Shared with the BSD host collector — `statvfs` is portable
 /// across Linux and the BSDs, so the disk path is identical everywhere.
+// libc field widths vary across supported Unix targets. The casts are
+// redundant on Linux x86_64 but preserve the cross-target return contract.
+#[allow(clippy::unnecessary_cast)]
 pub(crate) fn nix_statvfs(path: &str) -> anyhow::Result<(u64, u64, u64)> {
     // (block_size, total_blocks, avail_blocks)
     // Use libc::statvfs directly to avoid heavy deps
@@ -218,7 +221,7 @@ mod platform_tests {
             // memory fields it has no honest equivalent for — proving the
             // real fact reader produced a cannot_testify list, not silence.
             if cfg!(any(target_os = "macos", target_os = "freebsd")) {
-                use nq_core::wire::HostField;
+                use nq_monitor_check::wire::HostField;
                 assert!(
                     data.cannot_testify.contains(&HostField::MemAvailable)
                         && data.cannot_testify.contains(&HostField::MemPressure),

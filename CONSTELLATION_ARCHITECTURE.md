@@ -26,7 +26,8 @@ monolith.
 | `nq-protocol` | Small leaf of versioned identifiers, digests, artifact references, disposition references, timestamps, structured refusals, and the few stable serialized handoff DTOs needed to keep siblings independent. | Evaluation rules, witness validation, collectors, storage, configuration, policy, rendering, convenience utilities. |
 | `nq` | Evidence sufficiency, unknown/refusal semantics, decision blocking, dispositions, support identities, decision receipts, replay, and the rules determining what conclusions are earned. | Collection, schedules, dashboard, notifications, witness import/storage mechanics, deployment configuration. |
 | `nq-witness` | `nq.witness.v1` artifact schema, canonicalization, validation, identity, provenance/custody binding, external projections, packet-set adoption, and typed artifact refusals. | Collection cadence, host checks, dashboard state, or deciding what a valid witness proves. |
-| `nq-monitor` | Check execution contract, observations, observation time/basis/coverage/freshness, scheduling, operational coordination, generic read models, generic dashboard behavior, and monitor configuration. | NQ decision law, witness identity law, application-specific branches, deployment selection. |
+| `nq-monitor-check` | Small monitor-owned leaf containing stable check-pack identifiers, descriptors, strict selection, typed configuration validation, and the transitional `nq.witness_packet.v1` wire/status compatibility surface. | Collectors, scheduling, storage, decision law, dashboard behavior, deployment policy, a universal event/evidence payload, or permanent ownership of pack-family schemas. |
+| `nq-monitor` | Check execution, observations, observation time/basis/coverage/freshness, scheduling, operational coordination, generic read models, generic dashboard behavior, and monitor configuration. | NQ decision law, witness identity law, application-specific branches, deployment selection. |
 | `nq-store-sqlite` | One SQLite implementation of public monitor, witness-catalog, decision-receipt, coordination, and read-model repositories. | Semantic ownership merely because records share a file; unrestricted connections are not public API. |
 | Check-pack crates | Check descriptors, collectors, check configuration, structured observations/evidence presentation, bounded operator language, source links, and remediation hints for one family. | NQ decision law, private witness variants, dashboard branches, global monitor policy, or implicit enablement. |
 | `nq-suite` | Strict deployment configuration, pack selection, storage selection, wiring, process launch, packaging, and compatibility CLI shims. | Sibling semantics. |
@@ -41,29 +42,30 @@ The allowed package graph is one-directional:
 
 ```text
                               nq-protocol
-                           /       |       \
-                          v        v        v
-                    nq-witness     nq     nq-monitor
-                          \        |        /
-                           \       |       /
-                            v      v      v
-                         nq-store-sqlite
+                                  |
+                                  v
+                    nq-witness <── nq
 
-               nq-check-host ───────┐
-          nq-check-labelwatch ───────┼──> nq-monitor
-             nq-check-storage ───────┘
+       nq-check-pack-host ────────┐
+  nq-check-pack-labelwatch ───────┼──> nq-monitor-check <── nq-monitor
+    nq-check-pack-storage ────────┘
+
+            nq-store-sqlite implements bounded owner repositories
 
         nq-suite ──> protocol + witness + nq + monitor + store + selected packs
 ```
 
+The arrows above point from a package to the dependency it consumes.
 `nq` may consume the public `nq-witness` artifact API.  `nq-monitor` does not
 need NQ engine internals: it consumes a versioned disposition handoff and can
 run with a fixture disposition source.  Check packs depend only on the public
 monitor pack contract and protocol leaf.  The composition root is the only
 package that knows the complete assembled set.
 
-Forbidden edges are checked in CI, including dev dependencies, examples,
-build scripts, generated source, and test utilities:
+Forbidden edges are checked in CI, including dev/build/target-qualified
+dependency edges and test utilities. Both default and all-feature resolutions
+are checked, checked-in source is scanned, and unreviewed conventional
+`OUT_DIR` source inclusion is rejected:
 
 - `nq` to monitor, store, dashboard, check pack, or suite;
 - witness to NQ decision internals, monitor, store, pack, or suite;
@@ -77,12 +79,56 @@ build scripts, generated source, and test utilities:
   raw SQLite connection as a cross-component interface.
 
 The executable gate is `scripts/check-constellation-boundaries.sh`. It reads
-locked Cargo metadata across normal, development, build, target-qualified
-edges; rejects cycles and forbidden reachability; bounds the protocol leaf;
-and scans manifests and source for sibling-private paths. Every temporary
-source/fixture exception carries an exact match, reason, and removal
-condition, and a stale exception fails the gate. Its embedded negative
-fixtures prove that dev/build/target edges and cycles cannot evade the check.
+locked Cargo metadata for default and all-feature resolution across normal,
+development, build, and target-qualified edges; rejects cycles and forbidden
+reachability; bounds the protocol leaf; and scans manifests and checked-in
+source for sibling-private paths. Every temporary source/fixture exception
+carries an exact match, reason, and removal condition, and a stale exception
+fails the gate. Its embedded negative fixtures prove that optional features,
+dev/build/target edges, conventional `OUT_DIR` inclusion, and cycles cannot
+evade the checks actually named here.
+
+### Implemented check-pack checkpoint
+
+The first pack boundary is now concrete:
+
+- `nq-monitor-check` owns typed pack/check identities and strict selection,
+  and temporarily houses the `nq.witness_packet.v1` monitor transport DTOs
+  and closed collector-status vocabulary as a compatibility surface.
+  `Collectors`, `CollectorKind`, and family-specific report structs still
+  enumerate formerly built-in families; this checkpoint does not claim they
+  are the target generic observation contract or that packs have independent
+  wire-schema ownership. Registration only makes a pack available; an explicit
+  pack ID plus explicit check IDs makes it enabled. Unknown packs, unknown
+  checks, unknown configuration fields, missing settings, and settings for
+  disabled checks are refused before collection.
+- `nq-check-pack-host` owns the moved Linux and BSD host collectors and their
+  fixtures. It performs real cheap, local, read-only collection.
+- `nq-check-pack-storage` owns the moved ZFS, SMART, and GPU collectors,
+  helper configuration, timeout/error behavior, and fixtures. Disabled
+  families are not invoked.
+- `nq-check-pack-labelwatch` owns private-value-free descriptors and strict
+  service/SQLite/log/metric target configuration. Because the starting
+  repository contained scattered Labelwatch configuration rather than a
+  coherent Labelwatch collector, it honestly emits a typed collection plan
+  for reusable monitor primitives and does not implement the executable-pack
+  trait yet.
+
+`nq-core::{wire,status}` are narrow compatibility reexports.
+`nq-monitor-agent` temporarily links host and storage packs through explicit
+legacy-`PublisherConfig` adapters so the installed pre-composition binary
+retains behavior. The adapter validates the mapped storage subset against
+`StoragePack` before listener bind and again before aggregate collection, so
+the looser legacy parser cannot bypass pack execution preconditions. The
+dependency gate records exact removal conditions: the
+adapters disappear when `nq-suite` owns pack selection and the agent no longer
+links concrete packs. Therefore strict registry integration at the installed
+binary boundary and a fully executable Labelwatch composition are not claimed
+by this checkpoint. `PackSelection` also remains an unversioned embedded
+fragment; its suite configuration envelope and upgrade rules are future
+composition-root work. The concrete API, selection example, compatibility
+adapter, schema debt, and authority effect are recorded in
+[`docs/architecture/CHECK_PACK_CONTRACT.md`](docs/architecture/CHECK_PACK_CONTRACT.md).
 
 ## Semantic ownership
 
@@ -159,6 +205,12 @@ envelope, not the general witness artifact.  It remains accepted through a
 versioned compatibility adapter until the monitor observation boundary is
 fully migrated; it must not be confused with either `nq.witness.v1` or the
 external profile report currently named `nq.witness.v0`.
+
+Its `Collectors` object and `CollectorKind` enum still name concrete
+families. That is transitional compatibility debt, not the target
+check-pack-to-monitor artifact flow. Pack-owned independently versioned
+observation schemas and a generic side-by-side successor envelope remain
+incomplete.
 
 ### 3. Witness to NQ
 

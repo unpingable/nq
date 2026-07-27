@@ -1,0 +1,15 @@
+[package]
+name = "nq-monitor-check"
+edition.workspace = true
+version.workspace = true
+rust-version = "1.88"
+description = "Monitor-owned observation wire types and typed check-pack contract for NQ"
+license = "Apache-2.0"
+repository = "https://github.com/unpingable/nq"
+readme = "README.md"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }

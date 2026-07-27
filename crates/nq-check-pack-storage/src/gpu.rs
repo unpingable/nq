@@ -23,11 +23,12 @@
 //! V0: raw evidence only. No detectors; throttle bitmask decoding and
 //! threshold work are detector phase. See docs/working/gaps/GPU_WITNESS_GAP.md.
 
-use nq_core::wire::{
+use crate::{GpuWitnessConfig, StoragePackConfig};
+use nq_monitor_check::wire::{
     CollectorPayload, GpuComputeAppObservation, GpuDeviceObservation, GpuObservation,
     GpuWitnessCoverage, GpuWitnessError, GpuWitnessHeader, GpuWitnessReport, GpuWitnessStanding,
 };
-use nq_core::{CollectorStatus, GpuWitnessConfig, PublisherConfig};
+use nq_monitor_check::CollectorStatus;
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -49,7 +50,7 @@ const QUERY_GPU_FIELD_COUNT: usize = 18;
 
 const QUERY_APPS_FIELDS: &str = "gpu_uuid,pid,process_name,used_memory";
 
-pub fn collect(config: &PublisherConfig) -> CollectorPayload<GpuWitnessReport> {
+pub fn collect(config: &StoragePackConfig) -> CollectorPayload<GpuWitnessReport> {
     let now = OffsetDateTime::now_utc();
 
     let Some(gpu_cfg) = config.gpu_witness.as_ref() else {
@@ -445,8 +446,8 @@ mod tests {
         path.to_string_lossy().to_string()
     }
 
-    fn cfg(nvidia_smi_path: String, timeout_ms: u64) -> PublisherConfig {
-        PublisherConfig {
+    fn cfg(nvidia_smi_path: String, timeout_ms: u64) -> StoragePackConfig {
+        StoragePackConfig {
             gpu_witness: Some(GpuWitnessConfig {
                 nvidia_smi_path,
                 timeout_ms,
@@ -556,7 +557,7 @@ mod tests {
 
     #[test]
     fn unconfigured_collector_is_skipped() {
-        let payload = collect(&PublisherConfig::default());
+        let payload = collect(&StoragePackConfig::default());
         assert_eq!(payload.status, CollectorStatus::Skipped);
     }
 

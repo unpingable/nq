@@ -948,11 +948,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "nq-check-pack-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "nq-monitor-check",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "nq-check-pack-labelwatch"
+version = "0.1.0"
+dependencies = [
+ "nq-monitor-check",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "nq-check-pack-storage"
+version = "0.1.0"
+dependencies = [
+ "hostname",
+ "nq-monitor-check",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "time",
+ "tracing",
+]
+
+[[package]]
 name = "nq-core"
 version = "0.1.0"
 dependencies = [
  "hex",
  "nq",
+ "nq-monitor-check",
  "nq-witness",
  "serde",
  "serde_jcs",
@@ -1016,7 +1051,10 @@ dependencies = [
  "clap",
  "hostname",
  "libc",
+ "nq-check-pack-host",
+ "nq-check-pack-storage",
  "nq-core",
+ "nq-monitor-check",
  "nq-witness-api",
  "reqwest",
  "rusqlite",
@@ -1028,6 +1066,16 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "nq-monitor-check"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
 ]
 
 [[package]]

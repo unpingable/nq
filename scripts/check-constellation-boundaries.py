@@ -3,6 +3,7 @@
 
 The resolved Cargo graph is authoritative.  The checker deliberately includes
 normal, development, build, and target-qualified dependency edges from
+both the default and ``--all-features`` resolutions of
 ``cargo metadata --locked --format-version 1``.
 
 Adding a constellation component should require a table entry below, not new
@@ -50,6 +51,7 @@ PACKAGE_ROLES: Mapping[str, str] = {
     "nq-witness": "witness_artifact",
     "nq-witness-artifact": "witness_artifact",
     "nq-witness-api": "witness_transport",
+    "nq-monitor-check": "monitor_contract",
     "nq-monitor-agent": "monitor_agent",
     "nq-monitor": "monitor_runtime",
     "nq-dashboard": "dashboard",
@@ -78,6 +80,7 @@ FORBIDDEN_REACHABLE_ROLES: Mapping[str, frozenset[str]] = {
             "witness_artifact",
             "witness_transport",
             "monitor_agent",
+            "monitor_contract",
             "monitor_runtime",
             "dashboard",
             "storage",
@@ -90,6 +93,7 @@ FORBIDDEN_REACHABLE_ROLES: Mapping[str, frozenset[str]] = {
         {
             "storage",
             "monitor_agent",
+            "monitor_contract",
             "monitor_runtime",
             "dashboard",
             "check_pack",
@@ -102,6 +106,7 @@ FORBIDDEN_REACHABLE_ROLES: Mapping[str, frozenset[str]] = {
             "storage",
             "witness_transport",
             "monitor_agent",
+            "monitor_contract",
             "monitor_runtime",
             "dashboard",
             "check_pack",
@@ -109,12 +114,42 @@ FORBIDDEN_REACHABLE_ROLES: Mapping[str, frozenset[str]] = {
             "transitional_core",
         }
     ),
-    "witness_transport": frozenset({"decision", "storage", "composition"}),
-    "monitor_agent": frozenset(
-        {"decision", "storage", "dashboard", "composition"}
+    "witness_transport": frozenset(
+        {"decision", "storage", "monitor_contract", "composition"}
     ),
+    "monitor_contract": frozenset(
+        {
+            "decision",
+            "witness_artifact",
+            "witness_transport",
+            "monitor_agent",
+            "monitor_runtime",
+            "dashboard",
+            "storage",
+            "check_pack",
+            "composition",
+            "transitional_core",
+        }
+    ),
+    "monitor_agent": frozenset(
+        {"decision", "storage", "dashboard", "check_pack", "composition"}
+    ),
+    "monitor_runtime": frozenset({"decision", "check_pack", "composition"}),
     "dashboard": frozenset({"storage", "composition"}),
-    "check_pack": frozenset({"decision", "storage", "dashboard", "composition"}),
+    "check_pack": frozenset(
+        {
+            "decision",
+            "witness_artifact",
+            "witness_transport",
+            "monitor_agent",
+            "monitor_runtime",
+            "storage",
+            "dashboard",
+            "check_pack",
+            "composition",
+            "transitional_core",
+        }
+    ),
     "storage": frozenset(
         {"monitor_agent", "monitor_runtime", "dashboard", "check_pack", "composition"}
     ),
@@ -167,6 +202,72 @@ TRANSITIONAL_DEPENDENCY_ALLOWLIST: Sequence[DependencyAllowance] = (
             "without depending on the transitional nq-core package"
         ),
     ),
+    DependencyAllowance(
+        ("nq-witness-api", "nq-core", "nq-monitor-check"),
+        (
+            "the compatibility witness transport still reaches the frozen "
+            "nq.witness_packet.v1 monitor envelope through nq-core"
+        ),
+        (
+            "remove when nq-witness-api consumes a bounded public transport "
+            "DTO without depending on the transitional nq-core package"
+        ),
+    ),
+    DependencyAllowance(
+        ("nq-monitor-agent", "nq-check-pack-host"),
+        (
+            "the installed pre-composition nq-witness binary retains its host "
+            "collector through an explicit compatibility reexport"
+        ),
+        (
+            "remove when nq-suite owns pack registration and the monitor agent "
+            "no longer links any concrete check pack"
+        ),
+    ),
+    DependencyAllowance(
+        ("nq-monitor-agent", "nq-check-pack-storage"),
+        (
+            "the installed pre-composition nq-witness binary retains configured "
+            "ZFS/SMART/GPU collectors through a typed legacy-config adapter"
+        ),
+        (
+            "remove when nq-suite owns pack registration and the monitor agent "
+            "no longer links any concrete check pack"
+        ),
+    ),
+    DependencyAllowance(
+        ("nq-monitor", "nq-core", "nq"),
+        (
+            "the transitional runtime still imports mixed nq-core DTOs that "
+            "reexport decision types"
+        ),
+        (
+            "remove when nq-monitor consumes only disposition artifacts and "
+            "monitor-owned DTOs rather than the mixed nq-core facade"
+        ),
+    ),
+    DependencyAllowance(
+        ("nq-monitor", "nq-monitor-agent", "nq-check-pack-host"),
+        (
+            "the pre-composition runtime reaches the host pack through the "
+            "legacy all-collectors agent"
+        ),
+        (
+            "remove when nq-suite selects packs and nq-monitor no longer "
+            "reaches concrete packs directly or transitively"
+        ),
+    ),
+    DependencyAllowance(
+        ("nq-monitor", "nq-monitor-agent", "nq-check-pack-storage"),
+        (
+            "the pre-composition runtime reaches the storage pack through the "
+            "legacy all-collectors agent"
+        ),
+        (
+            "remove when nq-suite selects packs and nq-monitor no longer "
+            "reaches concrete packs directly or transitively"
+        ),
+    ),
 )
 
 
@@ -195,6 +296,7 @@ REQUIRED_DIRECT_CONTROLS: Sequence[DirectControl] = (
 # packages and Cargo.lock.
 ROLE_EXTERNAL_DEPENDENCIES: Mapping[str, frozenset[str]] = {
     "protocol": frozenset({"serde", "thiserror", "time"}),
+    "monitor_contract": frozenset({"serde", "serde_json", "thiserror", "time"}),
 }
 
 
@@ -827,6 +929,20 @@ _PATH_ATTRIBUTE_RE = re.compile(
 _SIBLING_SRC_LITERAL_RE = re.compile(
     r"\"((?:\.\./)+[^\"\n]*?/src(?:/[^\"\n]*)?)\""
 )
+# Generated Rust can otherwise copy sibling semantics into a package without a
+# Cargo edge. Reject the conventional OUT_DIR include forms outright so any
+# code-generation boundary must first become an explicit, reviewed package
+# contract. This is deliberately narrower than rejecting build scripts.
+_GENERATED_OUT_DIR_INCLUDE_RE = re.compile(
+    r"""
+    \b(include|include_str|include_bytes)!\s*\(
+    \s*(?:
+        concat!\s*\(\s*
+    )?
+    (?:env|option_env)!\s*\(\s*"OUT_DIR"\s*\)
+    """,
+    re.MULTILINE | re.VERBOSE,
+)
 _SOURCE_SUFFIXES = frozenset({".rs", ".py", ".sh"})
 
 
@@ -971,6 +1087,18 @@ def scan_source_couplings(
             except (OSError, UnicodeError):
                 continue
             macro_literal_spans: list[tuple[int, int]] = []
+            for match in _GENERATED_OUT_DIR_INCLUDE_RE.finditer(text):
+                findings.append(
+                    CouplingFinding(
+                        kind="generated-out-dir-include",
+                        consumer=consumer,
+                        source_path=_repository_path(source, repository),
+                        target="@generated",
+                        target_path="$OUT_DIR",
+                        line=text.count("\n", 0, match.start()) + 1,
+                        expression=match.group(0).strip(),
+                    )
+                )
             for match in _INCLUDE_RE.finditer(text):
                 macro, literal = match.groups()
                 macro_literal_spans.append(match.span(2))
@@ -1124,7 +1252,19 @@ def audit_couplings(
     return SourceAudit(tuple(findings), tuple(allowed), tuple(violations))
 
 
-def _load_metadata(repository: Path, metadata_path: Path | None) -> dict[str, object]:
+def _metadata_command(*, all_features: bool) -> list[str]:
+    command = ["cargo", "metadata", "--locked", "--format-version", "1"]
+    if all_features:
+        command.append("--all-features")
+    return command
+
+
+def _load_metadata(
+    repository: Path,
+    metadata_path: Path | None,
+    *,
+    all_features: bool = False,
+) -> dict[str, object]:
     if metadata_path is not None:
         with metadata_path.open("r", encoding="utf-8") as handle:
             loaded = json.load(handle)
@@ -1132,7 +1272,7 @@ def _load_metadata(repository: Path, metadata_path: Path | None) -> dict[str, ob
             raise ValueError("metadata JSON root must be an object")
         return loaded
 
-    command = ["cargo", "metadata", "--locked", "--format-version", "1"]
+    command = _metadata_command(all_features=all_features)
     completed = subprocess.run(
         command,
         cwd=repository,
@@ -1150,6 +1290,44 @@ def _load_metadata(repository: Path, metadata_path: Path | None) -> dict[str, ob
     if not isinstance(loaded, dict):
         raise ValueError("cargo metadata JSON root must be an object")
     return loaded
+
+
+def _load_metadata_resolutions(
+    repository: Path, metadata_path: Path | None
+) -> list[tuple[str, dict[str, object]]]:
+    if metadata_path is not None:
+        return [
+            (
+                "provided metadata (feature resolution supplied by caller)",
+                _load_metadata(repository, metadata_path),
+            )
+        ]
+    return [
+        ("default features", _load_metadata(repository, None)),
+        (
+            "all features",
+            _load_metadata(repository, None, all_features=True),
+        ),
+    ]
+
+
+def analyze_metadata_resolutions(
+    resolutions: Sequence[tuple[str, Mapping[str, object]]],
+    repository: Path,
+    *,
+    enforce_controls: bool = True,
+) -> list[tuple[str, GraphModel, list[Violation]]]:
+    return [
+        (
+            label,
+            *analyze_metadata(
+                metadata,
+                repository,
+                enforce_controls=enforce_controls,
+            ),
+        )
+        for label, metadata in resolutions
+    ]
 
 
 def _edge(
@@ -1250,6 +1428,33 @@ class BoundarySelfTests(unittest.TestCase):
         self.assertEqual({"dev"}, info.kinds)
         self.assertEqual({"cfg(unix)"}, info.targets)
 
+    def test_all_features_resolution_cannot_hide_forbidden_optional_edge(self) -> None:
+        default = _fixture_metadata()
+        all_features = json.loads(json.dumps(default))
+        nodes = all_features["resolve"]["nodes"]
+        protocol = next(node for node in nodes if node["id"] == "nq-protocol")
+        # Models an optional dependency that is absent from the default
+        # resolution and activated only by a non-default feature.
+        protocol["deps"].append(_edge("nq-monitor"))
+
+        analyses = analyze_metadata_resolutions(
+            [
+                ("default features", default),
+                ("all features", all_features),
+            ],
+            Path("/fixture"),
+        )
+        by_label = {
+            label: {item.code for item in violations}
+            for label, _graph, violations in analyses
+        }
+        self.assertNotIn("FORBIDDEN_DEPENDENCY", by_label["default features"])
+        self.assertIn("FORBIDDEN_DEPENDENCY", by_label["all features"])
+        self.assertNotIn(
+            "--all-features", _metadata_command(all_features=False)
+        )
+        self.assertIn("--all-features", _metadata_command(all_features=True))
+
     def test_dependency_allowance_is_exact_and_self_expiring(self) -> None:
         metadata = _fixture_metadata()
         metadata["packages"].append(  # type: ignore[union-attr]
@@ -1270,6 +1475,33 @@ class BoundarySelfTests(unittest.TestCase):
 
         agent = next(node for node in nodes if node["id"] == "nq-monitor-agent")
         agent["deps"].append(_edge("nq"))
+        _, changed = analyze_metadata(metadata, Path("/fixture"))
+        codes = {item.code for item in changed}
+        self.assertIn("FORBIDDEN_DEPENDENCY", codes)
+        self.assertIn("STALE_OR_CHANGED_DEPENDENCY_ALLOWANCE", codes)
+
+    def test_witness_transport_monitor_contract_allowance_is_exact(self) -> None:
+        metadata = _fixture_metadata()
+        metadata["packages"].append(  # type: ignore[union-attr]
+            {
+                "id": "nq-monitor-check",
+                "name": "nq-monitor-check",
+                "manifest_path": "/fixture/nq-monitor-check/Cargo.toml",
+                "source": None,
+            }
+        )
+        nodes = metadata["resolve"]["nodes"]  # type: ignore[index]
+        nodes.append({"id": "nq-monitor-check", "deps": []})
+        core = next(node for node in nodes if node["id"] == "nq-core")
+        core["deps"].append(_edge("nq-monitor-check"))
+
+        _, accepted = analyze_metadata(metadata, Path("/fixture"))
+        self.assertEqual([], accepted)
+
+        transport = next(
+            node for node in nodes if node["id"] == "nq-witness-api"
+        )
+        transport["deps"].append(_edge("nq-monitor-check"))
         _, changed = analyze_metadata(metadata, Path("/fixture"))
         codes = {item.code for item in changed}
         self.assertIn("FORBIDDEN_DEPENDENCY", codes)
@@ -1369,6 +1601,33 @@ class BoundarySelfTests(unittest.TestCase):
             )
             self.assertEqual(["manifest-private-path"], [item.kind for item in findings])
 
+    def test_generated_out_dir_source_is_not_an_unreviewed_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            package = repo / "crates" / "nq-check-generated"
+            (package / "src").mkdir(parents=True)
+            (package / "Cargo.toml").write_text(
+                '[package]\nname = "nq-check-generated"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (package / "src" / "lib.rs").write_text(
+                'include!(concat!(env!("OUT_DIR"), "/generated.rs"));\n',
+                encoding="utf-8",
+            )
+
+            findings = scan_source_couplings(
+                repo, discover_package_roots(repo)
+            )
+            self.assertEqual(
+                ["generated-out-dir-include"],
+                [item.kind for item in findings],
+            )
+            audit = audit_couplings(findings, ())
+            self.assertIn(
+                "UNALLOWLISTED_PRIVATE_COUPLING",
+                {item.code for item in audit.violations},
+            )
+
     def test_malformed_and_duplicate_allowances_fail(self) -> None:
         allowance = CouplingAllowance(
             "kind", "consumer", "source", "target", "target_path", "", "remove"
@@ -1447,8 +1706,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             "ok: negative fixture rejects target-qualified dev/build "
             "forbidden edges and cycles"
         )
-        metadata = _load_metadata(repository, args.metadata)
-        graph, graph_violations = analyze_metadata(metadata, repository)
+        metadata_resolutions = _load_metadata_resolutions(
+            repository, args.metadata
+        )
+        graph_analyses = analyze_metadata_resolutions(
+            metadata_resolutions, repository
+        )
         package_roots = discover_package_roots(repository)
         source_findings = scan_source_couplings(repository, package_roots)
         source_audit = audit_couplings(
@@ -1461,25 +1724,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"FAIL: boundary gate self-check failed: {error}")
         return 1
 
-    _print_graph_summary(graph)
-    if not _cycle_violations(graph):
-        print("ok: local dependency graph is acyclic across all edge kinds")
-    if not _forbidden_dependency_violations(graph):
-        print("ok: no forbidden role or exact-package reachability")
-    if not _external_dependency_violations(graph):
-        print("ok: constrained leaf external dependencies are bounded")
-    if not _control_violations(graph):
-        print("ok: positive control nq-monitor -[normal]-> nq-db is present")
+    graph_violations: list[Violation] = []
+    for label, graph, resolution_violations in graph_analyses:
+        print(f"feature resolution: {label}")
+        _print_graph_summary(graph)
+        if not _cycle_violations(graph):
+            print("ok: local dependency graph is acyclic across all edge kinds")
+        if not _forbidden_dependency_violations(graph):
+            print("ok: no forbidden role or exact-package reachability")
+        if not _external_dependency_violations(graph):
+            print("ok: constrained leaf external dependencies are bounded")
+        if not _control_violations(graph):
+            print("ok: positive control nq-monitor -[normal]-> nq-db is present")
 
-    dependency_allowances = _active_dependency_allowances(graph)
-    if dependency_allowances:
-        print("transitional dependency allowances:")
-        for allowance in dependency_allowances:
-            print(f"  ALLOWED exact path: {' -> '.join(allowance.path)}")
-            print(f"    reason: {allowance.reason}")
-            print(f"    removal: {allowance.removal_condition}")
-    else:
-        print("ok: no transitional dependency allowances are active")
+        dependency_allowances = _active_dependency_allowances(graph)
+        if dependency_allowances:
+            print("transitional dependency allowances:")
+            for allowance in dependency_allowances:
+                print(f"  ALLOWED exact path: {' -> '.join(allowance.path)}")
+                print(f"    reason: {allowance.reason}")
+                print(f"    removal: {allowance.removal_condition}")
+        else:
+            print("ok: no transitional dependency allowances are active")
+        graph_violations.extend(
+            Violation(item.code, f"[{label}] {item.message}")
+            for item in resolution_violations
+        )
 
     if source_audit.allowed:
         print("transitional private coupling allowances:")
@@ -1494,7 +1764,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         print("ok: no transitional private coupling allowances are active")
 
-    violations = list(graph_violations) + list(source_audit.violations)
+    violations = graph_violations + list(source_audit.violations)
     print("---")
     if violations:
         for violation in sorted(

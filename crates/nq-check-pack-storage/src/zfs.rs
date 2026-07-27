@@ -2,8 +2,8 @@
 //! `nq-witness` reference implementation.
 //!
 //! We do not parse `zpool status` here. Parsing — and the privilege
-//! grant that lets it happen — live in the witness implementation
-//! (see `~/git/nq-witness/`). The collector's only jobs are:
+//! grant that lets it happen — live in the versioned witness implementation.
+//! The collector's only jobs are:
 //!
 //!   1. spawn the configured helper with a bounded timeout
 //!   2. parse stdout as the canonical JSON report shape
@@ -18,8 +18,9 @@
 //! ingest + store + surface. Detectors that gate off the coverage array
 //! land in Phase B.
 
-use nq_core::wire::{CollectorPayload, ZfsWitnessReport};
-use nq_core::{CollectorStatus, PublisherConfig, ZfsWitnessConfig};
+use crate::{StoragePackConfig, ZfsWitnessConfig};
+use nq_monitor_check::wire::{CollectorPayload, ZfsWitnessReport};
+use nq_monitor_check::CollectorStatus;
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -30,7 +31,7 @@ const SUPPORTED_SCHEMA: &str = "nq.witness.v0";
 const SUPPORTED_PROFILE: &str = "nq.witness.zfs.v0";
 const KILL_GRACE: Duration = Duration::from_millis(500);
 
-pub fn collect(config: &PublisherConfig) -> CollectorPayload<ZfsWitnessReport> {
+pub fn collect(config: &StoragePackConfig) -> CollectorPayload<ZfsWitnessReport> {
     let now = OffsetDateTime::now_utc();
 
     let Some(zfs_cfg) = config.zfs_witness.as_ref() else {
@@ -162,9 +163,7 @@ fn run_witness(cfg: &ZfsWitnessConfig) -> Result<ZfsWitnessReport, CollectError>
     if !status.success() {
         let trimmed = truncate_for_error(&stderr_text, 400);
         return Err(CollectError::Exit(format!(
-            "exit={}, stderr={:?}",
-            status,
-            trimmed
+            "exit={status}, stderr={trimmed:?}"
         )));
     }
 
@@ -225,23 +224,14 @@ mod tests {
         path.to_string_lossy().to_string()
     }
 
-    fn cfg(helper_path: String, timeout_ms: u64) -> PublisherConfig {
-        PublisherConfig {
-            bind_addr: "127.0.0.1:0".into(),
-            sqlite_paths: vec![],
-            service_health_urls: vec![],
-            prometheus_targets: vec![],
-            log_sources: vec![],
+    fn cfg(helper_path: String, timeout_ms: u64) -> StoragePackConfig {
+        StoragePackConfig {
             zfs_witness: Some(ZfsWitnessConfig {
                 helper_path,
                 wrapper: vec![],
                 timeout_ms,
             }),
-            smart_witness: None,
-            gpu_witness: None,
-            sqlite_wal_targets: vec![],
-            sqlite_wal_proc_locks_enabled: false,
-            nq_binary_path: None,
+            ..StoragePackConfig::default()
         }
     }
 
@@ -279,10 +269,7 @@ mod tests {
     fn conforming_report_is_accepted() {
         let _lock = super::super::test_support::subprocess_lock();
         let tmp = tempfile::tempdir().unwrap();
-        let body = format!(
-            "#!/bin/sh\ncat <<'EOF'\n{}\nEOF\n",
-            CONFORMING_REPORT
-        );
+        let body = format!("#!/bin/sh\ncat <<'EOF'\n{CONFORMING_REPORT}\nEOF\n");
         let script = write_script(&tmp, "nq-zfs-witness", &body);
         let payload = collect(&cfg(script, 2000));
         assert_eq!(payload.status, CollectorStatus::Ok, "payload: {payload:?}");
@@ -298,7 +285,7 @@ mod tests {
         let _lock = super::super::test_support::subprocess_lock();
         let tmp = tempfile::tempdir().unwrap();
         let bad = CONFORMING_REPORT.replace("nq.witness.v0", "nq.witness.v99");
-        let body = format!("#!/bin/sh\ncat <<'EOF'\n{}\nEOF\n", bad);
+        let body = format!("#!/bin/sh\ncat <<'EOF'\n{bad}\nEOF\n");
         let script = write_script(&tmp, "nq-zfs-witness", &body);
         let payload = collect(&cfg(script, 2000));
         assert_eq!(payload.status, CollectorStatus::Error);
@@ -313,7 +300,7 @@ mod tests {
         let _lock = super::super::test_support::subprocess_lock();
         let tmp = tempfile::tempdir().unwrap();
         let bad = CONFORMING_REPORT.replace("nq.witness.zfs.v0", "nq.witness.zfs.v99");
-        let body = format!("#!/bin/sh\ncat <<'EOF'\n{}\nEOF\n", bad);
+        let body = format!("#!/bin/sh\ncat <<'EOF'\n{bad}\nEOF\n");
         let script = write_script(&tmp, "nq-zfs-witness", &body);
         let payload = collect(&cfg(script, 2000));
         assert_eq!(payload.status, CollectorStatus::Error);
@@ -364,19 +351,7 @@ mod tests {
 
     #[test]
     fn disabled_collector_is_skipped() {
-        let config = PublisherConfig {
-            bind_addr: "127.0.0.1:0".into(),
-            sqlite_paths: vec![],
-            service_health_urls: vec![],
-            prometheus_targets: vec![],
-            log_sources: vec![],
-            zfs_witness: None,
-            smart_witness: None,
-            gpu_witness: None,
-            sqlite_wal_targets: vec![],
-            sqlite_wal_proc_locks_enabled: false,
-            nq_binary_path: None,
-        };
+        let config = StoragePackConfig::default();
         let payload = collect(&config);
         assert_eq!(payload.status, CollectorStatus::Skipped);
     }

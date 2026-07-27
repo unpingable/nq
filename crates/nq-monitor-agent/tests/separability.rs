@@ -47,7 +47,7 @@ fn empty_publisher_config() -> Arc<PublisherConfig> {
 #[test]
 fn witness_emits_structurally_complete_publisher_state() {
     let cfg = empty_publisher_config();
-    let state: PublisherState = collect_state(&cfg);
+    let state: PublisherState = collect_state(&cfg).expect("fixture configuration is valid");
 
     // Top-level shape
     assert!(!state.host.is_empty(), "host must be populated");
@@ -57,11 +57,17 @@ fn witness_emits_structurally_complete_publisher_state() {
     let c = &state.collectors;
     assert!(c.host.is_some(), "host collector slot must be present");
     assert!(c.services.is_some(), "services slot must be present");
-    assert!(c.sqlite_health.is_some(), "sqlite_health slot must be present");
+    assert!(
+        c.sqlite_health.is_some(),
+        "sqlite_health slot must be present"
+    );
     assert!(c.prometheus.is_some(), "prometheus slot must be present");
     assert!(c.logs.is_some(), "logs slot must be present");
     assert!(c.zfs_witness.is_some(), "zfs_witness slot must be present");
-    assert!(c.smart_witness.is_some(), "smart_witness slot must be present");
+    assert!(
+        c.smart_witness.is_some(),
+        "smart_witness slot must be present"
+    );
     assert!(c.gpu_witness.is_some(), "gpu_witness slot must be present");
     assert!(
         c.sqlite_wal_observations.is_some(),
@@ -76,7 +82,7 @@ fn witness_emits_structurally_complete_publisher_state() {
 #[test]
 fn witness_emit_round_trips_through_serde() {
     let cfg = empty_publisher_config();
-    let state: PublisherState = collect_state(&cfg);
+    let state: PublisherState = collect_state(&cfg).expect("fixture configuration is valid");
 
     let json = serde_json::to_value(&state).expect("serializes");
     let restored: PublisherState = serde_json::from_value(json.clone()).expect("deserializes");
@@ -97,7 +103,7 @@ fn witness_emit_carries_versioned_envelope_schema() {
     // 2026-06-18 reconciliation slice the payload carried no schema at all,
     // while the compat doc promised a load-bearing versioned wire.
     let cfg = empty_publisher_config();
-    let state: PublisherState = collect_state(&cfg);
+    let state: PublisherState = collect_state(&cfg).expect("fixture configuration is valid");
 
     assert_eq!(
         state.schema.as_deref(),
