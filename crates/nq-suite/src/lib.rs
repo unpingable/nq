@@ -20,6 +20,11 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 pub const SUITE_CONFIG_VERSION: &str = "nq.suite.config.v1";
 pub const SUITE_PACK_SELECTION_VERSION: &str = "nq.suite.pack_selection.v1";
 pub const SUITE_PLAN_VERSION: &str = "nq.suite.plan.v1";
+const KNOWN_PACK_FEATURES: [(&str, &str); 3] = [
+    ("nq.host", "host"),
+    ("nq.storage", "storage"),
+    ("nq.labelwatch", "labelwatch"),
+];
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -188,6 +193,13 @@ pub enum SuiteError {
     #[error("check-pack selection refused: {0}")]
     Registry(#[from] RegistryError),
     #[error(
+        "pack `{pack_id}` is known but unavailable in this nq-suite build; rebuild with feature `{feature}` and select it explicitly"
+    )]
+    PackUnavailable {
+        pack_id: String,
+        feature: &'static str,
+    },
+    #[error(
         "this runtime mode requires the aggregator component, which is unavailable in this nq-suite build; rebuild with feature `aggregator` (or `full`)"
     )]
     AggregatorUnavailable,
@@ -232,13 +244,15 @@ pub fn plan(config: SuiteConfig) -> Result<SuitePlan, SuiteError> {
     }
 
     let registry = build_registry()?;
-    let available_packs = registry.available().cloned().collect();
-    let resolved = registry.resolve(PackSelection {
+    let available_packs: Vec<PackDescriptor> = registry.available().cloned().collect();
+    let selection = PackSelection {
         enabled: config
             .packs
             .map(|selection| selection.enabled)
             .unwrap_or_default(),
-    })?;
+    };
+    refuse_known_unavailable_packs(&selection, &available_packs)?;
+    let resolved = registry.resolve(selection)?;
 
     #[allow(unused_mut)]
     let mut publisher = config
@@ -400,6 +414,31 @@ fn build_registry() -> Result<CheckPackRegistry, RegistryError> {
     #[cfg(feature = "labelwatch")]
     registry.register::<nq_check_pack_labelwatch::LabelwatchPack>()?;
     Ok(registry)
+}
+
+fn refuse_known_unavailable_packs(
+    selection: &PackSelection,
+    available: &[PackDescriptor],
+) -> Result<(), SuiteError> {
+    for entry in &selection.enabled {
+        let pack_id = entry.pack_id.as_str();
+        if available
+            .iter()
+            .any(|descriptor| descriptor.pack_id.as_str() == pack_id)
+        {
+            continue;
+        }
+        if let Some((_, feature)) = KNOWN_PACK_FEATURES
+            .iter()
+            .find(|(known, _)| *known == pack_id)
+        {
+            return Err(SuiteError::PackUnavailable {
+                pack_id: pack_id.to_string(),
+                feature,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn validate_publisher(publisher: &PublisherEndpoint) -> Result<(), SuiteError> {
@@ -793,6 +832,17 @@ mod tests {
             .available_packs
             .iter()
             .all(|pack| pack.pack_id.as_str() != "nq.labelwatch"));
+
+        let unavailable = MINIMAL
+            .replace("\"nq.host\"", "\"nq.labelwatch\"")
+            .replace("\"host.resources\"", "\"labelwatch.service_state\"");
+        assert!(matches!(
+            plan_from_json(&unavailable),
+            Err(SuiteError::PackUnavailable {
+                ref pack_id,
+                feature: "labelwatch"
+            }) if pack_id == "nq.labelwatch"
+        ));
     }
 
     #[cfg(all(feature = "host", feature = "aggregator"))]

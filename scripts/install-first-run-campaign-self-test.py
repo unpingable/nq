@@ -60,6 +60,27 @@ def main() -> int:
         else:
             raise AssertionError("unsafe source archive was accepted")
 
+        assert harness.malformed_config_safety_fragments("nq-suite") == (
+            "unknown field",
+            "no listener",
+        )
+        assert harness.malformed_config_safety_fragments("nq-monitor") == (
+            "unknown field",
+            "no database was opened",
+            "no listener was started",
+        )
+        assert harness.malformed_config_safety_fragments("nq-witness") == (
+            "unknown field",
+            "no listener was started",
+            "no checks ran",
+        )
+        try:
+            harness.malformed_config_safety_fragments("nq-typo")
+        except ValueError as error:
+            assert "no malformed-configuration safety contract" in str(error)
+        else:
+            raise AssertionError("unknown binary received a guessed safety contract")
+
         output = root / "evidence"
         missing = root / "missing.tar"
         completed = subprocess.run(

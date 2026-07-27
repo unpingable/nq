@@ -1121,11 +1121,7 @@ class Campaign:
             )
             results["malformed_configuration"] = self.classify_failure(
                 malformed,
-                expected=(
-                    ("unknown field", "no listener")
-                    if name == "nq-suite"
-                    else ("unknown field", "no state")
-                ),
+                expected=malformed_config_safety_fragments(name),
             )
 
             if os.geteuid() == 0:
@@ -1864,6 +1860,30 @@ def inspect_source_archive(path: Path) -> dict[str, Any]:
             )
         ),
     }
+
+
+def malformed_config_safety_fragments(binary_name: str) -> tuple[str, ...]:
+    """Return the component's explicit fail-before-side-effects wording."""
+
+    expected = {
+        "nq-suite": ("unknown field", "no listener"),
+        "nq-monitor": (
+            "unknown field",
+            "no database was opened",
+            "no listener was started",
+        ),
+        "nq-witness": (
+            "unknown field",
+            "no listener was started",
+            "no checks ran",
+        ),
+    }
+    try:
+        return expected[binary_name]
+    except KeyError as error:
+        raise ValueError(
+            f"no malformed-configuration safety contract for {binary_name!r}"
+        ) from error
 
 
 def unused_loopback_port() -> int:
