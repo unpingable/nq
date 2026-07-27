@@ -1036,3 +1036,284 @@ family, Labelwatch composition, and the independent pfSense/Kea or another
 well-understood custom family through those boundaries. Moving files or
 repositories before those contracts exist would create a distributed
 monolith.
+
+## 19. Implemented-state checkpoint — 2026-07-27
+
+This section records the implementation landed after the archaeology above.
+Sections 1–18 remain the authoritative record of the starting state; they
+have deliberately not been rewritten to make the starting architecture look
+cleaner than it was.
+
+The checkpoint is `main` at
+`c5e3486` (`feat(suite): add strict composition planning`), thirteen local
+commits after the recovered `origin/main` at `55e35ac`. The concurrent
+installation-track files which were still untracked when this checkpoint was
+written are not treated as landed architecture here.
+
+### 19.1 Implemented component ownership
+
+The workspace now has thirteen packages rather than the five packages
+recorded in Section 3.
+
+| Package | Implemented ownership | Remaining limit |
+| --- | --- | --- |
+| `nq-protocol` | Validated schema identifiers, SHA-256 digest strings, artifact references, canonical UTC timestamps, and structured wire refusals. | Syntax and identity only. It does not hash content, validate witnesses, evaluate evidence, configure monitoring, or own a generic evidence envelope. |
+| `nq` | Frozen disposition/refusal vocabulary, supporting witness references, and consumer-indexed reliance law. | This is an isolated decision slice, not all NQ decision semantics. Claim evaluation, preflight, receipt construction/replay, inquiry, and intent still remain in `nq-core` and `nq-db`. |
+| `nq-witness` | `nq.witness.v1`, witness validation, JCS/SHA-256 identity, provenance/custody, packet-set adoption, projection receipts, and the standalone `nq-witness-tool`. | It does not decide what a valid witness proves. Catalog persistence and all monitor transport migration are still incomplete. |
+| `nq-monitor-check` | Typed pack/check identities, descriptors, strict selection, typed configuration validation, and immutable implementation-bound enabled-pack tokens. | It also temporarily owns the closed `nq.witness_packet.v1` monitor envelope, collector status vocabulary, and ZFS/SMART/GPU DTOs. Those compatibility types still enumerate built-in families and are not a generic observation contract. |
+| `nq-check-pack-host` | Executable Linux and partial-native BSD host acquisition moved from the former witness daemon. | It is a conservative *candidate* for explicit minimal-public selection; compilation alone does not enable it. |
+| `nq-check-pack-storage` | Executable ZFS, SMART, and GPU acquisition, helper validation, timeouts, typed outcomes, and fixtures. | It remains explicit-only. Its legacy execution is still reached through the compatibility monitor agent. Pack-owned independently versioned observation schemas are not yet present. |
+| `nq-check-pack-labelwatch` | Private-value-free descriptors, strict service/SQLite/log/metric configuration, remediation metadata, and a typed plan over generic monitor primitives. | There was no coherent collector to move. The pack is not executable and must not be reported as a completed runtime extraction. |
+| `nq-suite` | Strict `nq.suite.config.v1` and `nq.suite.pack_selection.v1` validation, feature-bounded registration, explicit topology validation, and deterministic `nq.suite.plan.v1` output. | It is a planning boundary only. Every plan says `launch.available: false`; no public monitor start seam exists. |
+| `nq-monitor-agent` | Compatibility local collection server and the installed `nq-witness` binary name. It owns remaining generic service, SQLite, log, metric, and NQ-binary collectors and adapts host/storage packs into the old publisher contract. | It still links concrete packs and executes the composite all-collectors path. It is not the target independently composed monitor executor. |
+| `nq-witness-api` | Compatibility `GET /state` client/transport and evaluator fixtures. | It still consumes mixed `nq-core` DTOs, including decision and monitor compatibility types. |
+| `nq-monitor` | Existing central scheduler, CLI, dashboard/API, coordination, notifications, probes, and external-projection adapters. Its operator renderer now consumes bounded generic evidence shapes without check-ID dispatch. | The read-model loader, finding metadata, notification grouping, serve lifecycle, and database access remain coupled to detector IDs and private runtime/storage implementation. |
+| `nq-core` | Transitional compatibility facade plus still-unmigrated claim, preflight, receipt, inquiry, intent, monitor configuration, batch, rendering, and time-basis behavior. Its witness, projection-receipt, reliance, status, and wire modules now re-export their new owners. | It remains a mixed semantic package and must not be described as the shared protocol leaf. |
+| `nq-db` | Existing SQLite implementation, migrations, publication, detectors, evaluators, projections, lifecycle, coordination, notification state, and detector-specific dashboard loading. It now also provides a read-only compatibility preflight and refuses newer or unrelated databases before write-open side effects. | It is not yet a bounded `nq-store-sqlite` implementation. Raw connections, private tables, and unrelated semantic authorities remain exposed through one schema/release axis. |
+
+The extraction therefore establishes authoritative new public surfaces without
+pretending that compatibility re-exports or retained physical storage have
+already disappeared. In particular:
+
+- witness structure and identity are owned by `nq-witness`, while evidence
+  sufficiency remains NQ authority;
+- the extracted reliance law is owned by `nq`, while the remaining evaluators
+  and receipt engine have not yet migrated;
+- pack availability and validation are owned by `nq-monitor-check`, while
+  deployment selection is owned by `nq-suite`;
+- observations remain monitor/check-pack testimony and do not become earned
+  conclusions through registration, planning, transport, or rendering.
+
+### 19.2 Dependency graph before and after
+
+At `55e35ac`, the complete local normal-dependency graph was the five-package
+graph recorded in Section 3:
+
+```text
+nq-core        -> []
+nq-db          -> [nq-core]
+nq-witness-api -> [nq-core]
+nq-witness     -> [nq-core, nq-witness-api]
+nq-monitor     -> [nq-core, nq-db, nq-witness-api, nq-witness]
+```
+
+At `c5e3486`, the resolved default-feature graph, including local normal and
+development edges, is:
+
+```text
+nq-protocol          -> []
+nq-witness           -> [nq-protocol]
+nq                   -> [nq-witness]
+nq-monitor-check     -> []
+nq-check-pack-host   -> [nq-monitor-check]
+nq-check-pack-labelwatch
+                      -> [nq-monitor-check]
+nq-check-pack-storage
+                      -> [nq-monitor-check]
+nq-core              -> [nq, nq-monitor-check, nq-witness]
+nq-db                -> [nq-core]
+nq-witness-api       -> [nq-core, nq-witness]
+nq-monitor-agent     -> [nq-check-pack-host, nq-check-pack-storage,
+                         nq-core, nq-monitor-check, nq-witness-api]
+nq-monitor           -> [nq-core, nq-db, nq-monitor-agent, nq-witness-api]
+nq-suite             -> [nq-check-pack-host, nq-core, nq-monitor-check]
+```
+
+With all features, only these additional local edges appear:
+
+```text
+nq-suite -> nq-check-pack-labelwatch
+nq-suite -> nq-check-pack-storage
+```
+
+The dependency gate resolves normal, development, build, and
+target-qualified edges under both default and all-feature configurations. It
+reports this graph acyclic. Acyclicity is earned; conformance to the final
+target graph is not. The paths through `nq-core`, the direct runtime-to-DB
+edge, and the agent-to-concrete-pack edges are still migration debt.
+
+### 19.3 Exact transitional allowances
+
+The executable dependency gate permits exactly eight otherwise-forbidden
+paths. Every allowance has a reason and a removal condition; adding an
+unlisted path or retaining a stale allowance fails the gate.
+
+| Exact path | Why it remains | Removal condition |
+| --- | --- | --- |
+| `nq-monitor-agent -> nq-core -> nq` | The agent still consumes mixed core monitor/config DTOs whose facade re-exports decision types. | The agent consumes monitor-owned DTOs and drops `nq-core`. |
+| `nq-witness-api -> nq-core -> nq` | Witness transport still consumes core preflight DTOs whose facade re-exports refusals/dispositions. | Witness transport consumes bounded witness/monitor DTOs and drops `nq-core`. |
+| `nq-witness-api -> nq-core -> nq-monitor-check` | The compatibility transport reaches `nq.witness_packet.v1` through the core facade. | Witness transport consumes the bounded public transport DTO directly. |
+| `nq-monitor-agent -> nq-check-pack-host` | The installed compatibility `nq-witness` binary retains host collection. | Suite-selected execution replaces the all-collectors agent link. |
+| `nq-monitor-agent -> nq-check-pack-storage` | The compatibility binary retains configured ZFS/SMART/GPU collection through a typed legacy adapter. | Suite-selected execution replaces the all-collectors agent link. |
+| `nq-monitor -> nq-core -> nq` | The runtime still consumes mixed core DTOs which reach decision types. | The runtime consumes only disposition artifacts and monitor-owned DTOs. |
+| `nq-monitor -> nq-monitor-agent -> nq-check-pack-host` | The central runtime reaches the host pack transitively through the legacy agent. | The runtime no longer reaches concrete packs directly or transitively. |
+| `nq-monitor -> nq-monitor-agent -> nq-check-pack-storage` | The central runtime reaches storage packs transitively through the legacy agent. | The runtime no longer reaches concrete packs directly or transitively. |
+
+The checked-in source scan also permits exactly these private fixture/example
+dependencies:
+
+| Consumer source | External target | Current occurrences |
+| --- | --- | ---: |
+| `nq-db/src/inquiry.rs` | `nq-core/tests/fixtures/resolver_pending_aged_tail.profile_catalog.v0.json` | 1 |
+| `nq-monitor/src/cmd/emit_escalation.rs` | `nq-core/tests/fixtures/resolver_pending_aged_tail.profile_catalog.v0.json` | 1 |
+| `nq-monitor/src/cmd/inquire.rs` | `nq-core/tests/fixtures/resolver_pending_aged_tail.profile_catalog.v0.json` | 5 |
+| `nq-monitor/src/cmd/inquire.rs` | `nq-core/tests/fixtures/tls_cert_probe.profile_catalog.v0.json` | 4 |
+| `nq-monitor/src/cmd/intent.rs` | `nq-core/tests/fixtures/golden_success.inquiry_intent.v0.json` | 1 |
+| `nq-monitor/src/cmd/intent.rs` | `nq-core/tests/fixtures/tls_cert_ambiguous.profile_catalog.v0.json` | 1 |
+| `nq-monitor/src/cmd/intent.rs` | `nq-core/tests/fixtures/tls_cert_probe.profile_catalog.v0.json` | 2 |
+| `nq-core/tests/reliance_conformance.rs` | repository-level `docs/examples/reliance-profiles.json` | 1 |
+
+The first seven allowances end when versioned inquiry fixtures are packaged
+behind the decision component's public test contract. The final allowance
+ends when the reliance vector lives beneath its authoritative decision
+package. No other cross-package source, sibling fixture, generated output, or
+repository-external include is allowlisted.
+
+### 19.4 Remaining accidental coupling outside the exact allowances
+
+The following debt is visible in ordinary public APIs and implementation
+structure rather than hidden by the gate:
+
+1. `nq-core` still mixes evaluator, receipt, inquiry, intent, config, monitor
+   batch, presentation, and time-basis concerns even though several modules
+   are now compatibility re-exports.
+2. `nq-db` still owns detector policy, NQ evaluation, witness projection,
+   monitor state, dashboard loading, operator coordination, notifications,
+   and migrations in one package.
+3. `WriteDb::conn()` and `ReadDb::conn()` still expose
+   `rusqlite::Connection`; runtime code can name private tables, and the
+   supposedly read-oriented write borrow remains technically capable of
+   mutation.
+4. `nq-monitor` still depends directly on `nq-db`, initializes the DB and
+   serve lifecycle internally, and cannot run against public bounded
+   repositories or a fixture disposition source.
+5. `nq-monitor-agent::collect_state` still constructs one closed
+   `Collectors` object and invokes every linked collector family. Disabled
+   legacy families may return a skipped payload, but they are not absent from
+   execution through suite-selected registry composition.
+6. `nq.witness_packet.v1` and `CollectorKind` still enumerate concrete
+   families. Adding future packs through this envelope would recreate central
+   schema edits, so new packs are forbidden from extending it as though it
+   were the target contract.
+7. The operator renderer no longer dispatches on check IDs, and fictional
+   unrelated packs render through generic evidence shapes. The DB read-model
+   loader still has special paths for `error_shift` and
+   `smart_status_lies`; `finding_meta` and notification grouping still switch
+   on detector IDs.
+8. `nq-suite` validates and plans composition but depends on `nq-core` for
+   aggregator configuration and has no `run` command. It cannot reconstruct
+   the existing deployment without returning to binary-private lifecycle and
+   all-collector behavior.
+9. All packages still share repository, lockfile, workspace version `0.1.0`,
+   CI, and path dependencies. Version fields make boundaries explicit, but
+   independent publication, compatibility ranges, feature negotiation, and
+   non-lockstep releases have not been demonstrated.
+10. The one SQLite schema and its 64 migrations remain the compatibility axis
+    for observation, finding, coordination, notification, and evaluator
+    state. The read-only compatibility preflight prevents unsafe downgrade;
+    it does not separate storage ownership.
+
+### 19.5 Check packs, custom material, and deployment state
+
+The landed check-pack result is deliberately uneven because repository
+reality did not contain three equivalent collectors:
+
+- `nq.host` is the only `MinimalPublicCandidate`. Its acquisition is real,
+  cheap, local, and read-only, but the packaged minimal suite configuration
+  still selects it explicitly; it is never enabled merely by compilation.
+- `nq.storage` contains the real moved ZFS, SMART, and GPU collectors and is
+  `ExplicitOnly`. Required helper configuration is strict and disabled
+  families are not invoked through the pack API.
+- `nq.labelwatch` is `ExplicitOnly` and excluded from the default suite
+  feature graph. It has no hostname, path, service, URL, secret, or threshold
+  default. The suite maps its typed plan to generic service, SQLite, log, and
+  metric inputs at the composition boundary, but there is no executable
+  Labelwatch pack or suite launch.
+- The pfSense/Kea, TLS, Docket, and Continuity families remain in
+  `nq-monitor` as manual probes or external-projection adapters. They were not
+  silently reclassified as scheduled packs.
+- The 6,874-packet `zab2nq` corpus was validated through the standalone public
+  witness boundary. Every packet remains an `external_projection` /
+  `archive_read` artifact; the corpus is neither a runtime monitor
+  observation nor a default dependency.
+
+The new suite specimens are private-free:
+
+- `minimal-public.json` selects only the host pack and uses relative local
+  state paths;
+- monitor-only and publisher-only are distinct explicit topologies;
+- the full public example contains obvious specimen values and is neither a
+  default nor a claim that its targets exist;
+- Labelwatch and storage require opt-in Cargo features and explicit pack/check
+  selection.
+
+Private/deployment residue has not all been removed from the repository.
+`deploy/examples/caddy-proxy.service`, the beacon script, historical
+Labelwatch fixtures/detections, caller names, and some migration/fleet
+fixtures still contain deployment identities or paths. They are not selected
+by the minimal suite plan, but their stranger-visible presence means
+`PRIVATE-DEPLOYMENT-NOT-EMBEDDED` is not earned for the repository as a whole.
+The ignored existing deployment configuration has not been copied into the
+public suite. `deploy/suite/README.md` gives an explicit private overlay
+migration procedure, but runtime reconstruction remains blocked on public
+monitor lifecycle and enabled-pack dispatch.
+
+### 19.6 Executable boundary evidence
+
+At this checkpoint:
+
+```text
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 scripts/check-constellation-boundaries.py
+
+CONSTELLATION BOUNDARY GATE: PASS
+```
+
+The gate's negative fixtures prove that target-qualified development/build
+edges, feature-hidden forbidden reachability, conventional `OUT_DIR` source
+inclusion, and dependency cycles are rejected. Both default and all-feature
+graphs passed, the protocol and monitor-contract external dependency sets
+remained bounded, every exact allowance above matched, and no unreviewed
+private source path was accepted.
+
+This is evidence for an acyclic guarded migration, not evidence that the
+temporary paths are the desired final architecture.
+
+### 19.7 Earned and unearned boundaries
+
+Earned at this checkpoint:
+
+- a deliberately small protocol leaf;
+- an independently testable witness artifact owner and standalone validation
+  seam;
+- an independently testable disposition/refusal/reliance decision slice;
+- strict pack identity, availability, selection, and configuration contracts;
+- real host and storage collector extraction;
+- a private-free, optional Labelwatch composition definition;
+- a versioned, strict, deterministic composition *plan*;
+- a generic operator-rendering seam preserving unknown, conflict, freshness,
+  provenance, and action-safety distinctions;
+- an executable acyclic dependency and private-source gate;
+- static external witness consumption which does not mint runtime
+  observation.
+
+Not earned at this checkpoint:
+
+- isolation of all NQ decision semantics;
+- isolation of the monitor runtime and public monitor lifecycle;
+- a fully generic dashboard/read-model backend;
+- an executable Labelwatch pack;
+- pack-owned independently versioned observation schemas;
+- a bounded SQLite repository implementation with no raw private-table
+  access;
+- installed-runtime dispatch of only suite-enabled packs;
+- reconstruction of the existing full deployment through public composition;
+- independent component publication or non-lockstep releases;
+- removal of all private deployment residue;
+- full constellation decomposition or proof that a distributed monolith has
+  been avoided.
+
+The honest implemented conclusion is therefore narrower than the target
+architecture: public semantic leaves, check-pack contracts, and planning
+boundaries now exist and are mechanically guarded, while the installed
+runtime remains a compatibility assembly over the mixed core/database path.
