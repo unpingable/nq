@@ -25,6 +25,7 @@ pub mod publish;
 pub mod query;
 pub mod regime;
 pub mod retention;
+pub mod schema_compatibility;
 pub mod source_retirement;
 pub mod nq_binary_mtime_state;
 pub mod nq_evaluator_state;
@@ -80,6 +81,10 @@ pub use publish::{
 };
 pub use query::{query_read_only, QueryLimits, QueryResult};
 pub use retention::{prune, PruneStats};
+pub use schema_compatibility::{
+    inspect_schema_compatibility, SchemaCompatibilityReport, SchemaCompatibilityState,
+    SCHEMA_COMPATIBILITY_SCHEMA_ID,
+};
 pub use source_retirement::{
     retire_source, retired_source_map, unretire_source, RetireStats, UnretireStats,
     LOCAL_OPERATOR_ACTOR,

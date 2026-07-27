@@ -17,6 +17,9 @@ pub enum Command {
     /// Validate monitor configuration without opening a database, binding a
     /// listener, contacting a source, or changing state.
     Config(ConfigCmd),
+    /// Inspect durable database compatibility without creating, migrating, or
+    /// repairing state.
+    Database(DatabaseCmd),
     /// Run the aggregator + web UI
     Serve(ServeCmd),
     /// Run a read-only SQL query against the DB
@@ -127,6 +130,31 @@ pub struct ConfigValidateCmd {
     /// Path to the aggregator JSON configuration.
     #[arg(long, short)]
     pub config: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct DatabaseCmd {
+    #[command(subcommand)]
+    pub action: DatabaseAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DatabaseAction {
+    /// Report whether this binary can safely start against a database.
+    /// The check opens existing state read-only and never runs migrations.
+    Compatibility(DatabaseCompatibilityCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct DatabaseCompatibilityCmd {
+    /// NQ SQLite database to inspect. A missing path is reported as a new
+    /// installation; the command does not create it.
+    #[arg(long)]
+    pub db: PathBuf,
+
+    /// Output format for the compatibility report.
+    #[arg(long, default_value = "human", value_parser = ["human", "json"])]
+    pub format: String,
 }
 
 #[derive(Debug, Args)]
