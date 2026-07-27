@@ -1,3 +1,4 @@
+pub mod operator_dashboard;
 pub mod query_api;
 pub mod routes;
 
