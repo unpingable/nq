@@ -76,6 +76,14 @@ build scripts, generated source, and test utilities:
 - any package other than the SQLite implementation exposing or accepting a
   raw SQLite connection as a cross-component interface.
 
+The executable gate is `scripts/check-constellation-boundaries.sh`. It reads
+locked Cargo metadata across normal, development, build, target-qualified
+edges; rejects cycles and forbidden reachability; bounds the protocol leaf;
+and scans manifests and source for sibling-private paths. Every temporary
+source/fixture exception carries an exact match, reason, and removal
+condition, and a stale exception fails the gate. Its embedded negative
+fixtures prove that dev/build/target edges and cycles cannot evade the check.
+
 ## Semantic ownership
 
 | Concept | Owner | Boundary representation |

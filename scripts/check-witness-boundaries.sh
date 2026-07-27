@@ -10,7 +10,8 @@
 #
 # Mechanism: read the RESOLVED cargo dependency graph (`cargo tree -e normal`) —
 # enforcement is the build graph, not convention or lint.
-#   Forbidden: nq-witness, nq-witness-api MUST NOT have nq-db in their normal closure.
+#   Forbidden: nq-witness, nq-monitor-agent, and nq-witness-api MUST NOT have
+#              nq-db in their normal closure.
 #   Control:   nq-monitor MUST have nq-db (proves the graph reader is not silently
 #              returning empty — fail closed if a known-true edge is undetectable).
 #   Self-test: a synthetic nq-witness->nq-db closure MUST be flagged (proves the
@@ -23,7 +24,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$HERE"
 
-FORBIDDEN=( "nq-witness:nq-db" "nq-witness-api:nq-db" )
+FORBIDDEN=(
+  "nq-witness:nq-db"
+  "nq-monitor-agent:nq-db"
+  "nq-witness-api:nq-db"
+)
 CONTROL=( "nq-monitor:nq-db" )
 
 # closure CRATE -> the nq-* crates in its normal dependency closure, one per line

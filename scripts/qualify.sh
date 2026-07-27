@@ -43,7 +43,7 @@ run_gate "cargo test --all --locked" cargo test --all --locked
 # 2-5. The scripted fail-closed gates.
 run_gate "check_gap_status" ./scripts/check_gap_status.sh
 run_gate "check-nq-receipts" ./scripts/check-nq-receipts.sh
-run_gate "check-witness-boundaries" ./scripts/check-witness-boundaries.sh
+run_gate "check-constellation-boundaries" ./scripts/check-constellation-boundaries.sh
 run_gate "check-coverage-manifest" ./scripts/check-coverage-manifest.sh
 
 # 6. Targeted integration suites, named explicitly. The full suite already runs
