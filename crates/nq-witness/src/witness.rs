@@ -41,6 +41,7 @@ pub enum WitnessPosition {
 /// and prevents an observation from directly naming claims, but interpretation
 /// belongs to an evaluator outside this crate.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WitnessPacket {
     /// Versioned wire schema.
     pub schema: String,
