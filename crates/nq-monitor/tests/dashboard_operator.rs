@@ -613,6 +613,8 @@ async fn overview_and_detail_share_a_basis_and_expose_the_statistical_claim() {
     assert!(overview_html.contains("Cause is not established by this finding"));
     assert!(overview_html.contains("Advanced NQ classification"));
     assert!(overview_html.contains("<code>Δs</code>"));
+    assert!(overview_html.contains("data-current-at-load"));
+    assert!(overview_html.contains("cardState && root.hasAttribute('data-current-at-load')"));
     assert!(overview_html.contains("<code>error_shift</code>"));
 
     let (detail_html_status, detail_html) =
@@ -626,6 +628,7 @@ async fn overview_and_detail_share_a_basis_and_expose_the_statistical_claim() {
     ));
     assert!(detail_html.contains("SQL is not required for the primary workflow"));
     assert!(detail_html.contains("data-stale-after-seconds=\"300\""));
+    assert!(detail_html.contains("data-finding-detail data-current-at-load"));
     assert!(detail_html.contains("This open page has crossed its freshness boundary"));
     assert!(detail_html.contains("refreshOpenPageFreshness"));
     assert!(
@@ -718,6 +721,7 @@ async fn stale_historical_conflicting_and_unknown_states_remain_distinct() {
     let (stale_status, stale_html) = get_finding(&client, &server, &scenario.stale_key).await;
     assert_eq!(stale_status, 200);
     assert!(stale_html.contains("Stale finding"));
+    assert!(!stale_html.contains("data-finding-detail data-current-at-load"));
     assert!(stale_html.contains("too old to describe current state"));
     assert!(stale_html.contains("Absence of a newer finding does not establish health"));
     assert!(stale_html.contains("Actions disabled for safety"));
@@ -835,7 +839,7 @@ async fn self_health_inventory_and_current_issues_have_separate_hierarchy() {
     assert!(!html.contains("publish status:"));
     assert!(html.contains("blocked by stale or unresolved evidence"));
     assert!(html.contains(
-        "<strong>No response recorded</strong> — No operator coordination response is recorded."
+        "<strong>No response recorded</strong> — Notifications remain eligible; detector observation continues."
     ));
     let attention_position = html.find("labelwatch error rate increased").unwrap();
     let self_health_heading = html.find("NQ system health").unwrap();

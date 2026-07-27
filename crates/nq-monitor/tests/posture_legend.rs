@@ -14,7 +14,7 @@ fn empty_dashboard_does_not_require_learning_a_posture_legend() {
 
     assert!(!html.contains("Response Posture"));
     assert!(!html.contains("posture-term"));
-    assert!(html.contains("No current issue is supported by this snapshot."));
+    assert!(html.contains("No current issue is supported by the latest NQ data capture."));
 }
 
 #[test]

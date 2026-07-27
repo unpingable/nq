@@ -123,7 +123,9 @@ fn unavailable_observation_is_visible_as_unknown_not_counted_as_attention() {
     overview.monitored_findings = vec![observed, unavailable];
     let html = render_overview(&overview);
 
-    assert!(html.contains("1 issue needs attention."));
+    assert!(html.contains(
+        "1 current issue needs attention; 1 decision is blocked by stale or unresolved evidence."
+    ));
     assert!(html.contains("OBSERVED_SENTINEL"));
     assert!(
         html.contains("UNAVAILABLE_SENTINEL"),
@@ -148,7 +150,9 @@ fn stale_finding_is_visible_but_cannot_masquerade_as_current_attention() {
 
     let html = render_overview(&overview);
 
-    assert!(html.contains("No current issue is supported by this snapshot."));
+    assert!(html.contains(
+        "No current issue is supported; 1 decision is blocked by stale or unresolved evidence."
+    ));
     assert!(html.contains("Unknowns blocking decisions (1)"));
     assert!(html.contains("Stale evidence"));
     assert!(html.contains("STALE_SENTINEL"));
@@ -169,7 +173,9 @@ fn retired_finding_is_historical_unknown_not_success_or_current_attention() {
     overview.monitored_findings = vec![active, retired];
     let html = render_overview(&overview);
 
-    assert!(html.contains("1 issue needs attention."));
+    assert!(html.contains(
+        "1 current issue needs attention; 1 decision is blocked by stale or unresolved evidence."
+    ));
     assert!(html.contains("ACTIVE_SENTINEL"));
     assert!(html.contains("RETIRED_SENTINEL"));
     assert!(html.contains("Unknowns blocking decisions (1)"));

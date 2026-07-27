@@ -73,10 +73,8 @@ fn page_frames_every_finding_as_a_bounded_observation() {
     assert!(html.contains(
         "NQ reports bounded observations. A finding does not by itself prove cause, user impact, or authorization to change a monitored system."
     ));
-    assert!(html.contains("Start with the operational claim."));
-    assert!(
-        html.contains("Evidence, uncertainty, and expert classification remain attached to it.")
-    );
+    assert!(html.contains("Start with what changed and when."));
+    assert!(html.contains("Evidence, uncertainty, and the next inspection stay attached."));
 }
 
 #[test]

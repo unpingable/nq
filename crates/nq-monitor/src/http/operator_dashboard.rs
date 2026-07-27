@@ -96,7 +96,7 @@ fn response_label(action_bias: Option<&str>) -> &'static str {
 
 fn coordination_statement(work_state: &str) -> &'static str {
     match normalize(work_state).as_str() {
-        "new" => "No operator coordination response is recorded.",
+        "new" => "Notifications remain eligible; detector observation continues.",
         "acknowledged" => "Acknowledged; notifications remain eligible.",
         "watching" => "An operator chose to watch; notifications remain eligible.",
         "quiesced" => "Notifications are paused during an operational quiet period.",
@@ -441,7 +441,7 @@ fn render_card(finding: &DashboardFinding, evidence: Option<&DashboardEvidence>)
 
     format!(
         "<article class=\"finding-card {state_class}\" data-finding-key=\"{key}\" data-finding-state=\"{state}\"\
-           data-observed-at=\"{observed_at}\" data-stale-after-seconds=\"{stale_after}\">\
+           data-observed-at=\"{observed_at}\" data-stale-after-seconds=\"{stale_after}\"{current_at_load}>\
            <div class=\"card-status\"><span>{state}</span><span>{response}</span></div>\
            <h3><a href=\"{href}\">{title}</a></h3>\
            {evidence_summary}\
@@ -483,6 +483,14 @@ fn render_card(finding: &DashboardFinding, evidence: Option<&DashboardEvidence>)
         },
         observed_at = escape_html(observation_time),
         stale_after = nq_db::dashboard::DASHBOARD_STALE_AFTER_SECONDS,
+        current_at_load = if finding.status == DashboardFindingStatus::Ongoing
+            && !finding.display_stale
+            && finding.observation_age_seconds.is_some_and(|age| age >= 0)
+        {
+            " data-current-at-load"
+        } else {
+            ""
+        },
         recency = escape_html(&recency),
         impact = escape_html(&impact_statement(finding)),
         work_state_label = escape_html(coordination_label(&finding.work_state)),
@@ -1052,8 +1060,10 @@ function refreshOpenPageFreshness() {
       }
     }
     const cardState = root.querySelector('.card-status span:first-child');
-    if (cardState) cardState.textContent = 'Stale on this open page — reload';
-    if (root.hasAttribute('data-finding-detail')) {
+    if (cardState && root.hasAttribute('data-current-at-load')) {
+      cardState.textContent = 'Stale on this open page — reload';
+    }
+    if (root.hasAttribute('data-finding-detail') && root.hasAttribute('data-current-at-load')) {
       const warning = root.querySelector('.open-page-freshness-warning');
       if (warning) warning.hidden = false;
       root.querySelectorAll('.action-panel button').forEach(function (button) {
@@ -1238,7 +1248,7 @@ pub fn render_overview(overview: &DashboardOverview) -> String {
         "<main id=\"main-content\">\
            <section aria-labelledby=\"attention-heading\">\
              <div class=\"eyebrow\">Decision</div><h1 id=\"attention-heading\">{attention_summary}</h1>\
-             <p class=\"section-intro\">Start with the operational claim. Evidence, uncertainty, and expert classification remain attached to it.</p>\
+             <p class=\"section-intro\">Start with what changed and when. Evidence, uncertainty, and the next inspection stay attached.</p>\
              {attention_body}\
            </section>\
            {unknown_section}{changed_section}{watching_section}{coordinated_section}{self_health_section}\
@@ -1723,7 +1733,7 @@ fn render_current_detail(
         .unwrap_or(&finding.last_seen_at);
 
     let content = format!(
-        "<main id=\"main-content\" data-observed-at=\"{at}\" data-stale-after-seconds=\"{stale_after}\" data-finding-detail>\
+        "<main id=\"main-content\" data-observed-at=\"{at}\" data-stale-after-seconds=\"{stale_after}\" data-finding-detail{current_at_load}>\
            <a class=\"back-link\" href=\"/\">← Current dashboard</a>\
            <section aria-labelledby=\"finding-heading\">\
              <div class=\"eyebrow\">Decision</div>\
@@ -1794,6 +1804,14 @@ fn render_current_detail(
         },
         at = escape_html(observation_at),
         stale_after = nq_db::dashboard::DASHBOARD_STALE_AFTER_SECONDS,
+        current_at_load = if finding.status == DashboardFindingStatus::Ongoing
+            && !finding.display_stale
+            && finding.observation_age_seconds.is_some_and(|age| age >= 0)
+        {
+            " data-current-at-load"
+        } else {
+            ""
+        },
         recency = match finding.observation_age_seconds {
             Some(age) if age >= 0 => format!("{} ago", human_duration(age)),
             Some(age) => format!("{}s in the future; clock disagreement", -age),
