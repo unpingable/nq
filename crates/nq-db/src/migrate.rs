@@ -87,6 +87,14 @@ pub fn migrate(db: &mut WriteDb) -> anyhow::Result<()> {
         .conn
         .pragma_query_value(None, "user_version", |row| row.get(0))?;
 
+    if current > CURRENT_SCHEMA_VERSION {
+        anyhow::bail!(
+            "database schema is newer than this NQ binary: found version {current}, \
+             supported through version {CURRENT_SCHEMA_VERSION}; use a compatible or newer \
+             NQ binary and do not downgrade the database"
+        );
+    }
+
     let pending: Vec<_> = MIGRATIONS
         .iter()
         .filter(|(v, _)| *v > current)
@@ -149,6 +157,60 @@ mod tests {
         let mut db = open_rw(&db_path).unwrap();
         migrate(&mut db).unwrap();
         migrate(&mut db).unwrap(); // should be a no-op
+    }
+
+    #[test]
+    fn migrate_refuses_newer_schema_without_modifying_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("newer.db");
+        let mut db = open_rw(&db_path).unwrap();
+        let newer_version = CURRENT_SCHEMA_VERSION + 1;
+        db.conn
+            .pragma_update(None, "user_version", newer_version)
+            .unwrap();
+
+        let error = migrate(&mut db).expect_err("newer schema must be refused");
+        let message = error.to_string();
+        assert!(
+            message.contains(&format!("found version {newer_version}")),
+            "error must name the database schema version: {message}"
+        );
+        assert!(
+            message.contains(&format!(
+                "supported through version {CURRENT_SCHEMA_VERSION}"
+            )),
+            "error must name the maximum supported schema version: {message}"
+        );
+        assert!(
+            message.contains("use a compatible or newer NQ binary"),
+            "error must give a safe next action: {message}"
+        );
+        assert!(
+            message.contains("do not downgrade"),
+            "error must warn against mutating the database backward: {message}"
+        );
+
+        let version: u32 = db
+            .conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            version, newer_version,
+            "refusal must preserve the newer schema version"
+        );
+
+        let tables: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            tables, 0,
+            "refusal must not execute migrations or mint current-schema tables"
+        );
     }
 
     // -----------------------------------------------------------------
