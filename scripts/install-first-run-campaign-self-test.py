@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -35,6 +36,27 @@ def main() -> int:
     repo = Path(__file__).resolve().parent.parent
     harness_path = repo / "scripts" / "install-first-run-campaign.py"
     harness = load_harness(harness_path)
+    result_schema = json.loads(
+        (
+            repo
+            / "docs/install/schemas/nq.install_first_run.campaign.v1.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    step_pattern = result_schema["$defs"]["step"]["properties"]["step_id"]["pattern"]
+    assert re.fullmatch(step_pattern, "010-source-build")
+    assert re.fullmatch(step_pattern, "010a-download-nq-monitor")
+    assert not re.fullmatch(step_pattern, "10a-download-nq-monitor")
+
+    retained_release = json.loads(
+        (
+            repo
+            / "docs/install/campaign/raw/post-decomposition-20260727"
+            / "release-unavailable/manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    for step in retained_release["steps"]:
+        assert re.fullmatch(step_pattern, step["step_id"]), step["step_id"]
+
     with tempfile.TemporaryDirectory(
         prefix="nq-first-run-harness-test-", dir="/tmp"
     ) as directory:
