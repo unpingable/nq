@@ -1,0 +1,73 @@
+{
+  "schema": "nq.reliance.profiles.v1",
+  "policy_version": "v1",
+  "profiles": [
+    {
+      "consumer_profile_id": "operator-review",
+      "allowed_claims": [
+        "docket_attempt_settled",
+        "docket_commitment_observed",
+        "nq_evaluator_state",
+        "nq_binary_mtime_state",
+        "sqlite_wal_state"
+      ],
+      "allowed_purposes": [
+        "review",
+        "investigate"
+      ],
+      "accepted_custody_bases": [
+        "native_observation",
+        "external_projection"
+      ],
+      "max_evidence_age_s": 86400,
+      "premise_policy": "allow_qualified",
+      "contradiction_policy": "allow_with_disclosure",
+      "residual_policy": "allow_with_disclosure"
+    },
+    {
+      "consumer_profile_id": "nightshift-readonly",
+      "allowed_claims": [
+        "docket_attempt_settled"
+      ],
+      "allowed_purposes": [
+        "continue_observing",
+        "wait",
+        "request_evidence",
+        "stop",
+        "human_escalation"
+      ],
+      "accepted_custody_bases": [
+        "native_observation"
+      ],
+      "max_evidence_age_s": 900,
+      "premise_policy": "require_all_enforceable",
+      "contradiction_policy": "refuse_on_retained",
+      "residual_policy": "refuse_on_unresolved"
+    },
+    {
+      "consumer_profile_id": "nightshift-readonly-continuity",
+      "allowed_claims": [
+        "docket_attempt_settled",
+        "continuity_rely_eligible"
+      ],
+      "allowed_purposes": [
+        "continue_observing",
+        "wait",
+        "request_evidence",
+        "stop",
+        "human_escalation"
+      ],
+      "accepted_custody_bases": [
+        "native_observation",
+        "external_projection"
+      ],
+      "max_evidence_age_s": 900,
+      "premise_policy": "require_all_enforceable",
+      "contradiction_policy": "refuse_on_retained",
+      "residual_policy": "refuse_on_unresolved",
+      "required_supporting_claims": [
+        "continuity_rely_eligible"
+      ]
+    }
+  ]
+}

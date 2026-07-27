@@ -12,6 +12,7 @@ use crate::wire::ClaimRefusal;
 #[cfg(test)]
 use crate::wire::RefusalKind;
 use crate::witness::{DigestError, DIGEST_ALGORITHM_PREFIX};
+pub use nq::{Status, StatusReason, WitnessRef};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -38,30 +39,6 @@ pub struct EvaluatorBinding {
     pub version: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Status {
-    Verified,
-    PartiallyVerified,
-    NeedsMoreEvidence,
-    NotVerified,
-    InvalidEvidence,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StatusReason {
-    AllRequirementsVerified,
-    PartialComposite,
-    MissingRequiredClaim,
-    ClaimConditionFailed,
-    StaleObservation,
-    ContradictoryObservation,
-    NonMintable,
-    SuggestedWeakerClaimAvailable,
-    InvalidWitness,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotVerifiedEntry {
     pub claim: String,
@@ -70,63 +47,7 @@ pub struct NotVerifiedEntry {
     pub detail: Option<String>,
 }
 
-/// Reference to a witness consulted while evaluating a claim.
-///
-/// `digest` carries the JCS-canonicalized SHA-256 of the source witness
-/// packet (`sha256:<hex>`) when one is available. Three cases populate
-/// the slot today:
-///
-/// - **Track B** (`nq verify`-shape, evaluator reads caller-supplied
-///   `WitnessPacket` envelopes): digest is computed via
-///   `WitnessPacket::digest()` and populated. Receipts from this path
-///   are anchored to the exact packet envelopes that produced them.
-/// - **Track A, cut over** (today: `disk_state` after Slice 2): the
-///   evaluator projects each admitted finding into a
-///   `legacy_projection` witness packet and stamps that packet's digest
-///   here. One WitnessRef per admitted support.
-/// - **Track A, not yet cut over** (today: `ingest_state`, `dns_state`):
-///   digest is left absent. The evaluator builds `PreflightCoverage`
-///   entries from finding state in the database; there is no envelope
-///   to hash at receipt time.
-///
-/// `custody_basis` discriminates the second and third cases, and
-/// further distinguishes native observation from transitional
-/// projection within Track A's cut-over path:
-///
-/// - `Some("native_observation")` — the packet anchors its own
-///   substrate observation. Today emitted only by Track B producers
-///   that explicitly declare it.
-/// - `Some("legacy_projection")` — the packet is a transitional
-///   projection from legacy finding state (`disk_state` post-cut-over).
-/// - `None` — the WitnessRef predates the Slice 2 cut-over distinction.
-///   Today emitted on Track B WitnessRefs from packets without an
-///   explicit basis, and on Track A coverage-derived WitnessRefs from
-///   evaluators that have not yet cut over.
-///
-/// See `docs/working/decisions/preflights/TRACK_A_WITNESS_PACKET_CUTOVER.md`.
-///
-/// **Absence of `digest` is not a verification result.** A missing
-/// digest means "this WitnessRef is not anchored to a specific packet
-/// envelope" — typically because the receipt was produced via a
-/// pre-cut-over Track A evaluator, or because JCS canonicalization
-/// itself failed for the source packet. It does *not* mean
-/// "verification false" and is not implicitly "verification ok."
-/// Verification is `nq receipt check` territory (Slice 1d).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WitnessRef {
-    pub witness_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub digest: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub observed_at: Option<String>,
-    /// Custody basis of the underlying packet, when known. See the type
-    /// doc-comment for the three cases. Additive on the Receipt wire
-    /// shape — pre-Slice-2 receipts omit this field, and consumers must
-    /// read absence as "basis not declared," not as "native by default."
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custody_basis: Option<String>,
-}
-
+/// Immutable artifact recording an evidence evaluation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Receipt {
     pub schema: String,
@@ -332,6 +253,20 @@ impl Receipt {
         let hash = self.compute_content_hash()?;
         self.content_hash = Some(hash);
         Ok(())
+    }
+}
+
+impl nq::EvaluatedReceipt for Receipt {
+    fn evaluation_view(&self) -> nq::EvaluationView<'_> {
+        nq::EvaluationView {
+            claim: &self.claim,
+            subject: &self.subject,
+            status: self.status,
+            status_reasons: &self.status_reasons,
+            cannot_testify: &self.cannot_testify,
+            witnesses: &self.witnesses,
+            content_hash: self.content_hash.as_deref(),
+        }
     }
 }
 

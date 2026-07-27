@@ -936,10 +936,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nq"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "nq-witness",
+ "serde",
+ "serde_jcs",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "nq-core"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "nq",
  "nq-witness",
  "serde",
  "serde_jcs",

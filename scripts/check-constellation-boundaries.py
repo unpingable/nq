@@ -134,6 +134,43 @@ FORBIDDEN_EXACT_REACHABILITY: Mapping[tuple[str, str], str] = {
 
 
 @dataclasses.dataclass(frozen=True)
+class DependencyAllowance:
+    """One exact, self-expiring transitional dependency path."""
+
+    path: tuple[str, ...]
+    reason: str
+    removal_condition: str
+
+
+TRANSITIONAL_DEPENDENCY_ALLOWLIST: Sequence[DependencyAllowance] = (
+    DependencyAllowance(
+        ("nq-monitor-agent", "nq-core", "nq"),
+        (
+            "nq-core temporarily reexports the frozen decision receipt types "
+            "while the monitor agent still imports mixed monitor/config DTOs "
+            "from nq-core"
+        ),
+        (
+            "remove when nq-monitor-agent consumes monitor-owned DTOs and no "
+            "longer depends on the transitional nq-core package"
+        ),
+    ),
+    DependencyAllowance(
+        ("nq-witness-api", "nq-core", "nq"),
+        (
+            "nq-core temporarily reexports the frozen refusal and disposition "
+            "types while witness transport still imports mixed preflight DTOs "
+            "from nq-core"
+        ),
+        (
+            "remove when nq-witness-api consumes witness/monitor boundary DTOs "
+            "without depending on the transitional nq-core package"
+        ),
+    ),
+)
+
+
+@dataclasses.dataclass(frozen=True)
 class DirectControl:
     consumer: str
     dependency: str
@@ -266,21 +303,6 @@ TRANSITIONAL_COUPLING_ALLOWLIST: Sequence[CouplingAllowance] = (
         "crates/nq-core/tests/fixtures/tls_cert_probe.profile_catalog.v0.json",
         _INQUIRY_FIXTURE_REASON,
         _INQUIRY_FIXTURE_REMOVAL,
-    ),
-    CouplingAllowance(
-        "repository-external-include",
-        "nq-core",
-        "crates/nq-core/src/reliance.rs",
-        "@repository",
-        "docs/examples/reliance-profiles.json",
-        (
-            "nq-core still compiles the repository-level reliance example as a "
-            "test vector"
-        ),
-        (
-            "remove when the versioned reliance vector is packaged beneath its "
-            "authoritative decision component"
-        ),
     ),
     CouplingAllowance(
         "repository-external-include",
@@ -596,6 +618,39 @@ def _render_path(graph: GraphModel, path: Sequence[str]) -> str:
 def _forbidden_dependency_violations(graph: GraphModel) -> list[Violation]:
     violations: list[Violation] = []
     emitted: set[tuple[str, str]] = set()
+    applicable_allowances: dict[tuple[str, ...], DependencyAllowance] = {}
+    for allowance in TRANSITIONAL_DEPENDENCY_ALLOWLIST:
+        if len(allowance.path) < 2:
+            violations.append(
+                Violation(
+                    "MALFORMED_DEPENDENCY_ALLOWANCE",
+                    f"dependency allowance path {allowance.path!r} is too short",
+                )
+            )
+            continue
+        if not allowance.reason.strip() or not allowance.removal_condition.strip():
+            violations.append(
+                Violation(
+                    "MALFORMED_DEPENDENCY_ALLOWANCE",
+                    (
+                        f"dependency allowance {allowance.path!r} requires a "
+                        "reason and removal condition"
+                    ),
+                )
+            )
+            continue
+        if allowance.path in applicable_allowances:
+            violations.append(
+                Violation(
+                    "DUPLICATE_DEPENDENCY_ALLOWANCE",
+                    f"duplicate dependency allowance {allowance.path!r}",
+                )
+            )
+            continue
+        if all(_single_local_id(graph, name) is not None for name in allowance.path):
+            applicable_allowances[allowance.path] = allowance
+
+    matched_allowances: set[tuple[str, ...]] = set()
     for source_id in sorted(graph.local_ids):
         source = graph.packages[source_id]
         source_role = role_for(source.name)
@@ -620,6 +675,10 @@ def _forbidden_dependency_violations(graph: GraphModel) -> list[Violation]:
             if path is None or (source_id, target_id) in emitted:
                 continue
             emitted.add((source_id, target_id))
+            path_names = tuple(graph.packages[item].name for item in path)
+            if path_names in applicable_allowances:
+                matched_allowances.add(path_names)
+                continue
             reason = (
                 exact_reason
                 if exact_reason is not None
@@ -634,7 +693,36 @@ def _forbidden_dependency_violations(graph: GraphModel) -> list[Violation]:
                     f"{reason}: {_render_path(graph, path)}",
                 )
             )
+    for path, allowance in sorted(applicable_allowances.items()):
+        if path not in matched_allowances:
+            violations.append(
+                Violation(
+                    "STALE_OR_CHANGED_DEPENDENCY_ALLOWANCE",
+                    (
+                        f"dependency allowance {path!r} no longer matches the "
+                        "exact forbidden path; remove it or update the migration. "
+                        f"Removal condition: {allowance.removal_condition}"
+                    ),
+                )
+            )
     return violations
+
+
+def _active_dependency_allowances(
+    graph: GraphModel,
+) -> list[DependencyAllowance]:
+    active: list[DependencyAllowance] = []
+    for allowance in TRANSITIONAL_DEPENDENCY_ALLOWLIST:
+        ids = [_single_local_id(graph, name) for name in allowance.path]
+        if any(item is None for item in ids):
+            continue
+        resolved = _path_between(graph, ids[0], ids[-1])  # type: ignore[arg-type]
+        if resolved is None:
+            continue
+        names = tuple(graph.packages[item].name for item in resolved)
+        if names == allowance.path:
+            active.append(allowance)
+    return active
 
 
 def _external_dependency_violations(graph: GraphModel) -> list[Violation]:
@@ -1162,6 +1250,31 @@ class BoundarySelfTests(unittest.TestCase):
         self.assertEqual({"dev"}, info.kinds)
         self.assertEqual({"cfg(unix)"}, info.targets)
 
+    def test_dependency_allowance_is_exact_and_self_expiring(self) -> None:
+        metadata = _fixture_metadata()
+        metadata["packages"].append(  # type: ignore[union-attr]
+            {
+                "id": "nq",
+                "name": "nq",
+                "manifest_path": "/fixture/nq/Cargo.toml",
+                "source": None,
+            }
+        )
+        nodes = metadata["resolve"]["nodes"]  # type: ignore[index]
+        nodes.append({"id": "nq", "deps": []})
+        core = next(node for node in nodes if node["id"] == "nq-core")
+        core["deps"].append(_edge("nq"))
+
+        _, accepted = analyze_metadata(metadata, Path("/fixture"))
+        self.assertEqual([], accepted)
+
+        agent = next(node for node in nodes if node["id"] == "nq-monitor-agent")
+        agent["deps"].append(_edge("nq"))
+        _, changed = analyze_metadata(metadata, Path("/fixture"))
+        codes = {item.code for item in changed}
+        self.assertIn("FORBIDDEN_DEPENDENCY", codes)
+        self.assertIn("STALE_OR_CHANGED_DEPENDENCY_ALLOWANCE", codes)
+
     def test_protocol_rejects_an_unlisted_external_dependency(self) -> None:
         metadata = _fixture_metadata()
         metadata["packages"].append(  # type: ignore[union-attr]
@@ -1357,6 +1470,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("ok: constrained leaf external dependencies are bounded")
     if not _control_violations(graph):
         print("ok: positive control nq-monitor -[normal]-> nq-db is present")
+
+    dependency_allowances = _active_dependency_allowances(graph)
+    if dependency_allowances:
+        print("transitional dependency allowances:")
+        for allowance in dependency_allowances:
+            print(f"  ALLOWED exact path: {' -> '.join(allowance.path)}")
+            print(f"    reason: {allowance.reason}")
+            print(f"    removal: {allowance.removal_condition}")
+    else:
+        print("ok: no transitional dependency allowances are active")
 
     if source_audit.allowed:
         print("transitional private coupling allowances:")

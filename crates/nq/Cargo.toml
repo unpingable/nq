@@ -1,0 +1,17 @@
+[package]
+name = "nq"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Evidence evaluation, refusal, disposition, and reliance semantics for NQ"
+license = "Apache-2.0"
+repository = "https://github.com/unpingable/nq"
+readme = "README.md"
+
+[dependencies]
+nq-witness = { version = "0.1.0", path = "../nq-witness" }
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_jcs = "0.2"
+serde_json = "1"
+sha2 = "0.10"

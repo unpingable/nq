@@ -4,6 +4,7 @@
 //! aggregator's problem.
 
 use crate::status::{CollectorStatus, ServiceStatus};
+pub use nq::{ClaimRefusal, RefusalKind};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
@@ -357,108 +358,6 @@ pub struct MetricSample {
     /// exporter `/probe?module=...&target=...` URL). Additive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scrape_target_url: Option<String>,
-}
-
-// ---------------------------------------------------------------------------
-// Typed refusal vocabulary — cross-cutting wire primitive used by
-// preflight (`PreflightResult.cannot_testify`) and witness coverage
-// (`*WitnessCoverage.cannot_testify`). See
-// `docs/working/gaps/WITNESS_CLAIM_SCOPE_GAP.md`.
-//
-// Driver is completeness, not new authority: every constitutional
-// `*_cannot_testify()` function and every witness coverage emission
-// already ships a refusal list as `Vec<String>`. Typing the row
-// preserves identity that prose loses on every consumer parse.
-//
-// Wire shape (JSON):
-//   { "refusal_kind": "consequence_claim",
-//     "statement":   "Whether to restart, reconfigure, ..." }
-// ---------------------------------------------------------------------------
-
-/// One refusal carried by a witness observation or evaluator claim.
-///
-/// `refusal_kind` is the stable machine category — consumers branch on
-/// this. `statement` is explanatory prose for renderers and is *not* a
-/// machine contract.
-///
-/// **Do not dedupe by `refusal_kind` alone.** A single kind (e.g.
-/// `OutOfJurisdiction`) can carry distinct statements ("wrong host" vs
-/// "wrong sibling kind") that are operationally different. Machine
-/// identity is `refusal_kind`; diagnostic inventory is
-/// `refusal_kind + statement + surface`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ClaimRefusal {
-    pub refusal_kind: RefusalKind,
-    pub statement: String,
-}
-
-impl ClaimRefusal {
-    /// Convenience constructor — `ClaimRefusal::new(RefusalKind::X, "prose")`.
-    pub fn new(refusal_kind: RefusalKind, statement: impl Into<String>) -> Self {
-        Self {
-            refusal_kind,
-            statement: statement.into(),
-        }
-    }
-}
-
-/// Operator-facing rendering: just the prose statement. The
-/// `refusal_kind` is machine identity and not part of the human
-/// rendering — the existing prose already embeds the category in
-/// parentheticals (e.g. "... (consequence claim)"), so rendering
-/// `statement` alone preserves the pre-v2 operator-facing output.
-impl std::fmt::Display for ClaimRefusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.statement)
-    }
-}
-
-/// Closed vocabulary of refusal categories harvested from the prose
-/// parentheticals in the 8 constitutional `*_cannot_testify()`
-/// functions. Promotion rule: new variants land when ≥2 kinds emit a
-/// shared category. Until then, kind-specific refusals carry
-/// [`RefusalKind::KindSpecific`] with the prose preserved in
-/// `statement`.
-///
-/// Variants are documented at the gap doc rather than here; see
-/// `docs/working/gaps/WITNESS_CLAIM_SCOPE_GAP.md` "The `RefusalKind`
-/// vocabulary, harvested" for the per-variant harvest sites and
-/// load-bearing rationale.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum RefusalKind {
-    /// Refusal to license consequence / action / mutation. The
-    /// `feedback_knob_facing` boundary, typed.
-    ConsequenceClaim,
-    /// Refusal to forecast / make any future-tense claim.
-    FutureStateClaim,
-    /// Refusal to be sole witness to NQ-self standing.
-    /// (sixth-keeper rule per `NQ_ON_NQ_OPERATIONAL_CLAIMS_GAP`.)
-    SelfAuditRefusal,
-    /// Refusal — out of this kind's jurisdiction. Covers different
-    /// target, different host, or a sibling kind's territory; the
-    /// specific subreason lives in `statement`.
-    OutOfJurisdiction,
-    /// Refusal — semantic correctness or application-layer state,
-    /// above what substrate observation licenses.
-    AboveSubstrate,
-    /// Refusal — internals beneath this kind's substrate (engine
-    /// correctness, build-time provenance, runtime behavior).
-    BelowSubstrate,
-    /// Refusal — substrate doesn't testify to environmental context
-    /// (upstream substrate health, network connectivity).
-    EnvironmentalContext,
-    /// Refusal — absence has multiple causes the probe shape cannot
-    /// distinguish; absence is ambiguous, not negative testimony.
-    AbsenceSemantics,
-    /// Refusal — composition / re-emission discipline. Kept explicit
-    /// despite single emission today because the rule is structural
-    /// (per `NQ_NS_CHANNEL_SPLIT_NQ_SIDE`), not a frequency artifact.
-    CompositionReEmission,
-    /// Catchall — the refusal is real and shipping, but its category
-    /// is kind-specific and not yet shared across surfaces. Promote
-    /// out of this variant when ≥2 kinds emit a shared category.
-    KindSpecific,
 }
 
 // ---------------------------------------------------------------------------
