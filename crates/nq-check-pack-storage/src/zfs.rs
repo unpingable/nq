@@ -53,9 +53,7 @@ pub fn collect(config: &StoragePackConfig) -> CollectorPayload<ZfsWitnessReport>
         Err(CollectError::Timeout { after_ms }) => CollectorPayload {
             status: CollectorStatus::Timeout,
             collected_at: Some(now),
-            error_message: Some(format!(
-                "witness helper exceeded {after_ms}ms timeout"
-            )),
+            error_message: Some(format!("witness helper exceeded {after_ms}ms timeout")),
             data: None,
         },
         Err(e) => {
@@ -90,7 +88,10 @@ impl std::fmt::Display for CollectError {
                 write!(f, "schema mismatch: expected {expected}, got {actual}")
             }
             Self::ProfileMismatch { expected, actual } => {
-                write!(f, "profile_version mismatch: expected {expected}, got {actual}")
+                write!(
+                    f,
+                    "profile_version mismatch: expected {expected}, got {actual}"
+                )
             }
             Self::Timeout { after_ms } => {
                 write!(f, "witness helper timed out after {after_ms} ms")
@@ -167,8 +168,8 @@ fn run_witness(cfg: &ZfsWitnessConfig) -> Result<ZfsWitnessReport, CollectError>
         )));
     }
 
-    let report: ZfsWitnessReport = serde_json::from_str(&stdout_text)
-        .map_err(|e| CollectError::ParseJson(e.to_string()))?;
+    let report: ZfsWitnessReport =
+        serde_json::from_str(&stdout_text).map_err(|e| CollectError::ParseJson(e.to_string()))?;
 
     if report.schema != SUPPORTED_SCHEMA {
         return Err(CollectError::SchemaMismatch {
@@ -290,8 +291,13 @@ mod tests {
         let payload = collect(&cfg(script, 2000));
         assert_eq!(payload.status, CollectorStatus::Error);
         assert!(
-            payload.error_message.as_deref().unwrap_or("").contains("schema"),
-            "error: {:?}", payload.error_message
+            payload
+                .error_message
+                .as_deref()
+                .unwrap_or("")
+                .contains("schema"),
+            "error: {:?}",
+            payload.error_message
         );
     }
 
@@ -305,8 +311,13 @@ mod tests {
         let payload = collect(&cfg(script, 2000));
         assert_eq!(payload.status, CollectorStatus::Error);
         assert!(
-            payload.error_message.as_deref().unwrap_or("").contains("profile_version"),
-            "error: {:?}", payload.error_message
+            payload
+                .error_message
+                .as_deref()
+                .unwrap_or("")
+                .contains("profile_version"),
+            "error: {:?}",
+            payload.error_message
         );
     }
 

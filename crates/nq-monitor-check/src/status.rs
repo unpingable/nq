@@ -257,7 +257,10 @@ mod tests {
     #[test]
     fn requires_is_keyed_off_the_linux_bound_kinds() {
         assert_eq!(CollectorKind::Host.requires(), Some("/proc"));
-        assert_eq!(CollectorKind::Services.requires(), Some("systemd/systemctl"));
+        assert_eq!(
+            CollectorKind::Services.requires(),
+            Some("systemd/systemctl")
+        );
         assert_eq!(CollectorKind::Logs.requires(), Some("journalctl"));
         // Collectors not bound to the Linux substrate have no requirement here.
         assert_eq!(CollectorKind::SqliteHealth.requires(), None);

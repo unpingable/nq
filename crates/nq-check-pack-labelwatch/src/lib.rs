@@ -193,10 +193,7 @@ impl CheckPackDefinition for LabelwatchPack {
                     require_identity(format!("services[{index}].target"), &target.target)?;
                 }
                 ServiceAdapter::PidFile => {
-                    require_absolute_path(
-                        format!("services[{index}].target"),
-                        &target.target,
-                    )?;
+                    require_absolute_path(format!("services[{index}].target"), &target.target)?;
                 }
             }
         }

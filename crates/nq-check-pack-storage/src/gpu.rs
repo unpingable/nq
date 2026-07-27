@@ -65,10 +65,7 @@ pub fn collect(config: &StoragePackConfig) -> CollectorPayload<GpuWitnessReport>
     let started = Instant::now();
 
     // Device query — mandatory. Its failure decides the payload status.
-    let device_stdout = match run_query(
-        gpu_cfg,
-        &["--query-gpu", QUERY_GPU_FIELDS],
-    ) {
+    let device_stdout = match run_query(gpu_cfg, &["--query-gpu", QUERY_GPU_FIELDS]) {
         Ok(out) => out,
         Err(QueryError::BinaryAbsent(detail)) => {
             return CollectorPayload {
@@ -119,7 +116,11 @@ pub fn collect(config: &StoragePackConfig) -> CollectorPayload<GpuWitnessReport>
     }
     // nvidia-smi answered but nothing parsed: that is failed testimony
     // about present substrate, not an empty estate.
-    if !device_rows.is_empty() && !observations.iter().any(|o| matches!(o, GpuObservation::Device(_))) {
+    if !device_rows.is_empty()
+        && !observations
+            .iter()
+            .any(|o| matches!(o, GpuObservation::Device(_)))
+    {
         return CollectorPayload {
             status: CollectorStatus::Error,
             collected_at: Some(now),
@@ -291,7 +292,9 @@ fn run_query(cfg: &GpuWitnessConfig, args: &[&str]) -> Result<String, QueryError
         } else {
             trimmed
         };
-        return Err(QueryError::Exit(format!("exit={status}, detail={detail:?}")));
+        return Err(QueryError::Exit(format!(
+            "exit={status}, detail={detail:?}"
+        )));
     }
 
     Ok(stdout_text)
@@ -498,7 +501,10 @@ mod tests {
         assert_eq!(d.memory_used_mib, Some(12883));
         assert_eq!(d.power_draw_w, Some(127.62));
         assert_eq!(d.sm_clock_mhz, Some(2745));
-        assert_eq!(d.throttle_reasons_active.as_deref(), Some("0x0000000000000000"));
+        assert_eq!(
+            d.throttle_reasons_active.as_deref(),
+            Some("0x0000000000000000")
+        );
         // Consumer silicon: [N/A] ECC is absent, not zero, not an error.
         assert_eq!(d.ecc_errors_corrected_total, None);
 
@@ -506,7 +512,10 @@ mod tests {
             panic!("second observation should be a compute app");
         };
         assert_eq!(a.pid, 766688);
-        assert_eq!(a.process_name.as_deref(), Some("/snap/ollama/122/bin/ollama"));
+        assert_eq!(
+            a.process_name.as_deref(),
+            Some("/snap/ollama/122/bin/ollama")
+        );
         assert_eq!(a.used_memory_mib, Some(12874));
         assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
     }
