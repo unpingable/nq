@@ -15,6 +15,7 @@ mod nq_evaluator_probe;
 mod nq_sql_contract_state;
 mod operator_surface;
 mod probe;
+mod projection_import;
 mod pull;
 mod tls_cert_probe;
 mod tls_cert_series;

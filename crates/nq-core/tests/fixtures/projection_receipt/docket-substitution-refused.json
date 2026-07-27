@@ -1,0 +1,35 @@
+{
+  "schema": "nq.projection_receipt.v1",
+  "receipt_id": "sha256:b9db8e78d68f53e3f17b9274f36f0261ea2409f22ff20fac952349a93d5f9f36",
+  "source": {
+    "system": "docket",
+    "schema": "gwr:attempt-dossier:v2",
+    "snapshot_identity": "att_fixture@7",
+    "raw_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "core_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "mapping": {
+    "profile": "docket_dossier",
+    "profile_version": "sha256:8b228b83a820a1e641fa93ae98525b34a31215ab5921e138a801b325b93e3432"
+  },
+  "custody_basis": "external_projection",
+  "premises_as_coverage": [],
+  "projection_limits": [],
+  "replay": {
+    "outcome": "refused:snapshot_substitution",
+    "substitution": {
+      "existing_core_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "presented_core_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "imported_at": "2026-07-26T22:11:00Z",
+  "establishes": "this import occurred, through this profile, with these digests and limits",
+  "does_not_establish": [
+    "this receipt does not upgrade custody",
+    "this receipt does not establish source truth",
+    "this receipt does not establish admissibility",
+    "this receipt is not a claim or claim evaluation",
+    "this receipt does not establish or authorize reliance",
+    "this receipt authorizes nothing and mints no authority or continuity"
+  ]
+}

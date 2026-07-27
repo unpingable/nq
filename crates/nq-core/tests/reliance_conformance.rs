@@ -20,6 +20,11 @@ use nq_core::reliance::{
 use nq_core::wire::{ClaimRefusal, RefusalKind};
 
 const NOW: &str = "2026-07-26T00:00:00Z";
+const DOCKET_PRIMARY_SUBJECT: &str = "gwr:ref-continuity:v0:repo-0123456789abcdef0123456789abcdef\
+     #refs/gwr/target@2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b";
+const OTHER_DOCKET_PRIMARY_SUBJECT: &str =
+    "gwr:ref-continuity:v0:repo-0123456789abcdef0123456789abcdef\
+     #refs/gwr/target@3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c";
 
 fn fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/reliance")
@@ -297,26 +302,21 @@ fn scenarios() -> Vec<Scenario> {
         Scenario {
             name: "cannot_testify_is_not_authorization",
             note: "inability is never success",
-            request: request(
-                "operator-review",
-                "review",
-                "docket_attempt_settled",
-                &{
-                    let mut r = Receipt::new("docket_attempt_settled", "attempt/1", NOW);
-                    r.status = Status::Verified;
-                    r.witnesses = vec![witness("native_observation")];
-                    r.cannot_testify = vec![ClaimRefusal::new(
-                        RefusalKind::ConsequenceClaim,
-                        "cannot testify to docket_attempt_settled as a consequence",
-                    )];
-                    r.seal(EvaluatorBinding {
-                        evaluator: "claim_registry".into(),
-                        version: 1,
-                    })
-                    .expect("seal");
-                    r
-                },
-            ),
+            request: request("operator-review", "review", "docket_attempt_settled", &{
+                let mut r = Receipt::new("docket_attempt_settled", "attempt/1", NOW);
+                r.status = Status::Verified;
+                r.witnesses = vec![witness("native_observation")];
+                r.cannot_testify = vec![ClaimRefusal::new(
+                    RefusalKind::ConsequenceClaim,
+                    "cannot testify to docket_attempt_settled as a consequence",
+                )];
+                r.seal(EvaluatorBinding {
+                    evaluator: "claim_registry".into(),
+                    version: 1,
+                })
+                .expect("seal");
+                r
+            }),
             receipt: {
                 let mut r = Receipt::new("docket_attempt_settled", "attempt/1", NOW);
                 r.status = Status::Verified;
@@ -343,9 +343,19 @@ fn scenarios() -> Vec<Scenario> {
                 "operator-review",
                 "review",
                 "safe_to_merge",
-                &sealed("safe_to_merge", Status::Verified, vec![], "native_observation"),
+                &sealed(
+                    "safe_to_merge",
+                    Status::Verified,
+                    vec![],
+                    "native_observation",
+                ),
             ),
-            receipt: sealed("safe_to_merge", Status::Verified, vec![], "native_observation"),
+            receipt: sealed(
+                "safe_to_merge",
+                Status::Verified,
+                vec![],
+                "native_observation",
+            ),
             evidence: EvidenceContext::default(),
             expected: RelianceOutcome::ClaimNotAuthorizedForConsumer,
         },
@@ -461,11 +471,9 @@ fn every_vector_declares_exactly_one_authorizing_outcome_shape() {
 // exercises: the `nightshift-readonly-continuity` profile requires a current
 // `continuity_rely_eligible` evaluation for the primary receipt's subject.
 //
-// Note on subjects: the supporting receipts here are sealed for the primary's
-// subject (`attempt/1`) because the law binds support to the relied-upon
-// subject. A *live* Docket-primary positive additionally needs the
-// Docket→Continuity subject-identity contract (designed, not yet implemented);
-// these vectors pin decision law, not that mapping.
+// The original vectors remain sealed for `attempt/1` so their bytes do not
+// change. The additional Docket-primary vector uses the complete ratified
+// Docket→Continuity logical subject and pins the same exact-subject fence.
 // ---------------------------------------------------------------------------
 
 struct SupportingScenario {
@@ -495,6 +503,46 @@ fn continuity_support(status: Status) -> Receipt {
     r
 }
 
+fn docket_primary_receipt() -> Receipt {
+    let mut receipt = Receipt::new("docket_attempt_settled", DOCKET_PRIMARY_SUBJECT, NOW);
+    receipt.status = Status::Verified;
+    receipt.supported_status =
+        "the imported Docket projection records normal committed state; NQ did not \
+         independently establish Docket settlement"
+            .to_string();
+    receipt.witnesses = vec![WitnessRef {
+        witness_type: "docket_attempt_dossier".to_string(),
+        digest: Some("sha256:dd".to_string()),
+        observed_at: Some(NOW.to_string()),
+        custody_basis: Some("external_projection".to_string()),
+    }];
+    receipt
+        .seal(EvaluatorBinding {
+            evaluator: "claim_registry".into(),
+            version: 2,
+        })
+        .expect("seal");
+    receipt
+}
+
+fn docket_primary_continuity_support(subject: &str) -> Receipt {
+    let mut receipt = Receipt::new("continuity_rely_eligible", subject, NOW);
+    receipt.status = Status::Verified;
+    receipt.witnesses = vec![WitnessRef {
+        witness_type: "continuity_rely_record".to_string(),
+        digest: Some("sha256:ee".to_string()),
+        observed_at: Some(NOW.to_string()),
+        custody_basis: Some("external_projection".to_string()),
+    }];
+    receipt
+        .seal(EvaluatorBinding {
+            evaluator: "claim_registry".into(),
+            version: 2,
+        })
+        .expect("seal");
+    receipt
+}
+
 fn supporting_request(receipt: &Receipt, supporting: &[Receipt], rid: &str) -> RelianceRequest {
     let mut r = request(
         "nightshift-readonly-continuity",
@@ -519,6 +567,8 @@ fn supporting_scenarios() -> Vec<SupportingScenario> {
     );
     let sup_ok = continuity_support(Status::Verified);
     let sup_lost = continuity_support(Status::NotVerified);
+    let docket_primary = docket_primary_receipt();
+    let docket_primary_support = docket_primary_continuity_support(DOCKET_PRIMARY_SUBJECT);
 
     vec![
         SupportingScenario {
@@ -527,7 +577,11 @@ fn supporting_scenarios() -> Vec<SupportingScenario> {
                    verified continuity_rely_eligible evaluation is bound for the \
                    relied-upon subject; the supporting identity is disclosed on \
                    the receipt",
-            request: supporting_request(&settled, std::slice::from_ref(&sup_ok), "req-cg-authorized"),
+            request: supporting_request(
+                &settled,
+                std::slice::from_ref(&sup_ok),
+                "req-cg-authorized",
+            ),
             receipt: settled.clone(),
             supporting: vec![sup_ok.clone()],
             evidence: EvidenceContext::default(),
@@ -568,7 +622,65 @@ fn supporting_scenarios() -> Vec<SupportingScenario> {
             },
             expected: RelianceOutcome::StaleEvidence,
         },
+        SupportingScenario {
+            name: "docket_primary_continuity_gated_authorized",
+            note: "a Docket-owned repository identity, exact ref, and exact result commit \
+                   form the primary subject; the continuity-gated profile authorizes \
+                   only because the projected Docket-state receipt and current \
+                   continuity support bind that identical logical subject",
+            request: supporting_request(
+                &docket_primary,
+                std::slice::from_ref(&docket_primary_support),
+                "req-docket-primary-continuity",
+            ),
+            receipt: docket_primary,
+            supporting: vec![docket_primary_support],
+            evidence: EvidenceContext::default(),
+            expected: RelianceOutcome::AuthorizedReliance,
+        },
     ]
+}
+
+#[test]
+fn docket_primary_missing_or_subject_mismatched_support_is_coverage_insufficient() {
+    let primary = docket_primary_receipt();
+
+    let missing_request = supporting_request(&primary, &[], "req-docket-primary-missing");
+    let missing = decide(
+        &missing_request,
+        &primary,
+        &[],
+        &EvidenceContext::default(),
+        &catalog(),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(missing.decision, RelianceOutcome::CoverageInsufficient);
+    assert!(missing
+        .refusal_reasons
+        .iter()
+        .any(|reason| reason.contains("absence of supporting testimony")));
+
+    let mismatched_support = docket_primary_continuity_support(OTHER_DOCKET_PRIMARY_SUBJECT);
+    let mismatch_request = supporting_request(
+        &primary,
+        std::slice::from_ref(&mismatched_support),
+        "req-docket-primary-mismatch",
+    );
+    let mismatch = decide(
+        &mismatch_request,
+        &primary,
+        &[mismatched_support],
+        &EvidenceContext::default(),
+        &catalog(),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(mismatch.decision, RelianceOutcome::CoverageInsufficient);
+    assert!(mismatch
+        .refusal_reasons
+        .iter()
+        .any(|reason| reason.contains("none is bound")));
 }
 
 #[test]
@@ -622,7 +734,10 @@ fn supporting_conformance_vectors_match_the_shipped_decision_behaviour() {
             s.name
         );
         for (bound, sup) in decided.supporting_receipts.iter().zip(&s.supporting) {
-            assert_eq!(Some(bound.content_hash.as_str()), sup.content_hash.as_deref());
+            assert_eq!(
+                Some(bound.content_hash.as_str()),
+                sup.content_hash.as_deref()
+            );
             assert_eq!(bound.claim, sup.claim);
             assert_eq!(bound.subject, sup.subject);
         }

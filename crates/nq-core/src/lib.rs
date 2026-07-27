@@ -5,6 +5,7 @@ pub mod humanize;
 pub mod inquiry;
 pub mod intent;
 pub mod preflight;
+pub mod projection_receipt;
 pub mod receipt;
 pub mod receipt_check;
 pub mod receipt_replay;
@@ -59,6 +60,13 @@ pub use preflight::{
     disk_state_cannot_testify, sqlite_wal_state_cannot_testify, ClaimKind, PreflightCoverage,
     PreflightExclusion, PreflightResult, PreflightSupport, PreflightTarget, Verdict,
     PREFLIGHT_CONTRACT_VERSION, PREFLIGHT_DISK_STATE_SCHEMA, PREFLIGHT_SQLITE_WAL_STATE_SCHEMA,
+};
+pub use projection_receipt::{
+    ProjectionContradictionStatus, ProjectionMappingProfile, ProjectionReceipt,
+    ProjectionReceiptMapping, ProjectionReceiptPacket, ProjectionReceiptReplay,
+    ProjectionReceiptSource, ProjectionReceiptSubstitution, ProjectionReceiptValidationError,
+    ProjectionSourceSystem, PROJECTION_RECEIPT_DOES_NOT_ESTABLISH,
+    PROJECTION_RECEIPT_ESTABLISHES, PROJECTION_RECEIPT_SCHEMA,
 };
 pub use receipt::{NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef, RECEIPT_SCHEMA};
 pub use render::{render_human, render_json, render_jsonl, render_markdown};

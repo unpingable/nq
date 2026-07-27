@@ -1,6 +1,6 @@
 //! `docket.attempt-dossier.v1` — import a Docket canonical attempt dossier
-//! (`gwr:attempt-dossier:v1`, the output of `docket show --json`) as a
-//! projection-marked `nq.witness.v1` packet.
+//! (`gwr:attempt-dossier:v1`, `v2`, or `v3`, the output of
+//! `docket show --json`) as a projection-marked `nq.witness.v1` packet.
 //!
 //! Office boundary, stated mechanically in what this module produces:
 //!
@@ -37,11 +37,20 @@
 //! the first detects duplicates, the second detects substitution of
 //! immutable content under the same (attempt, version).
 
+use crate::projection_import::{
+    persist_projection_receipt, ProjectionReceiptStoreError, ReceiptedImport,
+};
 use nq_core::witness::{
     WitnessPacket, WitnessPosition, CUSTODY_BASIS_EXTERNAL_PROJECTION,
     PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY,
 };
-use nq_core::WITNESS_SCHEMA;
+use nq_core::{
+    ProjectionContradictionStatus, ProjectionMappingProfile, ProjectionReceipt,
+    ProjectionReceiptMapping, ProjectionReceiptPacket, ProjectionReceiptReplay,
+    ProjectionReceiptSource, ProjectionReceiptSubstitution, ProjectionSourceSystem,
+    PROJECTION_RECEIPT_DOES_NOT_ESTABLISH, PROJECTION_RECEIPT_ESTABLISHES,
+    PROJECTION_RECEIPT_SCHEMA, WITNESS_SCHEMA,
+};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -55,8 +64,20 @@ pub const SUPPORTED_DOSSIER_FORMAT: &str = "gwr:attempt-dossier:v1";
 /// The v2 source schema, which additionally carries `authorization`.
 pub const SUPPORTED_DOSSIER_FORMAT_V2: &str = "gwr:attempt-dossier:v2";
 
+/// The v3 source schema. Docket replaces the ambiguous repository path field
+/// with its opaque repository ID, an explicitly labelled operational locator,
+/// and the complete logical ref-continuity subject.
+pub const SUPPORTED_DOSSIER_FORMAT_V3: &str = "gwr:attempt-dossier:v3";
+
 /// The `witness_type` this profile emits.
 pub const WITNESS_TYPE: &str = "docket_attempt_dossier";
+
+/// Content identity of the installed Docket-dossier mapping source carried by
+/// projection receipts. This binds the receiver's actual decoder/mapping
+/// implementation without pretending it is a claim-policy version.
+pub fn projection_profile_version() -> String {
+    sha256_hex(include_bytes!("docket_dossier.rs"))
+}
 
 /// Fixed coverage limits carried on every packet this profile emits.
 /// These are the mechanical statement of the office boundary; tests pin
@@ -165,7 +186,18 @@ struct UpstreamResidual {
 struct Identity {
     work_request: String,
     goal: String,
-    repository: String,
+    /// v1/v2 operational path. It remains unchanged on legacy projections.
+    #[serde(default)]
+    repository: Option<String>,
+    /// v3 Docket-owned logical repository identity.
+    #[serde(default)]
+    repository_id: Option<String>,
+    /// v3 operational alias. This is never used as logical identity.
+    #[serde(default)]
+    repository_locator: Option<RepositoryLocator>,
+    /// v3 primary logical subject. Null before a result commitment exists.
+    #[serde(default)]
+    ref_continuity_subject: Option<String>,
     target_ref: String,
     basis: String,
     effect_class: String,
@@ -180,6 +212,13 @@ struct Identity {
     observation_plan: ObservationPlan,
     request_created_at_ms: u64,
     admitted_at_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepositoryLocator {
+    kind: String,
+    value: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -398,8 +437,9 @@ pub enum ImportRefusal {
     /// also the recursive-custody fence: an `nq.witness.v1` packet (or any
     /// other NQ artifact) presented as a dossier refuses here.
     UnsupportedSchema { found: String },
-    /// The document declares the supported schema but is not a well-formed
-    /// v1 dossier (parse failure, unknown fields, wrong types).
+    /// The document declares a supported schema but is not a well-formed
+    /// dossier of that version (parse failure, unknown fields, wrong types,
+    /// or a v3 repository/subject component mismatch).
     Malformed { detail: String },
     /// A premise-qualified verdict is present but its premise is missing —
     /// the verdict cannot be imported unqualified.
@@ -425,7 +465,9 @@ impl std::fmt::Display for ImportRefusal {
             Self::UnsupportedSchema { found } => {
                 write!(
                     f,
-                    "unsupported_schema: expected {SUPPORTED_DOSSIER_FORMAT:?}, found {found:?}"
+                    "unsupported_schema: expected one of {SUPPORTED_DOSSIER_FORMAT:?}, \
+                     {SUPPORTED_DOSSIER_FORMAT_V2:?}, or {SUPPORTED_DOSSIER_FORMAT_V3:?}, \
+                     found {found:?}"
                 )
             }
             Self::Malformed { detail } => write!(f, "malformed_dossier: {detail}"),
@@ -469,6 +511,190 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     format!("sha256:{}", hex::encode(h.finalize()))
+}
+
+fn is_lower_hex(value: &str, lengths: &[usize]) -> bool {
+    lengths.contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_target_ref(name: &str) -> bool {
+    if !name.starts_with("refs/")
+        || name.ends_with('/')
+        || name.ends_with('.')
+        || name.contains("//")
+        || name.contains("..")
+        || name.contains("@{")
+        || name
+            .chars()
+            .any(|character| character.is_ascii_control() || " ~^:?*[\\".contains(character))
+    {
+        return false;
+    }
+    name.split('/')
+        .all(|component| !component.starts_with('.') && !component.ends_with(".lock"))
+}
+
+fn malformed(detail: impl Into<String>) -> ImportRefusal {
+    ImportRefusal::Malformed {
+        detail: detail.into(),
+    }
+}
+
+/// Enforce the source-owned repository/subject boundary before mapping.
+///
+/// NQ compares Docket's supplied v3 subject with the independently supplied
+/// components in the same closed dossier. It does not infer repository
+/// identity from the locator and does not manufacture a subject when Docket
+/// has not supplied one.
+fn validate_identity_contract(
+    dossier: &Dossier,
+    value: &serde_json::Value,
+) -> Result<(), ImportRefusal> {
+    let identity_value = value
+        .get("identity")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| malformed("identity must be an object"))?;
+
+    match dossier.dossier_format.as_str() {
+        SUPPORTED_DOSSIER_FORMAT | SUPPORTED_DOSSIER_FORMAT_V2 => {
+            let repository = dossier
+                .identity
+                .repository
+                .as_deref()
+                .ok_or_else(|| malformed("legacy identity.repository is required"))?;
+            if repository.trim().is_empty() {
+                return Err(malformed("legacy identity.repository must not be empty"));
+            }
+            for v3_only in [
+                "repository_id",
+                "repository_locator",
+                "ref_continuity_subject",
+            ] {
+                if identity_value.contains_key(v3_only) {
+                    return Err(malformed(format!(
+                        "legacy dossier must not carry v3-only identity field {v3_only:?}"
+                    )));
+                }
+            }
+        }
+        SUPPORTED_DOSSIER_FORMAT_V3 => {
+            if identity_value.contains_key("repository") {
+                return Err(malformed(
+                    "v3 identity must label the operational path repository_locator, \
+                     never repository",
+                ));
+            }
+            for required in [
+                "repository_id",
+                "repository_locator",
+                "ref_continuity_subject",
+            ] {
+                if !identity_value.contains_key(required) {
+                    return Err(malformed(format!(
+                        "v3 identity field {required:?} is required"
+                    )));
+                }
+            }
+
+            let repository_id = dossier
+                .identity
+                .repository_id
+                .as_deref()
+                .ok_or_else(|| malformed("v3 identity.repository_id must be a string"))?;
+            let repository_hex = repository_id.strip_prefix("repo-").ok_or_else(|| {
+                malformed(
+                    "repository_id must be an opaque repo- identifier; paths, remotes, \
+                         and Git object hashes are not repository identities",
+                )
+            })?;
+            if !is_lower_hex(repository_hex, &[32]) {
+                return Err(malformed(
+                    "repository_id must be repo- followed by exactly 32 lowercase \
+                     hexadecimal characters; paths, remotes, and Git object hashes are \
+                     not repository identities",
+                ));
+            }
+
+            let locator = dossier
+                .identity
+                .repository_locator
+                .as_ref()
+                .ok_or_else(|| malformed("v3 identity.repository_locator must be an object"))?;
+            if locator.kind != "path" {
+                return Err(malformed(
+                    "v3 identity.repository_locator.kind must be \"path\"",
+                ));
+            }
+            if locator.value.trim().is_empty() {
+                return Err(malformed(
+                    "v3 identity.repository_locator.value must not be empty",
+                ));
+            }
+            if !valid_target_ref(&dossier.identity.target_ref) {
+                return Err(malformed(
+                    "v3 identity.target_ref must be a conservative complete Git ref under \
+                     \"refs/\" (no whitespace/control, //, .., @{, forbidden Git \
+                     characters, dot-prefixed components, or .lock components)",
+                ));
+            }
+
+            match (
+                dossier.execution.commitment.as_ref(),
+                dossier.identity.ref_continuity_subject.as_deref(),
+            ) {
+                (Some(commitment), Some(subject)) => {
+                    if commitment.target_ref != dossier.identity.target_ref {
+                        return Err(malformed(format!(
+                            "v3 commitment target_ref {:?} does not exactly match identity \
+                             target_ref {:?}",
+                            commitment.target_ref, dossier.identity.target_ref
+                        )));
+                    }
+                    if !is_lower_hex(&commitment.result_commit, &[40, 64]) {
+                        return Err(malformed(
+                            "v3 commitment.result_commit must be exactly 40 or 64 lowercase \
+                             hexadecimal characters",
+                        ));
+                    }
+                    let expected = format!(
+                        "gwr:ref-continuity:v0:{repository_id}#{}@{}",
+                        dossier.identity.target_ref, commitment.result_commit
+                    );
+                    if subject != expected {
+                        return Err(malformed(format!(
+                            "v3 ref_continuity_subject component mismatch: supplied \
+                             {subject:?}, expected exact Docket components {expected:?}"
+                        )));
+                    }
+                }
+                (Some(_), None) => {
+                    return Err(malformed(
+                        "v3 result commitment requires Docket's supplied \
+                         ref_continuity_subject",
+                    ))
+                }
+                (None, Some(_)) => {
+                    return Err(malformed(
+                        "v3 ref_continuity_subject cannot be present before a result \
+                         commitment exists",
+                    ))
+                }
+                (None, None) => {
+                    if dossier.state == "committed" {
+                        return Err(malformed(
+                            "v3 committed state requires a result commitment and supplied \
+                             ref_continuity_subject",
+                        ));
+                    }
+                }
+            }
+        }
+        _ => unreachable!("schema probe rejects unsupported formats"),
+    }
+    Ok(())
 }
 
 fn ms_to_rfc3339(ms: u64) -> String {
@@ -713,7 +939,7 @@ fn build_packet(
         }));
     }
 
-    observations.push(json!({
+    let mut attempt_core = json!({
         "type": "docket_attempt_core",
         "docket_attempt": d.attempt,
         "docket_version": d.version,
@@ -721,7 +947,6 @@ fn build_packet(
         "docket_settlement": d.settlement,
         "goal": d.identity.goal,
         "work_request": d.identity.work_request,
-        "repository": d.identity.repository,
         "target_ref": d.identity.target_ref,
         "basis": d.identity.basis,
         "effect_class": d.identity.effect_class,
@@ -736,7 +961,34 @@ fn build_packet(
         "admitted_at_ms": d.identity.admitted_at_ms,
         "request_created_at_ms": d.identity.request_created_at_ms,
         "timestamp_provenance": "docket clock readings as recorded in the dossier",
-    }));
+    });
+    let attempt_core_object = attempt_core
+        .as_object_mut()
+        .expect("docket attempt core is constructed as an object");
+    if d.dossier_format == SUPPORTED_DOSSIER_FORMAT_V3 {
+        attempt_core_object.insert("repository_id".to_string(), json!(d.identity.repository_id));
+        attempt_core_object.insert(
+            "repository_locator".to_string(),
+            json!(d.identity.repository_locator.as_ref().map(|locator| json!({
+                "kind": locator.kind,
+                "value": locator.value,
+            }))),
+        );
+        attempt_core_object.insert(
+            "ref_continuity_subject".to_string(),
+            json!(d.identity.ref_continuity_subject),
+        );
+        attempt_core_object.insert(
+            "repository_identity_meaning".to_string(),
+            json!(
+                "repository_id and ref_continuity_subject are supplied by Docket; \
+                 repository_locator is an operational alias and not identity"
+            ),
+        );
+    } else {
+        attempt_core_object.insert("repository".to_string(), json!(d.identity.repository));
+    }
+    observations.push(attempt_core);
     let grant_json = |g: &Grant| {
         json!({
             "grant": g.grant,
@@ -898,10 +1150,19 @@ fn build_packet(
         .max()
         .unwrap_or(d.identity.admitted_at_ms);
 
+    let subject = if d.dossier_format == SUPPORTED_DOSSIER_FORMAT_V3 {
+        d.identity
+            .ref_continuity_subject
+            .clone()
+            .unwrap_or_else(|| format!("docket:attempt:{}", d.attempt))
+    } else {
+        format!("docket:attempt:{}", d.attempt)
+    };
+
     let packet = WitnessPacket {
         schema: WITNESS_SCHEMA.into(),
         witness_type: WITNESS_TYPE.into(),
-        subject: format!("docket:attempt:{}", d.attempt),
+        subject,
         access_path: source_path.to_string(),
         observed_at: ms_to_rfc3339(observed_at_ms),
         generated_at: generated_at.to_string(),
@@ -988,10 +1249,9 @@ fn read_store(attempt_dir: &Path) -> Result<Vec<StoredSnapshot>, ImportRefusal> 
     Ok(out)
 }
 
-/// Import exact dossier bytes into the packet store. Pure over its inputs
-/// except for the store directory; `generated_at` is supplied by the caller
-/// so tests are deterministic.
-pub fn import_dossier(
+/// Packet-producing half of the Docket import. The public entry points below
+/// always add the receiver-owned projection receipt.
+fn import_dossier_packet(
     bytes: &[u8],
     source_path: &str,
     store: &Path,
@@ -1016,7 +1276,10 @@ pub fn import_dossier(
                 .unwrap_or("(absent)")
         })
         .to_string();
-    if found != SUPPORTED_DOSSIER_FORMAT && found != SUPPORTED_DOSSIER_FORMAT_V2 {
+    if found != SUPPORTED_DOSSIER_FORMAT
+        && found != SUPPORTED_DOSSIER_FORMAT_V2
+        && found != SUPPORTED_DOSSIER_FORMAT_V3
+    {
         return Err(ImportRefusal::UnsupportedSchema { found });
     }
 
@@ -1024,6 +1287,7 @@ pub fn import_dossier(
         serde_json::from_value(value.clone()).map_err(|e| ImportRefusal::Malformed {
             detail: e.to_string(),
         })?;
+    validate_identity_contract(&dossier, &value)?;
     let core_digest = core_consistency_digest(&value)?;
 
     let attempt_dir = store.join(&dossier.attempt);
@@ -1084,4 +1348,235 @@ pub fn import_dossier(
         raw_source_digest: raw_digest,
         core_consistency_digest: core_digest,
     })
+}
+
+fn projection_refusal_outcome(
+    refusal: &ImportRefusal,
+) -> (&'static str, Option<ProjectionReceiptSubstitution>) {
+    match refusal {
+        ImportRefusal::UnsupportedSchema { .. } => ("refused:unsupported_schema", None),
+        ImportRefusal::Malformed { .. } => ("refused:malformed", None),
+        ImportRefusal::MissingPremise { .. } => ("refused:missing_premise", None),
+        ImportRefusal::UnenforceablePremise { .. } => ("refused:unenforceable_premise", None),
+        ImportRefusal::SnapshotSubstitution {
+            existing_core_digest,
+            new_core_digest,
+            ..
+        } => (
+            "refused:snapshot_substitution",
+            Some(ProjectionReceiptSubstitution {
+                existing_core_digest: existing_core_digest.clone(),
+                presented_core_digest: new_core_digest.clone(),
+            }),
+        ),
+        ImportRefusal::Store { .. } => ("refused:store", None),
+    }
+}
+
+fn projection_error(detail: impl Into<String>) -> ProjectionReceiptStoreError {
+    ProjectionReceiptStoreError {
+        detail: detail.into(),
+    }
+}
+
+fn projection_receipt(
+    bytes: &[u8],
+    outcome: &Result<ImportOutcome, ImportRefusal>,
+    imported_at: &str,
+) -> Result<ProjectionReceipt, ProjectionReceiptStoreError> {
+    let raw_digest = sha256_hex(bytes);
+    let value = serde_json::from_slice::<serde_json::Value>(bytes).ok();
+    let source_schema = value.as_ref().and_then(|value| {
+        value
+            .get("dossier_format")
+            .and_then(|v| v.as_str())
+            .or_else(|| value.get("schema").and_then(|v| v.as_str()))
+            .map(str::to_string)
+    });
+    let snapshot_identity = value.as_ref().and_then(|value| {
+        Some(format!(
+            "{}@{}",
+            value.get("attempt")?.as_str()?,
+            value.get("version")?.as_u64()?
+        ))
+    });
+    let core_digest = value.as_ref().and_then(|value| {
+        let supported = matches!(
+            source_schema.as_deref(),
+            Some(
+                SUPPORTED_DOSSIER_FORMAT
+                    | SUPPORTED_DOSSIER_FORMAT_V2
+                    | SUPPORTED_DOSSIER_FORMAT_V3
+            )
+        );
+        supported
+            .then(|| core_consistency_digest(value).ok())
+            .flatten()
+    });
+
+    let packet = match outcome {
+        Ok(ImportOutcome::Imported { packet_path, .. })
+        | Ok(ImportOutcome::Duplicate { packet_path, .. }) => {
+            let bytes = std::fs::read(packet_path).map_err(|e| {
+                projection_error(format!(
+                    "reading emitted packet {} for receipt: {e}",
+                    packet_path.display()
+                ))
+            })?;
+            let packet: WitnessPacket = serde_json::from_slice(&bytes).map_err(|e| {
+                projection_error(format!(
+                    "parsing emitted packet {} for receipt: {e}",
+                    packet_path.display()
+                ))
+            })?;
+            packet.validate().map_err(|e| {
+                projection_error(format!(
+                    "validating emitted packet {} for receipt: {e}",
+                    packet_path.display()
+                ))
+            })?;
+            Some(packet)
+        }
+        Err(_) => None,
+    };
+
+    let packet_digest = packet
+        .as_ref()
+        .map(|packet| packet.digest())
+        .transpose()
+        .map_err(|e| projection_error(format!("digesting emitted packet for receipt: {e}")))?;
+    if let (
+        Ok(ImportOutcome::Imported {
+            packet_digest: emitted,
+            ..
+        }),
+        Some(recomputed),
+    ) = (outcome, packet_digest.as_ref())
+    {
+        if emitted != recomputed {
+            return Err(projection_error(format!(
+                "emitted packet digest mismatch: outcome {emitted}, recomputed {recomputed}"
+            )));
+        }
+    }
+
+    let replay = match outcome {
+        Ok(ImportOutcome::Imported { .. }) => ProjectionReceiptReplay {
+            outcome: "imported".to_string(),
+            substitution: None,
+        },
+        Ok(ImportOutcome::Duplicate { .. }) => ProjectionReceiptReplay {
+            outcome: "duplicate".to_string(),
+            substitution: None,
+        },
+        Err(refusal) => {
+            let (outcome, substitution) = projection_refusal_outcome(refusal);
+            ProjectionReceiptReplay {
+                outcome: outcome.to_string(),
+                substitution,
+            }
+        }
+    };
+    let contradiction_status = packet.as_ref().and_then(|packet| {
+        packet
+            .coverage_limits
+            .iter()
+            .any(|limit| limit.contains("retained evidence disagrees"))
+            .then_some(ProjectionContradictionStatus::Retained)
+    });
+    let packet_binding = match (packet.as_ref(), packet_digest.as_ref()) {
+        (Some(packet), Some(digest)) => Some(ProjectionReceiptPacket {
+            digest: digest.clone(),
+            witness_type: packet.witness_type.clone(),
+            subject: packet.subject.clone(),
+        }),
+        (None, None) => None,
+        _ => {
+            return Err(projection_error(
+                "emitted packet and computed digest availability diverged",
+            ))
+        }
+    };
+    let record_ref = packet
+        .as_ref()
+        .and_then(|packet| packet.source_finding_ref.clone());
+    let premises_as_coverage = packet
+        .as_ref()
+        .map(|packet| packet.coverage_limits.clone())
+        .unwrap_or_default();
+    let projection_limits = packet
+        .as_ref()
+        .map(|packet| packet.projection_limits.clone())
+        .unwrap_or_default();
+
+    let mut receipt = ProjectionReceipt {
+        schema: PROJECTION_RECEIPT_SCHEMA.to_string(),
+        receipt_id: String::new(),
+        source: ProjectionReceiptSource {
+            system: ProjectionSourceSystem::Docket,
+            schema: source_schema,
+            snapshot_identity,
+            raw_digest,
+            core_digest,
+            record_ref,
+        },
+        mapping: ProjectionReceiptMapping {
+            profile: ProjectionMappingProfile::DocketDossier,
+            profile_version: projection_profile_version(),
+        },
+        custody_basis: CUSTODY_BASIS_EXTERNAL_PROJECTION.to_string(),
+        packet: packet_binding,
+        premises_as_coverage,
+        projection_limits,
+        replay,
+        contradiction_status,
+        imported_at: imported_at.to_string(),
+        establishes: PROJECTION_RECEIPT_ESTABLISHES.to_string(),
+        does_not_establish: PROJECTION_RECEIPT_DOES_NOT_ESTABLISH
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+    };
+    receipt
+        .seal()
+        .map_err(|e| projection_error(format!("sealing projection receipt: {e}")))?;
+    Ok(receipt)
+}
+
+/// Import a Docket dossier and persist NQ's receiver-owned projection
+/// receipt for imported, duplicate, and typed-refusal outcomes alike.
+///
+pub fn import_dossier_with_receipt(
+    bytes: &[u8],
+    source_path: &str,
+    store: &Path,
+    generated_at: &str,
+) -> Result<ReceiptedImport<ImportOutcome, ImportRefusal>, ProjectionReceiptStoreError> {
+    let outcome = import_dossier_packet(bytes, source_path, store, generated_at);
+    let receipt = projection_receipt(bytes, &outcome, generated_at)?;
+    let (receipt, receipt_path) = persist_projection_receipt(receipt, store)?;
+    Ok(ReceiptedImport {
+        outcome,
+        receipt,
+        receipt_path,
+    })
+}
+
+/// Import exact Docket dossier bytes into the provided store and always issue
+/// the receiver-owned projection receipt. Existing callers keep the original
+/// packet/refusal return shape; callers that need the receipt path and ID use
+/// [`import_dossier_with_receipt`].
+#[allow(dead_code)] // main.rs mirrors the library module; the CLI uses the richer wrapper.
+pub fn import_dossier(
+    bytes: &[u8],
+    source_path: &str,
+    store: &Path,
+    generated_at: &str,
+) -> Result<ImportOutcome, ImportRefusal> {
+    match import_dossier_with_receipt(bytes, source_path, store, generated_at) {
+        Ok(imported) => imported.outcome,
+        Err(error) => Err(ImportRefusal::Store {
+            detail: error.to_string(),
+        }),
+    }
 }

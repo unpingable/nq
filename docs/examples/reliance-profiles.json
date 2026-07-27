@@ -58,7 +58,8 @@
         "human_escalation"
       ],
       "accepted_custody_bases": [
-        "native_observation"
+        "native_observation",
+        "external_projection"
       ],
       "max_evidence_age_s": 900,
       "premise_policy": "require_all_enforceable",

@@ -15,8 +15,7 @@
 //! slice when there are more leaves than fit on one screen.
 
 use crate::receipt::{
-    EvaluatorBinding, NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef,
-    RECEIPT_SCHEMA,
+    EvaluatorBinding, NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef, RECEIPT_SCHEMA,
 };
 use crate::witness::WitnessPacket;
 use std::collections::BTreeMap;
@@ -26,7 +25,7 @@ use std::collections::BTreeMap;
 /// semantically observable change to the evaluation rules (new condition
 /// kinds, changed admission criteria, etc.). Wire-shape changes get the
 /// `RECEIPT_SCHEMA` bump instead.
-pub const EVALUATOR_VERSION: u32 = 1;
+pub const EVALUATOR_VERSION: u32 = 2;
 
 #[derive(Debug, Clone)]
 pub enum ClaimEntry {
@@ -148,6 +147,18 @@ impl ClaimRegistry {
                         authoring tier"
                 .into(),
         }));
+        r.register(ClaimEntry::Leaf(LeafClaim {
+            name: "docket_attempt_settled".into(),
+            witness_type: "docket_attempt_dossier".into(),
+            observation_type: "docket_attempt_core".into(),
+            condition: LeafCondition::StringFieldEquals {
+                path: "docket_state".into(),
+                expected: "committed".into(),
+            },
+            describes: "the imported Docket projection records normal committed state for this \
+                        attempt; NQ did not independently establish Docket settlement"
+                .into(),
+        }));
         r.register(ClaimEntry::Composite(CompositeClaim {
             name: "ready_for_review".into(),
             requires: vec![
@@ -160,10 +171,9 @@ impl ClaimRegistry {
         }));
         r.register(ClaimEntry::NonMintable(NonMintableClaim {
             name: "safe_to_merge".into(),
-            reason:
-                "requires semantic safety, maintainer authority, and consequence ownership \
+            reason: "requires semantic safety, maintainer authority, and consequence ownership \
                  outside NQ witness scope"
-                    .into(),
+                .into(),
             suggested_weaker_claims: vec!["ready_for_review".into()],
         }));
         r
@@ -233,10 +243,7 @@ pub fn evaluate(
                 reason: "unknown_claim".into(),
                 detail: Some(format!(
                     "claim {claim_name:?} is not registered; registered claims: {}",
-                    registry
-                        .names()
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    registry.names().collect::<Vec<_>>().join(", ")
                 )),
             }],
             suggested_weaker_claims: vec![],
@@ -319,8 +326,10 @@ fn resolve_leaf(
                 leaf.observation_type, leaf.witness_type
             )),
         }];
-        receipt.supported_status =
-            format!("No {} witness observation present for this subject.", leaf.witness_type);
+        receipt.supported_status = format!(
+            "No {} witness observation present for this subject.",
+            leaf.witness_type
+        );
         return receipt;
     }
 
@@ -338,8 +347,10 @@ fn resolve_leaf(
             reason: "condition_failed".into(),
             detail: Some(leaf.condition.describe_failure()),
         }];
-        receipt.supported_status =
-            format!("{} observation present but condition not met.", leaf.witness_type);
+        receipt.supported_status = format!(
+            "{} observation present but condition not met.",
+            leaf.witness_type
+        );
     }
     receipt
 }
@@ -395,10 +406,7 @@ fn resolve_composite(
     } else if verified.is_empty() && needs_more {
         receipt.status = Status::NeedsMoreEvidence;
         receipt.status_reasons = vec![StatusReason::MissingRequiredClaim];
-        receipt.supported_status = format!(
-            "Required testimony for {:?} is missing.",
-            comp.name
-        );
+        receipt.supported_status = format!("Required testimony for {:?} is missing.", comp.name);
     } else {
         receipt.status = Status::PartiallyVerified;
         let mut reasons = vec![StatusReason::PartialComposite];
@@ -448,7 +456,9 @@ fn resolve_non_mintable(
         }
     }
     if !receipt.suggested_weaker_claims.is_empty() {
-        receipt.status_reasons.push(StatusReason::SuggestedWeakerClaimAvailable);
+        receipt
+            .status_reasons
+            .push(StatusReason::SuggestedWeakerClaimAvailable);
     }
     receipt.supported_status = supported_status;
     receipt
@@ -491,14 +501,14 @@ impl LeafCondition {
                 .and_then(|v| v.as_i64())
                 .map(|n| n == 0)
                 .unwrap_or(false),
-            LeafCondition::StringFieldEquals { path, expected } => {
-                resolve_path(obs, path).and_then(|v| v.as_str()).map(|s| s == expected.as_str())
-                    .unwrap_or(false)
-            }
-            LeafCondition::NumberFieldEquals { path, expected } => {
-                resolve_path(obs, path).and_then(|v| v.as_i64()).map(|n| n == *expected)
-                    .unwrap_or(false)
-            }
+            LeafCondition::StringFieldEquals { path, expected } => resolve_path(obs, path)
+                .and_then(|v| v.as_str())
+                .map(|s| s == expected.as_str())
+                .unwrap_or(false),
+            LeafCondition::NumberFieldEquals { path, expected } => resolve_path(obs, path)
+                .and_then(|v| v.as_i64())
+                .map(|n| n == *expected)
+                .unwrap_or(false),
             LeafCondition::BoolFieldTrue { path } => resolve_path(obs, path)
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
@@ -534,7 +544,11 @@ mod tests {
     use super::*;
     use crate::witness::WITNESS_SCHEMA;
 
-    fn pkt(witness_type: &str, subject: &str, observations: Vec<serde_json::Value>) -> WitnessPacket {
+    fn pkt(
+        witness_type: &str,
+        subject: &str,
+        observations: Vec<serde_json::Value>,
+    ) -> WitnessPacket {
         WitnessPacket {
             schema: WITNESS_SCHEMA.into(),
             witness_type: witness_type.into(),
@@ -555,7 +569,13 @@ mod tests {
     #[test]
     fn unknown_claim_yields_invalid_evidence() {
         let reg = ClaimRegistry::track_b_starter();
-        let r = evaluate(&reg, "totally_made_up", "repo:.", &[], "2026-05-15T14:00:00Z");
+        let r = evaluate(
+            &reg,
+            "totally_made_up",
+            "repo:.",
+            &[],
+            "2026-05-15T14:00:00Z",
+        );
         assert_eq!(r.status, Status::InvalidEvidence);
         assert!(r.not_verified[0].reason == "unknown_claim");
     }
@@ -569,7 +589,13 @@ mod tests {
             vec![serde_json::json!({"type": "pytest_run", "exit_code": 0})],
         );
         bad.schema = "nq.witness.v0".into();
-        let r = evaluate(&reg, "tests_passed", "repo:.", &[bad], "2026-05-15T14:00:00Z");
+        let r = evaluate(
+            &reg,
+            "tests_passed",
+            "repo:.",
+            &[bad],
+            "2026-05-15T14:00:00Z",
+        );
         assert_eq!(r.status, Status::InvalidEvidence);
         assert!(r.status_reasons.contains(&StatusReason::InvalidWitness));
     }
@@ -607,6 +633,59 @@ mod tests {
     }
 
     #[test]
+    fn docket_attempt_settled_verifies_only_projected_normal_committed_state() {
+        let reg = ClaimRegistry::track_b_starter();
+        let subject =
+            "gwr:ref-continuity:v0:repo-0123456789abcdef0123456789abcdef#refs/heads/main@\
+             0123456789abcdef0123456789abcdef01234567";
+        let w = pkt(
+            "docket_attempt_dossier",
+            subject,
+            vec![serde_json::json!({
+                "type": "docket_attempt_core",
+                "docket_state": "committed",
+            })],
+        );
+        let r = evaluate(
+            &reg,
+            "docket_attempt_settled",
+            subject,
+            &[w],
+            "2026-05-15T14:00:00Z",
+        );
+        assert_eq!(r.status, Status::Verified);
+        assert!(r.supported_status.contains("Docket projection"));
+        assert!(r.supported_status.contains("did not independently"));
+    }
+
+    #[test]
+    fn docket_attempt_settled_does_not_verify_noncommitted_projection() {
+        let reg = ClaimRegistry::track_b_starter();
+        let subject =
+            "gwr:ref-continuity:v0:repo-0123456789abcdef0123456789abcdef#refs/heads/main@\
+             0123456789abcdef0123456789abcdef01234567";
+        let w = pkt(
+            "docket_attempt_dossier",
+            subject,
+            vec![serde_json::json!({
+                "type": "docket_attempt_core",
+                "docket_state": "indeterminate",
+            })],
+        );
+        let r = evaluate(
+            &reg,
+            "docket_attempt_settled",
+            subject,
+            &[w],
+            "2026-05-15T14:00:00Z",
+        );
+        assert_eq!(r.status, Status::NotVerified);
+        assert!(r
+            .status_reasons
+            .contains(&StatusReason::ClaimConditionFailed));
+    }
+
+    #[test]
     fn subject_mismatch_filters_witness_out() {
         let reg = ClaimRegistry::track_b_starter();
         let w = pkt(
@@ -629,7 +708,9 @@ mod tests {
         let w_git = pkt(
             "git_status",
             "repo:.",
-            vec![serde_json::json!({"type": "git_status_porcelain", "porcelain": " M src/foo.rs\n"})],
+            vec![
+                serde_json::json!({"type": "git_status_porcelain", "porcelain": " M src/foo.rs\n"}),
+            ],
         );
         let r = evaluate(
             &reg,
@@ -701,7 +782,10 @@ mod tests {
             "2026-05-15T14:00:00Z",
         );
         assert_eq!(r.status, Status::PartiallyVerified);
-        assert!(r.not_verified.iter().any(|n| n.claim == "diff_scope_matches_claim"));
+        assert!(r
+            .not_verified
+            .iter()
+            .any(|n| n.claim == "diff_scope_matches_claim"));
     }
 
     #[test]
@@ -749,7 +833,9 @@ mod tests {
             "2026-05-15T14:00:00Z",
         );
         assert_eq!(r.status, Status::NotVerified);
-        assert!(r.status_reasons.contains(&StatusReason::ClaimConditionFailed));
+        assert!(r
+            .status_reasons
+            .contains(&StatusReason::ClaimConditionFailed));
     }
 
     #[test]
@@ -774,8 +860,12 @@ mod tests {
         );
         assert_eq!(r.status, Status::NotVerified);
         assert!(r.status_reasons.contains(&StatusReason::NonMintable));
-        assert!(r.status_reasons.contains(&StatusReason::SuggestedWeakerClaimAvailable));
-        assert!(r.suggested_weaker_claims.contains(&"ready_for_review".to_string()));
+        assert!(r
+            .status_reasons
+            .contains(&StatusReason::SuggestedWeakerClaimAvailable));
+        assert!(r
+            .suggested_weaker_claims
+            .contains(&"ready_for_review".to_string()));
         assert!(r.verified.contains(&"repo_clean".to_string()));
         assert!(r.verified.contains(&"tests_passed".to_string()));
     }
@@ -832,7 +922,10 @@ mod tests {
         let ev = r.evaluator.as_ref().expect("Track B receipt has evaluator");
         assert_eq!(ev.evaluator, "claim_registry");
         assert_eq!(ev.version, EVALUATOR_VERSION);
-        let h = r.content_hash.as_ref().expect("Track B receipt has content_hash");
+        let h = r
+            .content_hash
+            .as_ref()
+            .expect("Track B receipt has content_hash");
         assert!(h.starts_with("sha256:"));
         assert_eq!(h.len(), "sha256:".len() + 64);
     }
@@ -851,11 +944,15 @@ mod tests {
             "repo:.",
             vec![serde_json::json!({"type": "pytest_run", "exit_code": 0})],
         );
-        native.custody_basis = Some(
-            crate::witness::CUSTODY_BASIS_NATIVE.to_string(),
-        );
+        native.custody_basis = Some(crate::witness::CUSTODY_BASIS_NATIVE.to_string());
 
-        let r = evaluate(&reg, "tests_passed", "repo:.", &[native], "2026-05-15T14:00:00Z");
+        let r = evaluate(
+            &reg,
+            "tests_passed",
+            "repo:.",
+            &[native],
+            "2026-05-15T14:00:00Z",
+        );
         assert_eq!(r.witnesses.len(), 1);
         assert_eq!(
             r.witnesses[0].custody_basis.as_deref(),
@@ -917,8 +1014,11 @@ mod tests {
         );
 
         assert_eq!(r.witnesses.len(), 3);
-        let got_digests: Vec<&str> =
-            r.witnesses.iter().filter_map(|w| w.digest.as_deref()).collect();
+        let got_digests: Vec<&str> = r
+            .witnesses
+            .iter()
+            .filter_map(|w| w.digest.as_deref())
+            .collect();
         for expected in &expected_digests {
             assert!(
                 got_digests.contains(&expected.as_str()),

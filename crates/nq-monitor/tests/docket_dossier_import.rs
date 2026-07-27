@@ -28,7 +28,45 @@ fn store() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
 
+fn assert_refusal_wrote_receipt_but_no_packet(store: &Path) {
+    let mut entries: Vec<String> = std::fs::read_dir(store)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    entries.sort();
+    assert_eq!(entries, [".projection-receipts"]);
+    assert!(std::fs::read_dir(store.join(".projection-receipts"))
+        .unwrap()
+        .next()
+        .is_some());
+}
+
 const AT: &str = "2026-07-25T12:00:00Z";
+const V3_REPOSITORY_ID: &str = "repo-0123456789abcdef0123456789abcdef";
+const V3_TARGET_REF: &str = "refs/gwr/target";
+const V3_RESULT_COMMIT: &str = "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b";
+const V3_SUBJECT: &str = "gwr:ref-continuity:v0:repo-0123456789abcdef0123456789abcdef\
+                         #refs/gwr/target@2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b";
+
+fn v3_fixture() -> Vec<u8> {
+    let mut value: serde_json::Value = serde_json::from_slice(&fixture("v2_local.json")).unwrap();
+    value["dossier_format"] = serde_json::json!("gwr:attempt-dossier:v3");
+    let identity = value["identity"].as_object_mut().unwrap();
+    identity.remove("repository");
+    identity.insert(
+        "repository_id".to_string(),
+        serde_json::json!(V3_REPOSITORY_ID),
+    );
+    identity.insert(
+        "repository_locator".to_string(),
+        serde_json::json!({"kind":"path","value":"/governed/repo"}),
+    );
+    identity.insert(
+        "ref_continuity_subject".to_string(),
+        serde_json::json!(V3_SUBJECT),
+    );
+    serde_json::to_vec(&value).unwrap()
+}
 
 fn import_ok(bytes: &[u8], store: &Path) -> (PathBuf, String, String) {
     match import_dossier(bytes, "fixture.json", store, AT).unwrap() {
@@ -215,10 +253,7 @@ fn malformed_identity_refuses_with_no_partial_packet() {
         Err(ImportRefusal::Malformed { .. }) => {}
         other => panic!("expected malformed, got {other:?}"),
     }
-    assert!(
-        std::fs::read_dir(s.path()).unwrap().next().is_none(),
-        "refusal wrote nothing"
-    );
+    assert_refusal_wrote_receipt_but_no_packet(s.path());
 }
 
 // 9 — a premise-qualified verdict whose premise is missing refuses; the
@@ -232,7 +267,7 @@ fn missing_premise_refuses_rather_than_dropping() {
         }
         other => panic!("expected missing premise, got {other:?}"),
     }
-    assert!(std::fs::read_dir(s.path()).unwrap().next().is_none());
+    assert_refusal_wrote_receipt_but_no_packet(s.path());
 }
 
 // 10 — a premise that cannot be enforced as coverage refuses; an unknown
@@ -333,8 +368,8 @@ fn altered_does_not_establish_refuses_as_substitution() {
     }
 }
 
-// 15 — settlement does not mint `safe_to_merge` (or anything else) through
-//      NQ's normal claim path.
+// 15 — settlement does not mint `safe_to_merge` (or any claim other than the
+//      deliberately narrow projected-state leaf) through NQ's normal path.
 #[test]
 fn settlement_cannot_mint_safe_to_merge() {
     let s = store();
@@ -348,8 +383,12 @@ fn settlement_cannot_mint_safe_to_merge() {
         !receipt.verified.iter().any(|c| c == "safe_to_merge"),
         "safe_to_merge must never verify from settlement testimony"
     );
-    // And no registered claim is minted from dossier testimony alone.
+    // The only registered leaf this source can satisfy is the narrow
+    // docket_attempt_settled projection predicate.
     for claim in registry.names() {
+        if claim == "docket_attempt_settled" {
+            continue;
+        }
         let r = evaluate(&registry, claim, &subject, &[packet.clone()], AT);
         assert_ne!(
             r.status,
@@ -491,7 +530,7 @@ fn v2_discharged_upstream_residual_refuses() {
         }
         other => panic!("expected refusal, got {other:?}"),
     }
-    assert!(std::fs::read_dir(s.path()).unwrap().next().is_none());
+    assert_refusal_wrote_receipt_but_no_packet(s.path());
 }
 
 // 22 — local and unrecorded authorization sources are visibly distinct, and
@@ -539,7 +578,8 @@ fn v2_unenforceable_authorization_metadata_refuses() {
 }
 
 // 24 — authorization alone mints no claim: settlement plus authorization still
-//      cannot verify safe_to_merge or anything else in the registry.
+//      cannot verify safe_to_merge or anything beyond the narrow Docket-state
+//      projection predicate.
 #[test]
 fn v2_authorization_plus_settlement_mints_no_claim() {
     let s = store();
@@ -548,6 +588,9 @@ fn v2_authorization_plus_settlement_mints_no_claim() {
     let subject = packet.subject.clone();
     let registry = ClaimRegistry::track_b_starter();
     for claim in registry.names() {
+        if claim == "docket_attempt_settled" {
+            continue;
+        }
         let r = evaluate(&registry, claim, &subject, &[packet.clone()], AT);
         assert_ne!(
             r.status,
@@ -557,4 +600,199 @@ fn v2_authorization_plus_settlement_mints_no_claim() {
     }
     let r = evaluate(&registry, "safe_to_merge", &subject, &[packet], AT);
     assert!(!r.verified.iter().any(|c| c == "safe_to_merge"));
+}
+
+// 25 — v3 carries Docket's supplied logical subject verbatim. The path is a
+//      labelled locator only, and the normal committed-state leaf can verify
+//      from the real imported projection without claiming independent
+//      settlement.
+#[test]
+fn v3_exact_subject_imports_and_verifies_narrow_projected_state() {
+    let s = store();
+    let (path, _, _) = import_ok(&v3_fixture(), s.path());
+    let packet = read_packet(&path);
+    assert_eq!(packet.subject, V3_SUBJECT);
+    assert!(!packet.subject.contains("/governed/repo"));
+
+    let core = packet
+        .observations
+        .iter()
+        .find(|observation| {
+            observation.get("type").and_then(|value| value.as_str()) == Some("docket_attempt_core")
+        })
+        .unwrap();
+    assert_eq!(
+        core.get("repository_id").and_then(|value| value.as_str()),
+        Some(V3_REPOSITORY_ID)
+    );
+    assert_eq!(
+        core.pointer("/repository_locator/kind")
+            .and_then(|value| value.as_str()),
+        Some("path")
+    );
+    assert_eq!(
+        core.pointer("/repository_locator/value")
+            .and_then(|value| value.as_str()),
+        Some("/governed/repo")
+    );
+    assert_eq!(
+        core.get("ref_continuity_subject")
+            .and_then(|value| value.as_str()),
+        Some(V3_SUBJECT)
+    );
+    assert_eq!(
+        core.get("target_ref").and_then(|value| value.as_str()),
+        Some(V3_TARGET_REF)
+    );
+    assert!(
+        core.get("repository").is_none(),
+        "v3 must not label the operational path as repository identity"
+    );
+
+    let receipt = evaluate(
+        &ClaimRegistry::track_b_starter(),
+        "docket_attempt_settled",
+        V3_SUBJECT,
+        &[packet],
+        AT,
+    );
+    assert_eq!(receipt.status, Status::Verified);
+    assert!(receipt.supported_status.contains("Docket projection"));
+    assert!(receipt.supported_status.contains("did not independently"));
+
+    let commit_64 = "a".repeat(64);
+    let subject_64 =
+        format!("gwr:ref-continuity:v0:{V3_REPOSITORY_ID}#{V3_TARGET_REF}@{commit_64}");
+    let mut source_64: serde_json::Value = serde_json::from_slice(&v3_fixture()).unwrap();
+    source_64["execution"]["commitment"]["result_commit"] = serde_json::json!(commit_64);
+    source_64["identity"]["ref_continuity_subject"] = serde_json::json!(subject_64);
+    let s = store();
+    let (path, _, _) = import_ok(&serde_json::to_vec(&source_64).unwrap(), s.path());
+    assert_eq!(read_packet(&path).subject, subject_64);
+}
+
+// 26 — noncommitted v3 testimony imports under an attempt-local subject when
+//      no primary subject exists, but cannot satisfy the committed-state leaf.
+#[test]
+fn v3_noncommitted_projection_does_not_verify_settled() {
+    let mut value: serde_json::Value = serde_json::from_slice(&v3_fixture()).unwrap();
+    value["state"] = serde_json::json!("dispatching");
+    value["execution"]["commitment"] = serde_json::Value::Null;
+    value["identity"]["ref_continuity_subject"] = serde_json::Value::Null;
+    let source = serde_json::to_vec(&value).unwrap();
+
+    let s = store();
+    let (path, _, _) = import_ok(&source, s.path());
+    let packet = read_packet(&path);
+    assert!(packet.subject.starts_with("docket:attempt:"));
+    let subject = packet.subject.clone();
+    let receipt = evaluate(
+        &ClaimRegistry::track_b_starter(),
+        "docket_attempt_settled",
+        &subject,
+        &[packet],
+        AT,
+    );
+    assert_eq!(receipt.status, Status::NotVerified);
+}
+
+// 27 — every logical component is independently fenced. A valid-looking
+//      substitution of repo, ref, or commit is malformed rather than accepted
+//      under Docket's unchanged supplied subject.
+#[test]
+fn v3_repo_ref_and_commit_component_mismatches_refuse() {
+    for component in ["repository_id", "target_ref", "result_commit"] {
+        let mut value: serde_json::Value = serde_json::from_slice(&v3_fixture()).unwrap();
+        match component {
+            "repository_id" => {
+                value["identity"]["repository_id"] =
+                    serde_json::json!("repo-ffffffffffffffffffffffffffffffff");
+            }
+            "target_ref" => {
+                value["identity"]["target_ref"] = serde_json::json!("refs/heads/other");
+            }
+            "result_commit" => {
+                value["execution"]["commitment"]["result_commit"] =
+                    serde_json::json!("3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c");
+            }
+            _ => unreachable!(),
+        }
+        let s = store();
+        match import_dossier(&serde_json::to_vec(&value).unwrap(), "x", s.path(), AT) {
+            Err(ImportRefusal::Malformed { detail }) => {
+                assert!(
+                    detail.contains("mismatch") || detail.contains("does not exactly match"),
+                    "{component}: {detail}"
+                );
+            }
+            other => panic!("{component}: expected malformed mismatch, got {other:?}"),
+        }
+    }
+}
+
+// 28 — neither a path nor a permissive/ambiguous ref spelling can cross the
+//      v3 identity boundary.
+#[test]
+fn v3_path_derived_identity_and_nonconservative_refs_refuse() {
+    let mut path_identity: serde_json::Value = serde_json::from_slice(&v3_fixture()).unwrap();
+    path_identity["identity"]["repository_id"] = serde_json::json!("/governed/repo");
+    let s = store();
+    match import_dossier(
+        &serde_json::to_vec(&path_identity).unwrap(),
+        "x",
+        s.path(),
+        AT,
+    ) {
+        Err(ImportRefusal::Malformed { detail }) => {
+            assert!(detail.contains("not repository identities"), "{detail}");
+        }
+        other => panic!("expected path-derived identity refusal, got {other:?}"),
+    }
+
+    for target_ref in [
+        "refs//heads/main",
+        "refs/heads/topic..other",
+        "refs/heads/open@{1}",
+        "refs/heads/.hidden",
+        "refs/heads/main.lock",
+        "refs/heads/bad name",
+    ] {
+        let mut value: serde_json::Value = serde_json::from_slice(&v3_fixture()).unwrap();
+        value["identity"]["target_ref"] = serde_json::json!(target_ref);
+        value["execution"]["commitment"]["target_ref"] = serde_json::json!(target_ref);
+        value["identity"]["ref_continuity_subject"] = serde_json::json!(format!(
+            "gwr:ref-continuity:v0:{V3_REPOSITORY_ID}#{target_ref}@{V3_RESULT_COMMIT}"
+        ));
+        let s = store();
+        assert!(
+            matches!(
+                import_dossier(&serde_json::to_vec(&value).unwrap(), "x", s.path(), AT),
+                Err(ImportRefusal::Malformed { .. })
+            ),
+            "nonconservative target ref {target_ref:?} was accepted"
+        );
+    }
+
+    for result_commit in [
+        "abc123".to_string(),
+        "A".repeat(40),
+        "g".repeat(40),
+        "a".repeat(39),
+        "a".repeat(65),
+    ] {
+        let mut value: serde_json::Value = serde_json::from_slice(&v3_fixture()).unwrap();
+        value["execution"]["commitment"]["result_commit"] =
+            serde_json::json!(result_commit.clone());
+        value["identity"]["ref_continuity_subject"] = serde_json::json!(format!(
+            "gwr:ref-continuity:v0:{V3_REPOSITORY_ID}#{V3_TARGET_REF}@{result_commit}"
+        ));
+        let s = store();
+        assert!(
+            matches!(
+                import_dossier(&serde_json::to_vec(&value).unwrap(), "x", s.path(), AT),
+                Err(ImportRefusal::Malformed { .. })
+            ),
+            "non-full-lowercase commit {result_commit:?} was accepted"
+        );
+    }
 }

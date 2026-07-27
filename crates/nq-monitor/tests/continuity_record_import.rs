@@ -28,6 +28,19 @@ fn import(value: &Value, store: &Path) -> Result<ImportOutcome, ImportRefusal> {
     import_record(&bytes, "test://record", store, NOW)
 }
 
+fn assert_refusal_wrote_receipt_but_no_packet(store: &Path) {
+    let mut entries: Vec<String> = std::fs::read_dir(store)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    entries.sort();
+    assert_eq!(entries, [".projection-receipts"]);
+    assert!(std::fs::read_dir(store.join(".projection-receipts"))
+        .unwrap()
+        .next()
+        .is_some());
+}
+
 fn read_packet(outcome: &ImportOutcome) -> Value {
     let ImportOutcome::Imported { packet_path, .. } = outcome else {
         panic!("expected Imported, got {outcome:?}");
@@ -169,7 +182,7 @@ fn empty_premise_source_refuses_rather_than_dropping() {
         Err(ImportRefusal::UnenforceablePremise { .. }) => {}
         other => panic!("expected UnenforceablePremise, got {other:?}"),
     }
-    assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+    assert_refusal_wrote_receipt_but_no_packet(dir.path());
 }
 
 // --- replay / substitution --------------------------------------------------
@@ -243,7 +256,7 @@ fn malformed_identity_refuses_with_no_partial_packet() {
         Err(ImportRefusal::Malformed { .. }) => {}
         other => panic!("expected Malformed, got {other:?}"),
     }
-    assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+    assert_refusal_wrote_receipt_but_no_packet(dir.path());
 }
 
 #[test]

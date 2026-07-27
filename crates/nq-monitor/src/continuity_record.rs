@@ -36,11 +36,19 @@
 //! new packet beside the old; a later evaluation time is new testimony and
 //! never mutates an older packet.
 
+use crate::projection_import::{
+    persist_projection_receipt, ProjectionReceiptStoreError, ReceiptedImport,
+};
 use nq_core::witness::{
     WitnessPacket, WitnessPosition, CUSTODY_BASIS_EXTERNAL_PROJECTION,
     PROJECTION_LIMIT_NATIVE_WITNESS_CUSTODY,
 };
-use nq_core::WITNESS_SCHEMA;
+use nq_core::{
+    ProjectionMappingProfile, ProjectionReceipt, ProjectionReceiptMapping, ProjectionReceiptPacket,
+    ProjectionReceiptReplay, ProjectionReceiptSource, ProjectionReceiptSubstitution,
+    ProjectionSourceSystem, PROJECTION_RECEIPT_DOES_NOT_ESTABLISH,
+    PROJECTION_RECEIPT_ESTABLISHES, PROJECTION_RECEIPT_SCHEMA, WITNESS_SCHEMA,
+};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -50,6 +58,13 @@ pub const SUPPORTED_RECORD_SCHEMA: &str = "continuity.rely_export.v0";
 
 /// The `witness_type` this profile emits.
 pub const WITNESS_TYPE: &str = "continuity_rely_record";
+
+/// Content identity of the installed Continuity-record mapping source carried
+/// by projection receipts. This binds the receiver's actual decoder/mapping
+/// implementation without pretending it is disposition law.
+pub fn projection_profile_version() -> String {
+    sha256_hex(include_bytes!("continuity_record.rs"))
+}
 
 /// The closed rely-code vocabulary of the supported source schema. An
 /// unknown code is a typed refusal — never a silent import.
@@ -559,10 +574,9 @@ fn read_store(memory_dir: &Path) -> Result<Vec<StoredSnapshot>, ImportRefusal> {
     Ok(out)
 }
 
-/// Import exact Continuity rely-export bytes into `store`, emitting one
-/// immutable projection-marked packet (or reporting the idempotent
-/// duplicate). See the module docs for the office boundary this enforces.
-pub fn import_record(
+/// Packet-producing half of the Continuity import. The public entry points
+/// below always add the receiver-owned projection receipt.
+fn import_record_packet(
     bytes: &[u8],
     source_path: &str,
     store: &Path,
@@ -662,4 +676,218 @@ pub fn import_record(
         raw_source_digest: raw_digest,
         core_consistency_digest: core_digest,
     })
+}
+
+fn projection_refusal_outcome(
+    refusal: &ImportRefusal,
+) -> (&'static str, Option<ProjectionReceiptSubstitution>) {
+    match refusal {
+        ImportRefusal::UnsupportedSchema { .. } => ("refused:unsupported_schema", None),
+        ImportRefusal::Malformed { .. } => ("refused:malformed", None),
+        ImportRefusal::UnknownRelyCode { .. } => ("refused:unknown_rely_code", None),
+        ImportRefusal::UnenforceablePremise { .. } => ("refused:unenforceable_premise", None),
+        ImportRefusal::SnapshotSubstitution {
+            existing_core_digest,
+            new_core_digest,
+            ..
+        } => (
+            "refused:snapshot_substitution",
+            Some(ProjectionReceiptSubstitution {
+                existing_core_digest: existing_core_digest.clone(),
+                presented_core_digest: new_core_digest.clone(),
+            }),
+        ),
+        ImportRefusal::Store { .. } => ("refused:store", None),
+    }
+}
+
+fn projection_error(detail: impl Into<String>) -> ProjectionReceiptStoreError {
+    ProjectionReceiptStoreError {
+        detail: detail.into(),
+    }
+}
+
+fn projection_receipt(
+    bytes: &[u8],
+    outcome: &Result<ImportOutcome, ImportRefusal>,
+    imported_at: &str,
+) -> Result<ProjectionReceipt, ProjectionReceiptStoreError> {
+    let raw_digest = sha256_hex(bytes);
+    let value = serde_json::from_slice::<serde_json::Value>(bytes).ok();
+    let source_schema = value
+        .as_ref()
+        .and_then(|value| value.get("schema"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let snapshot_identity = value.as_ref().and_then(|value| {
+        Some(format!(
+            "{}@{}",
+            value.pointer("/subject/memory_id")?.as_str()?,
+            value.get("evaluation_time")?.as_str()?
+        ))
+    });
+    let core_digest = value.as_ref().and_then(|value| {
+        (source_schema.as_deref() == Some(SUPPORTED_RECORD_SCHEMA))
+            .then(|| core_consistency_digest(value).ok())
+            .flatten()
+    });
+
+    let packet = match outcome {
+        Ok(ImportOutcome::Imported { packet_path, .. })
+        | Ok(ImportOutcome::Duplicate { packet_path, .. }) => {
+            let bytes = std::fs::read(packet_path).map_err(|e| {
+                projection_error(format!(
+                    "reading emitted packet {} for receipt: {e}",
+                    packet_path.display()
+                ))
+            })?;
+            let packet: WitnessPacket = serde_json::from_slice(&bytes).map_err(|e| {
+                projection_error(format!(
+                    "parsing emitted packet {} for receipt: {e}",
+                    packet_path.display()
+                ))
+            })?;
+            packet.validate().map_err(|e| {
+                projection_error(format!(
+                    "validating emitted packet {} for receipt: {e}",
+                    packet_path.display()
+                ))
+            })?;
+            Some(packet)
+        }
+        Err(_) => None,
+    };
+
+    let packet_digest = packet
+        .as_ref()
+        .map(|packet| packet.digest())
+        .transpose()
+        .map_err(|e| projection_error(format!("digesting emitted packet for receipt: {e}")))?;
+    if let (
+        Ok(ImportOutcome::Imported {
+            packet_digest: emitted,
+            ..
+        }),
+        Some(recomputed),
+    ) = (outcome, packet_digest.as_ref())
+    {
+        if emitted != recomputed {
+            return Err(projection_error(format!(
+                "emitted packet digest mismatch: outcome {emitted}, recomputed {recomputed}"
+            )));
+        }
+    }
+
+    let replay = match outcome {
+        Ok(ImportOutcome::Imported { .. }) => ProjectionReceiptReplay {
+            outcome: "imported".to_string(),
+            substitution: None,
+        },
+        Ok(ImportOutcome::Duplicate { .. }) => ProjectionReceiptReplay {
+            outcome: "duplicate".to_string(),
+            substitution: None,
+        },
+        Err(refusal) => {
+            let (outcome, substitution) = projection_refusal_outcome(refusal);
+            ProjectionReceiptReplay {
+                outcome: outcome.to_string(),
+                substitution,
+            }
+        }
+    };
+    let packet_binding = match (packet.as_ref(), packet_digest.as_ref()) {
+        (Some(packet), Some(digest)) => Some(ProjectionReceiptPacket {
+            digest: digest.clone(),
+            witness_type: packet.witness_type.clone(),
+            subject: packet.subject.clone(),
+        }),
+        (None, None) => None,
+        _ => {
+            return Err(projection_error(
+                "emitted packet and computed digest availability diverged",
+            ))
+        }
+    };
+    let record_ref = packet
+        .as_ref()
+        .and_then(|packet| packet.source_finding_ref.clone());
+    let premises_as_coverage = packet
+        .as_ref()
+        .map(|packet| packet.coverage_limits.clone())
+        .unwrap_or_default();
+    let projection_limits = packet
+        .as_ref()
+        .map(|packet| packet.projection_limits.clone())
+        .unwrap_or_default();
+
+    let mut receipt = ProjectionReceipt {
+        schema: PROJECTION_RECEIPT_SCHEMA.to_string(),
+        receipt_id: String::new(),
+        source: ProjectionReceiptSource {
+            system: ProjectionSourceSystem::Continuity,
+            schema: source_schema,
+            snapshot_identity,
+            raw_digest,
+            core_digest,
+            record_ref,
+        },
+        mapping: ProjectionReceiptMapping {
+            profile: ProjectionMappingProfile::ContinuityRecord,
+            profile_version: projection_profile_version(),
+        },
+        custody_basis: CUSTODY_BASIS_EXTERNAL_PROJECTION.to_string(),
+        packet: packet_binding,
+        premises_as_coverage,
+        projection_limits,
+        replay,
+        contradiction_status: None,
+        imported_at: imported_at.to_string(),
+        establishes: PROJECTION_RECEIPT_ESTABLISHES.to_string(),
+        does_not_establish: PROJECTION_RECEIPT_DOES_NOT_ESTABLISH
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+    };
+    receipt
+        .seal()
+        .map_err(|e| projection_error(format!("sealing projection receipt: {e}")))?;
+    Ok(receipt)
+}
+
+/// Import a Continuity record and persist NQ's receiver-owned projection
+/// receipt for imported, duplicate, and typed-refusal outcomes alike.
+///
+pub fn import_record_with_receipt(
+    bytes: &[u8],
+    source_path: &str,
+    store: &Path,
+    generated_at: &str,
+) -> Result<ReceiptedImport<ImportOutcome, ImportRefusal>, ProjectionReceiptStoreError> {
+    let outcome = import_record_packet(bytes, source_path, store, generated_at);
+    let receipt = projection_receipt(bytes, &outcome, generated_at)?;
+    let (receipt, receipt_path) = persist_projection_receipt(receipt, store)?;
+    Ok(ReceiptedImport {
+        outcome,
+        receipt,
+        receipt_path,
+    })
+}
+
+/// Import exact Continuity rely-export bytes into the provided store and
+/// always issue the receiver-owned projection receipt. Existing callers keep
+/// the original packet/refusal return shape; callers that need the receipt
+/// path and ID use [`import_record_with_receipt`].
+#[allow(dead_code)] // main.rs mirrors the library module; the CLI uses the richer wrapper.
+pub fn import_record(
+    bytes: &[u8],
+    source_path: &str,
+    store: &Path,
+    generated_at: &str,
+) -> Result<ImportOutcome, ImportRefusal> {
+    match import_record_with_receipt(bytes, source_path, store, generated_at) {
+        Ok(imported) => imported.outcome,
+        Err(error) => Err(ImportRefusal::Store {
+            detail: error.to_string(),
+        }),
+    }
 }

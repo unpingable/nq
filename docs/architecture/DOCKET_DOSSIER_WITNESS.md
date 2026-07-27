@@ -1,8 +1,10 @@
 # The `docket_attempt_dossier` witness profile
 
-Imports a **Docket canonical attempt dossier** — schema `gwr:attempt-dossier:v1` **or
-`gwr:attempt-dossier:v2`** (v2 adds the upstream-`authorization` block; both are closed
-schemas), the output of Docket's supported `show --json` surface — as a
+Imports a **Docket canonical attempt dossier** — schema `gwr:attempt-dossier:v1`,
+`gwr:attempt-dossier:v2`, or `gwr:attempt-dossier:v3` (v2 adds the
+upstream-`authorization` block; v3 adds Docket's explicit repository identity and
+ref-continuity subject; all are closed schemas), the output of Docket's supported
+`show --json` surface — as a
 projection-marked `nq.witness.v1` packet. Upstream authorization premises from a v2
 dossier become their own labeled coverage limits, kept separate from settlement
 premises, and the upstream residual-obligation status (`none recorded` vs
@@ -10,6 +12,18 @@ premises, and the upstream residual-obligation status (`none recorded` vs
 the implementation and its conformance fixtures have accepted v1+v2 since the
 three-office vertical, and the 2026-07-26 four-office pilot imported a live v2 dossier
 through this profile.)*
+
+In v3, `repository_id` is the opaque identity Docket owns.
+`repository_locator: {"kind":"path","value":"…"}` remains an operational alias only.
+NQ validates the exact supplied
+`gwr:ref-continuity:v0:<repository_id>#<target_ref>@<result_commit>` components and
+copies that supplied subject verbatim to the witness packet. NQ never derives a
+repository identity from the locator, a remote, or a Git object ID. A committed v3
+dossier with a missing or mismatched subject refuses as malformed.
+Before commitment, v3 carries `ref_continuity_subject: null`; that snapshot retains
+the attempt-local `docket:attempt:<id>` packet subject and cannot verify the
+committed-state leaf. This fallback names only the Docket record—it is not a
+repository identity and is never promoted into the ref-continuity subject.
 
 ```bash
 nq-monitor witness docket-dossier --dossier <dossier.json> --store <dir>
@@ -24,7 +38,8 @@ NQ authority, and NQ is not a Docket settlement engine.**
 ## What the profile imports
 
 One immutable packet per dossier snapshot, carrying as typed observations: the source
-identity (schema, attempt, version, digests), the attempt core (goal, repository,
+identity (schema, attempt, version, digests), the attempt core (goal, legacy repository
+path or v3 repository ID plus explicitly labelled locator, exact logical subject,
 target ref, basis, effect class, admitted scope, content digests), recorded authority
 bindings, settlement evidence (timeline, commitment or refusal or indeterminacy,
 recovery facts, resolution, qualification), Docket observation records, Docket reliance
@@ -37,7 +52,7 @@ obligations.
   operational testimony about what Docket's supported export said.
 - **Docket settlement is not NQ admissibility.** Settlement values appear only under
   `docket_`-prefixed observation fields; import produces no NQ status and touches no
-  claim.
+  claim registry.
 - **Occurrence evidence is not artifact meaning.**
 - **Import discharges nothing**: residual obligations carry `discharged: false`; a
   Docket reliance refusal is a source record, never the negation of the refused claim.
@@ -86,16 +101,17 @@ immutable core (identity, authority, timeline, execution, qualification).
 - Changed immutable core under an existing (attempt, version) → typed
   `snapshot_substitution` refusal.
 - Any other schema (including an `nq.witness.v1` packet presented as a dossier — the
-  recursive-import case) → typed `unsupported_schema` refusal. `gwr:attempt-dossier:v1`
-  is a closed format: unknown fields are refused as malformed.
+  recursive-import case) → typed `unsupported_schema` refusal. Every supported dossier
+  version is a closed format: unknown fields are refused as malformed.
 
 ## Claims
 
 Import never mints, admits, or submits claims. Dossier packets flow into the normal
-claim path (`nq-monitor verify`) like any other evidence; with the current registry no
-claim verifies from dossier testimony alone, and `safe_to_merge` remains structurally
-non-mintable — a weaker claim is suggested only when the presented evidence actually
-supports it.
+claim path (`nq-monitor verify`) like any other evidence. The narrow registered leaf
+`docket_attempt_settled` verifies only when the `docket_attempt_core` projection records
+`docket_state == "committed"`; its receipt says this is Docket's projected normal
+committed state, not settlement NQ independently established. No disposition law is
+added, and `safe_to_merge` remains structurally non-mintable.
 
 ## Conformance fixtures
 

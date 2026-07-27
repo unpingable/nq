@@ -227,6 +227,26 @@ Today the only declared scope shipped is `docs-only`. Additional scopes land as 
 
 ---
 
+### `docket_attempt_settled`
+
+**What it says when admitted:** the imported Docket projection records normal
+`committed` state for the exact packet subject.
+
+**Required witness:** `docket_attempt_dossier`, with a `docket_attempt_core`
+observation whose `docket_state` is exactly `committed`.
+
+For a v3 Docket dossier, the subject is the supplied
+`gwr:ref-continuity:v0:<repository_id>#<target_ref>@<result_commit>` value. NQ
+requires that subject to match the separately supplied Docket components and
+never derives repository identity from the path locator.
+
+**What it does not say:** NQ independently established Docket settlement,
+supporting continuity is current, the artifact is safe, or any action is
+authorized. The witness is an `external_projection`; reliance remains a
+separate, consumer-profile-scoped decision.
+
+---
+
 ### `ready_for_review` (composite)
 
 **What it says when admitted:** "repo is clean, tests passed, and the diff matched the declared scope."

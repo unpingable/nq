@@ -12,6 +12,7 @@ Start at `operator/` — install, run, read findings, interpret receipts.
 - [`operator/GLOSSARY.md`](operator/GLOSSARY.md) — authoritative finding and state vocabulary
 - [`operator/CLAIM_CATALOG.md`](operator/CLAIM_CATALOG.md) — public claims, required evidence, and refusals
 - [`operator/RECEIPTS.md`](operator/RECEIPTS.md) — `nq-monitor receipt check` and `receipt replay` with worked examples
+- [`operator/PROJECTION_RECEIPTS.md`](operator/PROJECTION_RECEIPTS.md) — receiver-owned records for Docket and Continuity projection imports
 - [`operator/REFUSAL_EXAMPLES.md`](operator/REFUSAL_EXAMPLES.md) — when NQ declines and why
 - [`operator/VERDICTS.md`](operator/VERDICTS.md) — the eight verdicts
 - [`operator/failure-domains.md`](operator/failure-domains.md) — the four domains and representative detector families

@@ -358,7 +358,8 @@ pub enum WitnessAction {
     /// against a declared scope. Emits a `diff_scope` witness packet.
     DiffScope(WitnessDiffScopeCmd),
     /// Import a Docket canonical attempt dossier (`gwr:attempt-dossier:v1`,
-    /// the output of `docket show --json`) into a packet store as a
+    /// `v2`, or repository-identity-aware `v3`, the output of
+    /// `docket show --json`) into a packet store as a
     /// projection-marked `docket_attempt_dossier` witness packet.
     /// Operational testimony, not sealed custody; settlement stays source
     /// testimony; premises become coverage limits; import mints no claim.
