@@ -130,6 +130,8 @@ Run it:
 
 ```bash
 sudo install -o root -g nq -m 0640 publisher.json /etc/nq/publisher.json
+sudo -u nq /usr/local/bin/nq-witness config validate \
+  --config /etc/nq/publisher.json
 sudo -u nq /usr/local/bin/nq-witness --config /etc/nq/publisher.json
 ```
 
@@ -156,6 +158,8 @@ With the witness running, start the aggregator in another terminal:
 
 ```bash
 sudo install -o root -g nq -m 0640 aggregator.json /etc/nq/aggregator.json
+sudo -u nq /usr/local/bin/nq-monitor config validate \
+  --config /etc/nq/aggregator.json
 sudo -u nq /usr/local/bin/nq-monitor serve --config /etc/nq/aggregator.json
 ```
 
@@ -637,6 +641,10 @@ For continuous checking, `nq-monitor sentinel --config sentinel.json` accepts a 
 ```bash
 nq-monitor sentinel --config sentinel.json
 ```
+
+Sentinel configuration is parsed strictly before the liveness artifact is
+read or an alert is sent. Unknown fields, a zero polling interval, an empty
+artifact path, and malformed webhook headers are refused with the field name.
 
 The sentinel does not fetch HTTP or SSH URLs. To place it outside the monitor host's failure boundary, mirror or mount the artifact onto the sentinel host and set `artifact_path` to that local copy. Running it beside `nq-serve` is still useful for loop-stall detection, but it shares host and filesystem failures.
 

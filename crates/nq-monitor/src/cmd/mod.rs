@@ -1,4 +1,5 @@
 pub mod check;
+pub mod config;
 pub mod drill;
 pub mod emit_escalation;
 pub mod findings;
@@ -24,6 +25,7 @@ use crate::cli::{Cli, Command};
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
+        Command::Config(cmd) => config::run(cmd),
         Command::Serve(cmd) => serve::run(cmd).await,
         Command::Query(cmd) => query::run(cmd),
         Command::Inquire(cmd) => inquire::run(cmd),

@@ -244,14 +244,19 @@ shrink the SQLite file.
 
 ## 6. Start and validate
 
-These validation commands use `jq`; backup and maintenance commands later use
-the distro's `sqlite3` client. They are operator tools, not NQ runtime
-dependencies. Check JSON syntax and the unit files before starting them:
+Validate configuration through the installed binaries before starting either
+unit. These commands parse the same strict configuration as startup but do
+not bind listeners, run checks, contact sources, open the database, or run
+migrations. Backup and maintenance commands later use the distro's `sqlite3`
+client; it is an operator tool, not an NQ runtime dependency.
 
 ```bash
 (
   set -eu
-  sudo jq empty /etc/nq/publisher.json /etc/nq/aggregator.json
+  sudo -u nq /usr/local/bin/nq-witness config validate \
+    --config /etc/nq/publisher.json
+  sudo -u nq /usr/local/bin/nq-monitor config validate \
+    --config /etc/nq/aggregator.json
   sudo systemd-analyze verify \
     /etc/systemd/system/nq-publish.service \
     /etc/systemd/system/nq-serve.service
@@ -347,7 +352,20 @@ Before an upgrade:
    for the command. The window annotates the restart's findings as `covered`
    instead of letting planned work read as anomaly; nothing is hidden.
 2. Read the release notes, download and verify both new binaries, and stage
-   them without replacing the installed pair.
+   them without replacing the installed pair. Validate the existing
+   configuration with the staged binaries before stopping a service:
+
+   ```bash
+   ./nq-witness-linux-$arch config validate --config /etc/nq/publisher.json
+   ./nq-monitor-linux-$arch config validate --config /etc/nq/aggregator.json
+   ```
+
+   Configuration parsing is strict. Remove legacy comment-as-data keys and
+   misspellings. Notification channels require an operator-facing
+   `notifications.external_url`; the reserved `service_health_urls[].health_url`
+   field is refused because the current collector does not perform HTTP health
+   checks; and `nq_binary_path`, when set, must be absolute. Validation makes
+   no network request and does not open or migrate the database.
 3. Save the installed binaries and `/etc/nq` configs with the release and date
    in their backup names.
 4. Stop `nq-serve` so the pre-migration restore point cannot miss a generation.

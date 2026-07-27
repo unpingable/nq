@@ -1,6 +1,7 @@
 use crate::cli::ServeCmd;
 use crate::http;
 use crate::pull;
+use anyhow::Context;
 use nq_core::config::NotificationChannel;
 use nq_core::Config;
 use nq_db::component_testimony::{
@@ -18,11 +19,29 @@ use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
-    let config_text = std::fs::read_to_string(&cmd.config)?;
-    let config: Config = serde_json::from_str(&config_text)?;
+    let config_text = std::fs::read_to_string(&cmd.config).with_context(|| {
+        format!(
+            "cannot read aggregator configuration `{}`; no state was changed",
+            cmd.config.display()
+        )
+    })?;
+    let config = Config::from_json_str(&config_text).with_context(|| {
+        format!(
+            "aggregator configuration `{}` was refused; no database was opened and no listener was started",
+            cmd.config.display()
+        )
+    })?;
+    let listener = tokio::net::TcpListener::bind(&config.bind_addr)
+        .await
+        .with_context(|| {
+            format!(
+                "cannot bind monitor listener `{}`; no database was opened and no observation task was started",
+                config.bind_addr
+            )
+        })?;
 
     if cmd.http_only {
-        return run_http_only(&config).await;
+        return run_http_only(&config, listener).await;
     }
 
     let db_path = std::path::PathBuf::from(&config.db_path);
@@ -358,7 +377,7 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
     // Start HTTP server (with write access for saved queries)
     let read_db = open_ro(&db_path)?;
     info!(bind = %bind_addr, "web UI starting");
-    http::serve_with_write(read_db, write_db, &bind_addr).await?;
+    http::serve_with_write_listener(read_db, write_db, listener).await?;
     Ok(())
 }
 
@@ -366,11 +385,11 @@ pub async fn run(cmd: ServeCmd) -> anyhow::Result<()> {
 /// read-only HTTP router. Performs no `open_rw`, no `migrate`, no pull /
 /// publish / detector / notification work, and writes no liveness file.
 /// Intended for safe live preflight smoke against a running monitor's DB.
-async fn run_http_only(config: &Config) -> anyhow::Result<()> {
+async fn run_http_only(config: &Config, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
     let db_path = std::path::PathBuf::from(&config.db_path);
     let read_db = open_ro(&db_path)?;
     info!(bind = %config.bind_addr, "web UI starting (http-only)");
-    http::serve_read_only(read_db, &config.bind_addr).await?;
+    http::serve_read_only_listener(read_db, listener).await?;
     Ok(())
 }
 

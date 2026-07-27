@@ -2,7 +2,11 @@ use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(name = "nq", about = "nq: local-first diagnostic monitor")]
+#[command(
+    name = "nq-monitor",
+    about = "NQ decision, monitor, and operator compatibility CLI",
+    version
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -10,6 +14,9 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Validate monitor configuration without opening a database, binding a
+    /// listener, contacting a source, or changing state.
+    Config(ConfigCmd),
     /// Run the aggregator + web UI
     Serve(ServeCmd),
     /// Run a read-only SQL query against the DB
@@ -101,6 +108,25 @@ pub enum Command {
     /// with explicit drill provenance. This observes a real staged condition;
     /// it does not inject a synthetic finding. See `docs/operator/GLOSSARY.md`.
     Drill(DrillCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct ConfigCmd {
+    #[command(subcommand)]
+    pub action: ConfigAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigAction {
+    /// Parse and validate an aggregator configuration with no side effects.
+    Validate(ConfigValidateCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct ConfigValidateCmd {
+    /// Path to the aggregator JSON configuration.
+    #[arg(long, short)]
+    pub config: PathBuf,
 }
 
 #[derive(Debug, Args)]

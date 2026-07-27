@@ -7,6 +7,7 @@
 //! See docs/working/gaps/SENTINEL_LIVENESS_GAP.md.
 
 use crate::cli::SentinelCmd;
+use anyhow::Context;
 use nq_core::config::NotificationChannel;
 use nq_db::{read_liveness, LivenessArtifact, LivenessReadError};
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,7 @@ use time::OffsetDateTime;
 use tracing::{error, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SentinelConfig {
     /// Path to the liveness artifact file.
     pub artifact_path: String,
@@ -42,6 +44,44 @@ fn default_max_age_secs() -> i64 { 180 }
 fn default_poll_interval_secs() -> u64 { 60 }
 fn default_grace_secs() -> u64 { 120 }
 fn default_stuck_polls() -> u64 { 5 }
+
+impl SentinelConfig {
+    fn from_json_str(input: &str) -> anyhow::Result<Self> {
+        let config: Self = serde_json::from_str(input)
+            .map_err(|error| anyhow::anyhow!("invalid sentinel configuration JSON: {error}"))?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> anyhow::Result<()> {
+        if self.artifact_path.trim().is_empty() {
+            anyhow::bail!(
+                "invalid sentinel configuration field `artifact_path`: must not be empty"
+            );
+        }
+        if self.max_age_seconds < 0 {
+            anyhow::bail!(
+                "invalid sentinel configuration field `max_age_seconds`: must be greater than or equal to zero"
+            );
+        }
+        if self.poll_interval_seconds == 0 {
+            anyhow::bail!(
+                "invalid sentinel configuration field `poll_interval_seconds`: must be greater than zero"
+            );
+        }
+        if self.stuck_after_polls == 0 {
+            anyhow::bail!(
+                "invalid sentinel configuration field `stuck_after_polls`: must be greater than zero"
+            );
+        }
+        for (index, channel) in self.channels.iter().enumerate() {
+            channel
+                .validate(&format!("channels[{index}]"))
+                .map_err(anyhow::Error::new)?;
+        }
+        Ok(())
+    }
+}
 
 /// Observed liveness state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,8 +144,18 @@ pub fn classify(
 }
 
 pub async fn run(cmd: SentinelCmd) -> anyhow::Result<()> {
-    let config_text = std::fs::read_to_string(&cmd.config)?;
-    let config: SentinelConfig = serde_json::from_str(&config_text)?;
+    let config_text = std::fs::read_to_string(&cmd.config).with_context(|| {
+        format!(
+            "cannot read sentinel configuration `{}`; no artifact was read and no alert was sent",
+            cmd.config.display()
+        )
+    })?;
+    let config = SentinelConfig::from_json_str(&config_text).with_context(|| {
+        format!(
+            "sentinel configuration `{}` was refused; no artifact was read and no alert was sent",
+            cmd.config.display()
+        )
+    })?;
 
     let artifact_path = PathBuf::from(&config.artifact_path);
     let poll_interval = Duration::from_secs(config.poll_interval_seconds);
@@ -320,5 +370,36 @@ mod tests {
         let now = OffsetDateTime::parse("2026-04-14T12:01:00Z", &Rfc3339).unwrap();
         let state = classify(now, 180, &read, None, 0, 5);
         assert_eq!(state, State::Healthy);
+    }
+
+    #[test]
+    fn sentinel_configuration_refuses_busy_loop_and_unknown_fields() {
+        let zero_poll = r#"{
+            "artifact_path": "/var/lib/nq/liveness.json",
+            "poll_interval_seconds": 0
+        }"#;
+        let error = SentinelConfig::from_json_str(zero_poll).unwrap_err();
+        assert!(error.to_string().contains("poll_interval_seconds"));
+
+        let misspelled = r#"{
+            "artifact_path": "/var/lib/nq/liveness.json",
+            "poll_interval_second": 60
+        }"#;
+        let error = SentinelConfig::from_json_str(misspelled).unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn sentinel_configuration_validates_notification_transport_values() {
+        let invalid_header = r#"{
+            "artifact_path": "/var/lib/nq/liveness.json",
+            "channels": [{
+                "type": "webhook",
+                "url": "https://alerts.example.invalid/nq",
+                "headers": {"Bad Header": "value"}
+            }]
+        }"#;
+        let error = SentinelConfig::from_json_str(invalid_header).unwrap_err();
+        assert!(error.to_string().contains("valid HTTP header name"));
     }
 }

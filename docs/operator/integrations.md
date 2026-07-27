@@ -245,6 +245,7 @@ lifecycle and configured severity floor.
 ```json
 {
   "notifications": {
+    "external_url": "https://nq.example.com",
     "channels": [
       { "type": "webhook", "url": "https://your-endpoint.com/nq-alerts" },
       { "type": "slack", "webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK" },
@@ -314,6 +315,10 @@ webhook channel to call that proxy:
   }
 }
 ```
+
+`external_url` is the operator-facing NQ dashboard base used for finding links
+inside notifications. It is distinct from the proxy endpoint in `url` and is
+required whenever any notification channel is enabled.
 
 The proxy must transform NQ's `nq/v2` rollup webhook payload into a PagerDuty
 Events API v2 event and supply the PagerDuty routing key. Pointing NQ directly at

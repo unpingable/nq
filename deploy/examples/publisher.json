@@ -1,6 +1,4 @@
 {
-  "_comment": "Safe baseline for nq-publish.service. Install as /etc/nq/publisher.json. The loopback bind is for a same-host monitor; use a private interface address plus a firewall rule for a remote monitor.",
-
   "bind_addr": "127.0.0.1:9847",
 
   "sqlite_paths": [],
@@ -9,12 +7,8 @@
     { "name": "nq-witness", "check_type": "systemd", "unit": "nq-publish.service" }
   ],
 
-  "_sqlite_wal_targets_comment": "Optional. Add real local database paths only after granting the nq service user traverse/read permission on their parent directories. Empty means the probe is inert.",
   "sqlite_wal_targets": [],
 
   "prometheus_targets": [],
-
-  "log_sources": [],
-
-  "_helper_comment": "zfs_witness and smart_witness are intentionally omitted. Add either block only after installing and testing its helper; a configured missing helper is reported as failed testimony."
+  "log_sources": []
 }

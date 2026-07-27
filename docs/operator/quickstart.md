@@ -110,6 +110,18 @@ Save this as `aggregator.json`:
 }
 ```
 
+Before starting either process, validate both files exactly as the binaries
+will parse them:
+
+```bash
+./nq-witness config validate --config publisher.json
+./nq-monitor config validate --config aggregator.json
+```
+
+Both commands say `no state changed`. Validation does not bind a port, run a
+check, open or create `nq.db`, or contact a source. Unknown fields,
+misspellings, invalid values, and ambiguous check configuration are refused.
+
 ## 3. Run it in two terminals
 
 In terminal 1, start the witness and leave it running:
