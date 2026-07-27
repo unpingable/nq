@@ -1,0 +1,23 @@
+{
+  "schema_version": "nq.suite.config.v1",
+  "runtime": {
+    "mode": "publisher_only",
+    "publisher": {
+      "bind_addr": "127.0.0.1:9847",
+      "source_base_url": "http://127.0.0.1:9847"
+    }
+  },
+  "packs": {
+    "schema_version": "nq.suite.pack_selection.v1",
+    "enabled": [
+      {
+        "pack_id": "nq.host",
+        "checks": [
+          "host.resources"
+        ],
+        "config": {}
+      }
+    ]
+  }
+}
+

@@ -1,0 +1,39 @@
+{
+  "schema_version": "nq.suite.config.v1",
+  "runtime": {
+    "mode": "full",
+    "publisher": {
+      "bind_addr": "127.0.0.1:9847",
+      "source_base_url": "http://127.0.0.1:9847"
+    },
+    "publisher_source": "local-host",
+    "aggregator": {
+      "interval_s": 5,
+      "db_path": "./nq.db",
+      "bind_addr": "127.0.0.1:9848",
+      "sources": [
+        {
+          "name": "local-host",
+          "base_url": "http://127.0.0.1:9847",
+          "timeout_ms": 10000
+        }
+      ],
+      "liveness": {
+        "path": "./nq-liveness.json",
+        "instance_id": "local-first-run"
+      }
+    }
+  },
+  "packs": {
+    "schema_version": "nq.suite.pack_selection.v1",
+    "enabled": [
+      {
+        "pack_id": "nq.host",
+        "checks": [
+          "host.resources"
+        ],
+        "config": {}
+      }
+    ]
+  }
+}

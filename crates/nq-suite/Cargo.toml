@@ -1,0 +1,32 @@
+[package]
+name = "nq-suite"
+edition.workspace = true
+version.workspace = true
+rust-version = "1.88"
+description = "Explicit, fail-closed composition planning for the NQ constellation"
+license = "Apache-2.0"
+repository = "https://github.com/unpingable/nq"
+readme = "README.md"
+
+[features]
+default = ["host", "aggregator"]
+host = ["dep:nq-check-pack-host"]
+storage = ["dep:nq-check-pack-storage"]
+labelwatch = ["dep:nq-check-pack-labelwatch"]
+aggregator = ["dep:nq-core"]
+full = ["host", "storage", "labelwatch", "aggregator"]
+
+[dependencies]
+nq-monitor-check = { path = "../nq-monitor-check", version = "0.1.0" }
+nq-check-pack-host = { path = "../nq-check-pack-host", version = "0.1.0", optional = true }
+nq-check-pack-storage = { path = "../nq-check-pack-storage", version = "0.1.0", optional = true }
+nq-check-pack-labelwatch = { path = "../nq-check-pack-labelwatch", version = "0.1.0", optional = true }
+nq-core = { path = "../nq-core", version = "0.1.0", optional = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

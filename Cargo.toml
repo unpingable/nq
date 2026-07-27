@@ -7,6 +7,7 @@ members = [
     "crates/nq-check-pack-host",
     "crates/nq-check-pack-labelwatch",
     "crates/nq-check-pack-storage",
+    "crates/nq-suite",
     "crates/nq-core",
     "crates/nq-db",
     "crates/nq-witness-api",

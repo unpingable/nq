@@ -1,0 +1,85 @@
+{
+  "schema_version": "nq.suite.config.v1",
+  "runtime": {
+    "mode": "full",
+    "publisher": {
+      "bind_addr": "127.0.0.1:9847",
+      "source_base_url": "http://127.0.0.1:9847"
+    },
+    "publisher_source": "local-host",
+    "aggregator": {
+      "interval_s": 30,
+      "db_path": "/var/lib/nq/nq.db",
+      "bind_addr": "127.0.0.1:9848",
+      "sources": [
+        {
+          "name": "local-host",
+          "base_url": "http://127.0.0.1:9847",
+          "timeout_ms": 10000
+        }
+      ]
+    }
+  },
+  "packs": {
+    "schema_version": "nq.suite.pack_selection.v1",
+    "enabled": [
+      {
+        "pack_id": "nq.host",
+        "checks": [
+          "host.resources"
+        ],
+        "config": {}
+      },
+      {
+        "pack_id": "nq.storage",
+        "checks": [
+          "accelerator.nvidia"
+        ],
+        "config": {
+          "gpu_witness": {
+            "nvidia_smi_path": "nvidia-smi",
+            "timeout_ms": 5000
+          }
+        }
+      },
+      {
+        "pack_id": "nq.labelwatch",
+        "checks": [
+          "labelwatch.service_state",
+          "labelwatch.sqlite_state",
+          "labelwatch.log_signal",
+          "labelwatch.metric_signal"
+        ],
+        "config": {
+          "services": [
+            {
+              "name": "example-app",
+              "adapter": "systemd",
+              "target": "example-app.service"
+            }
+          ],
+          "databases": [
+            {
+              "path": "/srv/example-app/state.db"
+            }
+          ],
+          "logs": [
+            {
+              "source_id": "example-app-log",
+              "adapter": "journald",
+              "target": "example-app.service",
+              "max_lines": 5000
+            }
+          ],
+          "metrics": [
+            {
+              "name": "example-app-metrics",
+              "url": "http://127.0.0.1:9100/metrics",
+              "timeout_ms": 5000
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

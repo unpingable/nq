@@ -1088,6 +1088,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nq-suite"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "nq-check-pack-host",
+ "nq-check-pack-labelwatch",
+ "nq-check-pack-storage",
+ "nq-core",
+ "nq-monitor-check",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "nq-witness"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,18 @@
+{
+  "schema_version": "nq.suite.config.v1",
+  "runtime": {
+    "mode": "monitor_only",
+    "aggregator": {
+      "interval_s": 30,
+      "db_path": "/var/lib/nq/nq.db",
+      "bind_addr": "127.0.0.1:9848",
+      "sources": [
+        {
+          "name": "remote-publisher",
+          "base_url": "https://publisher.example.com",
+          "timeout_ms": 10000
+        }
+      ]
+    }
+  }
+}

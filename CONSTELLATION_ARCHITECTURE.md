@@ -124,11 +124,34 @@ dependency gate records exact removal conditions: the
 adapters disappear when `nq-suite` owns pack selection and the agent no longer
 links concrete packs. Therefore strict registry integration at the installed
 binary boundary and a fully executable Labelwatch composition are not claimed
-by this checkpoint. `PackSelection` also remains an unversioned embedded
-fragment; its suite configuration envelope and upgrade rules are future
-composition-root work. The concrete API, selection example, compatibility
+by this checkpoint. The concrete API, selection example, compatibility
 adapter, schema debt, and authority effect are recorded in
 [`docs/architecture/CHECK_PACK_CONTRACT.md`](docs/architecture/CHECK_PACK_CONTRACT.md).
+
+### Implemented composition checkpoint
+
+`nq-suite` now owns the versioned `nq.suite.config.v1` deployment envelope and
+its separately versioned `nq.suite.pack_selection.v1` selection. It registers
+only feature-available packs, resolves explicit pack and check IDs through the
+strict registry, validates the real aggregator configuration where present,
+and emits deterministic `nq.suite.plan.v1` artifacts without touching
+configured paths, sources, sockets, databases, or collectors.
+
+The default suite dependency graph contains the conservative host pack and
+aggregator plumbing. Storage and Labelwatch remain optional features. Its
+three topologies are not conflated: `publisher_only` has a local publisher and
+packs, `monitor_only` has an aggregator/dashboard with remote sources and no
+local packs, and `full` explicitly binds the local publisher to one aggregator
+source. Labelwatch service targets carry a service adapter and native target;
+the suite maps the typed plan to generic collector inputs without assuming
+systemd or adding a dashboard branch.
+
+Runtime launch is not claimed. The compatibility publisher still invokes all
+linked collector families through one mixed config, while aggregator startup
+remains binary-private. Every plan therefore carries
+`launch.available: false` and the exact public monitor start seam needed to
+remove this limitation. See
+[`docs/architecture/COMPOSITION_ROOT.md`](docs/architecture/COMPOSITION_ROOT.md).
 
 ## Semantic ownership
 
