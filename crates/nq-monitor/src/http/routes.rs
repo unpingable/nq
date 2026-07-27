@@ -1,22 +1,24 @@
+use crate::artifact_registry::RegistryResponse;
+use crate::nq_sql_contract_state::NqSqlContractStateTarget;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
-    routing::{get, post, delete},
+    routing::{delete, get, post},
     Json, Router,
 };
 use nq_db::nq_binary_mtime_state::NqBinaryMtimeStateTarget;
 use nq_db::nq_evaluator_state::NqEvaluatorStateTarget;
 use nq_db::sqlite_wal_state::SqliteWalTarget;
-use crate::artifact_registry::RegistryResponse;
-use crate::nq_sql_contract_state::NqSqlContractStateTarget;
 // The operator-surface seam: the ONLY path from a witness evaluator to
 // this HTTP surface. Route handlers call `preflight::*` here, never
 // `evaluate_*_preflight` directly. Enforced by
 // `tests/operator_surface_boundary.rs`.
 use crate::operator_surface::preflight;
 use crate::served_surface_registry::ServedSurfaceResponse;
-use nq_db::{overview, host_detail, query_read_only, DnsObservationTuple, QueryLimits, ReadDb, WriteDb};
+use nq_db::{
+    host_detail, overview, query_read_only, DnsObservationTuple, QueryLimits, ReadDb, WriteDb,
+};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -25,12 +27,14 @@ type WDb = Arc<Mutex<WriteDb>>;
 
 /// Percent-encode a string for use in URL paths.
 fn urlencod(s: &str) -> String {
-    s.bytes().map(|b| match b {
-        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-            String::from(b as char)
-        }
-        _ => format!("%{:02X}", b),
-    }).collect()
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                String::from(b as char)
+            }
+            _ => format!("%{:02X}", b),
+        })
+        .collect()
 }
 
 pub fn router(db: Db) -> Router {
@@ -44,8 +48,14 @@ fn read_routes(db: Db) -> Router {
         .route("/api/host/{name}/history", get(api_host_history))
         .route("/api/frame/host/{name}", get(api_frame_host))
         .route("/api/query", get(api_query))
-        .route("/api/preflight/disk-state/{host}", get(api_preflight_disk_state))
-        .route("/api/preflight/ingest-state", get(api_preflight_ingest_state))
+        .route(
+            "/api/preflight/disk-state/{host}",
+            get(api_preflight_disk_state),
+        )
+        .route(
+            "/api/preflight/ingest-state",
+            get(api_preflight_ingest_state),
+        )
         .route("/api/preflight/dns-state", get(api_preflight_dns_state))
         .route(
             "/api/preflight/sqlite-wal-state",
@@ -106,7 +116,10 @@ pub struct AppState {
 }
 
 pub fn router_with_write(read_db: Db, write_db: WDb) -> Router {
-    let state = AppState { read_db: read_db.clone(), write_db };
+    let state = AppState {
+        read_db: read_db.clone(),
+        write_db,
+    };
 
     // Saved query and guarded action routes use AppState. Dashboard reads use
     // their own capability-bearing state so a read-only server never renders
@@ -131,8 +144,9 @@ pub fn router_with_write(read_db: Db, write_db: WDb) -> Router {
 async fn dashboard_index(State(state): State<DashboardRouteState>) -> Response {
     let db = state.read_db.lock().await;
     match nq_db::dashboard::load_dashboard_overview(&db, time::OffsetDateTime::now_utc()) {
-        Ok(overview) => Html(crate::http::operator_dashboard::render_overview(&overview))
-            .into_response(),
+        Ok(overview) => {
+            Html(crate::http::operator_dashboard::render_overview(&overview)).into_response()
+        }
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Html(crate::http::operator_dashboard::render_load_failure(
@@ -160,25 +174,25 @@ async fn api_dashboard_overview(State(state): State<DashboardRouteState>) -> Res
 
 #[derive(serde::Deserialize)]
 struct FindingKeyQuery {
-    key: String,
+    #[serde(default)]
+    key: Option<String>,
 }
 
 async fn dashboard_finding(
     State(state): State<DashboardRouteState>,
     Query(query): Query<FindingKeyQuery>,
 ) -> Response {
+    let key = query.key.unwrap_or_default();
+    let request_status = if key.trim().is_empty() {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::NOT_FOUND
+    };
     let db = state.read_db.lock().await;
-    match nq_db::dashboard::load_dashboard_finding(
-        &db,
-        &query.key,
-        time::OffsetDateTime::now_utc(),
-    ) {
+    match nq_db::dashboard::load_dashboard_finding(&db, &key, time::OffsetDateTime::now_utc()) {
         Ok(detail) => {
-            let status = if matches!(
-                detail,
-                nq_db::dashboard::DashboardFindingDetail::Missing(_)
-            ) {
-                StatusCode::NOT_FOUND
+            let status = if matches!(detail, nq_db::dashboard::DashboardFindingDetail::Missing(_)) {
+                request_status
             } else {
                 StatusCode::OK
             };
@@ -205,18 +219,17 @@ async fn api_dashboard_finding(
     State(state): State<DashboardRouteState>,
     Query(query): Query<FindingKeyQuery>,
 ) -> Response {
+    let key = query.key.unwrap_or_default();
+    let request_status = if key.trim().is_empty() {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::NOT_FOUND
+    };
     let db = state.read_db.lock().await;
-    match nq_db::dashboard::load_dashboard_finding(
-        &db,
-        &query.key,
-        time::OffsetDateTime::now_utc(),
-    ) {
+    match nq_db::dashboard::load_dashboard_finding(&db, &key, time::OffsetDateTime::now_utc()) {
         Ok(detail) => {
-            let status = if matches!(
-                detail,
-                nq_db::dashboard::DashboardFindingDetail::Missing(_)
-            ) {
-                StatusCode::NOT_FOUND
+            let status = if matches!(detail, nq_db::dashboard::DashboardFindingDetail::Missing(_)) {
+                request_status
             } else {
                 StatusCode::OK
             };
@@ -233,9 +246,7 @@ async fn api_dashboard_finding(
     }
 }
 
-async fn legacy_finding_redirect(
-    Path((kind, host)): Path<(String, String)>,
-) -> Redirect {
+async fn legacy_finding_redirect(Path((kind, host)): Path<(String, String)>) -> Redirect {
     redirect_to_stable_finding(&kind, &host, "")
 }
 
@@ -317,7 +328,10 @@ async fn api_frame_host(State(db): State<Db>, Path(name): Path<String>) -> Json<
     }
 }
 
-async fn api_host_history(State(db): State<Db>, Path(name): Path<String>) -> Json<serde_json::Value> {
+async fn api_host_history(
+    State(db): State<Db>,
+    Path(name): Path<String>,
+) -> Json<serde_json::Value> {
     let db = db.lock().await;
     match query_read_only(
         &db,
@@ -350,7 +364,10 @@ fn default_limit() -> usize {
     500
 }
 
-async fn api_query(State(db): State<Db>, Query(params): Query<QueryParams>) -> Json<serde_json::Value> {
+async fn api_query(
+    State(db): State<Db>,
+    Query(params): Query<QueryParams>,
+) -> Json<serde_json::Value> {
     let db = db.lock().await;
     match query_read_only(
         &db,
@@ -763,10 +780,7 @@ async fn api_preflight_sqlite_wal_state(
         ));
     }
     let db = db.lock().await;
-    let target = SqliteWalTarget {
-        host,
-        db_file_path,
-    };
+    let target = SqliteWalTarget { host, db_file_path };
     let now = time::OffsetDateTime::now_utc();
     match preflight::sqlite_wal_state(&db, &target, now) {
         Ok(surfaced) => match serde_json::to_value(&surfaced) {
@@ -839,7 +853,14 @@ async fn api_saved_run(
         Err(_) => return Json(serde_json::json!({"error": "saved query not found"})),
     };
 
-    match query_read_only(&db, &sql, QueryLimits { max_rows: 500, max_time_ms: 5_000 }) {
+    match query_read_only(
+        &db,
+        &sql,
+        QueryLimits {
+            max_rows: 500,
+            max_time_ms: 5_000,
+        },
+    ) {
         Ok(result) => Json(serde_json::json!({
             "columns": result.columns,
             "rows": result.rows,
@@ -919,21 +940,41 @@ async fn api_finding_action(
 }
 
 fn finding_action_error_response(error: nq_db::finding_actions::FindingActionError) -> Response {
-    let (status, kind) = match &error {
+    let (status, kind, message) = match &error {
         nq_db::finding_actions::FindingActionError::NotFound { .. } => {
-            (StatusCode::NOT_FOUND, "not_found")
+            (
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "The concrete finding target no longer exists. Reload before taking any action.",
+            )
         }
         nq_db::finding_actions::FindingActionError::Stale { .. } => {
-            (StatusCode::CONFLICT, "not_actionable")
+            (
+                StatusCode::CONFLICT,
+                "not_actionable",
+                "This finding is no longer current and actionable on the reviewed observation basis. Reload and inspect its present state.",
+            )
         }
         nq_db::finding_actions::FindingActionError::Conflict { .. } => {
-            (StatusCode::CONFLICT, "precondition_conflict")
+            (
+                StatusCode::CONFLICT,
+                "precondition_conflict",
+                "The finding changed after it was reviewed. Nothing was applied; reload before deciding again.",
+            )
         }
         nq_db::finding_actions::FindingActionError::Invalid { .. } => {
-            (StatusCode::UNPROCESSABLE_ENTITY, "invalid_request")
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_request",
+                "The action request is incomplete or unsupported. Review the highlighted inputs and preview it again.",
+            )
         }
         nq_db::finding_actions::FindingActionError::Database(_) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, "storage_error")
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "NQ could not durably record the action. Do not assume anything changed; reload before retrying.",
+            )
         }
     };
     (
@@ -941,7 +982,7 @@ fn finding_action_error_response(error: nq_db::finding_actions::FindingActionErr
         Json(serde_json::json!({
             "ok": false,
             "kind": kind,
-            "error": error.to_string()
+            "error": message
         })),
     )
         .into_response()
@@ -952,7 +993,10 @@ async fn api_saved_delete(
     Path(id): Path<i64>,
 ) -> Json<serde_json::Value> {
     let db = state.write_db.lock().await;
-    match db.conn().execute("DELETE FROM saved_queries WHERE query_id = ?1", [id]) {
+    match db
+        .conn()
+        .execute("DELETE FROM saved_queries WHERE query_id = ?1", [id])
+    {
         Ok(0) => Json(serde_json::json!({"error": "not found"})),
         Ok(_) => Json(serde_json::json!({"ok": true})),
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),

@@ -5,9 +5,10 @@
 //! evidence, and expert-detail hierarchy.
 
 use nq_db::dashboard::{
-    DashboardBasis, DashboardCurrentFindingDetail, DashboardEvidence, DashboardFinding,
-    DashboardFindingDetail, DashboardFindingStatus, DashboardHistoricalFindingDetail,
-    DashboardInventory, DashboardMissingFindingDetail, DashboardOverview,
+    DashboardBasis, DashboardCurrentFindingDetail, DashboardEvidence, DashboardEvidenceStanding,
+    DashboardFinding, DashboardFindingDetail, DashboardFindingStatus,
+    DashboardHistoricalFindingDetail, DashboardInventory, DashboardMissingFindingDetail,
+    DashboardOverview,
 };
 use nq_db::finding_actions::{FindingAction, FindingActionContract, TtlPolicy};
 
@@ -93,6 +94,30 @@ fn response_label(action_bias: Option<&str>) -> &'static str {
     }
 }
 
+fn coordination_statement(work_state: &str) -> &'static str {
+    match normalize(work_state).as_str() {
+        "new" => "No operator coordination response is recorded.",
+        "acknowledged" => "Acknowledged; notifications remain eligible.",
+        "watching" => "An operator chose to watch; notifications remain eligible.",
+        "quiesced" => "Notifications are paused during an operational quiet period.",
+        "closed" => "Coordination work is marked complete; the condition may remain.",
+        "suppressed" => "Notifications are intentionally muted; evidence remains visible.",
+        _ => "Coordination state is not recognized.",
+    }
+}
+
+fn coordination_label(work_state: &str) -> &'static str {
+    match normalize(work_state).as_str() {
+        "new" => "No response recorded",
+        "acknowledged" => "Acknowledged",
+        "watching" => "Watching",
+        "quiesced" => "Quiet period",
+        "closed" => "Coordination closed",
+        "suppressed" => "Notifications suppressed",
+        _ => "Unrecognized state",
+    }
+}
+
 fn status_label(status: DashboardFindingStatus) -> &'static str {
     match status {
         DashboardFindingStatus::Ongoing => "Ongoing",
@@ -100,6 +125,7 @@ fn status_label(status: DashboardFindingStatus) -> &'static str {
         DashboardFindingStatus::Stale => "Stale evidence",
         DashboardFindingStatus::Suppressed => "Observation unavailable",
         DashboardFindingStatus::Retired => "Historical evidence",
+        DashboardFindingStatus::Unknown => "Current standing unknown",
     }
 }
 
@@ -110,6 +136,7 @@ fn status_class(status: DashboardFindingStatus) -> &'static str {
         DashboardFindingStatus::Stale => "state-stale",
         DashboardFindingStatus::Suppressed => "state-unknown",
         DashboardFindingStatus::Retired => "state-historical",
+        DashboardFindingStatus::Unknown => "state-unknown",
     }
 }
 
@@ -120,9 +147,15 @@ fn is_muted_work_state(work_state: &str) -> bool {
     )
 }
 
+fn is_operator_watching(finding: &DashboardFinding) -> bool {
+    normalize(&finding.work_state) == "watching"
+        || normalize(finding.diagnosis.action_bias.as_deref().unwrap_or_default()) == "watch"
+}
+
 fn needs_attention(finding: &DashboardFinding) -> bool {
     finding.status == DashboardFindingStatus::Ongoing
         && !is_muted_work_state(&finding.work_state)
+        && !is_operator_watching(finding)
         && normalize(finding.diagnosis.action_bias.as_deref().unwrap_or_default()) != "watch"
 }
 
@@ -133,6 +166,7 @@ fn is_unknown_state(finding: &DashboardFinding) -> bool {
             | DashboardFindingStatus::Stale
             | DashboardFindingStatus::Suppressed
             | DashboardFindingStatus::Retired
+            | DashboardFindingStatus::Unknown
     )
 }
 
@@ -263,8 +297,17 @@ fn unknowns(finding: &DashboardFinding) -> Vec<String> {
             "The evidence source was deliberately retired; current state is not established."
                 .into(),
         ),
+        DashboardFindingStatus::Unknown => items.push(
+            "NQ cannot join the finding lifecycle and supporting records to one current observation basis.".into(),
+        ),
         DashboardFindingStatus::Ongoing => {}
     }
+    items.extend(
+        finding
+            .coherence_issues
+            .iter()
+            .map(|issue| issue.summary.clone()),
+    );
     items.sort();
     items.dedup();
     items
@@ -277,20 +320,41 @@ fn render_basis(basis: &DashboardBasis) -> String {
         basis.age_seconds,
         basis.status.as_deref(),
     ) {
-        (Some(generation), Some(observed_at), Some(age), Some(status)) => format!(
-            "<div class=\"snapshot-basis\" data-generation=\"{generation}\">\
-               <span class=\"basis-label\">Observation basis</span>\
+        (Some(generation), Some(observed_at), Some(age), Some(status)) if age < 0 => format!(
+            "<div class=\"snapshot-basis state-unknown\" data-generation=\"{generation}\"\
+                  data-page-basis data-observed-at=\"{at}\" data-stale-after-seconds=\"{stale_after}\">\
+               <span class=\"basis-label\">NQ data capture has a clock disagreement</span>\
                <time datetime=\"{at}\">{at}</time>\
-               <span>({age} ago)</span>\
-               <span>publish status: {status}</span>\
-               <span class=\"expert-token\" title=\"A snapshot is one atomic NQ publish unit; it makes values on this page comparable.\">snapshot #{generation}</span>\
+               <span class=\"relative-age\">({future}s in the future)</span>\
+               <span class=\"basis-live-state\">Freshness is unknown; this says nothing about monitored-system health.</span>\
+               <details class=\"basis-details\"><summary>Data-basis details</summary>\
+                 <span>NQ capture status: {status}. Atomic data record #{generation} keeps values from this capture comparable.</span>\
+               </details>\
+             </div>",
+            generation = generation,
+            at = escape_html(observed_at),
+            future = -age,
+            status = escape_html(status),
+            stale_after = nq_db::dashboard::DASHBOARD_STALE_AFTER_SECONDS,
+        ),
+        (Some(generation), Some(observed_at), Some(age), Some(status)) => format!(
+            "<div class=\"snapshot-basis\" data-generation=\"{generation}\"\
+                  data-page-basis data-observed-at=\"{at}\" data-stale-after-seconds=\"{stale_after}\">\
+               <span class=\"basis-label\">NQ data captured</span>\
+               <time datetime=\"{at}\">{at}</time>\
+               <span class=\"relative-age\">({age} ago)</span>\
+               <span class=\"basis-live-state\">Capture {status}; this describes NQ data freshness, not monitored-system health.</span>\
+               <details class=\"basis-details\"><summary>Data-basis details</summary>\
+                 <span>Atomic NQ data record #{generation} keeps values from this capture comparable.</span>\
+               </details>\
              </div>",
             generation = generation,
             at = escape_html(observed_at),
             age = escape_html(&human_duration(age)),
             status = escape_html(status),
+            stale_after = nq_db::dashboard::DASHBOARD_STALE_AFTER_SECONDS,
         ),
-        _ => "<div class=\"snapshot-basis state-unknown\"><span class=\"basis-label\">Observation basis unavailable</span></div>".into(),
+        _ => "<div class=\"snapshot-basis state-unknown\"><span class=\"basis-label\">NQ data-capture time unavailable</span><span>This does not establish monitored-system health.</span></div>".into(),
     }
 }
 
@@ -318,10 +382,31 @@ fn render_error_shift_summary(evidence: &nq_db::dashboard::ErrorShiftEvidence) -
     )
 }
 
+fn render_smart_conflict_summary(
+    evidence: &nq_db::dashboard::SmartSourceConflictEvidence,
+) -> String {
+    let total_errors: i64 = evidence.counters.iter().map(|counter| counter.value).sum();
+    let overall = match evidence.smart_overall_passed {
+        Some(true) => "passed",
+        Some(false) => "failed",
+        None => "unavailable",
+    };
+    format!(
+        "<div class=\"evidence-summary conflict-state\">\
+           <strong>Sources disagree: SMART self-assessment says {overall}; covered raw counters total {total_errors}.</strong>\
+           <span>Both observations were captured together at {observed_at}; NQ did not average the contradiction away.</span>\
+         </div>",
+        overall = escape_html(overall),
+        total_errors = total_errors,
+        observed_at = escape_html(&evidence.device_observed_at),
+    )
+}
+
 fn render_card(finding: &DashboardFinding, evidence: Option<&DashboardEvidence>) -> String {
     let href = finding_href(&finding.finding_key);
     let evidence_summary = match evidence {
         Some(DashboardEvidence::ErrorShift(value)) => render_error_shift_summary(value),
+        Some(DashboardEvidence::SmartSourceConflict(value)) => render_smart_conflict_summary(value),
         None => format!(
             "<p class=\"observed-claim\">{}</p>",
             escape_html(&finding.message)
@@ -342,10 +427,11 @@ fn render_card(finding: &DashboardFinding, evidence: Option<&DashboardEvidence>)
         .as_ref()
         .map(|observation| observation.observed_at.as_str())
         .unwrap_or(&finding.last_seen_at);
-    let age = finding
-        .observation_age_seconds
-        .map(human_duration)
-        .unwrap_or_else(|| "unknown age".into());
+    let recency = match finding.observation_age_seconds {
+        Some(age) if age >= 0 => format!("{} ago", human_duration(age)),
+        Some(age) => format!("{}s in the future; clock disagreement", -age),
+        None => "age unavailable".to_string(),
+    };
     let response = response_label(finding.diagnosis.action_bias.as_deref());
     let response = if finding.status == DashboardFindingStatus::Ongoing {
         response.to_string()
@@ -354,14 +440,16 @@ fn render_card(finding: &DashboardFinding, evidence: Option<&DashboardEvidence>)
     };
 
     format!(
-        "<article class=\"finding-card {state_class}\" data-finding-key=\"{key}\" data-finding-state=\"{state}\">\
+        "<article class=\"finding-card {state_class}\" data-finding-key=\"{key}\" data-finding-state=\"{state}\"\
+           data-observed-at=\"{observed_at}\" data-stale-after-seconds=\"{stale_after}\">\
            <div class=\"card-status\"><span>{state}</span><span>{response}</span></div>\
            <h3><a href=\"{href}\">{title}</a></h3>\
            {evidence_summary}\
            <dl class=\"decision-facts\">\
              <div><dt>Affected</dt><dd>{host}{subject}</dd></div>\
-             <div><dt>Observed</dt><dd><time datetime=\"{observed_at}\">{observed_at}</time> ({age} ago)</dd></div>\
+             <div><dt>Observed</dt><dd><time datetime=\"{observed_at}\">{observed_at}</time> <span class=\"relative-age\">({recency})</span></dd></div>\
              <div><dt>Impact</dt><dd>{impact}</dd></div>\
+             <div><dt>Operator coordination</dt><dd><strong>{work_state_label}</strong> — {coordination}</dd></div>\
            </dl>\
            <div class=\"unknowns\"><strong>What remains unknown</strong><ul>{unknown_items}</ul></div>\
            <details class=\"next-inspection\"><summary>Recommended next inspection</summary><ul>{next_checks}</ul></details>\
@@ -394,8 +482,11 @@ fn render_card(finding: &DashboardFinding, evidence: Option<&DashboardEvidence>)
             format!(" / {}", escape_html(&finding.subject))
         },
         observed_at = escape_html(observation_time),
-        age = escape_html(&age),
+        stale_after = nq_db::dashboard::DASHBOARD_STALE_AFTER_SECONDS,
+        recency = escape_html(&recency),
         impact = escape_html(&impact_statement(finding)),
+        work_state_label = escape_html(coordination_label(&finding.work_state)),
+        coordination = escape_html(coordination_statement(&finding.work_state)),
         unknown_items = unknown_items,
         next_checks = next_checks,
         domain_plain = escape_html(plain_domain(&finding.domain)),
@@ -405,28 +496,82 @@ fn render_card(finding: &DashboardFinding, evidence: Option<&DashboardEvidence>)
     )
 }
 
+fn render_inventory_freshness(
+    standing: DashboardEvidenceStanding,
+    collected_at: &str,
+    age_seconds: Option<i64>,
+    as_of_generation: i64,
+    display_lag_generations: Option<i64>,
+) -> String {
+    let evidence = match standing {
+        DashboardEvidenceStanding::Admissible => "admissible testimony".to_string(),
+        DashboardEvidenceStanding::StaleTestimony => {
+            "stale testimony; do not use as current state".to_string()
+        }
+        DashboardEvidenceStanding::Unknown => {
+            "unknown; the observation timestamp cannot establish freshness".to_string()
+        }
+        DashboardEvidenceStanding::ClockSkew => {
+            "unknown; the observation timestamp is in the future".to_string()
+        }
+    };
+    let recency = match age_seconds {
+        Some(age) if age >= 0 => format!("{} ago", human_duration(age)),
+        Some(age) => format!("{}s in the future", -age),
+        None => "age unavailable".to_string(),
+    };
+    let display = match display_lag_generations {
+        Some(lag @ 0..=2) => format!(
+            "current display at snapshot #{as_of_generation} ({} snapshot lag)",
+            lag
+        ),
+        Some(lag) if lag > 2 => {
+            format!("display old by {lag} snapshots; row is from #{as_of_generation}")
+        }
+        Some(lag) => format!(
+            "snapshot conflict: row is {} snapshots ahead at #{as_of_generation}",
+            -lag
+        ),
+        None => format!("page snapshot unavailable; row is from #{as_of_generation}"),
+    };
+
+    format!(
+        "<span class=\"inventory-clock\"><strong>Evidence standing:</strong> {evidence}. \
+         <time datetime=\"{at}\">{at}</time> ({recency}).</span>\
+         <span class=\"inventory-clock\"><strong>Display freshness:</strong> {display}.</span>",
+        evidence = escape_html(&evidence),
+        at = escape_html(collected_at),
+        recency = escape_html(&recency),
+        display = escape_html(&display),
+    )
+}
+
 fn render_inventory(inventory: &DashboardInventory) -> String {
     let hosts = inventory
         .hosts
         .iter()
         .map(|host| {
-            let stale_label = if host.display_stale {
-                "<strong class=\"unknown-value\">Stale inventory.</strong> "
-            } else {
-                ""
-            };
+            let freshness = render_inventory_freshness(
+                host.evidence_standing,
+                &host.collected_at,
+                host.age_seconds,
+                host.as_of_generation,
+                host.display_lag_generations,
+            );
             format!(
-                "<tr class=\"{}\"><th scope=\"row\">{}</th><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}<time datetime=\"{}\">{}</time> ({})</td></tr>",
-                if host.display_stale { "inventory-stale" } else { "" },
+                "<tr class=\"{}\"><th scope=\"row\">{}</th><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{freshness}</td></tr>",
+                if host.display_stale
+                    || host.evidence_standing != DashboardEvidenceStanding::Admissible
+                {
+                    "inventory-stale"
+                } else {
+                    ""
+                },
                 escape_html(&host.host),
                 optional_number(host.cpu_load_1m.map(|v| format!("{v:.1}")), ""),
                 optional_number(host.mem_pressure_pct.map(|v| format!("{v:.1}")), "%"),
                 optional_number(host.disk_used_pct.map(|v| format!("{v:.1}")), "%"),
                 optional_number(host.disk_available_mb, " MB"),
-                stale_label,
-                escape_html(&host.collected_at),
-                escape_html(&host.collected_at),
-                escape_html(&host.age_seconds.map(human_duration).unwrap_or_else(|| "age unavailable".into())),
             )
         })
         .collect::<String>();
@@ -434,22 +579,26 @@ fn render_inventory(inventory: &DashboardInventory) -> String {
         .services
         .iter()
         .map(|service| {
-            let stale_label = if service.display_stale {
-                "<strong class=\"unknown-value\">Stale inventory.</strong> "
-            } else {
-                ""
-            };
+            let freshness = render_inventory_freshness(
+                service.evidence_standing,
+                &service.collected_at,
+                service.age_seconds,
+                service.as_of_generation,
+                service.display_lag_generations,
+            );
             format!(
-                "<tr class=\"{}\"><th scope=\"row\">{}</th><td>{}</td><td>{}</td><td>{}</td><td>{}<time datetime=\"{}\">{}</time> ({})</td></tr>",
-                if service.display_stale { "inventory-stale" } else { "" },
+                "<tr class=\"{}\"><th scope=\"row\">{}</th><td>{}</td><td>{}</td><td>{}</td><td>{freshness}</td></tr>",
+                if service.display_stale
+                    || service.evidence_standing != DashboardEvidenceStanding::Admissible
+                {
+                    "inventory-stale"
+                } else {
+                    ""
+                },
                 escape_html(&service.host),
                 escape_html(&service.service),
                 escape_html(&service.service_status),
                 optional_number(service.queue_depth, ""),
-                stale_label,
-                escape_html(&service.collected_at),
-                escape_html(&service.collected_at),
-                escape_html(&service.age_seconds.map(human_duration).unwrap_or_else(|| "age unavailable".into())),
             )
         })
         .collect::<String>();
@@ -457,23 +606,56 @@ fn render_inventory(inventory: &DashboardInventory) -> String {
         .sqlite_databases
         .iter()
         .map(|database| {
-            let stale_label = if database.display_stale {
-                "<strong class=\"unknown-value\">Stale inventory.</strong> "
-            } else {
-                ""
-            };
+            let freshness = render_inventory_freshness(
+                database.evidence_standing,
+                &database.collected_at,
+                database.age_seconds,
+                database.as_of_generation,
+                database.display_lag_generations,
+            );
             format!(
-                "<tr class=\"{}\"><th scope=\"row\">{}</th><td class=\"long-value\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}<time datetime=\"{}\">{}</time> ({})</td></tr>",
-                if database.display_stale { "inventory-stale" } else { "" },
+                "<tr class=\"{}\"><th scope=\"row\">{}</th><td class=\"long-value\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{freshness}</td></tr>",
+                if database.display_stale
+                    || database.evidence_standing != DashboardEvidenceStanding::Admissible
+                {
+                    "inventory-stale"
+                } else {
+                    ""
+                },
                 escape_html(&database.host),
                 escape_html(&database.db_path),
                 optional_number(database.db_size_mb.map(|v| format!("{v:.1}")), " MB"),
                 optional_number(database.wal_size_mb.map(|v| format!("{v:.1}")), " MB"),
                 optional_text(database.last_quick_check.as_deref()),
-                stale_label,
-                escape_html(&database.collected_at),
-                escape_html(&database.collected_at),
-                escape_html(&database.age_seconds.map(human_duration).unwrap_or_else(|| "age unavailable".into())),
+            )
+        })
+        .collect::<String>();
+    let log_sources = inventory
+        .log_sources
+        .iter()
+        .map(|source| {
+            let freshness = render_inventory_freshness(
+                source.evidence_standing,
+                &source.collected_at,
+                source.age_seconds,
+                source.as_of_generation,
+                source.display_lag_generations,
+            );
+            format!(
+                "<tr class=\"{}\"><th scope=\"row\">{}</th><td>{}</td><td>{}</td><td>{}</td><td>{}–{}</td><td>{freshness}</td></tr>",
+                if source.display_stale
+                    || source.evidence_standing != DashboardEvidenceStanding::Admissible
+                {
+                    "inventory-stale"
+                } else {
+                    ""
+                },
+                escape_html(&source.host),
+                escape_html(&source.source_id),
+                escape_html(&source.fetch_status),
+                source.lines_total,
+                escape_html(&source.window_start),
+                escape_html(&source.window_end),
             )
         })
         .collect::<String>();
@@ -485,6 +667,7 @@ fn render_inventory(inventory: &DashboardInventory) -> String {
            <div class=\"table-scroll\"><table><caption>Host inventory</caption><thead><tr><th scope=\"col\">Host</th><th scope=\"col\">CPU 1m</th><th scope=\"col\">Memory</th><th scope=\"col\">Disk used</th><th scope=\"col\">Disk free</th><th scope=\"col\">Observed</th></tr></thead><tbody>{hosts}</tbody></table></div>\
            <div class=\"table-scroll\"><table><caption>Service inventory</caption><thead><tr><th scope=\"col\">Host</th><th scope=\"col\">Service</th><th scope=\"col\">Status</th><th scope=\"col\">Queue</th><th scope=\"col\">Observed</th></tr></thead><tbody>{services}</tbody></table></div>\
            <div class=\"table-scroll\"><table><caption>SQLite inventory</caption><thead><tr><th scope=\"col\">Host</th><th scope=\"col\">Database</th><th scope=\"col\">Size</th><th scope=\"col\">WAL</th><th scope=\"col\">Quick check</th><th scope=\"col\">Observed</th></tr></thead><tbody>{databases}</tbody></table></div>\
+           <div class=\"table-scroll\"><table><caption>Log-source inventory</caption><thead><tr><th scope=\"col\">Host</th><th scope=\"col\">Source</th><th scope=\"col\">Fetch</th><th scope=\"col\">Messages</th><th scope=\"col\">Source window</th><th scope=\"col\">Observed</th></tr></thead><tbody>{log_sources}</tbody></table></div>\
            <details class=\"expert-tools\"><summary>Expert SQL and raw inspection</summary>\
              <p>SQL is an expert tool, not a prerequisite for understanding a finding. Queries are read-only.</p>\
              <form class=\"sql-form\" onsubmit=\"runExpertQuery(event)\">\
@@ -497,6 +680,7 @@ fn render_inventory(inventory: &DashboardInventory) -> String {
         hosts = hosts,
         services = services,
         databases = databases,
+        log_sources = log_sources,
     )
 }
 
@@ -526,6 +710,16 @@ body {
   font-size: 16px;
   line-height: 1.5;
 }
+.skip-link {
+  position: absolute;
+  inset-inline-start: 16px;
+  inset-block-start: -80px;
+  z-index: 1000;
+  padding: 10px 14px;
+  background: #ffffff;
+  color: #000000;
+}
+.skip-link:focus { inset-block-start: 12px; }
 a { color: var(--accent); }
 a:hover { text-decoration-thickness: 2px; }
 a:focus-visible, button:focus-visible, summary:focus-visible, textarea:focus-visible {
@@ -560,6 +754,10 @@ code, pre, textarea, .expert-token {
   font-size: 14px;
 }
 .basis-label { color: var(--text); font-weight: 700; }
+.basis-live-state { max-width: 52ch; }
+.basis-details { flex-basis: 100%; }
+.basis-details summary { color: var(--faint); font-size: 12px; font-weight: 600; }
+.basis-details span { display: block; margin-top: 4px; color: var(--faint); }
 .expert-token { color: var(--faint); font-size: 12px; }
 main { padding: 32px 0 56px; }
 .eyebrow { color: var(--muted); font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
@@ -655,6 +853,8 @@ table { width: 100%; border-collapse: collapse; font-size: 14px; }
 caption { text-align: left; font-weight: 800; font-size: 17px; margin-bottom: 7px; }
 th, td { border-bottom: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
 .inventory-stale th, .inventory-stale td { text-decoration: underline dotted; text-decoration-color: var(--attention); }
+.inventory-clock { display: block; min-width: 18rem; }
+.inventory-clock + .inventory-clock { margin-top: 4px; }
 .unknown-value { color: var(--attention); font-style: italic; }
 .long-value, code { overflow-wrap: anywhere; }
 .expert-tools { margin-top: 20px; }
@@ -676,8 +876,12 @@ dialog::backdrop { background: rgb(0 0 0 / .75); }
 .secondary-button { background: transparent; border-color: var(--border); }
 .action-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .action-choice { border: 1px solid var(--border); border-radius: 8px; padding: 13px; }
+.action-choice-consequential { border-inline-start: 4px solid var(--attention); }
 .action-choice p { color: var(--muted); margin: 5px 0 10px; }
 .action-choice h3 { margin-top: 0; font-size: 18px; }
+.consequential-actions { margin-top: 18px; border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.consequential-actions > summary { font-weight: 800; }
+.danger-button { background: #5d1f28; border-color: var(--danger); }
 .effect-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .effect-columns section { border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
 .effect-columns h3 { margin-top: 0; font-size: 17px; }
@@ -779,8 +983,9 @@ async function previewFindingAction(button) {
       status.textContent = 'Action unavailable: ' + (data.error || response.status);
       return;
     }
-    const expiry = data.preview.expires_at
-      ? ' Expiry will be recorded for ' + data.preview.expires_at + '.'
+    const expiry = data.preview.expires_after_hours
+      ? ' The ' + data.preview.expires_after_hours +
+        '-hour expiry starts only when you confirm; the receipt will record the exact time.'
       : ' No automatic expiry was requested.';
     status.textContent =
       'Target and preconditions validated.' + expiry +
@@ -814,6 +1019,55 @@ async function applyFindingAction(button) {
     status.textContent = 'The action result could not be confirmed. Reload before retrying; do not assume it changed.';
   }
 }
+
+function formatOpenPageAge(seconds) {
+  if (seconds < 60) return seconds + 's';
+  if (seconds < 3600) return Math.floor(seconds / 60) + 'm';
+  if (seconds < 86400) return Math.floor(seconds / 3600) + 'h';
+  return Math.floor(seconds / 86400) + 'd';
+}
+
+function refreshOpenPageFreshness() {
+  document.querySelectorAll('[data-observed-at][data-stale-after-seconds]').forEach(function (root) {
+    const observedMs = Date.parse(root.dataset.observedAt);
+    const threshold = Number(root.dataset.staleAfterSeconds);
+    const ageSeconds = Math.floor((Date.now() - observedMs) / 1000);
+    const age = root.querySelector('.relative-age');
+    if (age) {
+      age.textContent = Number.isFinite(ageSeconds) && ageSeconds >= 0
+        ? '(' + formatOpenPageAge(ageSeconds) + ' ago)'
+        : '(clock disagreement; freshness unknown)';
+    }
+    const noLongerFresh = !Number.isFinite(observedMs) || ageSeconds < 0 || ageSeconds > threshold;
+    if (!noLongerFresh) return;
+
+    root.classList.add('state-stale-live');
+    if (root.hasAttribute('data-page-basis')) {
+      const label = root.querySelector('.basis-label');
+      const state = root.querySelector('.basis-live-state');
+      if (label) label.textContent = 'This NQ data view is now stale — reload';
+      if (state) {
+        state.textContent =
+          'The page age crossed its display boundary; this does not establish monitored-system health.';
+      }
+    }
+    const cardState = root.querySelector('.card-status span:first-child');
+    if (cardState) cardState.textContent = 'Stale on this open page — reload';
+    if (root.hasAttribute('data-finding-detail')) {
+      const warning = root.querySelector('.open-page-freshness-warning');
+      if (warning) warning.hidden = false;
+      root.querySelectorAll('.action-panel button').forEach(function (button) {
+        button.disabled = true;
+      });
+      root.querySelectorAll('dialog[open]').forEach(function (dialog) {
+        dialog.close();
+      });
+    }
+  });
+}
+
+refreshOpenPageFreshness();
+window.setInterval(refreshOpenPageFreshness, 15000);
 "#
 }
 
@@ -823,7 +1077,8 @@ fn page_shell(title: &str, basis: &DashboardBasis, content: String) -> String {
          <html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>{title} — NQ</title><style>{styles}</style></head>\
-         <body><header class=\"site-header\"><div class=\"site-header-inner\">\
+         <body><a class=\"skip-link\" href=\"#main-content\">Skip to dashboard content</a>\
+         <header class=\"site-header\"><div class=\"site-header-inner\">\
            <a class=\"brand\" href=\"/\" aria-label=\"NQ dashboard home\">NQ</a>{basis}\
          </div></header>{content}\
          <footer class=\"site-footer\">NQ reports bounded observations. A finding does not by itself prove cause, user impact, or authorization to change a monitored system.</footer>\
@@ -851,14 +1106,28 @@ pub fn render_overview(overview: &DashboardOverview) -> String {
         .monitored_findings
         .iter()
         .filter(|finding| {
-            !needs_attention(finding) && !is_unknown_state(finding) && is_recent_change(finding)
+            !needs_attention(finding)
+                && !is_unknown_state(finding)
+                && !is_operator_watching(finding)
+                && !is_muted_work_state(&finding.work_state)
+                && is_recent_change(finding)
         })
         .collect::<Vec<_>>();
     let watching = overview
         .monitored_findings
         .iter()
         .filter(|finding| {
-            !needs_attention(finding) && !is_unknown_state(finding) && !is_recent_change(finding)
+            finding.status == DashboardFindingStatus::Ongoing
+                && is_operator_watching(finding)
+                && !is_muted_work_state(&finding.work_state)
+        })
+        .collect::<Vec<_>>();
+    let coordinated = overview
+        .monitored_findings
+        .iter()
+        .filter(|finding| {
+            finding.status == DashboardFindingStatus::Ongoing
+                && is_muted_work_state(&finding.work_state)
         })
         .collect::<Vec<_>>();
 
@@ -878,19 +1147,40 @@ pub fn render_overview(overview: &DashboardOverview) -> String {
         .iter()
         .map(|finding| render_card(finding, finding.evidence.as_ref()))
         .collect::<String>();
+    let coordinated_cards = coordinated
+        .iter()
+        .map(|finding| render_card(finding, finding.evidence.as_ref()))
+        .collect::<String>();
     let self_health_cards = overview
         .nq_self_health
         .iter()
         .map(|finding| render_card(finding, finding.evidence.as_ref()))
         .collect::<String>();
 
-    let attention_summary = match attention.len() {
-        0 => "No current issue is supported by this snapshot.".to_string(),
-        1 => "1 issue needs attention.".to_string(),
-        count => format!("{count} issues need attention."),
+    let attention_summary = match (attention.len(), unknown.len()) {
+        (0, 0) => "No current issue is supported by the latest NQ data capture.".to_string(),
+        (0, 1) => "No current issue is supported; 1 decision is blocked by stale or unresolved evidence.".to_string(),
+        (0, unknown_count) => format!(
+            "No current issue is supported; {unknown_count} decisions are blocked by stale or unresolved evidence."
+        ),
+        (1, 0) => "1 issue needs attention.".to_string(),
+        (1, 1) => {
+            "1 current issue needs attention; 1 decision is blocked by stale or unresolved evidence."
+                .to_string()
+        }
+        (1, unknown_count) => format!(
+            "1 current issue needs attention; {unknown_count} decisions are blocked by stale or unresolved evidence."
+        ),
+        (count, 0) => format!("{count} issues need attention."),
+        (count, 1) => format!(
+            "{count} current issues need attention; 1 decision is blocked by stale or unresolved evidence."
+        ),
+        (count, unknown_count) => format!(
+            "{count} current issues need attention; {unknown_count} decisions are blocked by stale or unresolved evidence."
+        ),
     };
     let attention_body = if attention.is_empty() {
-        "<div class=\"empty-state\"><strong>No monitored-system issue currently requires action.</strong><p>This is bounded by the observation basis and coverage shown below; it is not a universal health claim.</p></div>".into()
+        "<div class=\"empty-state\"><strong>No monitored-system issue currently requires action.</strong><p>This statement is limited to the observation time and coverage shown below; it is not a universal health claim.</p></div>".into()
     } else {
         format!("<div class=\"finding-grid\">{attention_cards}</div>")
     };
@@ -923,6 +1213,16 @@ pub fn render_overview(overview: &DashboardOverview) -> String {
             watching.len()
         )
     };
+    let coordinated_section = if coordinated.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<section aria-labelledby=\"coordinated-heading\"><h2 id=\"coordinated-heading\">Operator-coordinated findings ({})</h2>\
+             <p class=\"section-intro\">The observed condition may still be ongoing. Its coordination state changes notification handling, not detector testimony or monitored-system state.</p>\
+             <div class=\"finding-grid\">{coordinated_cards}</div></section>",
+            coordinated.len()
+        )
+    };
     let self_health_section = if overview.nq_self_health.is_empty() {
         "<section class=\"self-health\" aria-labelledby=\"self-health-heading\"><h2 id=\"self-health-heading\">NQ system health</h2><p>No NQ self-health finding is recorded in this snapshot.</p></section>".into()
     } else {
@@ -941,7 +1241,7 @@ pub fn render_overview(overview: &DashboardOverview) -> String {
              <p class=\"section-intro\">Start with the operational claim. Evidence, uncertainty, and expert classification remain attached to it.</p>\
              {attention_body}\
            </section>\
-           {unknown_section}{changed_section}{watching_section}{self_health_section}\
+           {unknown_section}{changed_section}{watching_section}{coordinated_section}{self_health_section}\
            {inventory}\
          </main>",
         attention_summary = escape_html(&attention_summary),
@@ -949,6 +1249,7 @@ pub fn render_overview(overview: &DashboardOverview) -> String {
         unknown_section = unknown_section,
         changed_section = changed_section,
         watching_section = watching_section,
+        coordinated_section = coordinated_section,
         self_health_section = self_health_section,
         inventory = render_inventory(&overview.inventory),
     );
@@ -982,6 +1283,23 @@ fn render_effect_list(items: &[&str]) -> String {
 fn render_action_choice(finding: &DashboardFinding, contract: &FindingActionContract) -> String {
     let action = action_name(contract.action);
     let dialog_id = format!("action-dialog-{action}");
+    let dialog_title_id = format!("{dialog_id}-title");
+    let risk_class = if matches!(
+        contract.action,
+        FindingAction::Close | FindingAction::Suppress | FindingAction::Reset
+    ) {
+        " action-choice-consequential"
+    } else {
+        ""
+    };
+    let confirm_class = if matches!(
+        contract.action,
+        FindingAction::Close | FindingAction::Suppress
+    ) {
+        "confirm-action danger-button"
+    } else {
+        "confirm-action"
+    };
     let will = render_effect_list(contract.will);
     let will_not = render_effect_list(contract.will_not);
     let ttl = match contract.ttl_policy {
@@ -996,17 +1314,19 @@ fn render_action_choice(finding: &DashboardFinding, contract: &FindingActionCont
     };
 
     format!(
-        "<div class=\"action-choice\">\
+        "<div class=\"action-choice{risk_class}\">\
            <h3>{label}</h3><p>{summary}</p>\
            <button type=\"button\" aria-haspopup=\"dialog\" aria-controls=\"{dialog_id}\"\
              data-dialog=\"{dialog_id}\" onclick=\"previewFindingAction(this)\">Preview {label}</button>\
          </div>\
          <dialog id=\"{dialog_id}\"\
+           aria-labelledby=\"{dialog_title_id}\"\
            data-finding-key=\"{key}\"\
            data-action=\"{action}\"\
            data-expected-work-state=\"{work_state}\"\
            data-expected-last-seen-gen=\"{generation}\">\
-           <h2>{label} this finding?</h2>\
+           <form onsubmit=\"event.preventDefault(); applyFindingAction(event.submitter)\">\
+           <h2 id=\"{dialog_title_id}\">{label} this finding?</h2>\
            <p>{summary}</p>\
            <dl class=\"decision-facts\">\
              <div><dt>Concrete target</dt><dd><code>{key}</code></dd></div>\
@@ -1032,12 +1352,15 @@ fn render_action_choice(finding: &DashboardFinding, contract: &FindingActionCont
            <div class=\"dialog-actions\">\
              <button type=\"button\" class=\"secondary-button\" onclick=\"this.closest('dialog').close()\">Cancel</button>\
              <button type=\"button\" class=\"secondary-button\" data-dialog=\"{dialog_id}\" onclick=\"previewFindingAction(this)\">Validate preview</button>\
-             <button type=\"button\" class=\"confirm-action\" disabled onclick=\"applyFindingAction(this)\">Confirm {label}</button>\
+             <button type=\"submit\" class=\"{confirm_class}\" disabled>Confirm {label}</button>\
            </div>\
-         </dialog>",
+           </form></dialog>",
         label = escape_html(contract.label),
         summary = escape_html(contract.summary),
         dialog_id = dialog_id,
+        dialog_title_id = dialog_title_id,
+        risk_class = risk_class,
+        confirm_class = confirm_class,
         key = escape_html(&finding.finding_key),
         action = action,
         work_state = escape_html(&finding.work_state),
@@ -1057,9 +1380,9 @@ fn render_actions(
 ) -> String {
     let basis_current = basis.status.as_deref() == Some("complete")
         && basis.generation_id == Some(finding.last_seen_generation)
-        && basis
-            .age_seconds
-            .is_some_and(|age| age <= nq_db::dashboard::DASHBOARD_STALE_AFTER_SECONDS);
+        && basis.age_seconds.is_some_and(|age| {
+            (0..=nq_db::dashboard::DASHBOARD_STALE_AFTER_SECONDS).contains(&age)
+        });
     let finding_current = finding.status == DashboardFindingStatus::Ongoing
         && !finding.display_stale
         && finding.visibility_state == "observed"
@@ -1079,13 +1402,27 @@ fn render_actions(
         return "<div class=\"action-unavailable\"><strong>Actions disabled for safety.</strong> The stored coordination state is not recognized.</div>".into();
     }
 
-    let choices = FindingAction::ALL
+    let routine_choices = [FindingAction::Acknowledge, FindingAction::Watch]
         .iter()
         .map(|action| render_action_choice(finding, &action.contract()))
         .collect::<String>();
+    let consequential_choices = [
+        FindingAction::Quiesce,
+        FindingAction::Close,
+        FindingAction::Suppress,
+        FindingAction::Reset,
+    ]
+    .iter()
+    .map(|action| render_action_choice(finding, &action.contract()))
+    .collect::<String>();
     format!(
         "<p>These controls change only operator coordination and notification eligibility for the concrete finding shown above. They do not act on the monitored system.</p>\
-         <div class=\"action-grid\">{choices}</div>"
+         <div class=\"action-grid\">{routine_choices}</div>\
+         <details class=\"consequential-actions\"><summary>Notification-pausing, closure, and reset controls</summary>\
+           <p>These controls can stop future notifications or change how completed coordination work is recorded. Inspect their effect preview before choosing one.</p>\
+           <p><strong>Quiesce and Suppress have the same notification effect:</strong> Quiesce records a temporary operational quiet period; Suppress records an intentional judgment that notifications are not currently useful.</p>\
+           <div class=\"action-grid\">{consequential_choices}</div>\
+         </details>"
     )
 }
 
@@ -1093,8 +1430,14 @@ fn render_error_shift_evidence(evidence: &nq_db::dashboard::ErrorShiftEvidence) 
     let comparison_range = match (
         evidence.comparison_basis.generation_start,
         evidence.comparison_basis.generation_end,
+        evidence.comparison_basis.observed_start_at.as_deref(),
+        evidence.comparison_basis.observed_end_at.as_deref(),
     ) {
-        (Some(start), Some(end)) => format!("snapshots #{start}–#{end}"),
+        (Some(start), Some(end), Some(start_at), Some(end_at)) => format!(
+            "snapshots #{start}–#{end}, observed {} to {}",
+            start_at, end_at
+        ),
+        (Some(start), Some(end), _, _) => format!("snapshots #{start}–#{end}"),
         _ => "retained comparison range unavailable".into(),
     };
     let sufficiency = if evidence.baseline_average_error_ratio.is_none() {
@@ -1165,9 +1508,108 @@ fn render_error_shift_evidence(evidence: &nq_db::dashboard::ErrorShiftEvidence) 
     )
 }
 
+fn render_smart_conflict_evidence(
+    evidence: &nq_db::dashboard::SmartSourceConflictEvidence,
+) -> String {
+    let total_errors: i64 = evidence.counters.iter().map(|counter| counter.value).sum();
+    let counter_rows = if evidence.counters.is_empty() {
+        "<tr><td colspan=\"3\" class=\"unknown-value\">No covered raw counter values are available.</td></tr>".to_string()
+    } else {
+        evidence
+            .counters
+            .iter()
+            .map(|counter| {
+                format!(
+                    "<tr><th scope=\"row\">{}</th><td>{}</td><td>{}</td></tr>",
+                    escape_html(&counter.name),
+                    counter.value,
+                    escape_html(&counter.source_channel),
+                )
+            })
+            .collect::<String>()
+    };
+    let overall = match evidence.smart_overall_passed {
+        Some(true) => "passed",
+        Some(false) => "failed",
+        None => "unavailable",
+    };
+    let missing = if evidence.missing_coverage.is_empty() {
+        "No missing coverage is recorded for the two channels used in this contradiction."
+            .to_string()
+    } else {
+        format!(
+            "Coverage is missing for: {}.",
+            evidence.missing_coverage.join(", ")
+        )
+    };
+    format!(
+        "<div class=\"conflict-state\"><strong>Sources disagree.</strong>\
+         <p>The advisory SMART overall-status channel reports <strong>{overall}</strong>, while covered raw counters total <strong>{total_errors}</strong>. The individual values appear below. These are retained as a contradiction, not averaged into a reassuring single state.</p></div>\
+         <div class=\"table-scroll\"><table><caption>Conflicting SMART channels from one observation basis</caption>\
+           <thead><tr><th scope=\"col\">Observation</th><th scope=\"col\">Value</th><th scope=\"col\">Source channel</th></tr></thead>\
+           <tbody><tr><th scope=\"row\">SMART overall status</th><td>{overall}</td><td>device self-assessment (coverage: {overall_coverage})</td></tr>{counter_rows}</tbody>\
+         </table></div>\
+         <dl class=\"decision-facts\">\
+           <div><dt>Observation time</dt><dd><time datetime=\"{observed_at}\">{observed_at}</time></dd></div>\
+           <div><dt>Observation snapshot</dt><dd>#{generation}</dd></div>\
+           <div><dt>Witness/source</dt><dd>{source}</dd></div>\
+           <div><dt>Coverage</dt><dd>{missing}</dd></div>\
+         </dl>\
+         <p><strong>Bounded conclusion:</strong> the device's self-assessment and covered raw counters disagree. This supports investigation of device health; it does not establish data loss, service impact, or the cause of the errors.</p>",
+        overall = escape_html(overall),
+        total_errors = total_errors,
+        overall_coverage = if evidence.overall_status_covered {
+            "present"
+        } else {
+            "missing"
+        },
+        counter_rows = counter_rows,
+        observed_at = escape_html(&evidence.device_observed_at),
+        generation = evidence.generation_id,
+        source = optional_text(evidence.source_id.as_deref()),
+        missing = escape_html(&missing),
+    )
+}
+
+fn render_coherence_issues(finding: &DashboardFinding) -> String {
+    if finding.coherence_issues.is_empty() {
+        return String::new();
+    }
+    let rows = finding
+        .coherence_issues
+        .iter()
+        .map(|issue| {
+            format!(
+                "<tr><th scope=\"row\"><code>{code}</code></th><td>{summary}</td>\
+                 <td>finding snapshot #{lifecycle}</td><td>{conflict}</td></tr>",
+                code = escape_html(&issue.code),
+                summary = escape_html(&issue.summary),
+                lifecycle = issue.lifecycle_generation,
+                conflict = issue
+                    .conflicting_generation
+                    .map(|generation| format!("conflicting snapshot #{generation}"))
+                    .unwrap_or_else(|| {
+                        "<span class=\"unknown-value\">No matching source snapshot</span>".into()
+                    }),
+            )
+        })
+        .collect::<String>();
+    format!(
+        "<div class=\"evidence-caution\"><strong>Observation-basis conflict</strong>\
+         <p>NQ kept these records separate instead of constructing one mixed-snapshot claim.</p>\
+         <div class=\"table-scroll\"><table><caption>Unjoined records</caption>\
+         <thead><tr><th scope=\"col\">Gap</th><th scope=\"col\">Meaning</th>\
+         <th scope=\"col\">Lifecycle basis</th><th scope=\"col\">Other basis</th></tr></thead>\
+         <tbody>{rows}</tbody></table></div></div>"
+    )
+}
+
 fn render_evidence(finding: &DashboardFinding, evidence: Option<&DashboardEvidence>) -> String {
     match evidence {
         Some(DashboardEvidence::ErrorShift(evidence)) => render_error_shift_evidence(evidence),
+        Some(DashboardEvidence::SmartSourceConflict(evidence)) => {
+            render_smart_conflict_evidence(evidence)
+        }
         None if finding.kind == "smart_status_lies" => format!(
             "<div class=\"conflict-state\"><strong>Sources disagree.</strong>\
              <p>{}</p><p>NQ preserves the contradiction; it does not average these channels into a healthy or failed verdict.</p></div>\
@@ -1259,7 +1701,11 @@ fn render_current_detail(
         .iter()
         .map(|check| format!("<li>{}</li>", escape_html(check)))
         .collect::<String>();
-    let stale_banner = if finding.display_stale {
+    let stale_banner = if finding.observation_age_seconds.is_some_and(|age| age < 0) {
+        "<div class=\"state-banner\"><strong>Clock disagreement</strong>The finding observation is timestamped in the future relative to this dashboard read. Current standing is unknown and actions are disabled.</div>"
+    } else if finding.status == DashboardFindingStatus::Unknown {
+        "<div class=\"state-banner\"><strong>Current standing cannot be resolved coherently</strong>NQ did not combine lifecycle, evidence, or observations from different snapshots. Review the explicit basis gaps below; actions are disabled.</div>"
+    } else if finding.display_stale {
         "<div class=\"state-banner\"><strong>Stale finding</strong>The last observation is too old to describe current state. Actions are disabled. Absence of a newer finding does not establish health.</div>"
     } else if finding.status == DashboardFindingStatus::Recovering {
         "<div class=\"state-banner\"><strong>No longer observed; confirmation is pending</strong>This is not the same as resolved or healthy. Actions are disabled while NQ confirms disappearance.</div>"
@@ -1277,27 +1723,30 @@ fn render_current_detail(
         .unwrap_or(&finding.last_seen_at);
 
     let content = format!(
-        "<main id=\"main-content\">\
+        "<main id=\"main-content\" data-observed-at=\"{at}\" data-stale-after-seconds=\"{stale_after}\" data-finding-detail>\
            <a class=\"back-link\" href=\"/\">← Current dashboard</a>\
            <section aria-labelledby=\"finding-heading\">\
              <div class=\"eyebrow\">Decision</div>\
              <h1 id=\"finding-heading\">{title}</h1>\
              <p class=\"observed-claim\">{message}</p>\
+             <div class=\"open-page-freshness-warning state-banner\" role=\"alert\" hidden>\
+               <strong>This open page has crossed its freshness boundary.</strong>\
+               Reload before treating the finding as current or previewing an action. No action has been applied.</div>\
              {stale_banner}\
              <dl class=\"decision-facts\">\
                <div><dt>State</dt><dd>{status}</dd></div>\
                <div><dt>Affected</dt><dd>{host}{subject}</dd></div>\
-               <div><dt>Observed</dt><dd><time datetime=\"{at}\">{at}</time> ({age} ago)</dd></div>\
+               <div><dt>Observed</dt><dd><time datetime=\"{at}\">{at}</time> <span class=\"relative-age\">({recency})</span></dd></div>\
                <div><dt>Comparison / magnitude</dt><dd>{magnitude}</dd></div>\
                <div><dt>Impact</dt><dd>{impact}</dd></div>\
-               <div><dt>Coordination</dt><dd>{work_state}</dd></div>\
+               <div><dt>Coordination</dt><dd><strong>{work_state_label}</strong> — {coordination}</dd></div>\
              </dl>\
              <div class=\"unknowns\"><strong>What remains unknown</strong><ul>{unknown_items}</ul></div>\
              <details class=\"next-inspection\" open><summary>Recommended next inspection</summary><ul>{checks}</ul></details>\
            </section>\
            <section class=\"evidence-panel\" aria-labelledby=\"evidence-heading\">\
              <div class=\"eyebrow\">Evidence</div><h2 id=\"evidence-heading\">Why NQ reports this</h2>\
-             {evidence}\
+             {coherence}{evidence}\
              <details><summary>Retained observation history ({observation_count})</summary>{observations}</details>\
            </section>\
            <section class=\"action-panel\" aria-labelledby=\"action-heading\">\
@@ -1318,6 +1767,7 @@ fn render_current_detail(
                  <div><dt>Basis source</dt><dd>{basis_source}</dd></div>\
                  <div><dt>Basis witness</dt><dd>{basis_witness}</dd></div>\
                  <div><dt>Failure class</dt><dd>{failure_class}</dd></div>\
+                 <div><dt>Coordination state</dt><dd><code>{work_state}</code></dd></div>\
                </dl>\
                <h3>Detector rationale, not causal fact</h3><p>{gloss}</p><p>{contradiction}</p>\
              </details>\
@@ -1343,10 +1793,12 @@ fn render_current_detail(
             format!(" / {}", escape_html(&finding.subject))
         },
         at = escape_html(observation_at),
-        age = finding
-            .observation_age_seconds
-            .map(human_duration)
-            .unwrap_or_else(|| "unknown".into()),
+        stale_after = nq_db::dashboard::DASHBOARD_STALE_AFTER_SECONDS,
+        recency = match finding.observation_age_seconds {
+            Some(age) if age >= 0 => format!("{} ago", human_duration(age)),
+            Some(age) => format!("{}s in the future; clock disagreement", -age),
+            None => "age unavailable".to_string(),
+        },
         magnitude = match detail.evidence.as_ref() {
             Some(DashboardEvidence::ErrorShift(evidence)) => format!(
                 "{} now versus {} baseline; {} current messages",
@@ -1354,13 +1806,29 @@ fn render_current_detail(
                 percentage(evidence.baseline_average_error_ratio),
                 evidence.current_sample_size
             ),
+            Some(DashboardEvidence::SmartSourceConflict(evidence)) => format!(
+                "SMART self-assessment {} versus {} covered raw errors",
+                match evidence.smart_overall_passed {
+                    Some(true) => "passed",
+                    Some(false) => "failed",
+                    None => "unavailable",
+                },
+                evidence
+                    .counters
+                    .iter()
+                    .map(|counter| counter.value)
+                    .sum::<i64>()
+            ),
             None => optional_number(finding.peak_value, ""),
         },
         impact = escape_html(&impact_statement(finding)),
+        work_state_label = escape_html(coordination_label(&finding.work_state)),
         work_state = escape_html(&finding.work_state),
+        coordination = escape_html(coordination_statement(&finding.work_state)),
         unknown_items = unknown_items,
         checks = checks,
         evidence = render_evidence(finding, detail.evidence.as_ref()),
+        coherence = render_coherence_issues(finding),
         observation_count = detail.observations.total_count,
         observations = render_observation_history(&detail.observations),
         actions = render_actions(finding, &detail.basis, mutation_available),
@@ -1475,7 +1943,11 @@ fn render_missing_detail(detail: &DashboardMissingFindingDetail) -> String {
              <p><a class=\"primary-link\" href=\"/\">Inspect current issues and retained inventory</a></p>\
            </section>\
          </main>",
-        key = escape_html(&detail.requested_finding_key),
+        key = if detail.requested_finding_key.trim().is_empty() {
+            "(no finding key supplied)".to_string()
+        } else {
+            escape_html(&detail.requested_finding_key)
+        },
     );
     page_shell("Finding unavailable", &detail.basis, content)
 }

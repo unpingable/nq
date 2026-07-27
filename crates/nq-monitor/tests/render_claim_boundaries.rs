@@ -1,346 +1,194 @@
-//! Pins the render-surface projection boundary on the overview page.
+//! Pins the task-first overview's projection boundary.
 //!
-//! Three cold adversarial reads of the live dashboard converged on one
-//! finding: the scan surface invites readers to launder NQ output into
-//! authority it does not hold. Two distinct over-reads:
-//!
-//!   Adversary A (the SRE):  severity + age + amber strings → "P1,
-//!     neglected for 58 days, service is dead." Incident-authority
-//!     projection.
-//!   Adversary B (the formal-methods reader): doctrine + Greek → "live
-//!     Lean proof checker that locates the root cause." Proof-authority
-//!     projection.
-//!
-//! A third read, given the README's frame, landed NQ correctly as an
-//! anti-lying witness layer. The lesson: the README carries the
-//! interpretive frame; the live dashboard did not. This suite pins the
-//! render-boundary completeness pass (Lane A) that carries enough frame
-//! and local canon onto the page that neither over-read survives a scan.
-//!
-//! Scope guard: this is render/copy/canon-carriage only. It does NOT
-//! pin OperationalStatus, RelaxationReceipt, or any projection-receipt
-//! ladder — those remain non-binding in
-//! docs/working/decisions/MONITORING_PROJECTION_SEAM_CANDIDATE.md.
+//! The decision surface may report an observed change and response guidance.
+//! It must not turn severity, persistence, ontology, or detector commentary
+//! into incident priority, neglect, proof, cause, or authorization.
 
-use nq_monitor::http::routes::render_overview;
-use nq_db::views::{HostSummaryVm, OverviewVm, WarningVm};
+mod dashboard_support;
 
-fn host() -> HostSummaryVm {
-    HostSummaryVm {
-        host: "labelwatch-host".into(),
-        cpu_load_1m: Some(0.5),
-        mem_pressure_pct: Some(22.0),
-        disk_used_pct: Some(60.0),
-        disk_avail_mb: Some(40_000),
-        uptime_seconds: Some(720_000),
-        as_of_generation: 1,
-        stale: false,
-    }
-}
+use dashboard_support::{empty_overview, finding, OBSERVED_AT};
+use nq_monitor::http::operator_dashboard::render_overview;
 
-fn warning(
-    category: &str,
+fn bounded_finding(
+    kind: &str,
     domain: &str,
     severity: &str,
-    acknowledged: bool,
-) -> WarningVm {
-    WarningVm {
-        severity: severity.into(),
-        category: category.into(),
-        host: "labelwatch-host".into(),
-        subject: Some("/var/lib/labeler.sqlite".into()),
-        message: format!("{category} observed"),
-        domain: Some(domain.into()),
-        // An old finding — the exact shape the SRE read as "neglected for
-        // 58 days." The boundary must render persistence, not neglect.
-        first_seen_at: Some("2026-04-25T00:00:00Z".into()),
-        consecutive_gens: Some(30_000),
-        acknowledged,
-        finding_class: Some("signal".into()),
-        visibility_state: "observed".into(),
-        suppression_reason: None,
-        failure_class: Some("substrate".into()),
-        service_impact: Some("none".into()),
-        action_bias: Some("investigate_business_hours".into()),
-        synopsis: Some(category.into()),
-        stability: Some("stable".into()),
-        maintenance_state: "none".into(),
-        maintenance_id: None,
-        work_state: "new".into(),
-        owner: None,
-        note: None,
-        external_ref: None,
-        basis_state: "live".into(),
-    }
+    subject: &str,
+    message: &str,
+) -> nq_db::dashboard::DashboardFinding {
+    let mut current = finding(kind, "labelwatch-host", subject, message);
+    current.domain = domain.into();
+    current.severity = severity.into();
+    current.first_seen_at = "2026-04-25T00:00:00Z".into();
+    current.first_seen_generation = 1;
+    current.consecutive_generations = 30_000;
+    current.diagnosis.failure_class = Some("substrate".into());
+    current.diagnosis.service_impact = Some("none".into());
+    current.diagnosis.action_bias = Some("investigate_business_hours".into());
+    current
 }
 
-/// Attach recorded local canon (work_state + note) to a finding — the
-/// canon NQ already holds, as an operator would have recorded it.
-fn with_canon(mut w: WarningVm, work_state: &str, note: &str) -> WarningVm {
-    w.work_state = work_state.into();
-    w.note = Some(note.into());
-    w
-}
+fn scenario() -> nq_db::dashboard::DashboardOverview {
+    let mut overview = empty_overview();
 
-/// A scenario carrying the three over-read triggers at once: a critical
-/// substrate finding (severity), old and unacknowledged (age → neglect),
-/// an acknowledged sibling (canon receipt), and a quiet log source
-/// (collector absence). Mirrors the labelwatch/driftwatch substrate the
-/// adversarial reads actually scanned.
-fn vm() -> OverviewVm {
-    OverviewVm {
-        generation_id: Some(1),
-        generated_at: Some("2026-06-23T00:00:00Z".into()),
-        generation_status: Some("complete".into()),
-        generation_age_s: Some(10),
-        hosts: vec![host()],
-        services: vec![],
-        sqlite_dbs: vec![],
-        warnings: vec![
-            // Unacknowledged persistent critical — the P1/neglect bait.
-            warning("freelist_bloat", "Δg", "critical", false),
-            // Acknowledged but no recorded reason — bare receipt chip.
-            warning("disk_pressure", "Δg", "warning", true),
-            // Collector-scoped absence.
-            warning("log_silence", "Δo", "warning", false),
-            // Accepted debt: scary-but-known, distinct from unacknowledged
-            // persistence — carries the recorded reason it is no-action.
-            with_canon(
-                warning("wal_bloat", "Δg", "warning", true),
-                "accepted",
-                "accepted cleanup debt · runway 133d · no drops",
-            ),
-            // Parked work: distinct from stale/ignored.
-            with_canon(
-                warning("stale_service", "Δo", "warning", false),
-                "parked",
-                "ENABLE_FACTS_EXPORT=false",
-            ),
-            // By-design degradation: distinct from loss.
-            with_canon(
-                warning("resource_drift", "Δh", "warning", false),
-                "accepted",
-                "design behavior · protects writer · no data loss witnessed",
-            ),
-        ],
-        history_generations: 10,
-        host_freshness: vec![],
-    }
-}
+    let mut reclaimable = bounded_finding(
+        "freelist_bloat",
+        "Δg",
+        "critical",
+        "/var/lib/labeler.sqlite",
+        "41.5 MB is reclaimable (51.2% of the database)",
+    );
+    reclaimable.peak_value = Some(51.2);
 
-// ── The page-level frame: witness report, not commander, not prover ──
+    let mut acknowledged = bounded_finding(
+        "disk_pressure",
+        "Δg",
+        "warning",
+        "",
+        "disk use crossed the configured detector boundary",
+    );
+    acknowledged.work_state = "acknowledged".into();
+    acknowledged.owner = Some("storage-team".into());
+    acknowledged.note = Some("accepted cleanup debt; runway estimate is tracked elsewhere".into());
+
+    let mut collector_absence = bounded_finding(
+        "log_silence",
+        "Δo",
+        "warning",
+        "labelwatch",
+        "No log lines reached this collector in the current observation window",
+    );
+    collector_absence.diagnosis.failure_class = Some("silence".into());
+    collector_absence.diagnosis.synopsis =
+        Some("No labelwatch log lines reached the collector".into());
+
+    overview.monitored_findings = vec![reclaimable, acknowledged, collector_absence];
+    overview
+}
 
 #[test]
-fn page_declares_itself_a_witness_report() {
-    let html = render_overview(&vm(), &[]);
+fn page_frames_every_finding_as_a_bounded_observation() {
+    let html = render_overview(&scenario());
+
+    assert!(html.contains(
+        "NQ reports bounded observations. A finding does not by itself prove cause, user impact, or authorization to change a monitored system."
+    ));
+    assert!(html.contains("Start with the operational claim."));
     assert!(
-        html.contains("witness report"),
-        "page must frame itself as a witness report"
+        html.contains("Evidence, uncertainty, and expert classification remain attached to it.")
     );
 }
-
-/// Adversary A inoculation: the page must explicitly disclaim incident
-/// command authority somewhere a scanner will hit it.
-#[test]
-fn page_refuses_incident_commander_role() {
-    let html = render_overview(&vm(), &[]);
-    assert!(
-        html.contains("not an incident commander"),
-        "page must refuse the incident-commander reading"
-    );
-    assert!(
-        html.contains("does not assign incident priority"),
-        "footer must disclaim priority/ownership/SLA/obligation"
-    );
-}
-
-/// Adversary B inoculation: the page must explicitly disclaim proof /
-/// verification authority, including the Lean-in-prod inflation.
-#[test]
-fn page_refuses_proof_checker_role() {
-    let html = render_overview(&vm(), &[]);
-    assert!(
-        html.contains("not a proof checker"),
-        "page must refuse the proof-checker reading"
-    );
-    assert!(
-        html.contains("not a theorem"),
-        "footer must state a rendered finding is not a theorem unless linked to a checked proof artifact"
-    );
-}
-
-// ── The scan surface: every finding carries its claim boundary ──
 
 #[test]
-fn findings_carry_a_cannot_testify_boundary() {
-    let html = render_overview(&vm(), &[]);
-    assert!(
-        html.contains("cannot testify"),
-        "findings must render an explicit claim boundary on the scan surface"
+fn every_scan_card_preserves_unknown_cause_and_impact_boundaries() {
+    let html = render_overview(&scenario());
+
+    assert_eq!(
+        html.matches("Cause is not established by this finding.")
+            .count(),
+        3,
+        "each concrete finding must carry its own causal boundary"
     );
-    // Δg substrate boundary: condition witnessed, priority/impact withheld.
-    assert!(
-        html.contains("service impact and incident priority cannot testify from this alone"),
-        "a substrate finding must state that service impact and priority cannot testify"
-    );
-    // Δo absence boundary: collector-scoped, not subject-state.
-    assert!(
-        html.contains("absence observed at the collector"),
-        "a missing-signal finding must state the absence is collector-scoped"
+    assert_eq!(
+        html.matches("No current service impact is recorded. That is not proof of no impact.")
+            .count(),
+        3,
+        "absence of recorded impact must not become a no-impact claim"
     );
 }
 
-/// Age must render as witnessed persistence, never as neglect. An
-/// unacknowledged old finding gets the persistence/neglect boundary; an
-/// acknowledged one carries the operator receipt instead.
 #[test]
-fn age_renders_as_persistence_not_neglect() {
-    let html = render_overview(&vm(), &[]);
-    assert!(
-        html.contains("persistence witnessed; neglect cannot testify"),
-        "an unacknowledged persistent finding must render persistence, not neglect"
-    );
-    assert!(
-        html.contains("persistence acknowledged by an operator"),
-        "an acknowledged finding must carry the operator receipt, defusing the neglect read"
-    );
+fn plain_operational_claim_precedes_delta_and_detector_ontology() {
+    let html = render_overview(&scenario());
+    let claim = html
+        .find("/var/lib/labeler.sqlite has reclaimable database space")
+        .expect("plain operational claim");
+    let advanced = html
+        .find("Advanced NQ classification")
+        .expect("expert detail remains available");
+    let delta = html
+        .find("<code>Δg</code>")
+        .expect("delta remains auditable");
+    let detector = html
+        .find("<code>freelist_bloat</code>")
+        .expect("detector identity remains auditable");
+
+    assert!(claim < advanced && advanced < delta && advanced < detector);
 }
 
-/// Canon carriage (bare receipt): a finding acknowledged without a
-/// recorded reason still surfaces a receipt chip, so it reads as
-/// attended rather than as a fresh incident.
 #[test]
-fn local_canon_receipt_reaches_the_scan_surface() {
-    let html = render_overview(&vm(), &[]);
-    assert!(
-        html.contains("canon-chip"),
-        "an acknowledged finding with no recorded canon must surface a receipt chip"
-    );
+fn critical_severity_and_long_persistence_do_not_become_priority_or_neglect() {
+    let html = render_overview(&scenario());
+
+    assert!(html.contains("Investigate during working hours"));
+    assert!(!html.contains("Severity:"));
+    assert!(!html.contains(">critical<"));
+    assert!(!html.contains("P1"));
+    assert!(!html.contains("neglected"));
+    assert!(!html.contains("ignored"));
 }
 
-/// Packet 1 — canon carriage: recorded work_state + note (the canon NQ
-/// already holds) reaches the scan surface verbatim, so a scary-but-known
-/// condition reads as known. Accepted debt must be distinguishable from
-/// unacknowledged persistence on the same scan.
 #[test]
-fn accepted_debt_is_distinct_from_unacknowledged_persistence() {
-    let html = render_overview(&vm(), &[]);
-    // The recorded reason renders, verbatim, on the row.
+fn overview_uses_current_observation_time_without_inventing_persistence_semantics() {
+    let html = render_overview(&scenario());
+
+    assert!(html.contains(OBSERVED_AT));
     assert!(
-        html.contains("Canon: accepted"),
-        "an accepted finding must render its recorded work_state on the scan surface"
+        !html.contains("2026-04-25T00:00:00Z"),
+        "first-seen history is not promoted into the current decision claim"
     );
     assert!(
-        html.contains("accepted cleanup debt · runway 133d · no drops"),
-        "the recorded note (the reason it is no-action) must render verbatim"
-    );
-    // ...while the unacknowledged persistent finding still reads as
-    // persistence about which neglect cannot be testified. Both shapes
-    // present on one page ⇒ the reader can tell them apart.
-    assert!(
-        html.contains("persistence witnessed; neglect cannot testify"),
-        "unacknowledged persistence must remain distinguishable from accepted debt"
+        !html.contains("30,000") && !html.contains(">30000<"),
+        "generation persistence is not presented as operator neglect"
     );
 }
 
-/// Parked work must be distinguishable from stale/ignored work.
 #[test]
-fn parked_work_is_distinct_from_stale() {
-    let html = render_overview(&vm(), &[]);
+fn coordination_canon_does_not_leak_into_the_observed_claim() {
+    let html = render_overview(&scenario());
+
+    assert!(html.contains("disk use crossed the configured detector boundary"));
+    assert!(!html.contains("accepted cleanup debt"));
+    assert!(!html.contains("storage-team"));
     assert!(
-        html.contains("Canon: parked"),
-        "a parked finding must render its parked work_state"
-    );
-    assert!(
-        html.contains("ENABLE_FACTS_EXPORT=false"),
-        "the recorded note explaining the park must render verbatim"
+        html.contains("Investigate evidence"),
+        "the overview routes the operator to evidence/detail instead of rephrasing hidden canon as testimony"
     );
 }
 
-/// By-design degradation must be distinguishable from data loss.
 #[test]
-fn design_behavior_is_distinct_from_loss() {
-    let html = render_overview(&vm(), &[]);
-    assert!(
-        html.contains("design behavior · protects writer · no data loss witnessed"),
-        "a by-design degraded state must carry its recorded canon, not read as loss"
-    );
+fn collector_absence_does_not_claim_the_service_is_dead() {
+    let html = render_overview(&scenario());
+
+    assert!(html.contains("No labelwatch log lines reached the collector"));
+    assert!(html.contains("Observation is missing"));
+    assert!(html.contains("Cause is not established by this finding."));
+    assert!(!html.contains("service stopped logging"));
+    assert!(!html.contains("service dead"));
+    assert!(!html.contains("service is dead"));
 }
 
-/// Canon is render-only: a default-lifecycle finding (`work_state = new`,
-/// no note) must NOT manufacture a canon line. NQ surfaces recorded
-/// canon; it invents none.
-#[test]
-fn no_canon_line_without_recorded_canon() {
-    // A single finding at the default lifecycle state.
-    let mut bare = OverviewVm {
-        generation_id: Some(1),
-        generated_at: Some("2026-06-23T00:00:00Z".into()),
-        generation_status: Some("complete".into()),
-        generation_age_s: Some(10),
-        hosts: vec![host()],
-        services: vec![],
-        sqlite_dbs: vec![],
-        warnings: vec![warning("freelist_bloat", "Δg", "critical", false)],
-        history_generations: 10,
-        host_freshness: vec![],
-    };
-    bare.warnings[0].work_state = "new".into();
-    bare.warnings[0].note = None;
-    let html = render_overview(&bare, &[]);
-    assert!(
-        !html.contains("Canon:"),
-        "no canon line may render for a finding with no recorded canon"
-    );
-}
-
-/// A quiet source renders as collector-scoped absence, never as a dead
-/// or silent service.
-#[test]
-fn source_quiet_renders_as_collector_absence() {
-    let html = render_overview(&vm(), &[]);
-    assert!(
-        html.contains("no lines at collector"),
-        "source_quiet must render as collector-scoped absence wording"
-    );
-    assert!(
-        html.contains("the service state cannot testify from this alone"),
-        "the quiet-source tooltip must withhold any claim about the service's own state"
-    );
-}
-
-// ── The refusal: forbidden vocabulary must never reach the page ──
-
-/// Incident-authority vocabulary. NQ keeps `severity` (the magnitude
-/// axis, deliberately) and `investigate now` (an action_bias posture
-/// label) — those are NOT forbidden. What is forbidden is language that
-/// asserts incident priority, neglect, or service death as fact.
 #[test]
 fn no_incident_authority_vocabulary() {
-    let html = render_overview(&vm(), &[]);
+    let html = render_overview(&scenario());
     for forbidden in [
         "P1",
-        "ignored",
-        "neglected",
         "negligent",
         "unaddressed",
-        "service stopped logging",
-        "service dead",
-        "service is dead",
+        "must intervene",
+        "incident priority is",
+        "operator is obligated",
     ] {
         assert!(
             !html.contains(forbidden),
-            "incident-authority laundering: rendered page must not contain {forbidden:?}"
+            "incident-authority laundering: {forbidden:?}"
         );
     }
 }
 
-/// Proof-authority vocabulary. NQ may say it is "not a proof checker" and
-/// "does not prove correctness" (negated disclaimers); it must never make
-/// the affirmative claim that something was proven or formally verified.
 #[test]
 fn no_proof_authority_vocabulary() {
-    let html = render_overview(&vm(), &[]);
+    let html = render_overview(&scenario());
     for forbidden in [
         "proven correct",
         "formally verified",
@@ -351,16 +199,14 @@ fn no_proof_authority_vocabulary() {
     ] {
         assert!(
             !html.contains(forbidden),
-            "proof-authority laundering: rendered page must not contain {forbidden:?}"
+            "proof-authority laundering: {forbidden:?}"
         );
     }
 }
 
-/// Causal-authority vocabulary. NQ may say it "does not identify a root
-/// cause" (negated); it must never make the affirmative causal claim.
 #[test]
 fn no_causal_authority_vocabulary() {
-    let html = render_overview(&vm(), &[]);
+    let html = render_overview(&scenario());
     for forbidden in [
         "is the root cause",
         "root-caused",
@@ -370,19 +216,16 @@ fn no_causal_authority_vocabulary() {
     ] {
         assert!(
             !html.contains(forbidden),
-            "causal-authority laundering: rendered page must not contain {forbidden:?}"
+            "causal-authority laundering: {forbidden:?}"
         );
     }
 }
 
-/// The action_bias axis stays advisory: the posture legend must keep the
-/// "response shape, not severity" framing so the Response axis cannot be
-/// read as an obligation or a severity scale.
 #[test]
-fn action_bias_remains_advisory() {
-    let html = render_overview(&vm(), &[]);
-    assert!(
-        html.contains("Recommended response shape, not severity."),
-        "the posture legend must keep action_bias framed as advisory, not obligation"
-    );
+fn response_guidance_is_not_actuation_authority() {
+    let html = render_overview(&scenario());
+
+    assert!(html.contains("Investigate during working hours"));
+    assert!(html.contains("authorization to change a monitored system"));
+    assert!(!html.contains("authorized to remediate"));
 }

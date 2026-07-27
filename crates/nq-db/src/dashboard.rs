@@ -32,12 +32,22 @@ pub enum DashboardScope {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum DashboardEvidenceStanding {
+    Admissible,
+    StaleTestimony,
+    Unknown,
+    ClockSkew,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DashboardFindingStatus {
     Ongoing,
     Recovering,
     Stale,
     Suppressed,
     Retired,
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -56,6 +66,14 @@ pub struct DashboardObservation {
     pub observed_at: String,
     pub value: Option<f64>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DashboardCoherenceIssue {
+    pub code: String,
+    pub summary: String,
+    pub lifecycle_generation: i64,
+    pub conflicting_generation: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -113,6 +131,9 @@ pub struct DashboardFinding {
     /// Basis-bound detector evidence assembled inside the same read
     /// transaction as this finding. Present for supported finding kinds.
     pub evidence: Option<DashboardEvidence>,
+    /// Explicit reasons that claim-attached records could not be joined to the
+    /// lifecycle observation without crossing a generation boundary.
+    pub coherence_issues: Vec<DashboardCoherenceIssue>,
     pub observation_age_seconds: Option<i64>,
     /// Display policy only. This does not rewrite evidence admissibility.
     pub display_stale: bool,
@@ -129,6 +150,8 @@ pub struct DashboardHostInventory {
     pub as_of_generation: i64,
     pub collected_at: String,
     pub age_seconds: Option<i64>,
+    pub evidence_standing: DashboardEvidenceStanding,
+    pub display_lag_generations: Option<i64>,
     pub display_stale: bool,
 }
 
@@ -142,6 +165,8 @@ pub struct DashboardServiceInventory {
     pub as_of_generation: i64,
     pub collected_at: String,
     pub age_seconds: Option<i64>,
+    pub evidence_standing: DashboardEvidenceStanding,
+    pub display_lag_generations: Option<i64>,
     pub display_stale: bool,
 }
 
@@ -159,6 +184,8 @@ pub struct DashboardSqliteInventory {
     pub as_of_generation: i64,
     pub collected_at: String,
     pub age_seconds: Option<i64>,
+    pub evidence_standing: DashboardEvidenceStanding,
+    pub display_lag_generations: Option<i64>,
     pub display_stale: bool,
 }
 
@@ -177,6 +204,8 @@ pub struct DashboardLogSourceInventory {
     pub as_of_generation: i64,
     pub collected_at: String,
     pub age_seconds: Option<i64>,
+    pub evidence_standing: DashboardEvidenceStanding,
+    pub display_lag_generations: Option<i64>,
     pub display_stale: bool,
 }
 
@@ -238,6 +267,10 @@ pub struct DashboardComparisonBasis {
     pub generation_start: Option<i64>,
     /// Last retained generation that actually contributed a sample.
     pub generation_end: Option<i64>,
+    /// Earliest retained source observation that contributed a sample.
+    pub observed_start_at: Option<String>,
+    /// Latest retained source observation that contributed a sample.
+    pub observed_end_at: Option<String>,
     pub generation_samples: i64,
     pub excludes_current_generation: bool,
 }
@@ -262,10 +295,31 @@ pub struct ErrorShiftEvidence {
     pub examples_unparseable: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DashboardSmartCounter {
+    pub name: String,
+    pub value: i64,
+    pub source_channel: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SmartSourceConflictEvidence {
+    pub device_observed_at: String,
+    pub generation_id: i64,
+    pub source_id: Option<String>,
+    pub smart_overall_passed: Option<bool>,
+    pub overall_status_covered: bool,
+    pub counters: Vec<DashboardSmartCounter>,
+    pub scsi_counters_covered: bool,
+    pub nvme_health_covered: bool,
+    pub missing_coverage: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DashboardEvidence {
     ErrorShift(ErrorShiftEvidence),
+    SmartSourceConflict(SmartSourceConflictEvidence),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -307,11 +361,7 @@ pub fn classify_dashboard_scope(kind: &str, finding_class: &str, domain: &str) -
         || domain == "component_testimony"
         || matches!(
             kind,
-            "check_error"
-                | "check_failed"
-                | "coverage_testimony_absent"
-                | "node_unobservable"
-                | "source_error"
+            "check_error" | "coverage_testimony_absent" | "node_unobservable" | "source_error"
         )
         || kind.ends_with("_witness_silent")
     {
@@ -328,8 +378,8 @@ pub fn load_dashboard_overview(
 ) -> anyhow::Result<DashboardOverview> {
     let tx = db.conn().unchecked_transaction()?;
     let basis = load_basis(&tx, now)?;
-    let findings = load_current_findings(&tx, now)?;
-    let inventory = load_inventory(&tx, now)?;
+    let findings = load_current_findings(&tx, now, basis.generation_id)?;
+    let inventory = load_inventory(&tx, now, basis.generation_id)?;
 
     let mut monitored_findings = Vec::new();
     let mut nq_self_health = Vec::new();
@@ -370,7 +420,7 @@ pub fn load_dashboard_finding(
         Some(identity) => {
             let observations = load_observation_history(&tx, finding_key)?;
             let transitions = load_transition_history(&tx, &identity)?;
-            let current = load_current_findings(&tx, now)?
+            let current = load_current_findings(&tx, now, basis.generation_id)?
                 .into_iter()
                 .find(|finding| finding.finding_key == finding_key);
 
@@ -489,6 +539,7 @@ fn load_basis(conn: &Connection, now: OffsetDateTime) -> anyhow::Result<Dashboar
 fn load_current_findings(
     conn: &Connection,
     now: OffsetDateTime,
+    page_generation: Option<i64>,
 ) -> anyhow::Result<Vec<DashboardFinding>> {
     let mut stmt = conn.prepare(
         "SELECT host, kind, subject, domain, severity, message, peak_value,
@@ -565,7 +616,7 @@ fn load_current_findings(
     drop(stmt);
 
     raw.into_iter()
-        .map(|raw| dashboard_finding_from_raw(conn, raw, now))
+        .map(|raw| dashboard_finding_from_raw(conn, raw, now, page_generation))
         .collect()
 }
 
@@ -573,18 +624,41 @@ fn dashboard_finding_from_raw(
     conn: &Connection,
     raw: RawFinding,
     now: OffsetDateTime,
+    page_generation: Option<i64>,
 ) -> anyhow::Result<DashboardFinding> {
     let finding_key = compute_finding_key("local", &raw.host, &raw.kind, &raw.subject);
-    let current_observation = load_latest_observation(conn, &finding_key)?;
+    let latest_observation = load_latest_observation(conn, &finding_key)?;
+    let mut coherence_issues = Vec::new();
+    let current_observation = match latest_observation {
+        Some(observation) if observation.generation_id == raw.last_seen_generation => {
+            Some(observation)
+        }
+        Some(observation) => {
+            coherence_issues.push(DashboardCoherenceIssue {
+                code: "observation_generation_mismatch".to_string(),
+                summary: "The retained observation belongs to a different snapshot than the current finding lifecycle row; NQ did not combine their values.".to_string(),
+                lifecycle_generation: raw.last_seen_generation,
+                conflicting_generation: Some(observation.generation_id),
+            });
+            None
+        }
+        None => None,
+    };
+    if page_generation.is_some_and(|generation| generation != raw.last_seen_generation) {
+        coherence_issues.push(DashboardCoherenceIssue {
+            code: "finding_page_generation_mismatch".to_string(),
+            summary: "The finding lifecycle row does not belong to the page's latest complete snapshot; it cannot be presented as a current issue.".to_string(),
+            lifecycle_generation: raw.last_seen_generation,
+            conflicting_generation: page_generation,
+        });
+    }
     let observation_time = current_observation
         .as_ref()
         .map(|observation| observation.observed_at.as_str())
         .unwrap_or(raw.last_seen_at.as_str());
     let observation_age_seconds = timestamp_age_seconds(now, observation_time);
-    let display_stale = observation_age_seconds
-        .map(|age| age > DASHBOARD_STALE_AFTER_SECONDS)
-        .unwrap_or(true);
-    let status = classify_finding_status(
+    let display_stale = observation_is_stale(observation_age_seconds);
+    let mut status = classify_finding_status(
         &raw.basis_state,
         &raw.visibility_state,
         raw.absent_generations,
@@ -592,7 +666,50 @@ fn dashboard_finding_from_raw(
         display_stale,
     );
     let scope = classify_dashboard_scope(&raw.kind, &raw.finding_class, &raw.domain);
-    let evidence = load_finding_evidence(conn, &raw.kind, &raw.host, &raw.subject)?;
+    let evidence = load_finding_evidence(
+        conn,
+        &raw.kind,
+        &raw.host,
+        &raw.subject,
+        raw.last_seen_generation,
+    )?;
+    if raw.kind == "error_shift" && evidence.is_none() {
+        let conflicting_generation = conn
+            .query_row(
+                "SELECT as_of_generation
+                   FROM log_observations_current
+                  WHERE host = ?1 AND source_id = ?2",
+                rusqlite::params![&raw.host, &raw.subject],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        coherence_issues.push(DashboardCoherenceIssue {
+            code: "detector_evidence_basis_unavailable".to_string(),
+            summary: "Error-rate source evidence for the finding's lifecycle snapshot is unavailable; NQ did not attach a value from another snapshot.".to_string(),
+            lifecycle_generation: raw.last_seen_generation,
+            conflicting_generation,
+        });
+    }
+    if raw.kind == "smart_status_lies" && evidence.is_none() {
+        let conflicting_generation = conn
+            .query_row(
+                "SELECT as_of_generation
+                   FROM smart_devices_current
+                  WHERE host = ?1 AND subject = ?2",
+                rusqlite::params![&raw.host, &raw.subject],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        coherence_issues.push(DashboardCoherenceIssue {
+            code: "detector_evidence_basis_unavailable".to_string(),
+            summary: "SMART source evidence for the finding's lifecycle snapshot is unavailable; NQ did not attach device values from another snapshot.".to_string(),
+            lifecycle_generation: raw.last_seen_generation,
+            conflicting_generation,
+        });
+    }
+    if !coherence_issues.is_empty() {
+        status = DashboardFindingStatus::Unknown;
+    }
 
     Ok(DashboardFinding {
         finding_key,
@@ -640,6 +757,7 @@ fn dashboard_finding_from_raw(
         origin_mode: raw.origin_mode,
         current_observation,
         evidence,
+        coherence_issues,
         observation_age_seconds,
         display_stale,
     })
@@ -656,6 +774,8 @@ fn classify_finding_status(
         DashboardFindingStatus::Retired
     } else if visibility_state == "suppressed" {
         DashboardFindingStatus::Suppressed
+    } else if matches!(basis_state, "unknown" | "invalidated") {
+        DashboardFindingStatus::Unknown
     } else if basis_state == "stale" || display_stale {
         DashboardFindingStatus::Stale
     } else if absent_generations > 0 || stability == Some("recovering") {
@@ -692,7 +812,11 @@ fn map_observation(row: &rusqlite::Row<'_>) -> rusqlite::Result<DashboardObserva
     })
 }
 
-fn load_inventory(conn: &Connection, now: OffsetDateTime) -> anyhow::Result<DashboardInventory> {
+fn load_inventory(
+    conn: &Connection,
+    now: OffsetDateTime,
+    page_generation: Option<i64>,
+) -> anyhow::Result<DashboardInventory> {
     let hosts = {
         let mut stmt = conn.prepare(
             "SELECT host, cpu_load_1m, mem_pressure_pct, disk_used_pct,
@@ -703,6 +827,9 @@ fn load_inventory(conn: &Connection, now: OffsetDateTime) -> anyhow::Result<Dash
         let rows = stmt.query_map([], |row| {
             let collected_at: String = row.get(7)?;
             let age_seconds = timestamp_age_seconds(now, &collected_at);
+            let as_of_generation: i64 = row.get(6)?;
+            let display_lag_generations =
+                page_generation.map(|generation| generation - as_of_generation);
             Ok(DashboardHostInventory {
                 host: row.get(0)?,
                 cpu_load_1m: row.get(1)?,
@@ -710,8 +837,10 @@ fn load_inventory(conn: &Connection, now: OffsetDateTime) -> anyhow::Result<Dash
                 disk_used_pct: row.get(3)?,
                 disk_available_mb: row.get(4)?,
                 uptime_seconds: row.get(5)?,
-                as_of_generation: row.get(6)?,
-                display_stale: is_display_stale(age_seconds),
+                as_of_generation,
+                evidence_standing: evidence_standing(age_seconds),
+                display_stale: display_is_old(display_lag_generations),
+                display_lag_generations,
                 collected_at,
                 age_seconds,
             })
@@ -729,14 +858,19 @@ fn load_inventory(conn: &Connection, now: OffsetDateTime) -> anyhow::Result<Dash
         let rows = stmt.query_map([], |row| {
             let collected_at: String = row.get(6)?;
             let age_seconds = timestamp_age_seconds(now, &collected_at);
+            let as_of_generation: i64 = row.get(5)?;
+            let display_lag_generations =
+                page_generation.map(|generation| generation - as_of_generation);
             Ok(DashboardServiceInventory {
                 host: row.get(0)?,
                 service: row.get(1)?,
                 service_status: row.get(2)?,
                 eps: row.get(3)?,
                 queue_depth: row.get(4)?,
-                as_of_generation: row.get(5)?,
-                display_stale: is_display_stale(age_seconds),
+                as_of_generation,
+                evidence_standing: evidence_standing(age_seconds),
+                display_stale: display_is_old(display_lag_generations),
+                display_lag_generations,
                 collected_at,
                 age_seconds,
             })
@@ -755,6 +889,9 @@ fn load_inventory(conn: &Connection, now: OffsetDateTime) -> anyhow::Result<Dash
         let rows = stmt.query_map([], |row| {
             let collected_at: String = row.get(10)?;
             let age_seconds = timestamp_age_seconds(now, &collected_at);
+            let as_of_generation: i64 = row.get(9)?;
+            let display_lag_generations =
+                page_generation.map(|generation| generation - as_of_generation);
             Ok(DashboardSqliteInventory {
                 host: row.get(0)?,
                 db_path: row.get(1)?,
@@ -765,8 +902,10 @@ fn load_inventory(conn: &Connection, now: OffsetDateTime) -> anyhow::Result<Dash
                 freelist_count: row.get(6)?,
                 checkpoint_lag_seconds: row.get(7)?,
                 last_quick_check: row.get(8)?,
-                as_of_generation: row.get(9)?,
-                display_stale: is_display_stale(age_seconds),
+                as_of_generation,
+                evidence_standing: evidence_standing(age_seconds),
+                display_stale: display_is_old(display_lag_generations),
+                display_lag_generations,
                 collected_at,
                 age_seconds,
             })
@@ -785,6 +924,9 @@ fn load_inventory(conn: &Connection, now: OffsetDateTime) -> anyhow::Result<Dash
         let rows = stmt.query_map([], |row| {
             let collected_at: String = row.get(11)?;
             let age_seconds = timestamp_age_seconds(now, &collected_at);
+            let as_of_generation: i64 = row.get(10)?;
+            let display_lag_generations =
+                page_generation.map(|generation| generation - as_of_generation);
             Ok(DashboardLogSourceInventory {
                 host: row.get(0)?,
                 source_id: row.get(1)?,
@@ -796,8 +938,10 @@ fn load_inventory(conn: &Connection, now: OffsetDateTime) -> anyhow::Result<Dash
                 lines_warn: row.get(7)?,
                 last_log_at: row.get(8)?,
                 examples_json: row.get(9)?,
-                as_of_generation: row.get(10)?,
-                display_stale: is_display_stale(age_seconds),
+                as_of_generation,
+                evidence_standing: evidence_standing(age_seconds),
+                display_stale: display_is_old(display_lag_generations),
+                display_lag_generations,
                 collected_at,
                 age_seconds,
             })
@@ -977,10 +1121,15 @@ fn load_finding_evidence(
     kind: &str,
     host: &str,
     subject: &str,
+    expected_generation: i64,
 ) -> anyhow::Result<Option<DashboardEvidence>> {
     match kind {
-        "error_shift" => load_error_shift_evidence(conn, host, subject)
+        "error_shift" => load_error_shift_evidence(conn, host, subject, expected_generation)
             .map(|evidence| evidence.map(DashboardEvidence::ErrorShift)),
+        "smart_status_lies" => {
+            load_smart_source_conflict_evidence(conn, host, subject, expected_generation)
+                .map(|evidence| evidence.map(DashboardEvidence::SmartSourceConflict))
+        }
         _ => Ok(None),
     }
 }
@@ -989,6 +1138,7 @@ fn load_error_shift_evidence(
     conn: &Connection,
     host: &str,
     source_id: &str,
+    expected_generation: i64,
 ) -> anyhow::Result<Option<ErrorShiftEvidence>> {
     #[derive(Debug)]
     struct Current {
@@ -1005,9 +1155,9 @@ fn load_error_shift_evidence(
         .query_row(
             "SELECT window_start, window_end, lines_error, lines_total,
                     examples_json, as_of_generation, collected_at
-             FROM log_observations_current
-             WHERE host = ?1 AND source_id = ?2",
-            rusqlite::params![host, source_id],
+         FROM log_observations_current
+         WHERE host = ?1 AND source_id = ?2 AND as_of_generation = ?3",
+            rusqlite::params![host, source_id, expected_generation],
             |row| {
                 Ok(Current {
                     window_start: row.get(0)?,
@@ -1028,12 +1178,6 @@ fn load_error_shift_evidence(
     // Keep this window exactly aligned with detect_error_shift:
     // generation_id >= MAX(generation_id)-12 and < MAX(generation_id),
     // average the per-generation error ratios, require >=3 generations.
-    let latest_generation: Option<i64> = conn
-        .query_row("SELECT MAX(generation_id) FROM generations", [], |row| {
-            row.get(0)
-        })
-        .optional()?
-        .flatten();
     let (
         raw_average,
         baseline_errors,
@@ -1041,7 +1185,18 @@ fn load_error_shift_evidence(
         generation_samples,
         observed_start,
         observed_end,
-    ): (Option<f64>, i64, i64, i64, Option<i64>, Option<i64>) = conn.query_row(
+        observed_start_at,
+        observed_end_at,
+    ): (
+        Option<f64>,
+        i64,
+        i64,
+        i64,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+    ) = conn.query_row(
         "SELECT AVG(
                     CASE WHEN lines_total > 0
                          THEN CAST(lines_error AS REAL) / lines_total
@@ -1051,13 +1206,15 @@ fn load_error_shift_evidence(
                 COALESCE(SUM(lines_total), 0),
                 COUNT(DISTINCT generation_id),
                 MIN(generation_id),
-                MAX(generation_id)
+                MAX(generation_id),
+                MIN(collected_at),
+                MAX(collected_at)
          FROM log_observations_history
          WHERE host = ?1
            AND source_id = ?2
-           AND generation_id >= (SELECT MAX(generation_id) - 12 FROM generations)
-           AND generation_id < (SELECT MAX(generation_id) FROM generations)",
-        rusqlite::params![host, source_id],
+           AND generation_id >= ?3 - 12
+           AND generation_id < ?3",
+        rusqlite::params![host, source_id, expected_generation],
         |row| {
             Ok((
                 row.get(0)?,
@@ -1066,6 +1223,8 @@ fn load_error_shift_evidence(
                 row.get(3)?,
                 row.get(4)?,
                 row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
             ))
         },
     )?;
@@ -1096,15 +1255,147 @@ fn load_error_shift_evidence(
         baseline_window_samples: generation_samples,
         comparison_basis: DashboardComparisonBasis {
             description: "Average per-generation error ratio over the detector's trailing 12-generation window, excluding the latest generation; at least 3 generation samples are required.".to_string(),
-            detector_window_start_generation: latest_generation.map(|generation| generation - 12),
-            detector_window_end_generation: latest_generation.map(|generation| generation - 1),
+            detector_window_start_generation: Some(expected_generation - 12),
+            detector_window_end_generation: Some(expected_generation - 1),
             generation_start: observed_start,
             generation_end: observed_end,
+            observed_start_at,
+            observed_end_at,
             generation_samples,
             excludes_current_generation: true,
         },
         examples,
         examples_unparseable,
+    }))
+}
+
+fn load_smart_source_conflict_evidence(
+    conn: &Connection,
+    host: &str,
+    subject: &str,
+    expected_generation: i64,
+) -> anyhow::Result<Option<SmartSourceConflictEvidence>> {
+    #[allow(clippy::type_complexity)]
+    let row: Option<(
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        String,
+        i64,
+        Option<String>,
+        i64,
+        i64,
+        i64,
+    )> = conn
+        .query_row(
+            "SELECT d.smart_overall_passed,
+                    d.uncorrected_read_errors,
+                    d.uncorrected_write_errors,
+                    d.uncorrected_verify_errors,
+                    d.media_errors,
+                    d.collected_at,
+                    d.as_of_generation,
+                    w.witness_id,
+                    EXISTS(
+                        SELECT 1 FROM smart_device_coverage_current c
+                         WHERE c.host = d.host AND c.subject = d.subject
+                           AND c.tag = 'smart_overall_status' AND c.can_testify = 1
+                    ),
+                    EXISTS(
+                        SELECT 1 FROM smart_device_coverage_current c
+                         WHERE c.host = d.host AND c.subject = d.subject
+                           AND c.tag = 'scsi_error_counters' AND c.can_testify = 1
+                    ),
+                    EXISTS(
+                        SELECT 1 FROM smart_device_coverage_current c
+                         WHERE c.host = d.host AND c.subject = d.subject
+                           AND c.tag = 'nvme_health_log' AND c.can_testify = 1
+                    )
+               FROM smart_devices_current d
+               LEFT JOIN smart_witness_current w
+                 ON w.host = d.host AND w.as_of_generation = d.as_of_generation
+              WHERE d.host = ?1 AND d.subject = ?2 AND d.as_of_generation = ?3",
+            rusqlite::params![host, subject, expected_generation],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
+                    row.get(10)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        overall_passed,
+        read_errors,
+        write_errors,
+        verify_errors,
+        media_errors,
+        device_observed_at,
+        generation_id,
+        source_id,
+        overall_status_covered,
+        scsi_counters_covered,
+        nvme_health_covered,
+    )) = row
+    else {
+        return Ok(None);
+    };
+
+    let mut counters = Vec::new();
+    if scsi_counters_covered == 1 {
+        for (name, value) in [
+            ("uncorrected read errors", read_errors),
+            ("uncorrected write errors", write_errors),
+            ("uncorrected verify errors", verify_errors),
+        ] {
+            if let Some(value) = value {
+                counters.push(DashboardSmartCounter {
+                    name: name.to_string(),
+                    value,
+                    source_channel: "raw SCSI error counters".to_string(),
+                });
+            }
+        }
+    }
+    if nvme_health_covered == 1 {
+        if let Some(value) = media_errors {
+            counters.push(DashboardSmartCounter {
+                name: "media errors".to_string(),
+                value,
+                source_channel: "NVMe health log".to_string(),
+            });
+        }
+    }
+
+    let mut missing_coverage = Vec::new();
+    if overall_status_covered != 1 {
+        missing_coverage.push("SMART overall-status testimony".to_string());
+    }
+    if scsi_counters_covered != 1 && nvme_health_covered != 1 {
+        missing_coverage.push("raw error-counter testimony".to_string());
+    }
+
+    Ok(Some(SmartSourceConflictEvidence {
+        device_observed_at,
+        generation_id,
+        source_id,
+        smart_overall_passed: overall_passed.map(|value| value != 0),
+        overall_status_covered: overall_status_covered == 1,
+        counters,
+        scsi_counters_covered: scsi_counters_covered == 1,
+        nvme_health_covered: nvme_health_covered == 1,
+        missing_coverage,
     }))
 }
 
@@ -1139,12 +1430,29 @@ fn parse_log_examples(raw: Option<&str>) -> (Vec<DashboardLogExample>, bool) {
 fn timestamp_age_seconds(now: OffsetDateTime, timestamp: &str) -> Option<i64> {
     OffsetDateTime::parse(timestamp, &time::format_description::well_known::Rfc3339)
         .ok()
-        .map(|observed_at| (now - observed_at).whole_seconds().max(0))
+        .map(|observed_at| (now - observed_at).whole_seconds())
 }
 
-fn is_display_stale(age_seconds: Option<i64>) -> bool {
+fn observation_is_stale(age_seconds: Option<i64>) -> bool {
     age_seconds
-        .map(|age| age > DASHBOARD_STALE_AFTER_SECONDS)
+        .map(|age| !(0..=DASHBOARD_STALE_AFTER_SECONDS).contains(&age))
+        .unwrap_or(true)
+}
+
+fn evidence_standing(age_seconds: Option<i64>) -> DashboardEvidenceStanding {
+    match age_seconds {
+        None => DashboardEvidenceStanding::Unknown,
+        Some(age) if age < 0 => DashboardEvidenceStanding::ClockSkew,
+        Some(age) if age > DASHBOARD_STALE_AFTER_SECONDS => {
+            DashboardEvidenceStanding::StaleTestimony
+        }
+        Some(_) => DashboardEvidenceStanding::Admissible,
+    }
+}
+
+fn display_is_old(display_lag_generations: Option<i64>) -> bool {
+    display_lag_generations
+        .map(|lag| !(0..=2).contains(&lag))
         .unwrap_or(true)
 }
 
@@ -1309,7 +1617,11 @@ mod tests {
         assert_eq!(overview.nq_self_health.len(), 1);
         assert_eq!(
             overview.monitored_findings[0].status,
-            DashboardFindingStatus::Ongoing
+            DashboardFindingStatus::Unknown
+        );
+        assert_eq!(
+            overview.monitored_findings[0].coherence_issues[0].code,
+            "detector_evidence_basis_unavailable"
         );
         assert_eq!(overview.inventory.hosts.len(), 1);
         assert_eq!(overview.inventory.hosts[0].cpu_load_1m, None);
@@ -1325,14 +1637,14 @@ mod tests {
             insert_generation(db.conn(), id, &format!("2026-07-26T11:59:{second:02}Z"));
         }
         for (generation, errors) in [(1, 1), (2, 2), (3, 0), (4, 1)] {
+            let collected_at = format!("2026-07-26T11:59:{}0Z", generation);
             db.conn()
                 .execute(
                     "INSERT INTO log_observations_history (
                         generation_id, host, source_id, lines_total, lines_error,
                         lines_warn, fetch_status, collected_at
-                     ) VALUES (?1, 'app-1', 'app-log', 10, ?2, 0, 'ok',
-                               '2026-07-26T11:59:40Z')",
-                    params![generation, errors],
+                     ) VALUES (?1, 'app-1', 'app-log', 10, ?2, 0, 'ok', ?3)",
+                    params![generation, errors, collected_at],
                 )
                 .unwrap();
         }
@@ -1430,6 +1742,14 @@ mod tests {
         );
         assert_eq!(evidence.comparison_basis.generation_start, Some(1));
         assert_eq!(evidence.comparison_basis.generation_end, Some(4));
+        assert_eq!(
+            evidence.comparison_basis.observed_start_at.as_deref(),
+            Some("2026-07-26T11:59:10Z")
+        );
+        assert_eq!(
+            evidence.comparison_basis.observed_end_at.as_deref(),
+            Some("2026-07-26T11:59:40Z")
+        );
         assert!(evidence.comparison_basis.excludes_current_generation);
         assert_eq!(evidence.examples.len(), 1);
         assert_eq!(detail.observations.total_count, 1);
@@ -1493,12 +1813,134 @@ mod tests {
             DashboardFindingStatus::Stale
         );
         assert_eq!(
+            classify_finding_status("invalidated", "observed", 0, Some("stable"), false),
+            DashboardFindingStatus::Unknown
+        );
+        assert_eq!(
             classify_finding_status("live", "observed", 2, Some("recovering"), false),
             DashboardFindingStatus::Recovering
         );
         assert_eq!(
             classify_finding_status("live", "observed", 0, Some("stable"), false),
             DashboardFindingStatus::Ongoing
+        );
+    }
+
+    #[test]
+    fn mismatched_observation_and_detector_generations_are_not_combined() {
+        let (_dir, path) = migrated_db();
+        let db = open_rw(&path).unwrap();
+        insert_generation(db.conn(), 1, "2026-07-26T11:59:20Z");
+        insert_generation(db.conn(), 2, "2026-07-26T11:59:50Z");
+        insert_warning(
+            db.conn(),
+            "app-1",
+            "error_shift",
+            "app-log",
+            "Δs",
+            "signal",
+            "2026-07-26T11:59:50Z",
+        );
+        db.conn()
+            .execute(
+                "UPDATE warning_state
+                    SET first_seen_gen = 2, last_seen_gen = 2,
+                        first_seen_at = '2026-07-26T11:59:50Z',
+                        last_seen_at = '2026-07-26T11:59:50Z'
+                  WHERE host = 'app-1'",
+                [],
+            )
+            .unwrap();
+        let key = insert_observation(
+            db.conn(),
+            1,
+            "app-1",
+            "error_shift",
+            "app-log",
+            "Δs",
+            "2026-07-26T11:59:20Z",
+            Some(0.9),
+        );
+        db.conn()
+            .execute(
+                "INSERT INTO log_observations_current (
+                     host, source_id, window_start, window_end, fetch_status,
+                     lines_total, lines_error, lines_warn, as_of_generation, collected_at
+                 ) VALUES (
+                     'app-1', 'app-log',
+                     '2026-07-26T11:58:20Z', '2026-07-26T11:59:20Z', 'ok',
+                     10, 9, 0, 1, '2026-07-26T11:59:20Z'
+                 )",
+                [],
+            )
+            .unwrap();
+        drop(db);
+
+        let read = open_ro(&path).unwrap();
+        let detail = load_dashboard_finding(&read, &key, now()).unwrap();
+        let DashboardFindingDetail::Current(detail) = detail else {
+            panic!("expected current lifecycle row");
+        };
+        assert_eq!(detail.finding.status, DashboardFindingStatus::Unknown);
+        assert_eq!(detail.finding.last_seen_generation, 2);
+        assert!(detail.finding.current_observation.is_none());
+        assert!(detail.evidence.is_none());
+        assert_eq!(detail.finding.coherence_issues.len(), 2);
+        assert!(detail.finding.coherence_issues.iter().any(|issue| {
+            issue.code == "observation_generation_mismatch"
+                && issue.conflicting_generation == Some(1)
+        }));
+        assert!(detail.finding.coherence_issues.iter().any(|issue| {
+            issue.code == "detector_evidence_basis_unavailable"
+                && issue.conflicting_generation == Some(1)
+        }));
+    }
+
+    #[test]
+    fn future_observation_is_clock_skew_not_freshness() {
+        let (_dir, path) = migrated_db();
+        let db = open_rw(&path).unwrap();
+        insert_generation(db.conn(), 1, "2026-07-26T11:59:30Z");
+        insert_warning(
+            db.conn(),
+            "app-1",
+            "resource_drift",
+            "memory",
+            "Δh",
+            "signal",
+            "2026-07-26T13:00:00Z",
+        );
+        let key = insert_observation(
+            db.conn(),
+            1,
+            "app-1",
+            "resource_drift",
+            "memory",
+            "Δh",
+            "2026-07-26T13:00:00Z",
+            None,
+        );
+        drop(db);
+
+        let read = open_ro(&path).unwrap();
+        let detail = load_dashboard_finding(&read, &key, now()).unwrap();
+        let DashboardFindingDetail::Current(detail) = detail else {
+            panic!("expected current detail");
+        };
+        assert_eq!(detail.finding.status, DashboardFindingStatus::Stale);
+        assert_eq!(detail.finding.observation_age_seconds, Some(-3_600));
+        assert!(detail.finding.display_stale);
+    }
+
+    #[test]
+    fn user_defined_check_failure_remains_a_monitored_system_finding() {
+        assert_eq!(
+            classify_dashboard_scope("check_failed", "signal", "Δs"),
+            DashboardScope::MonitoredSystem
+        );
+        assert_eq!(
+            classify_dashboard_scope("source_error", "meta", "component_testimony"),
+            DashboardScope::NqSelfHealth
         );
     }
 }

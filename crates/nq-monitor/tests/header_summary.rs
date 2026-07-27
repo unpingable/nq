@@ -1,168 +1,108 @@
-//! Pins the header severity/action_bias label discipline from
-//! docs/working/decisions/preflights/DASHBOARD_HEADER_SEVERITY_URGENCY_SPLIT.md.
+//! Pins the task-first replacement for the old masthead severity counters.
 //!
-//! The bug the discipline refuses: rendering severity counts (condition
-//! magnitude) under a bare label that operators read as urgency-of-response.
-//! Per FINDING_STATE_MODEL.md, severity and action_bias are distinct axes;
-//! the header surface must label both.
+//! Severity is condition magnitude; `action_bias` is response guidance. The
+//! decision surface must never turn a scary severity word into an urgency
+//! instruction.
 
-use nq_monitor::http::routes::render_overview;
-use nq_db::views::{HostSummaryVm, OverviewVm, WarningVm};
+mod dashboard_support;
 
-fn vm_with_one_critical_business_hours() -> OverviewVm {
-    OverviewVm {
-        generation_id: Some(1),
-        generated_at: Some("2026-06-02T00:00:00Z".into()),
-        generation_status: Some("complete".into()),
-        generation_age_s: Some(10),
-        hosts: vec![HostSummaryVm {
-            host: "host-a".into(),
-            cpu_load_1m: Some(0.5),
-            mem_pressure_pct: Some(20.0),
-            disk_used_pct: Some(40.0),
-            disk_avail_mb: Some(50_000),
-            uptime_seconds: Some(3600),
-            as_of_generation: 1,
-            stale: false,
-        }],
-        services: vec![],
-        sqlite_dbs: vec![],
-        warnings: vec![WarningVm {
-            severity: "critical".into(),
-            category: "freelist_bloat".into(),
-            host: "host-a".into(),
-            subject: Some("/var/lib/db.sqlite".into()),
-            message: "freelist bloat observed".into(),
-            domain: Some("Δg".into()),
-            first_seen_at: Some("2026-05-12T00:00:00Z".into()),
-            consecutive_gens: Some(30_729),
-            acknowledged: false,
-            finding_class: Some("signal".into()),
-            visibility_state: "observed".into(),
-            suppression_reason: None,
-            failure_class: Some("substrate".into()),
-            service_impact: Some("none".into()),
-            action_bias: Some("investigate_business_hours".into()),
-            synopsis: Some("freelist bloat".into()),
-            stability: Some("stable".into()),
-            maintenance_state: "none".into(),
-            maintenance_id: None,
-            work_state: "new".into(),
-            owner: None,
-            note: None,
-            external_ref: None,
-            basis_state: "live".into(),
-        }],
-        history_generations: 10,
-        host_freshness: vec![],
-    }
+use dashboard_support::{empty_overview, finding};
+use nq_monitor::http::operator_dashboard::render_overview;
+
+fn overview_with_one_critical_business_hours() -> nq_db::dashboard::DashboardOverview {
+    let mut overview = empty_overview();
+    let mut current = finding(
+        "freelist_bloat",
+        "host-a",
+        "/var/lib/db.sqlite",
+        "freelist bloat observed",
+    );
+    current.severity = "critical".into();
+    current.peak_value = Some(51.2);
+    current.diagnosis.failure_class = Some("substrate".into());
+    current.diagnosis.service_impact = Some("none".into());
+    current.diagnosis.action_bias = Some("investigate_business_hours".into());
+    current.diagnosis.synopsis = Some("Database space can be reclaimed".into());
+    overview.monitored_findings.push(current);
+    overview
 }
 
-/// The shipped bug: a finding with `severity=critical` AND
-/// `action_bias=investigate_business_hours` was rendered as bare
-/// `"1 critical."` in the header. Operators read that as urgency.
-/// The label discipline now requires severity counts to carry the
-/// word `Severity` adjacent.
 #[test]
-fn severity_count_renders_under_severity_label() {
-    let vm = vm_with_one_critical_business_hours();
-    let html = render_overview(&vm, &[]);
+fn critical_magnitude_does_not_become_immediate_response_guidance() {
+    let html = render_overview(&overview_with_one_critical_business_hours());
 
     assert!(
-        html.contains("Severity: 1 critical"),
-        "severity count must render under explicit Severity label; got header without it"
+        html.contains("Investigate during working hours"),
+        "response copy must come from action_bias"
+    );
+    assert!(
+        !html.contains("Review for immediate intervention"),
+        "critical severity must not be laundered into immediate response guidance"
+    );
+    assert!(
+        !html.contains("Severity: 1 critical") && !html.contains(" critical."),
+        "the removed severity-count masthead must not return"
     );
 }
 
-/// The companion discipline: when any finding carries an action_bias,
-/// the count must render under the Response label so it cannot be
-/// read as the severity axis.
 #[test]
-fn action_bias_count_renders_under_response_label() {
-    let vm = vm_with_one_critical_business_hours();
-    let html = render_overview(&vm, &[]);
+fn immediate_response_guidance_does_not_require_critical_severity() {
+    let mut overview = empty_overview();
+    let mut current = finding(
+        "disk_pressure",
+        "host-a",
+        "",
+        "disk pressure warrants prompt review",
+    );
+    current.severity = "info".into();
+    current.diagnosis.action_bias = Some("intervene_now".into());
+    overview.monitored_findings.push(current);
 
+    let html = render_overview(&overview);
+
+    assert!(html.contains("Review for immediate intervention"));
     assert!(
-        html.contains("Response: 1 investigate business hours"),
-        "action_bias count must render under explicit Response label with the enum value visible"
+        !html.contains("Severity:") && !html.contains(">critical<"),
+        "response posture must remain independent of a critical severity label"
     );
 }
 
-/// The keystone refusal: the bare `" critical."` string with a leading
-/// space (the laundering shape) must not appear in the rendered HTML.
-/// A severity count adjacent to a non-severity label is exactly the
-/// shape that gets read as urgency. This is the regression guard.
 #[test]
-fn bare_critical_label_no_longer_appears_in_header_summary() {
-    let vm = vm_with_one_critical_business_hours();
-    let html = render_overview(&vm, &[]);
+fn decision_summary_precedes_inventory_instead_of_collapsing_axes_into_a_masthead() {
+    let mut overview = overview_with_one_critical_business_hours();
+    overview
+        .inventory
+        .hosts
+        .push(dashboard_support::host_inventory(
+            "host-a",
+            dashboard_support::OBSERVED_AT,
+            10,
+            false,
+        ));
 
-    // The classic bug shape: `parts.join(". ") + "."` yielded
-    // `"... up. 1 critical."` — `" critical."` with a leading space
-    // is the disciplined refusal point.
-    assert!(
-        !html.contains(" critical."),
-        "bare ' critical.' summary label is the refused shape (severity-as-urgency laundering)"
-    );
+    let html = render_overview(&overview);
+    let decision = html
+        .find("1 issue needs attention.")
+        .expect("task-first decision summary");
+    let claim = html
+        .find("/var/lib/db.sqlite has reclaimable database space")
+        .expect("plain-language operational claim");
+    let inventory = html
+        .find("Inventory and exploration")
+        .expect("secondary inventory surface");
+
+    assert!(decision < claim && claim < inventory);
+    assert!(!html.contains("masthead-line"));
 }
 
-/// The masthead renders each axis as its own line element rather than a
-/// single `<br>`-joined blob, so the Severity and Response axes cannot
-/// visually run together into one sentence. The label text inside each
-/// line stays contiguous (the pins above depend on that).
 #[test]
-fn masthead_axes_render_as_separate_lines() {
-    let vm = vm_with_one_critical_business_hours();
-    let html = render_overview(&vm, &[]);
+fn empty_state_is_bounded_by_the_observation_basis_not_declared_healthy() {
+    let html = render_overview(&empty_overview());
 
-    assert!(
-        html.contains("<div class=\"masthead-line\">Severity: 1 critical</div>"),
-        "Severity axis must render as its own masthead line"
-    );
-    assert!(
-        html.contains("<div class=\"masthead-line\">Response: 1 investigate business hours</div>"),
-        "Response axis must render as its own masthead line"
-    );
-}
-
-/// The `"no active findings"` and `"No active findings."` strings
-/// invented an axis (`active`) that FINDING_STATE_MODEL.md does not
-/// define. The header packet §3 and the dashboard ordering packet both
-/// flag this. The shipped replacement is `"No open findings."` —
-/// forward-compatible with the dashboard ordering slice's "Open
-/// Findings" section header.
-#[test]
-fn no_active_findings_register_is_not_coined() {
-    let vm = OverviewVm {
-        generation_id: Some(1),
-        generated_at: Some("2026-06-02T00:00:00Z".into()),
-        generation_status: Some("complete".into()),
-        generation_age_s: Some(10),
-        hosts: vec![HostSummaryVm {
-            host: "host-a".into(),
-            cpu_load_1m: Some(0.5),
-            mem_pressure_pct: Some(20.0),
-            disk_used_pct: Some(40.0),
-            disk_avail_mb: Some(50_000),
-            uptime_seconds: Some(3600),
-            as_of_generation: 1,
-            stale: false,
-        }],
-        services: vec![],
-        sqlite_dbs: vec![],
-        warnings: vec![],
-        history_generations: 10,
-        host_freshness: vec![],
-    };
-
-    let html = render_overview(&vm, &[]);
-
-    assert!(
-        !html.contains("active findings"),
-        "the 'active findings' register must not appear; FINDING_STATE_MODEL.md does not define an 'active' axis"
-    );
-    assert!(
-        html.contains("No open findings"),
-        "empty state must render the forward-compatible 'No open findings' string"
-    );
+    assert!(html.contains("No current issue is supported by the latest NQ data capture."));
+    assert!(html.contains(
+        "This statement is limited to the observation time and coverage shown below; it is not a universal health claim."
+    ));
+    assert!(!html.contains("No open findings"));
+    assert!(!html.contains("active findings"));
 }

@@ -40,6 +40,7 @@ const WATCH_WILL: &[&str] = &[
 ];
 
 const QUIESCE_WILL: &[&str] = &[
+    "record an operational quiet period while investigation or planned work is underway",
     "pause future notifications until Reset or an optional expiry",
     "keep the finding, its evidence, and its history visible",
     "keep detector observation running",
@@ -52,6 +53,7 @@ const CLOSE_WILL: &[&str] = &[
 ];
 
 const SUPPRESS_WILL: &[&str] = &[
+    "record an explicit decision that notifications for this finding are not currently useful",
     "pause future notifications until Reset or an optional expiry",
     "keep the finding, its evidence, and its history visible",
     "keep detector observation running",
@@ -136,7 +138,7 @@ impl FindingAction {
                 action: self,
                 label: "Quiesce",
                 summary:
-                    "Pause future notifications until Reset or an optional expiry; observation and evidence continue.",
+                    "Record an operational quiet period; pause notifications until Reset or an optional expiry; observation and evidence continue.",
                 target_work_state: self.target_work_state(),
                 notification_effect: NotificationEffect::Pause,
                 ttl_policy: TtlPolicy::OptionalBounded {
@@ -163,7 +165,7 @@ impl FindingAction {
                 action: self,
                 label: "Suppress",
                 summary:
-                    "Pause future notifications until Reset or an optional expiry; retain the finding, evidence, and observation.",
+                    "Record an intentional notification mute until Reset or an optional expiry; retain the finding, evidence, and observation.",
                 target_work_state: self.target_work_state(),
                 notification_effect: NotificationEffect::Pause,
                 ttl_policy: TtlPolicy::OptionalBounded {
@@ -299,7 +301,9 @@ pub struct FindingActionPreview {
     pub target: FindingActionTarget,
     pub contract: FindingActionContract,
     pub requested_at: String,
-    pub expires_at: Option<String>,
+    /// Duration that will begin when the transition is actually committed.
+    /// The receipt, not the preview, carries the exact absolute expiry.
+    pub expires_after_hours: Option<i64>,
     pub owner_will_change: bool,
     pub note_will_change: bool,
 }
@@ -340,6 +344,10 @@ pub enum FindingStaleReason {
         age_seconds: i64,
         max_age_seconds: i64,
     },
+    LatestGenerationFromFuture {
+        completed_at: String,
+        future_seconds: i64,
+    },
     FindingTimestampUnavailable {
         last_seen_at: String,
     },
@@ -347,6 +355,10 @@ pub enum FindingStaleReason {
         last_seen_at: String,
         age_seconds: i64,
         max_age_seconds: i64,
+    },
+    FindingObservationFromFuture {
+        last_seen_at: String,
+        future_seconds: i64,
     },
     FindingObservationGenerationMismatch {
         observation_generation: i64,
@@ -429,14 +441,14 @@ pub fn preview_finding_action(
     request: &FindingActionRequest,
     now: OffsetDateTime,
 ) -> Result<FindingActionPreview, FindingActionError> {
-    let expires_at = validate_request(request, now)?;
+    validate_request(request)?;
     let resolved = resolve_and_validate(db.conn(), request, now)?;
 
     Ok(FindingActionPreview {
         target: resolved.public(&request.finding_key),
         contract: request.action.contract(),
         requested_at: format_timestamp(now)?,
-        expires_at,
+        expires_after_hours: request.ttl_hours,
         owner_will_change: request.action != FindingAction::Reset && request.owner.is_some(),
         note_will_change: request.action != FindingAction::Reset && request.note.is_some(),
     })
@@ -449,7 +461,8 @@ pub fn transition_finding_action(
     request: &FindingActionRequest,
     now: OffsetDateTime,
 ) -> Result<FindingActionReceipt, FindingActionError> {
-    let expires_at = validate_request(request, now)?;
+    validate_request(request)?;
+    let expires_at = expiration_at(request, now)?;
     let applied_at = format_timestamp(now)?;
     let tx = db
         .conn
@@ -549,10 +562,7 @@ pub fn transition_finding_action(
     })
 }
 
-fn validate_request(
-    request: &FindingActionRequest,
-    now: OffsetDateTime,
-) -> Result<Option<String>, FindingActionError> {
+fn validate_request(request: &FindingActionRequest) -> Result<(), FindingActionError> {
     if request.finding_key.trim().is_empty() {
         return Err(FindingActionError::Invalid {
             field: "finding_key",
@@ -565,11 +575,20 @@ fn validate_request(
             detail: "must be a positive generation identifier".to_string(),
         });
     }
+    if request
+        .actor
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return Err(FindingActionError::Invalid {
+            field: "actor",
+            detail: "is required for durable transition history".to_string(),
+        });
+    }
 
-    for (field, value) in [
-        ("owner", request.owner.as_deref()),
-        ("actor", request.actor.as_deref()),
-    ] {
+    for (field, value) in [("owner", request.owner.as_deref())] {
         if value.is_some_and(|v| v.trim().is_empty()) {
             return Err(FindingActionError::Invalid {
                 field,
@@ -579,7 +598,7 @@ fn validate_request(
     }
 
     let Some(ttl_hours) = request.ttl_hours else {
-        return Ok(None);
+        return Ok(());
     };
 
     if !matches!(
@@ -601,6 +620,16 @@ fn validate_request(
         });
     }
 
+    Ok(())
+}
+
+fn expiration_at(
+    request: &FindingActionRequest,
+    now: OffsetDateTime,
+) -> Result<Option<String>, FindingActionError> {
+    let Some(ttl_hours) = request.ttl_hours else {
+        return Ok(None);
+    };
     let expires =
         now.checked_add(Duration::hours(ttl_hours))
             .ok_or_else(|| FindingActionError::Invalid {
@@ -744,6 +773,10 @@ fn resolve_and_validate(
             age_seconds,
             max_age_seconds: FINDING_ACTION_MAX_AGE_SECONDS,
         },
+        |value, future_seconds| FindingStaleReason::LatestGenerationFromFuture {
+            completed_at: value,
+            future_seconds,
+        },
     )?;
     validate_action_timestamp(
         request,
@@ -760,28 +793,40 @@ fn resolve_and_validate(
             age_seconds,
             max_age_seconds: FINDING_ACTION_MAX_AGE_SECONDS,
         },
+        |value, future_seconds| FindingStaleReason::FindingObservationFromFuture {
+            last_seen_at: value,
+            future_seconds,
+        },
     )?;
 
     Ok(resolved)
 }
 
-fn validate_action_timestamp<F, G>(
+fn validate_action_timestamp<F, G, H>(
     request: &FindingActionRequest,
     now: OffsetDateTime,
     timestamp: &str,
     unavailable: F,
     too_old: G,
+    from_future: H,
 ) -> Result<(), FindingActionError>
 where
     F: FnOnce(String) -> FindingStaleReason,
     G: FnOnce(String, i64) -> FindingStaleReason,
+    H: FnOnce(String, i64) -> FindingStaleReason,
 {
     let observed_at =
         OffsetDateTime::parse(timestamp, &Rfc3339).map_err(|_| FindingActionError::Stale {
             finding_key: request.finding_key.clone(),
             reason: unavailable(timestamp.to_string()),
         })?;
-    let age_seconds = (now - observed_at).whole_seconds().max(0);
+    let age_seconds = (now - observed_at).whole_seconds();
+    if age_seconds < 0 {
+        return Err(FindingActionError::Stale {
+            finding_key: request.finding_key.clone(),
+            reason: from_future(timestamp.to_string(), -age_seconds),
+        });
+    }
     if age_seconds > FINDING_ACTION_MAX_AGE_SECONDS {
         return Err(FindingActionError::Stale {
             finding_key: request.finding_key.clone(),
@@ -1070,14 +1115,15 @@ mod tests {
             preview.contract.notification_effect,
             NotificationEffect::Pause
         );
-        assert_eq!(preview.expires_at.as_deref(), Some("2026-07-27T03:17:00Z"));
+        assert_eq!(preview.expires_after_hours, Some(24));
         assert!(preview.owner_will_change);
         assert!(preview.note_will_change);
         assert_eq!(stored_state(&db).0, "new", "preview must not mutate");
 
-        let receipt = transition_finding_action(&mut db, &req, now()).unwrap();
+        let receipt =
+            transition_finding_action(&mut db, &req, now() + Duration::seconds(2)).unwrap();
         assert_eq!(receipt.contract, preview.contract);
-        assert_eq!(receipt.expires_at, preview.expires_at);
+        assert_eq!(receipt.expires_at.as_deref(), Some("2026-07-27T03:17:02Z"));
     }
 
     #[test]
@@ -1333,6 +1379,62 @@ mod tests {
                 .unwrap();
             assert_eq!(history_count, 0);
         }
+    }
+
+    #[test]
+    fn actor_is_required_for_durable_history() {
+        let (_dir, mut db, key) = seeded();
+        let mut req = request(&key, FindingAction::Acknowledge);
+        req.actor = None;
+        assert!(matches!(
+            transition_finding_action(&mut db, &req, now()),
+            Err(FindingActionError::Invalid { field: "actor", .. })
+        ));
+        assert_eq!(stored_state(&db).0, "new");
+    }
+
+    #[test]
+    fn future_generation_or_finding_timestamp_is_not_actionable() {
+        let (_dir, mut db, key) = seeded();
+        db.conn
+            .execute(
+                "UPDATE generations
+                    SET completed_at = '2026-07-26T04:17:00Z'
+                  WHERE generation_id = 7",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            transition_finding_action(&mut db, &request(&key, FindingAction::Acknowledge), now()),
+            Err(FindingActionError::Stale {
+                reason: FindingStaleReason::LatestGenerationFromFuture { .. },
+                ..
+            })
+        ));
+
+        db.conn
+            .execute(
+                "UPDATE generations
+                    SET completed_at = '2026-07-26T03:17:00Z'
+                  WHERE generation_id = 7",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "UPDATE warning_state
+                    SET last_seen_at = '2026-07-26T04:17:00Z'
+                  WHERE host = 'app-1'",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            transition_finding_action(&mut db, &request(&key, FindingAction::Acknowledge), now()),
+            Err(FindingActionError::Stale {
+                reason: FindingStaleReason::FindingObservationFromFuture { .. },
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -1619,7 +1721,7 @@ mod tests {
             expected_last_seen_gen: 7,
             note: None,
             owner: None,
-            actor: None,
+            actor: Some("operator@example".to_string()),
             ttl_hours: None,
         };
         let receipt = transition_finding_action(&mut db, &req, now()).unwrap();

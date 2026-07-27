@@ -1,368 +1,220 @@
-//! Pins the dashboard ordering slice from
-//! docs/working/decisions/DASHBOARD_ORDERING_SLICE_PACKET.md.
+//! Task-first dashboard hierarchy and lifecycle-state regressions.
 //!
-//! Three discipline points the slice locks in:
-//! 1. The section name is "Open Findings" — witness register, not
-//!    "Issues" / "Active" / "Attention Required".
-//! 2. Open Findings comes BEFORE Host State in the main column, so
-//!    the first screen answers "what does NQ currently refuse to
-//!    normalize?" instead of "what's the host rollup?"
-//! 3. When a finding's evidence IS substrate (freelist_bloat is the
-//!    canonical V0 case), the substrate detail surfaces adjacent to
-//!    the finding, not only in the footer SQLite DBs table.
+//! These tests intentionally target the operator DashboardOverview DTO. The
+//! deleted renderer's "Open Findings", host-rollup, and substrate sub-row
+//! vocabulary are not part of the current information architecture.
 
-use nq_monitor::http::routes::render_overview;
-use nq_db::views::{
-    HostEvidenceStanding, HostFreshnessVm, HostSummaryVm, OverviewVm, SqliteDbSummaryVm, WarningVm,
-};
+mod dashboard_support;
 
-fn empty_vm() -> OverviewVm {
-    OverviewVm {
-        generation_id: Some(1),
-        generated_at: Some("2026-06-02T00:00:00Z".into()),
-        generation_status: Some("complete".into()),
-        generation_age_s: Some(10),
-        hosts: vec![],
-        services: vec![],
-        sqlite_dbs: vec![],
-        warnings: vec![],
-        history_generations: 10,
-        host_freshness: vec![],
-    }
-}
+use dashboard_support::{empty_overview, finding, host_inventory, sqlite_inventory, OBSERVED_AT};
+use nq_db::dashboard::DashboardFindingStatus;
+use nq_monitor::http::operator_dashboard::render_overview;
 
-fn freelist_bloat_finding(host: &str, db_path: &str) -> WarningVm {
-    WarningVm {
-        severity: "critical".into(),
-        category: "freelist_bloat".into(),
-        host: host.into(),
-        subject: Some(db_path.into()),
-        message: "freelist reclaimable 41.5 MB (51.2% of db)".into(),
-        domain: Some("Δg".into()),
-        first_seen_at: Some("2026-05-12T00:00:00Z".into()),
-        consecutive_gens: Some(30_729),
-        acknowledged: false,
-        finding_class: Some("signal".into()),
-        visibility_state: "observed".into(),
-        suppression_reason: None,
-        failure_class: Some("substrate".into()),
-        service_impact: Some("none".into()),
-        action_bias: Some("investigate_business_hours".into()),
-        synopsis: Some("freelist bloat".into()),
-        stability: Some("stable".into()),
-        maintenance_state: "none".into(),
-        maintenance_id: None,
-        work_state: "new".into(),
-        owner: None,
-        note: None,
-        external_ref: None,
-        basis_state: "live".into(),
-    }
-}
-
-fn sqlite_db(host: &str, db_path: &str) -> SqliteDbSummaryVm {
-    SqliteDbSummaryVm {
-        host: host.into(),
-        db_path: db_path.into(),
-        db_size_mb: Some(81.0),
-        wal_size_mb: Some(1.4),
-        checkpoint_lag_s: Some(30),
-        last_quick_check: Some("ok".into()),
-        as_of_generation: 1,
-        stale: false,
-    }
+fn freelist_bloat_finding(host: &str, db_path: &str) -> nq_db::dashboard::DashboardFinding {
+    let mut finding = finding(
+        "freelist_bloat",
+        host,
+        db_path,
+        "freelist reclaimable 41.5 MB (51.2% of database)",
+    );
+    finding.severity = "critical".into();
+    finding.peak_value = Some(51.2);
+    finding.diagnosis.failure_class = Some("substrate".into());
+    finding.diagnosis.service_impact = Some("none".into());
+    finding.diagnosis.action_bias = Some("investigate_business_hours".into());
+    finding
 }
 
 #[test]
-fn findings_section_is_named_open_findings() {
-    let vm = empty_vm();
-    let html = render_overview(&vm, &[]);
+fn decision_surface_replaces_the_obsolete_open_findings_register() {
+    let mut overview = empty_overview();
+    overview
+        .monitored_findings
+        .push(freelist_bloat_finding("host-a", "/var/lib/db.sqlite"));
 
+    let html = render_overview(&overview);
+
+    assert!(html.contains("1 issue needs attention."));
+    assert!(html.contains("/var/lib/db.sqlite has reclaimable database space"));
     assert!(
-        html.contains("Open Findings"),
-        "findings section must be named 'Open Findings' (witness register)"
-    );
-    assert!(
-        !html.contains(">Findings (0)<") && !html.contains(">Findings (1)<"),
-        "bare 'Findings (N)' header is the pre-rename shape"
+        !html.contains("Open Findings"),
+        "the task-first UI must not regress to the deleted witness-register entrance"
     );
 }
 
 #[test]
-fn open_findings_renders_before_host_state() {
-    let mut vm = empty_vm();
-    vm.hosts = vec![HostSummaryVm {
-        host: "host-a".into(),
-        cpu_load_1m: Some(0.5),
-        mem_pressure_pct: Some(20.0),
-        disk_used_pct: Some(40.0),
-        disk_avail_mb: Some(50_000),
-        uptime_seconds: Some(3600),
-        as_of_generation: 1,
-        stale: false,
-    }];
+fn decision_and_claim_render_before_inventory_exploration() {
+    let mut overview = empty_overview();
+    overview
+        .monitored_findings
+        .push(freelist_bloat_finding("host-a", "/var/lib/db.sqlite"));
+    overview
+        .inventory
+        .hosts
+        .push(host_inventory("host-a", OBSERVED_AT, 10, false));
 
-    let html = render_overview(&vm, &[]);
-
-    let open_findings_pos = html
-        .find("Open Findings")
-        .expect("Open Findings header must render");
-    let host_state_pos = html.find("Host State").unwrap_or(usize::MAX);
-    let hosts_table_pos = html.find(">Hosts<").expect("Hosts table header must render");
+    let html = render_overview(&overview);
+    let decision = html.find("1 issue needs attention.").unwrap();
+    let claim = html
+        .find("/var/lib/db.sqlite has reclaimable database space")
+        .unwrap();
+    let inventory = html.find("Inventory and exploration").unwrap();
 
     assert!(
-        open_findings_pos < hosts_table_pos,
-        "Open Findings (pos {open_findings_pos}) must render before the Hosts substrate table (pos {hosts_table_pos})"
-    );
-    if host_state_pos != usize::MAX {
-        assert!(
-            open_findings_pos < host_state_pos,
-            "Open Findings (pos {open_findings_pos}) must render before Host State (pos {host_state_pos})"
-        );
-    }
-}
-
-#[test]
-fn freelist_bloat_finding_surfaces_substrate_detail_adjacent() {
-    let mut vm = empty_vm();
-    vm.warnings = vec![freelist_bloat_finding("host-a", "/var/lib/db.sqlite")];
-    vm.sqlite_dbs = vec![sqlite_db("host-a", "/var/lib/db.sqlite")];
-
-    let html = render_overview(&vm, &[]);
-
-    // The substrate sub-row exists with the marker the renderer uses.
-    assert!(
-        html.contains("data-evidence=\"substrate\""),
-        "freelist_bloat finding must render an adjacent substrate-detail sub-row"
-    );
-
-    // The substrate stats are surfaced in the sub-row text.
-    let substrate_start = html
-        .find("data-evidence=\"substrate\"")
-        .expect("marker presence checked above");
-    let substrate_slice = &html[substrate_start..];
-    assert!(
-        substrate_slice.contains("81.0 MB"),
-        "db_size_mb must surface in the substrate sub-row"
-    );
-    assert!(
-        substrate_slice.contains("1.4 MB"),
-        "wal_size_mb must surface in the substrate sub-row"
-    );
-    assert!(
-        substrate_slice.contains("checkpoint lag 30s"),
-        "checkpoint_lag_s must surface in the substrate sub-row"
-    );
-
-    // Position discipline: the substrate sub-row must appear AFTER
-    // the finding's primary row (adjacent, not relegated to the
-    // footer SQLite table — which renders the same data later).
-    let finding_row_start = html
-        .find("freelist_bloat")
-        .expect("finding row must render");
-    let footer_sqlite_h2 = html
-        .find(">SQLite DBs<")
-        .expect("footer SQLite DBs section must still render");
-    assert!(
-        finding_row_start < substrate_start && substrate_start < footer_sqlite_h2,
-        "substrate sub-row must render between the finding row and the footer SQLite DBs table"
+        decision < claim && claim < inventory,
+        "decision → operational claim must precede inventory exploration"
     );
 }
 
 #[test]
-fn no_substrate_sub_row_when_no_matching_sqlite_db() {
-    let mut vm = empty_vm();
-    vm.warnings = vec![freelist_bloat_finding("host-a", "/var/lib/db.sqlite")];
-    // No sqlite_dbs entries — the lookup misses, no sub-row.
+fn substrate_inventory_remains_timestamped_context_not_silent_claim_evidence() {
+    let mut overview = empty_overview();
+    overview
+        .monitored_findings
+        .push(freelist_bloat_finding("host-a", "/var/lib/db.sqlite"));
+    overview.inventory.sqlite_databases.push(sqlite_inventory(
+        "host-a",
+        "/var/lib/db.sqlite",
+        OBSERVED_AT,
+    ));
 
-    let html = render_overview(&vm, &[]);
+    let html = render_overview(&overview);
+    let finding = html.find("freelist reclaimable 41.5 MB").unwrap();
+    let inventory = html.find("Inventory and exploration").unwrap();
+    let database_value = html[inventory..].find("81.0 MB").unwrap() + inventory;
 
+    assert!(finding < inventory && inventory < database_value);
     assert!(
         !html.contains("data-evidence=\"substrate\""),
-        "no substrate sub-row should render when the lookup misses"
+        "inventory from a separately timestamped source must not be injected into the finding as if it shared the claim basis"
     );
-}
-
-/// Lane A completeness (C1 #2): the monitor readout must not surface a
-/// `visibility_state = "suppressed"` finding as an active signal row, and
-/// suppression must not inflate the header severity counts. Suppressed
-/// signal findings are folded under their host — never leaked into the
-/// readout as observed testimony. `render_overview` filters `signal_warnings`
-/// (and every header count derived from it) to `visibility_state == "observed"`
-/// (routes.rs); this pins that promise so a regression can't silently start
-/// rendering held findings as live signal.
-#[test]
-fn suppressed_signal_finding_is_folded_not_rendered_as_active_readout() {
-    let mut vm = empty_vm();
-
-    let observed = {
-        let mut w = freelist_bloat_finding("host-a", "/var/lib/observed.sqlite");
-        w.message = "OBSERVED_SENTINEL reclaimable 41.5 MB".into();
-        w
-    };
-    let suppressed = {
-        let mut w = freelist_bloat_finding("host-a", "/var/lib/suppressed.sqlite");
-        w.message = "SUPPRESSED_SENTINEL reclaimable 41.5 MB".into();
-        w.visibility_state = "suppressed".into();
-        w.suppression_reason = Some("suppressed_by_declaration".into());
-        w
-    };
-    vm.warnings = vec![observed, suppressed];
-
-    let html = render_overview(&vm, &[]);
-
-    // The observed finding renders as signal; the suppressed one does not
-    // leak into the readout as an active row.
-    assert!(
-        html.contains("OBSERVED_SENTINEL"),
-        "observed finding must render in the readout"
-    );
-    assert!(
-        !html.contains("SUPPRESSED_SENTINEL"),
-        "suppressed finding must NOT leak into the readout as an active signal row"
-    );
-
-    // Suppression must not inflate the header severity count: two critical
-    // findings, one suppressed, must summarize as "1 critical" — never "2".
-    assert!(
-        html.contains("1 critical"),
-        "header severity must count only observed criticals; html: {html}"
-    );
-    assert!(
-        !html.contains("2 critical"),
-        "suppressed finding must not inflate the header severity count"
-    );
-}
-
-// ---- C2: dual-explicit host freshness markers ----
-// docs/working/decisions/DISPLAY_FRESHNESS_VS_ADMISSIBILITY_FRESHNESS.md.
-// The host row must show BOTH staleness clocks, asymmetrically fenced:
-// Regime A (Evidence standing, authority) primary; Regime B (Display
-// freshness) secondary. Never conflate; never a bare unqualified "stale".
-
-fn plain_host(host: &str, display_stale: bool) -> HostSummaryVm {
-    HostSummaryVm {
-        host: host.into(),
-        cpu_load_1m: Some(0.5),
-        mem_pressure_pct: Some(20.0),
-        disk_used_pct: Some(40.0),
-        disk_avail_mb: Some(50_000),
-        uptime_seconds: Some(3600),
-        as_of_generation: 1,
-        stale: display_stale,
-    }
-}
-
-fn freshness(host: &str, standing: HostEvidenceStanding, age_s: i64) -> HostFreshnessVm {
-    HostFreshnessVm {
-        host: host.into(),
-        evidence_standing: standing,
-        observed_age_s: Some(age_s),
-    }
+    assert!(html[inventory..]
+        .contains("Inventory is supporting context. Each row keeps its own observation time"));
+    assert!(html[inventory..].contains(OBSERVED_AT));
 }
 
 #[test]
-fn c2_host_row_renders_evidence_standing_before_display_freshness() {
-    let mut vm = empty_vm();
-    vm.hosts = vec![plain_host("host-a", false)];
-    vm.host_freshness = vec![freshness("host-a", HostEvidenceStanding::Admissible, 180)];
+fn absent_substrate_inventory_does_not_fabricate_database_values() {
+    let mut overview = empty_overview();
+    overview
+        .monitored_findings
+        .push(freelist_bloat_finding("host-a", "/var/lib/db.sqlite"));
 
-    let html = render_overview(&vm, &[]);
+    let html = render_overview(&overview);
 
-    let ev = html
-        .find("Evidence standing:")
-        .expect("Regime A evidence standing marker must render");
-    let disp = html
-        .find("Display freshness:")
-        .expect("Regime B display freshness marker must render");
-    assert!(
-        ev < disp,
-        "Evidence standing (authority, primary) must render BEFORE Display freshness (secondary)"
-    );
-    assert!(html.contains("admissible"), "host packet within horizon -> admissible");
-    assert!(html.contains("current"), "non-stale generation lag -> display 'current'");
+    assert!(html.contains("freelist reclaimable 41.5 MB"));
+    assert!(html.contains("SQLite inventory"));
+    assert!(!html.contains("81.0 MB"));
+    assert!(!html.contains("checkpoint lag 30s"));
 }
 
 #[test]
-fn c2_divergence_admissible_evidence_but_display_old() {
-    // The canonical C2 case: evidence still stands, dashboard is behind.
-    // Both must be legible, and the display clock must NOT borrow authority
-    // vocabulary ("stale testimony") to describe a display lag.
-    let mut vm = empty_vm();
-    vm.hosts = vec![plain_host("host-a", true)]; // Regime B: display old
-    vm.host_freshness = vec![freshness("host-a", HostEvidenceStanding::Admissible, 200)];
+fn unavailable_observation_is_visible_as_unknown_not_counted_as_attention() {
+    let mut overview = empty_overview();
+    let mut observed = freelist_bloat_finding("host-a", "/var/lib/observed.sqlite");
+    observed.message = "OBSERVED_SENTINEL reclaimable 41.5 MB".into();
 
-    let html = render_overview(&vm, &[]);
+    let mut unavailable = freelist_bloat_finding("host-a", "/var/lib/unavailable.sqlite");
+    unavailable.message = "UNAVAILABLE_SENTINEL retained last-known value".into();
+    unavailable.status = DashboardFindingStatus::Suppressed;
+    unavailable.visibility_state = "suppressed".into();
+    unavailable.suppression_reason = Some("host_unreachable".into());
 
-    assert!(html.contains("admissible"), "evidence standing must remain admissible");
+    overview.monitored_findings = vec![observed, unavailable];
+    let html = render_overview(&overview);
+
+    assert!(html.contains("1 issue needs attention."));
+    assert!(html.contains("OBSERVED_SENTINEL"));
     assert!(
-        html.contains("display old"),
-        "display lag must render as 'display old', never a bare unqualified 'stale'"
+        html.contains("UNAVAILABLE_SENTINEL"),
+        "last-known evidence remains inspectable instead of disappearing"
     );
+    assert!(html.contains("Unknowns blocking decisions (1)"));
+    assert!(html.contains("Observation unavailable"));
     assert!(
-        !html.contains("stale testimony"),
-        "a mere display lag must NOT be described with Regime A authority vocabulary"
+        html.contains("Observation is unavailable; last-known state must not be read as current.")
     );
 }
 
 #[test]
-fn c2_stale_testimony_uses_authority_vocab_independent_of_display() {
-    // Inverse divergence: testimony expired (Regime A) while the collector
-    // is current (Regime B). Authority vocab on A, display vocab on B.
-    let mut vm = empty_vm();
-    vm.hosts = vec![plain_host("host-a", false)]; // Regime B: current
-    vm.host_freshness = vec![freshness("host-a", HostEvidenceStanding::StaleTestimony, 600)];
+fn stale_finding_is_visible_but_cannot_masquerade_as_current_attention() {
+    let mut overview = empty_overview();
+    let mut stale = freelist_bloat_finding("host-a", "/var/lib/stale.sqlite");
+    stale.message = "STALE_SENTINEL retained database observation".into();
+    stale.status = DashboardFindingStatus::Stale;
+    stale.display_stale = true;
+    stale.observation_age_seconds = Some(3_600);
+    overview.monitored_findings.push(stale);
 
-    let html = render_overview(&vm, &[]);
+    let html = render_overview(&overview);
 
-    assert!(
-        html.contains("stale testimony"),
-        "host packet beyond horizon -> Regime A 'stale testimony'"
-    );
-    assert!(
-        html.contains("current"),
-        "display freshness is independent: collector current even as testimony expires"
-    );
+    assert!(html.contains("No current issue is supported by this snapshot."));
+    assert!(html.contains("Unknowns blocking decisions (1)"));
+    assert!(html.contains("Stale evidence"));
+    assert!(html.contains("STALE_SENTINEL"));
+    assert!(html.contains("last observation is too old to describe current state"));
 }
 
-/// EVIDENCE_RETIREMENT render: a `basis_state = "retired"` finding renders in
-/// its own blunt "Retired Evidence" block — explicitly-withdrawn evidence,
-/// never active/success/silence — and does NOT inflate the active header counts.
 #[test]
-fn retired_finding_renders_distinctly_and_not_as_active_signal() {
-    let mut vm = empty_vm();
+fn retired_finding_is_historical_unknown_not_success_or_current_attention() {
+    let mut overview = empty_overview();
+    let mut active = freelist_bloat_finding("host-a", "/var/lib/active.sqlite");
+    active.message = "ACTIVE_SENTINEL reclaimable".into();
 
-    let active = {
-        let mut w = freelist_bloat_finding("host-a", "/var/lib/active.sqlite");
-        w.message = "ACTIVE_SENTINEL reclaimable".into();
-        w
-    };
-    let retired = {
-        let mut w = freelist_bloat_finding("host-a", "/var/lib/retired.sqlite");
-        w.message = "RETIRED_SENTINEL reclaimable".into();
-        w.basis_state = "retired".into();
-        w
-    };
-    vm.warnings = vec![active, retired];
+    let mut retired = freelist_bloat_finding("host-a", "/var/lib/retired.sqlite");
+    retired.message = "RETIRED_SENTINEL reclaimable".into();
+    retired.status = DashboardFindingStatus::Retired;
+    retired.basis_state = "retired".into();
 
-    let html = render_overview(&vm, &[]);
+    overview.monitored_findings = vec![active, retired];
+    let html = render_overview(&overview);
 
-    // Retired evidence renders in its own labelled block, blunt.
-    assert!(html.contains("Retired Evidence"), "retired block must render");
+    assert!(html.contains("1 issue needs attention."));
+    assert!(html.contains("ACTIVE_SENTINEL"));
+    assert!(html.contains("RETIRED_SENTINEL"));
+    assert!(html.contains("Unknowns blocking decisions (1)"));
+    assert!(html.contains("Historical evidence"));
+    assert!(html.contains(
+        "The evidence source was deliberately retired; current state is not established."
+    ));
+    assert!(!html.contains("condition resolved"));
+    assert!(!html.contains(">OK<"));
+}
+
+#[test]
+fn inventory_rows_keep_their_own_clock_and_visible_staleness() {
+    let mut overview = empty_overview();
+    overview.inventory.hosts = vec![
+        host_inventory("host-current", "2026-06-02T00:00:00Z", 10, false),
+        host_inventory("host-old", "2026-06-01T22:00:00Z", 7_200, true),
+    ];
+
+    let html = render_overview(&overview);
+    let current_start = html
+        .find("<tr class=\"\"><th scope=\"row\">host-current")
+        .expect("current inventory row");
+    let current_end = html[current_start..].find("</tr>").unwrap() + current_start;
+    let stale_start = html
+        .find("<tr class=\"inventory-stale\"><th scope=\"row\">host-old")
+        .expect("stale inventory row");
+    let stale_end = html[stale_start..].find("</tr>").unwrap() + stale_start;
+
+    let current_row = &html[current_start..current_end];
+    let stale_row = &html[stale_start..stale_end];
+    assert!(current_row.contains("2026-06-02T00:00:00Z"));
+    assert!(current_row.contains("(10s ago)"));
+    assert!(current_row.contains("Evidence standing:</strong> admissible testimony"));
+    assert!(current_row.contains("Display freshness:</strong> current display"));
+    assert!(stale_row.contains("2026-06-01T22:00:00Z"));
+    assert!(stale_row.contains("(2h ago)"));
+    assert!(stale_row
+        .contains("Evidence standing:</strong> stale testimony; do not use as current state"));
+    assert!(stale_row.contains("Display freshness:</strong> display old by 3 snapshots"));
+
+    let evidence = stale_row.find("Evidence standing:").unwrap();
+    let display = stale_row.find("Display freshness:").unwrap();
     assert!(
-        html.contains("source explicitly retired"),
-        "retired findings carry the blunt explicit-retirement label"
+        evidence < display,
+        "authority-bearing observation standing must precede display lag"
     );
-    assert!(html.contains("RETIRED_SENTINEL"), "the retired finding is still visible");
-
-    // ...but it is NOT active signal: two critical findings, one retired, must
-    // summarize as "1 critical" — never "2".
-    assert!(html.contains("1 critical"), "active count excludes retired; html: {html}");
-    assert!(
-        !html.contains("2 critical"),
-        "retired evidence must not inflate the active severity count"
-    );
-
-    // Retired must never render as success/resolved/gone language.
-    assert!(!html.contains(">OK<"), "retired is not OK");
 }

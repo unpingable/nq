@@ -1,73 +1,84 @@
-//! Pins the Response Posture legend in the overview sidebar.
+//! Pins the task-first replacement for the removed Response Posture sidebar.
 //!
-//! The legend explains the five ActionBias tiers. Per the ActionBias doc
-//! comment in nq-db/src/detect.rs, posture is operator-recommended
-//! response shape, NOT severity — the legend must carry that framing so
-//! the "Response:" masthead axis cannot be read as a severity scale.
+//! Action bias is rendered as response guidance attached to a concrete
+//! finding, never as an abstract severity ladder or an operator obligation.
 
-use nq_monitor::http::routes::render_overview;
-use nq_db::views::{HostSummaryVm, OverviewVm};
+mod dashboard_support;
 
-fn minimal_vm() -> OverviewVm {
-    OverviewVm {
-        generation_id: Some(1),
-        generated_at: Some("2026-06-02T00:00:00Z".into()),
-        generation_status: Some("complete".into()),
-        generation_age_s: Some(10),
-        hosts: vec![HostSummaryVm {
-            host: "host-a".into(),
-            cpu_load_1m: Some(0.5),
-            mem_pressure_pct: Some(20.0),
-            disk_used_pct: Some(40.0),
-            disk_avail_mb: Some(50_000),
-            uptime_seconds: Some(3600),
-            as_of_generation: 1,
-            stale: false,
-        }],
-        services: vec![],
-        sqlite_dbs: vec![],
-        warnings: vec![],
-        history_generations: 10,
-        host_freshness: vec![],
+use dashboard_support::{empty_overview, finding};
+use nq_monitor::http::operator_dashboard::render_overview;
+
+#[test]
+fn empty_dashboard_does_not_require_learning_a_posture_legend() {
+    let html = render_overview(&empty_overview());
+
+    assert!(!html.contains("Response Posture"));
+    assert!(!html.contains("posture-term"));
+    assert!(html.contains("No current issue is supported by this snapshot."));
+}
+
+#[test]
+fn all_response_tiers_translate_on_the_finding_that_uses_them() {
+    let cases = [
+        ("intervene_now", "Review for immediate intervention"),
+        ("intervene_soon", "Plan an intervention soon"),
+        ("investigate_now", "Investigate now"),
+        (
+            "investigate_business_hours",
+            "Investigate during working hours",
+        ),
+        ("watch", "Watch"),
+    ];
+    let mut overview = empty_overview();
+    for (index, (bias, _)) in cases.iter().enumerate() {
+        let mut current = finding(
+            "resource_drift",
+            "host-a",
+            &format!("resource-{index}"),
+            &format!("RESOURCE_SENTINEL_{index}"),
+        );
+        current.severity = "critical".into();
+        current.diagnosis.action_bias = Some((*bias).into());
+        current.diagnosis.synopsis = Some(format!("Resource {index} changed"));
+        overview.monitored_findings.push(current);
     }
-}
 
-/// The legend is static chrome: it renders regardless of whether any
-/// finding currently carries an action_bias, so an operator can read
-/// the tier vocabulary before the first finding arrives.
-#[test]
-fn posture_legend_is_present() {
-    let html = render_overview(&minimal_vm(), &[]);
+    let html = render_overview(&overview);
 
-    assert!(
-        html.contains("Response Posture"),
-        "sidebar must carry the Response Posture legend heading"
-    );
-    assert!(
-        html.contains("Recommended response shape, not severity."),
-        "legend must pin the ActionBias framing: response shape, not severity"
-    );
-}
-
-/// All five ActionBias tiers must appear as legend terms, humanized the
-/// same way the masthead Response line humanizes them (underscores to
-/// spaces). Pinned as full term markup so a bare substring like "watch"
-/// elsewhere in the page cannot satisfy the test.
-#[test]
-fn posture_legend_names_all_five_tiers() {
-    let html = render_overview(&minimal_vm(), &[]);
-
-    for term in [
-        "intervene now",
-        "intervene soon",
-        "investigate now",
-        "investigate business hours",
-        "watch",
-    ] {
-        let needle = format!("<div class=\"posture-term\">{term}</div>");
+    for (index, (_, label)) in cases.iter().enumerate() {
         assert!(
-            html.contains(&needle),
-            "legend must name the ActionBias tier {term:?} as a posture-term"
+            html.contains(&format!("RESOURCE_SENTINEL_{index}")),
+            "concrete finding must remain visible"
+        );
+        assert!(
+            html.contains(&format!("<span>{label}</span>")),
+            "response tier {label:?} must be translated on its concrete finding"
         );
     }
+    assert!(!html.contains("posture-term"));
+    assert!(!html.contains("Severity:"));
+}
+
+#[test]
+fn response_guidance_remains_advisory_not_authorization() {
+    let mut overview = empty_overview();
+    let mut current = finding(
+        "disk_pressure",
+        "host-a",
+        "",
+        "disk use crossed the configured detector boundary",
+    );
+    current.diagnosis.action_bias = Some("intervene_now".into());
+    overview.monitored_findings.push(current);
+
+    let html = render_overview(&overview);
+
+    assert!(html.contains("Review for immediate intervention"));
+    assert!(html.contains(
+        "A finding does not by itself prove cause, user impact, or authorization to change a monitored system."
+    ));
+    assert!(
+        !html.contains("must intervene"),
+        "response guidance must not become an obligation"
+    );
 }

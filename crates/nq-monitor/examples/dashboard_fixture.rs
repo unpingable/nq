@@ -226,6 +226,38 @@ async fn main() -> anyhow::Result<()> {
         "3 of 16 recent labelwatch messages were errors",
     );
 
+    conn.execute(
+        "INSERT INTO smart_witness_current (
+             host, witness_id, witness_type, witness_host, profile_version,
+             collection_mode, privilege_model, witness_status,
+             witness_collected_at, as_of_generation, received_at
+         ) VALUES (
+             'storage-1', 'smart-fixture-1', 'smartctl', 'storage-1', '1',
+             'direct', 'root', 'ok', ?1, 5, ?1
+         )",
+        [&generation_times[4]],
+    )?;
+    conn.execute(
+        "INSERT INTO smart_devices_current (
+             host, subject, device_path, device_class, protocol,
+             collection_outcome, model, serial_number, smart_available,
+             smart_enabled, smart_overall_passed, uncorrected_read_errors,
+             uncorrected_write_errors, uncorrected_verify_errors,
+             as_of_generation, collected_at
+         ) VALUES (
+             'storage-1', '/dev/sda', '/dev/sda', 'scsi', 'scsi', 'ok',
+             'FixtureDrive', 'FIXTURE-001', 1, 1, 1, 7, 0, 0, 5, ?1
+         )",
+        [&generation_times[4]],
+    )?;
+    conn.execute(
+        "INSERT INTO smart_device_coverage_current (host, subject, tag, can_testify)
+         VALUES
+             ('storage-1', '/dev/sda', 'smart_overall_status', 1),
+             ('storage-1', '/dev/sda', 'scsi_error_counters', 1)",
+        [],
+    )?;
+
     insert_warning(
         conn,
         "storage-1",

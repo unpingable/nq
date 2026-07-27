@@ -322,6 +322,41 @@ fn seed_scenario() -> Scenario {
     )
     .unwrap();
 
+    conn.execute(
+        "INSERT INTO smart_witness_current (
+             host, witness_id, witness_type, witness_host, profile_version,
+             collection_mode, privilege_model, witness_status,
+             witness_collected_at, as_of_generation, received_at
+         ) VALUES (
+             'storage-1', 'smart-test-1', 'smartctl', 'storage-1', '1',
+             'direct', 'root', 'ok', ?1, ?2, ?1
+         )",
+        params![&generation_times[4], CURRENT_GENERATION],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO smart_devices_current (
+             host, subject, device_path, device_class, protocol,
+             collection_outcome, smart_available, smart_enabled,
+             smart_overall_passed, uncorrected_read_errors,
+             uncorrected_write_errors, uncorrected_verify_errors,
+             as_of_generation, collected_at
+         ) VALUES (
+             'storage-1', '/dev/sda', '/dev/sda', 'scsi', 'scsi', 'ok',
+             1, 1, 1, 7, 0, 0, ?2, ?1
+         )",
+        params![&generation_times[4], CURRENT_GENERATION],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO smart_device_coverage_current (host, subject, tag, can_testify)
+         VALUES
+             ('storage-1', '/dev/sda', 'smart_overall_status', 1),
+             ('storage-1', '/dev/sda', 'scsi_error_counters', 1)",
+        [],
+    )
+    .unwrap();
+
     insert_warning(
         conn,
         "storage-1",
@@ -430,7 +465,7 @@ fn seed_scenario() -> Scenario {
              host, cpu_load_1m, mem_pressure_pct, disk_used_pct,
              disk_avail_mb, uptime_seconds, as_of_generation, collected_at
          ) VALUES ('inventory-old', 0.2, 12.0, 44.0, 1000, 500, ?1, ?2)",
-        params![CURRENT_GENERATION, timestamp(-7_200)],
+        params![CURRENT_GENERATION - 3, timestamp(-7_200)],
     )
     .unwrap();
 
@@ -590,6 +625,9 @@ async fn overview_and_detail_share_a_basis_and_expose_the_statistical_claim() {
         "does not identify the cause, prove a deployment was responsible, or establish user-visible impact"
     ));
     assert!(detail_html.contains("SQL is not required for the primary workflow"));
+    assert!(detail_html.contains("data-stale-after-seconds=\"300\""));
+    assert!(detail_html.contains("This open page has crossed its freshness boundary"));
+    assert!(detail_html.contains("refreshOpenPageFreshness"));
     assert!(
         detail_html.find("Why NQ reports this").unwrap()
             < detail_html.find("Attached expert SQL").unwrap(),
@@ -631,6 +669,23 @@ async fn stable_routes_fail_safe_and_never_retain_a_previous_finding() {
     assert_eq!(missing_json_status, 404);
     assert_eq!(missing_json["state"], "missing");
     assert_eq!(missing_json["requested_finding_key"], requested_missing_key);
+
+    let (empty_status, empty_html) = get_text(&client, format!("{}/finding", server.base)).await;
+    assert_eq!(empty_status, 400);
+    assert!(empty_html.contains("Finding cannot be resolved"));
+    assert!(empty_html.contains("(no finding key supplied)"));
+    assert!(empty_html.contains("No mutation controls are available"));
+    assert!(!empty_html.contains("<dialog"));
+
+    let empty_api = client
+        .get(format!("{}/api/dashboard/finding", server.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(empty_api.status().as_u16(), 400);
+    let empty_json: Value = empty_api.json().await.unwrap();
+    assert_eq!(empty_json["state"], "missing");
+    assert_eq!(empty_json["requested_finding_key"], "");
 
     let no_redirect_client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -689,9 +744,13 @@ async fn stale_historical_conflicting_and_unknown_states_remain_distinct() {
         stale_error["error"]
             .as_str()
             .unwrap()
-            .contains("FindingObservationTooOld"),
-        "latest-generation identity must not launder an old observation into an actionable target"
+            .contains("no longer current and actionable"),
+        "the operator error must explain the safe outcome without leaking Rust enum names"
     );
+    assert!(!stale_error["error"]
+        .as_str()
+        .unwrap()
+        .contains("FindingObservationTooOld"));
 
     let (historical_status, historical_html) =
         get_finding(&client, &server, &scenario.historical_key).await;
@@ -709,10 +768,19 @@ async fn stale_historical_conflicting_and_unknown_states_remain_distinct() {
         get_finding(&client, &server, &scenario.conflict_key).await;
     assert_eq!(conflict_status, 200);
     assert!(conflict_html.contains("Sources disagree"));
-    assert!(conflict_html.contains("preserves the contradiction"));
-    assert!(
-        conflict_html.contains("does not average these channels into a healthy or failed verdict")
+    assert!(conflict_html.contains("covered raw counters total <strong>7</strong>"));
+    assert!(conflict_html.contains("Conflicting SMART channels from one observation basis"));
+    assert!(conflict_html.contains("uncorrected read errors"));
+    assert!(conflict_html.contains("smart-test-1"));
+    assert!(conflict_html.contains("not averaged into a reassuring single state"));
+    let (_, conflict_json) = get_finding_json(&client, &server, &scenario.conflict_key).await;
+    assert_eq!(conflict_json["evidence"]["kind"], "smart_source_conflict");
+    assert_eq!(
+        conflict_json["evidence"]["generation_id"],
+        CURRENT_GENERATION
     );
+    assert_eq!(conflict_json["evidence"]["smart_overall_passed"], true);
+    assert_eq!(conflict_json["evidence"]["counters"][0]["value"], 7);
 
     let (unknown_status, unknown_html) = get_finding(&client, &server, &scenario.unknown_key).await;
     assert_eq!(unknown_status, 200);
@@ -757,8 +825,18 @@ async fn self_health_inventory_and_current_issues_have_separate_hierarchy() {
         .find(|host| host["host"] == "inventory-old")
         .unwrap();
     assert_eq!(old_inventory["display_stale"], true);
+    assert_eq!(old_inventory["display_lag_generations"], 3);
+    assert_eq!(old_inventory["evidence_standing"], "stale_testimony");
 
     let (_, html) = get_text(&client, format!("{}/", server.base)).await;
+    assert!(html.contains("NQ data captured"));
+    assert!(html.contains("this describes NQ data freshness, not monitored-system health"));
+    assert!(html.contains("<summary>Data-basis details</summary>"));
+    assert!(!html.contains("publish status:"));
+    assert!(html.contains("blocked by stale or unresolved evidence"));
+    assert!(html.contains(
+        "<strong>No response recorded</strong> — No operator coordination response is recorded."
+    ));
     let attention_position = html.find("labelwatch error rate increased").unwrap();
     let self_health_heading = html.find("NQ system health").unwrap();
     let self_health_finding = html.find("NQ_SELF_HEALTH_SECRET").unwrap();
@@ -771,10 +849,8 @@ async fn self_health_inventory_and_current_issues_have_separate_hierarchy() {
     assert!(html.contains("Unavailable"));
     assert!(html.contains("inventory-old"));
     assert!(html.contains("inventory-stale"));
-    assert!(
-        html.contains("<strong class=\"unknown-value\">Stale inventory.</strong>"),
-        "stale inventory must be stated in visible and assistive-text-readable copy, not only CSS"
-    );
+    assert!(html.contains("Evidence standing:</strong> stale testimony"));
+    assert!(html.contains("Display freshness:</strong> display old by 3 snapshots"));
 }
 
 #[tokio::test]
@@ -826,6 +902,8 @@ async fn action_preview_transition_history_and_reset_share_one_contract() {
         preview["preview"]["contract"]["notification_effect"],
         "pause"
     );
+    assert_eq!(preview["preview"]["expires_after_hours"], 24);
+    assert!(preview["preview"].get("expires_at").is_none());
     let preview_will = preview["preview"]["contract"]["will"]
         .as_array()
         .unwrap()
@@ -864,11 +942,31 @@ async fn action_preview_transition_history_and_reset_share_one_contract() {
     let (suppressed_status, suppressed_html) =
         get_finding(&client, &server, &scenario.current_error_key).await;
     assert_eq!(suppressed_status, 200);
-    assert!(suppressed_html.contains("<dt>Coordination</dt><dd>suppressed</dd>"));
+    assert!(suppressed_html.contains(
+        "<dt>Coordination</dt><dd><strong>Notifications suppressed</strong> — Notifications are intentionally muted; evidence remains visible."
+    ));
     assert!(suppressed_html.contains("3 errors in 16 messages"));
     assert!(suppressed_html.contains("new</code> → <code>suppressed"));
     assert!(!suppressed_html.contains("Historical record"));
     assert!(!suppressed_html.contains("condition resolved"));
+
+    let (_, suppressed_overview) = get_text(&client, format!("{}/", server.base)).await;
+    assert!(suppressed_overview.contains("Operator-coordinated findings (1)"));
+    assert!(suppressed_overview.contains(
+        "The observed condition may still be ongoing. Its coordination state changes notification handling"
+    ));
+    assert!(suppressed_overview.contains(
+        "<strong>Notifications suppressed</strong> — Notifications are intentionally muted; evidence remains visible."
+    ));
+    let watching_heading = suppressed_overview.find("Watching (1)").unwrap();
+    let coordinated_heading = suppressed_overview
+        .find("Operator-coordinated findings (1)")
+        .unwrap();
+    let coordinated_finding = suppressed_overview
+        .find("labelwatch error rate increased")
+        .unwrap();
+    assert!(watching_heading < coordinated_heading);
+    assert!(coordinated_heading < coordinated_finding);
 
     let reset = serde_json::json!({
         "finding_key": scenario.current_error_key,
