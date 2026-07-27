@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/nq-protocol",
     "crates/nq-core",
     "crates/nq-db",
     "crates/nq-witness-api",
