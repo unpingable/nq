@@ -1,0 +1,7 @@
+bash	/usr/bin/bash
+curl	/usr/bin/curl
+git	/usr/bin/git
+cargo	/usr/bin/cargo
+rustc	/usr/bin/rustc
+sha256sum	/usr/bin/sha256sum
+install	/usr/bin/install

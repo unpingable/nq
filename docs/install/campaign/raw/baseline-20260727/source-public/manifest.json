@@ -1,0 +1,92 @@
+{
+  "duration_ms": 250755,
+  "failure_step": "040-witness-process",
+  "finished_at": "2026-07-27T06:28:26.839Z",
+  "first_meaningful_result_at": null,
+  "first_run_policy": "copy-visible-config",
+  "interpretation": "A blocked status is installation evidence, not a harness failure. The harness did not repair the environment.",
+  "release_base": null,
+  "repository": "https://github.com/unpingable/nq.git",
+  "schema": "nq.install_clean_room.v1",
+  "started_at": "2026-07-27T06:24:16.084Z",
+  "status": "blocked",
+  "steps": [
+    {
+      "command": [
+        "/usr/bin/bash",
+        "--noprofile",
+        "--norc",
+        "-c",
+        "for command in bash curl git cargo rustc sha256sum install; do printf \"%s\\t\" \"$command\"; if command -v \"$command\" >/dev/null 2>&1; then command -v \"$command\"; else echo \"MISSING\"; fi; done"
+      ],
+      "cwd": "/tmp/nq-install-source-_ryi23ys/work",
+      "description": "Record documented command paths without invoking Cargo or Rustup before the source-install step",
+      "duration_ms": 1,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T06:24:16.086Z",
+      "started_at": "2026-07-27T06:24:16.085Z",
+      "stderr": "steps/000-command-inventory/stderr.log",
+      "stdout": "steps/000-command-inventory/stdout.log",
+      "step_id": "000-command-inventory"
+    },
+    {
+      "command": [
+        "/usr/bin/bash",
+        "--noprofile",
+        "--norc",
+        "-x",
+        "-c",
+        "set -eu\ngit clone 'https://github.com/unpingable/nq.git' || exit 1\ncd nq || exit 1\n(\n  set -eu\n  cargo build --release --locked\n  install -m 0755 target/release/nq-monitor ./nq-monitor\n  install -m 0755 target/release/nq-witness ./nq-witness\n)\n"
+      ],
+      "cwd": "/tmp/nq-install-source-_ryi23ys/work",
+      "description": "Literal source installation block from docs/operator/quickstart.md, with the documented destination named nq",
+      "duration_ms": 250150,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T06:28:26.237Z",
+      "started_at": "2026-07-27T06:24:16.087Z",
+      "stderr": "steps/010-source-install/stderr.log",
+      "stdout": "steps/010-source-install/stdout.log",
+      "step_id": "010-source-install"
+    },
+    {
+      "command": [
+        "/usr/bin/bash",
+        "--noprofile",
+        "--norc",
+        "-c",
+        "git rev-parse HEAD; git remote get-url origin; git status --short"
+      ],
+      "cwd": "/tmp/nq-install-source-_ryi23ys/work/nq",
+      "description": "Record the exact public source revision and remote after installation",
+      "duration_ms": 400,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T06:28:26.638Z",
+      "started_at": "2026-07-27T06:28:26.238Z",
+      "stderr": "steps/011-installed-source-identity/stderr.log",
+      "stdout": "steps/011-installed-source-identity/stdout.log",
+      "step_id": "011-installed-source-identity"
+    },
+    {
+      "command": [
+        "/usr/bin/bash",
+        "--noprofile",
+        "--norc",
+        "-c",
+        "./nq-monitor --version; ./nq-witness --version"
+      ],
+      "cwd": "/tmp/nq-install-source-_ryi23ys/work/nq",
+      "description": "Record installed binary names and reported versions",
+      "duration_ms": 19,
+      "exit_code": 2,
+      "finished_at": "2026-07-27T06:28:26.659Z",
+      "started_at": "2026-07-27T06:28:26.639Z",
+      "stderr": "steps/012-installed-binary-identity/stderr.log",
+      "stdout": "steps/012-installed-binary-identity/stdout.log",
+      "step_id": "012-installed-binary-identity"
+    }
+  ],
+  "time_to_first_meaningful_result_ms": null,
+  "track": "source",
+  "workspace": null,
+  "workspace_retained": false
+}

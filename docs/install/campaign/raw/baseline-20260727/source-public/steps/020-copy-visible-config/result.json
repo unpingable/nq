@@ -1,0 +1,17 @@
+{
+  "description": "Evaluator materialized the two JSON specimens exactly as shown in docs/operator/quickstart.md. This is recorded assistance because the document supplies content but no file-creation command.",
+  "duration_ms": 0,
+  "exit_code": 0,
+  "files": {
+    "aggregator.json": {
+      "bytes": 449,
+      "sha256": "8f31a4b3fb09bbad0031db2b622bec1a54281f233d96beb826f3712240a62d25"
+    },
+    "publisher.json": {
+      "bytes": 164,
+      "sha256": "f61e7bd815820b3752a0e43b7c7b1add0260b3285b6170db221526fc87cf99dd"
+    }
+  },
+  "operator_assistance": true,
+  "step_id": "020-copy-visible-config"
+}

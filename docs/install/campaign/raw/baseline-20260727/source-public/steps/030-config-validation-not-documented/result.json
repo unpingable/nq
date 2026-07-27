@@ -1,0 +1,8 @@
+{
+  "description": "The installed source checkout's quickstart does not document config validation, so the clean-room operator did not invent that step.",
+  "documentation": "docs/operator/quickstart.md",
+  "duration_ms": 0,
+  "exit_code": 0,
+  "operator_assistance": false,
+  "step_id": "030-config-validation-not-documented"
+}

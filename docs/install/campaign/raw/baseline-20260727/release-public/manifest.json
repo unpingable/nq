@@ -1,0 +1,56 @@
+{
+  "duration_ms": 4349,
+  "failure_step": "010-release-install",
+  "finished_at": "2026-07-27T06:14:20.350Z",
+  "first_meaningful_result_at": null,
+  "first_run_policy": "copy-visible-config",
+  "interpretation": "A blocked status is installation evidence, not a harness failure. The harness did not repair the environment.",
+  "release_base": "https://github.com/unpingable/nq/releases/latest/download",
+  "repository": null,
+  "schema": "nq.install_clean_room.v1",
+  "started_at": "2026-07-27T06:14:16.001Z",
+  "status": "blocked",
+  "steps": [
+    {
+      "command": [
+        "/usr/bin/bash",
+        "--noprofile",
+        "--norc",
+        "-c",
+        "for command in bash curl git cargo rustc sha256sum install; do printf \"%s\\t\" \"$command\"; if command -v \"$command\" >/dev/null 2>&1; then command -v \"$command\"; else echo \"MISSING\"; fi; done"
+      ],
+      "cwd": "/tmp/nq-install-release-x89u21ls/work",
+      "description": "Record documented command paths without invoking Cargo or Rustup before the source-install step",
+      "duration_ms": 1,
+      "exit_code": 0,
+      "finished_at": "2026-07-27T06:14:16.003Z",
+      "started_at": "2026-07-27T06:14:16.002Z",
+      "stderr": "steps/000-command-inventory/stderr.log",
+      "stdout": "steps/000-command-inventory/stdout.log",
+      "step_id": "000-command-inventory"
+    },
+    {
+      "command": [
+        "/usr/bin/bash",
+        "--noprofile",
+        "--norc",
+        "-x",
+        "-c",
+        "set -eu\nmkdir nq-quickstart || exit 1\ncd nq-quickstart || exit 1\n\ncase \"$(uname -m)\" in\n  x86_64)         arch=amd64 ;;\n  aarch64|arm64)  arch=arm64 ;;\n  *) echo \"No NQ release binary for $(uname -m)\" >&2; exit 1 ;;\nesac\n\nstage=\"$(mktemp -d .nq-download.XXXXXX)\"\ntrap 'rm -rf \"$stage\"' EXIT\nbase='https://github.com/unpingable/nq/releases/latest/download'\nfor bin in nq-monitor nq-witness; do\n  curl -fL \"$base/$bin-linux-$arch\" -o \"$stage/$bin-linux-$arch\"\n  curl -fL \"$base/$bin-linux-$arch.sha256\" \\\n    -o \"$stage/$bin-linux-$arch.sha256\"\n  (cd \"$stage\" && sha256sum --check \"$bin-linux-$arch.sha256\")\ndone\nfor bin in nq-monitor nq-witness; do\n  install -m 0755 \"$stage/$bin-linux-$arch\" \"$bin\"\ndone\n"
+      ],
+      "cwd": "/tmp/nq-install-release-x89u21ls/work",
+      "description": "Literal release-artifact installation block from docs/operator/quickstart.md",
+      "duration_ms": 4345,
+      "exit_code": 22,
+      "finished_at": "2026-07-27T06:14:20.350Z",
+      "started_at": "2026-07-27T06:14:16.004Z",
+      "stderr": "steps/010-release-install/stderr.log",
+      "stdout": "steps/010-release-install/stdout.log",
+      "step_id": "010-release-install"
+    }
+  ],
+  "time_to_first_meaningful_result_ms": null,
+  "track": "release",
+  "workspace": null,
+  "workspace_retained": false
+}

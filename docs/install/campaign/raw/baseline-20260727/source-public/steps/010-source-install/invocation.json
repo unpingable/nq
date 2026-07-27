@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "/usr/bin/bash",
+    "--noprofile",
+    "--norc",
+    "-x",
+    "-c",
+    "set -eu\ngit clone 'https://github.com/unpingable/nq.git' || exit 1\ncd nq || exit 1\n(\n  set -eu\n  cargo build --release --locked\n  install -m 0755 target/release/nq-monitor ./nq-monitor\n  install -m 0755 target/release/nq-witness ./nq-witness\n)\n"
+  ],
+  "cwd": "/tmp/nq-install-source-_ryi23ys/work",
+  "description": "Literal source installation block from docs/operator/quickstart.md, with the documented destination named nq",
+  "environment_additions": {}
+}

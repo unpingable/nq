@@ -1,0 +1,19 @@
+{
+  "command": [
+    "/usr/bin/bash",
+    "--noprofile",
+    "--norc",
+    "-x",
+    "-c",
+    "set -eu\nmkdir nq-quickstart || exit 1\ncd nq-quickstart || exit 1\n\ncase \"$(uname -m)\" in\n  x86_64)         arch=amd64 ;;\n  aarch64|arm64)  arch=arm64 ;;\n  *) echo \"No NQ release binary for $(uname -m)\" >&2; exit 1 ;;\nesac\n\nstage=\"$(mktemp -d .nq-download.XXXXXX)\"\ntrap 'rm -rf \"$stage\"' EXIT\nbase='https://github.com/unpingable/nq/releases/latest/download'\nfor bin in nq-monitor nq-witness; do\n  curl -fL \"$base/$bin-linux-$arch\" -o \"$stage/$bin-linux-$arch\"\n  curl -fL \"$base/$bin-linux-$arch.sha256\" \\\n    -o \"$stage/$bin-linux-$arch.sha256\"\n  (cd \"$stage\" && sha256sum --check \"$bin-linux-$arch.sha256\")\ndone\nfor bin in nq-monitor nq-witness; do\n  install -m 0755 \"$stage/$bin-linux-$arch\" \"$bin\"\ndone\n"
+  ],
+  "cwd": "/tmp/nq-install-release-x89u21ls/work",
+  "description": "Literal release-artifact installation block from docs/operator/quickstart.md",
+  "duration_ms": 4345,
+  "exit_code": 22,
+  "finished_at": "2026-07-27T06:14:20.350Z",
+  "started_at": "2026-07-27T06:14:16.004Z",
+  "stderr": "steps/010-release-install/stderr.log",
+  "stdout": "steps/010-release-install/stdout.log",
+  "step_id": "010-release-install"
+}

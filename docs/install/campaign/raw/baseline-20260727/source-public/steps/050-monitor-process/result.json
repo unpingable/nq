@@ -1,0 +1,8 @@
+{
+  "duration_ms": null,
+  "exit_code": null,
+  "finished_at": "2026-07-27T06:28:26.839Z",
+  "started_at": null,
+  "step_id": "050-monitor-process",
+  "terminated_by_harness": false
+}

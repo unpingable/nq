@@ -1,0 +1,18 @@
+{
+  "command": [
+    "/usr/bin/bash",
+    "--noprofile",
+    "--norc",
+    "-c",
+    "for command in bash curl git cargo rustc sha256sum install; do printf \"%s\\t\" \"$command\"; if command -v \"$command\" >/dev/null 2>&1; then command -v \"$command\"; else echo \"MISSING\"; fi; done"
+  ],
+  "cwd": "/tmp/nq-install-source-_ryi23ys/work",
+  "description": "Record documented command paths without invoking Cargo or Rustup before the source-install step",
+  "duration_ms": 1,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T06:24:16.086Z",
+  "started_at": "2026-07-27T06:24:16.085Z",
+  "stderr": "steps/000-command-inventory/stderr.log",
+  "stdout": "steps/000-command-inventory/stdout.log",
+  "step_id": "000-command-inventory"
+}

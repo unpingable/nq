@@ -1,0 +1,23 @@
++ set -eu
++ mkdir nq-quickstart
++ cd nq-quickstart
++ case "$(uname -m)" in
+++ uname -m
++ arch=amd64
+++ mktemp -d .nq-download.XXXXXX
++ stage=.nq-download.WSWLUy
++ trap 'rm -rf "$stage"' EXIT
++ base=https://github.com/unpingable/nq/releases/latest/download
++ for bin in nq-monitor nq-witness
++ curl -fL https://github.com/unpingable/nq/releases/latest/download/nq-monitor-linux-amd64 -o .nq-download.WSWLUy/nq-monitor-linux-amd64
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:--  0:00:01 --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:--  0:00:02 --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:--  0:00:03 --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:--  0:00:04 --:--:--     0
+  0     9    0     0    0     0      0      0 --:--:--  0:00:04 --:--:--     0
+curl: (22) The requested URL returned error: 404
++ rm -rf .nq-download.WSWLUy

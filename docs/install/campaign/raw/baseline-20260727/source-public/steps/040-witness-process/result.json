@@ -1,0 +1,8 @@
+{
+  "duration_ms": 174,
+  "exit_code": 1,
+  "finished_at": "2026-07-27T06:28:26.839Z",
+  "started_at": "2026-07-27T06:28:26.665Z",
+  "step_id": "040-witness-process",
+  "terminated_by_harness": false
+}

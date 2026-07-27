@@ -1,0 +1,85 @@
+{
+  "schema": "nq.install_campaign_result.v1",
+  "campaign_date": "2026-07-27",
+  "raw_evidence": "docs/install/campaign/raw/baseline-20260727",
+  "public_source_basis": {
+    "commit": "55e35ac886130a92ec656433a44a4c2b3bc13342",
+    "remote": "https://github.com/unpingable/nq.git"
+  },
+  "local_working_line_not_exercised": {
+    "head_at_analysis": "c09f748935a4a04f5cbff399b566908b744d3f26",
+    "config_startup_repair": "08e2449",
+    "reason": "The documented public clone resolved to the older public HEAD; unpublished local behavior is outside this clean-room result."
+  },
+  "runs": [
+    {
+      "id": "release-public",
+      "track": "release",
+      "started_at": "2026-07-27T06:14:16.001Z",
+      "finished_at": "2026-07-27T06:14:20.350Z",
+      "duration_ms": 4349,
+      "status": "blocked",
+      "failure_step": "010-release-install",
+      "failure": {
+        "class": "release-artifact-unavailable",
+        "command_exit_code": 22,
+        "asset": "https://github.com/unpingable/nq/releases/latest/download/nq-monitor-linux-amd64",
+        "transport_result": "HTTP 404"
+      },
+      "time_to_first_meaningful_result_ms": null,
+      "environment_leak_detected": false,
+      "evaluator_assistance": false
+    },
+    {
+      "id": "source-public",
+      "track": "source",
+      "started_at": "2026-07-27T06:24:16.084Z",
+      "finished_at": "2026-07-27T06:28:26.839Z",
+      "duration_ms": 250755,
+      "install_step_duration_ms": 250150,
+      "status": "blocked",
+      "failure_step": "040-witness-process",
+      "failure": {
+        "class": "occupied-port",
+        "process_exit_code": 1,
+        "message": "Address already in use (os error 98)",
+        "address_from_startup_log": "127.0.0.1:9847",
+        "residual_database_created": false
+      },
+      "source_build": {
+        "succeeded": true,
+        "empty_cargo_home": true,
+        "empty_rustup_home": true,
+        "sibling_checkout_used": false,
+        "installed_binaries": [
+          "nq-monitor",
+          "nq-witness"
+        ],
+        "binary_version_command_supported": false
+      },
+      "time_to_first_meaningful_result_ms": null,
+      "environment_leak_detected": false,
+      "shared_port_state_detected": true,
+      "evaluator_assistance": true,
+      "evaluator_assistance_detail": "Materialized the two JSON blocks because the documentation supplies contents but no literal file-creation command."
+    }
+  ],
+  "undocumented_or_implicit_prerequisites_observed": [
+    "public HTTPS access to GitHub source",
+    "public access to Rust distribution servers",
+    "public access to the crates.io index and crate downloads",
+    "a usable Rustup proxy or Rust 1.88 toolchain",
+    "native compiler and linker prerequisites for the locked dependency graph",
+    "sufficient build disk and memory",
+    "unoccupied loopback ports 9847 and 9848",
+    "an inferred method for creating publisher.json and aggregator.json"
+  ],
+  "verdicts": {
+    "self_contained": false,
+    "composable": false,
+    "recoverable": false,
+    "suitable_for_non_author": false,
+    "public_source_build_without_siblings": true,
+    "first_run": false
+  }
+}

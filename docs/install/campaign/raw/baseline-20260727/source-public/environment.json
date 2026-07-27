@@ -1,0 +1,36 @@
+{
+  "captured_at": "2026-07-27T06:24:16.084Z",
+  "effective_environment": {
+    "CARGO_HOME": "/tmp/nq-install-source-_ryi23ys/home/.cargo",
+    "GIT_TERMINAL_PROMPT": "0",
+    "HOME": "/tmp/nq-install-source-_ryi23ys/home",
+    "LANG": "C",
+    "LC_ALL": "C",
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "RUSTUP_HOME": "/tmp/nq-install-source-_ryi23ys/home/.rustup",
+    "TZ": "UTC",
+    "XDG_CACHE_HOME": "/tmp/nq-install-source-_ryi23ys/home/.cache",
+    "XDG_CONFIG_HOME": "/tmp/nq-install-source-_ryi23ys/home/.config"
+  },
+  "inherited_environment_variable_count": 0,
+  "note": "Only the variables above are passed to product-path commands. No inherited NQ, Cargo, Rustup, proxy, credential, or checkout environment is available.",
+  "platform": {
+    "machine": "x86_64",
+    "release": "6.8.0-136-generic",
+    "system": "Linux"
+  },
+  "schema": "nq.install_clean_room.v1",
+  "sibling_checkout_search_roots": [
+    "/tmp/nq-install-source-_ryi23ys"
+  ],
+  "visible_commands": {
+    "bash": "/usr/bin/bash",
+    "cargo": "/usr/bin/cargo",
+    "curl": "/usr/bin/curl",
+    "git": "/usr/bin/git",
+    "install": "/usr/bin/install",
+    "rustc": "/usr/bin/rustc",
+    "sha256sum": "/usr/bin/sha256sum"
+  },
+  "workspace": "/tmp/nq-install-source-_ryi23ys"
+}

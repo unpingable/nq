@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "/usr/bin/bash",
+    "--noprofile",
+    "--norc",
+    "-c",
+    "./nq-monitor --version; ./nq-witness --version"
+  ],
+  "cwd": "/tmp/nq-install-source-_ryi23ys/work/nq",
+  "description": "Record installed binary names and reported versions",
+  "environment_additions": {}
+}

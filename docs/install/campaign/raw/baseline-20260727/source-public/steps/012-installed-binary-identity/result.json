@@ -1,0 +1,18 @@
+{
+  "command": [
+    "/usr/bin/bash",
+    "--noprofile",
+    "--norc",
+    "-c",
+    "./nq-monitor --version; ./nq-witness --version"
+  ],
+  "cwd": "/tmp/nq-install-source-_ryi23ys/work/nq",
+  "description": "Record installed binary names and reported versions",
+  "duration_ms": 19,
+  "exit_code": 2,
+  "finished_at": "2026-07-27T06:28:26.659Z",
+  "started_at": "2026-07-27T06:28:26.639Z",
+  "stderr": "steps/012-installed-binary-identity/stderr.log",
+  "stdout": "steps/012-installed-binary-identity/stdout.log",
+  "step_id": "012-installed-binary-identity"
+}

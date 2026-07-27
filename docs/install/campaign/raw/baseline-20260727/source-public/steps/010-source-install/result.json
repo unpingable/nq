@@ -1,0 +1,19 @@
+{
+  "command": [
+    "/usr/bin/bash",
+    "--noprofile",
+    "--norc",
+    "-x",
+    "-c",
+    "set -eu\ngit clone 'https://github.com/unpingable/nq.git' || exit 1\ncd nq || exit 1\n(\n  set -eu\n  cargo build --release --locked\n  install -m 0755 target/release/nq-monitor ./nq-monitor\n  install -m 0755 target/release/nq-witness ./nq-witness\n)\n"
+  ],
+  "cwd": "/tmp/nq-install-source-_ryi23ys/work",
+  "description": "Literal source installation block from docs/operator/quickstart.md, with the documented destination named nq",
+  "duration_ms": 250150,
+  "exit_code": 0,
+  "finished_at": "2026-07-27T06:28:26.237Z",
+  "started_at": "2026-07-27T06:24:16.087Z",
+  "stderr": "steps/010-source-install/stderr.log",
+  "stdout": "steps/010-source-install/stdout.log",
+  "step_id": "010-source-install"
+}

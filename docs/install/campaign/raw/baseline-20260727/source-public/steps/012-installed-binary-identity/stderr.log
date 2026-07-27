@@ -1,0 +1,10 @@
+error: unexpected argument '--version' found
+
+Usage: nq-monitor <COMMAND>
+
+For more information, try '--help'.
+error: unexpected argument '--version' found
+
+Usage: nq-witness --config <CONFIG>
+
+For more information, try '--help'.

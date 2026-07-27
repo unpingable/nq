@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "/usr/bin/bash",
+    "--noprofile",
+    "--norc",
+    "-c",
+    "git rev-parse HEAD; git remote get-url origin; git status --short"
+  ],
+  "cwd": "/tmp/nq-install-source-_ryi23ys/work/nq",
+  "description": "Record the exact public source revision and remote after installation",
+  "environment_additions": {}
+}
