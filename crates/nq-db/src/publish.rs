@@ -1886,9 +1886,34 @@ fn update_warning_state_inner(
     drop(del);
     drop(suppress);
 
-    // Ack TTL expiry: revert expired acks/quiesces/suppressions to 'new'
+    // Work-state TTL expiry: revert expired acknowledgements, quiesces, and
+    // suppressions to `new`. Record the automatic transition in the same
+    // lifecycle transaction and keep the legacy acknowledgement receipt in
+    // sync when an acknowledgement itself expires.
     tx.execute(
-        "UPDATE warning_state SET work_state = 'new', ack_expires_at = NULL
+        "INSERT INTO finding_transitions
+            (host, kind, subject, from_state, to_state, changed_by, note, created_at)
+         SELECT host, kind, subject, work_state, 'new', 'nq-lifecycle',
+                'work-state TTL expired', ?1
+           FROM warning_state
+          WHERE ack_expires_at IS NOT NULL
+            AND ack_expires_at < ?1
+            AND work_state IN ('acknowledged', 'quiesced', 'suppressed')",
+        rusqlite::params![&now],
+    )?;
+    tx.execute(
+        "UPDATE warning_state
+            SET work_state = 'new',
+                work_state_at = ?1,
+                acknowledged = CASE
+                    WHEN work_state = 'acknowledged' THEN 0
+                    ELSE acknowledged
+                END,
+                acknowledged_at = CASE
+                    WHEN work_state = 'acknowledged' THEN NULL
+                    ELSE acknowledged_at
+                END,
+                ack_expires_at = NULL
          WHERE ack_expires_at IS NOT NULL
            AND ack_expires_at < ?1
            AND work_state IN ('acknowledged', 'quiesced', 'suppressed')",

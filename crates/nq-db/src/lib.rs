@@ -1,6 +1,7 @@
 pub mod component_testimony;
 pub mod connect;
 pub mod coverage_rules;
+pub mod dashboard;
 pub mod declarations;
 pub mod detect;
 pub mod digest;
@@ -11,6 +12,7 @@ pub mod dns_state_witness_projection;
 pub mod export;
 pub mod finding_meta;
 pub mod frame;
+pub mod finding_actions;
 pub mod import;
 pub mod inquiry;
 pub mod fleet;
