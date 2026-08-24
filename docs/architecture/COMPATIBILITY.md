@@ -2,15 +2,16 @@
 
 **Status:** Pre-1.0. Anything can change.
 
-> **Known external readers (2026-07-26).** Pre-1.0 freedom now coexists with
-> real cross-office consumers: Nightshift consumes
-> `nq.finding_snapshot.v1`, the liveness artifact, and
-> `nq.reliance.receipt.v1` (via `nq-monitor reliance evaluate --format
-> json`), and the Docket dossier import (`witness docket-dossier`, dossier
-> v1+v2) feeds the four-office governed vertical. These are not stability
-> guarantees — the policy below stands — but breaking any of these surfaces
-> now breaks named consumers, and the versioned side-by-side rule below is
-> the operative discipline for them.
+> **Known external readers (updated 2026-08-24).** Pre-1.0 freedom now
+> coexists with real cross-office consumers. The retired Nightshift Watchbill
+> runtime consumed `nq.finding_snapshot.v1`, the liveness artifact, and
+> `nq.reliance.receipt.v1`; canonical Nightshift has since cut over to the
+> separate NQ-NG `nq.diagnostic_execution.v2` admission boundary and does not
+> compile that adapter. The Docket dossier import (`witness docket-dossier`,
+> dossier v1+v2) still feeds the four-office governed vertical. These are not
+> stability guarantees — the policy below stands — but versioned historical
+> contracts remain real contracts and must not be described as current
+> production readers after their consumer has retired them.
 
 NQ is at `v0.x` of its lifecycle. Per [semver](https://semver.org/), the `0.x` major-version range explicitly admits breaking changes between any two releases. This document names what that means in practice for NQ, so operators upgrading between releases know what to expect.
 

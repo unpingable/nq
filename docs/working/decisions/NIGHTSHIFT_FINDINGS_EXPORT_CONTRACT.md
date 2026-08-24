@@ -1,6 +1,12 @@
 # Nightshift Findings Export Contract
 
-**Status (2026-06-08):** stable cross-repo consumer contract. CLI JSONL FindingSnapshot v1 is the call surface; HTTP transport explicitly deferred behind REMOTE_SURFACE_AUTH primitive. Nightshift V1.2 landed cross-repo 2026-05-01 and consumes this contract.
+**Status (updated 2026-08-24):** stable historical cross-repo consumer
+contract. CLI JSONL FindingSnapshot v1 remains a real Classic NQ export; HTTP
+transport remains deferred behind the REMOTE_SURFACE_AUTH primitive. The
+Nightshift V1.2 Watchbill consumer landed cross-repo 2026-05-01, but canonical
+Nightshift later retired that runtime and now consumes NQ-NG diagnostic
+execution/admission provenance instead. This record does not make the
+historical adapter current again.
 
 **Composes with:**
 - [`../gaps/FINDING_EXPORT_GAP.md`](../gaps/FINDING_EXPORT_GAP.md) — V1 wire surface (shipped).
@@ -10,7 +16,10 @@
 
 ## What this doc pins
 
-Nightshift is the first cross-repo consumer of NQ findings. The contract has not been re-documented since it landed; this note records what's stable, what's deferred, and what just got unblocked, so future-self and future-Nightshift sessions don't accidentally re-litigate or quietly drift the wire.
+Nightshift was the first cross-repo consumer of NQ findings. This note records
+what the frozen Watchbill integration consumed, what's deferred, and what was
+unblocked at that time, so historical artifacts remain interpretable without
+being mistaken for the current canonical runtime.
 
 ## Stable call surface
 
