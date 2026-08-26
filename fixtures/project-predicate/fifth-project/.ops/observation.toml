@@ -1,0 +1,5 @@
+schema = "project.observation-binding/v1"
+producer = "sprocket-fixture.status"
+output_schema = "project.ops.status/v1"
+kind = "exec/v1"
+argv = ["python3", "producer.py"]

@@ -11,6 +11,7 @@ pub mod liveness;
 pub mod maintenance;
 pub mod preflight;
 pub mod probe;
+pub mod project_predicate;
 pub mod query;
 pub mod receipt;
 pub mod reliance;
@@ -43,6 +44,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Preflight(cmd) => preflight::run(cmd),
         Command::ValidateWitness(cmd) => validate_witness::run(cmd),
         Command::Verify(cmd) => verify::run(cmd),
+        Command::ProjectPredicate(cmd) => project_predicate::run(cmd),
         Command::Witness(cmd) => witness::run(cmd),
         Command::Receipt(cmd) => receipt::run(cmd),
         Command::Reliance(cmd) => reliance::run(cmd),

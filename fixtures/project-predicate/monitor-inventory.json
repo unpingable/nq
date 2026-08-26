@@ -1,0 +1,51 @@
+{
+  "schema": "monitor.project-observation.inventory/v1",
+  "project": "sprocket-fixture",
+  "repository": "/home/jbeck/git/nq-root/nq/fixtures/project-predicate/fifth-project",
+  "acquisition": {
+    "disposition": "ACQUIRED_AND_VALIDATED",
+    "acquired_at_unix_ms": 1787704334277,
+    "producer": "sprocket-fixture.status",
+    "binding_schema": "project.observation-binding/v1",
+    "manifest_digest": "sha256:8e81b1be2f274e4be29a992fa69ceae81cf337a1323ab319fc06c416afed505c",
+    "status_digest": "sha256:298fdab15972fc2a8df2ac6b3f0468083977fd8e1c235236fa7a628d9fc7ae16",
+    "exit_code": 0,
+    "stdout_bytes": 849,
+    "stderr_bytes": 0,
+    "repository_revision_context": "c5b187f8198192320f8037ed636d3e8f024bc142",
+    "repository_revision_is_deployment_provenance": false
+  },
+  "validation_issues": [],
+  "concerns": [
+    {
+      "declaration": {
+        "id": "sprocket.queue.bounded",
+        "question": "sprocket.question.queue-bounded/v1",
+        "profile": "sprocket.profile.queue-bounded-17/v1",
+        "required": true,
+        "description": "Is the supplied queue depth at most the governed bound of 17?"
+      },
+      "monitor_state": "OBSERVED",
+      "observation": {
+        "observation_present": true,
+        "local_state": "FROBNICATED",
+        "domain_state": "SPROCKET_PAUSED",
+        "observed_at": "2026-08-25T12:00:00Z",
+        "valid_for_seconds": 300,
+        "reason": "opaque state is deliberately irrelevant to the governed predicate",
+        "facts": {"queue": {"depth": 12}}
+      }
+    },
+    {
+      "declaration": {
+        "id": "sprocket.output.freshness",
+        "question": "sprocket.question.output-freshness/v1",
+        "profile": "sprocket.profile.output-freshness/v1",
+        "required": true,
+        "description": "Is a current output-freshness observation available?"
+      },
+      "monitor_state": "MISSING_REQUIRED_OBSERVATION",
+      "observation": null
+    }
+  ]
+}

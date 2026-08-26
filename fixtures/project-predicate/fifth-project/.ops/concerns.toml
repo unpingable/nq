@@ -1,0 +1,16 @@
+schema = "project.concerns/v1"
+project = "sprocket-fixture"
+
+[[concerns]]
+id = "sprocket.queue.bounded"
+question = "sprocket.question.queue-bounded/v1"
+profile = "sprocket.profile.queue-bounded-17/v1"
+required = true
+description = "Is the supplied queue depth at most the governed bound of 17?"
+
+[[concerns]]
+id = "sprocket.output.freshness"
+question = "sprocket.question.output-freshness/v1"
+profile = "sprocket.profile.output-freshness/v1"
+required = true
+description = "Is a current output-freshness observation available?"

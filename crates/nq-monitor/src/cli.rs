@@ -76,6 +76,10 @@ pub enum Command {
     /// informational; blocking modes live behind `--strict` /
     /// `--fail-on STATUS`. See `docs/architecture/SHARED_SPINE.md`.
     Verify(VerifyCmd),
+    /// Recompute a closed declarative predicate over a Monitor project-
+    /// observation inventory. Producer states remain testimony; only the
+    /// profile-governed predicate over typed facts is admitted.
+    ProjectPredicate(ProjectPredicateCmd),
     /// Produce a witness packet from a local source (git, pytest, ...).
     /// Writes `nq.witness.v1` JSON to stdout by default. Witnesses
     /// report observations; they do not name claims.
@@ -252,6 +256,70 @@ pub struct SmokePreflightIngestStateCmd {
 pub struct ReceiptCmd {
     #[command(subcommand)]
     pub action: ReceiptAction,
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectPredicateCmd {
+    #[command(subcommand)]
+    pub action: ProjectPredicateAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProjectPredicateAction {
+    /// Admit or explicitly refuse one observed concern. Refusal is a valid
+    /// machine-readable result and exits zero.
+    Admit(ProjectPredicateAdmitCmd),
+    /// Recompute a sealed admission from its exact inventory and catalog.
+    /// Replay does not refresh its observation occurrence.
+    Replay(ProjectPredicateReplayCmd),
+    /// Print the JCS/SHA-256 digest that must explicitly bind a governed
+    /// profile catalog at admission time.
+    CatalogDigest(ProjectPredicateCatalogDigestCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectPredicateAdmitCmd {
+    /// Saved `monitor.project-observation.inventory/v1` JSON artifact.
+    #[arg(long)]
+    pub inventory: PathBuf,
+    /// Governed `nq.project-predicate-profile-catalog/v1` JSON artifact.
+    #[arg(long)]
+    pub profiles: PathBuf,
+    /// Exact expected JCS/SHA-256 digest of the governed profile catalog.
+    #[arg(long)]
+    pub catalog_digest: String,
+    /// Stable concern identity to select from the Monitor inventory.
+    #[arg(long)]
+    pub concern: String,
+    /// Explicit RFC3339 occurrence at which admission is evaluated.
+    #[arg(long)]
+    pub evaluated_at: String,
+    /// Output path, or `-` for stdout.
+    #[arg(long, default_value = "-")]
+    pub output: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectPredicateReplayCmd {
+    /// Sealed `nq.project-predicate-admission/v1` receipt.
+    #[arg(long)]
+    pub receipt: PathBuf,
+    /// The exact Monitor inventory used to create the receipt.
+    #[arg(long)]
+    pub inventory: PathBuf,
+    /// The exact governed profile catalog used to create the receipt.
+    #[arg(long)]
+    pub profiles: PathBuf,
+    /// Output path, or `-` for stdout.
+    #[arg(long, default_value = "-")]
+    pub output: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectPredicateCatalogDigestCmd {
+    /// Governed `nq.project-predicate-profile-catalog/v1` JSON artifact.
+    #[arg(long)]
+    pub profiles: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
