@@ -6,6 +6,7 @@ pub mod inquiry;
 pub mod intent;
 pub mod preflight;
 pub mod projection_receipt;
+pub mod project_predicate;
 pub mod receipt;
 pub mod receipt_check;
 pub mod receipt_replay;
@@ -68,6 +69,16 @@ pub use projection_receipt::{
     ProjectionReceiptValidationFailure, ProjectionSourceSystem,
     PROJECTION_RECEIPT_DOES_NOT_ESTABLISH, PROJECTION_RECEIPT_ESTABLISHES,
     PROJECTION_RECEIPT_SCHEMA,
+};
+pub use project_predicate::{
+    admit_project_predicate, canonical_digest, catalog_digest, profile_digest,
+    replay_project_predicate, AdmissionDisposition, AdmissionReceipt, AdmissionRefusal,
+    Comparator, EvaluationTrace, FactSpec, FactType, MonitorAcquisition, MonitorDeclaration,
+    MonitorInventory, MonitorInventoryConcern, NamedPredicateBranch, Predicate, PredicateSubject,
+    ProducerTestimony, ProfileCatalog, ProjectObservation, ProjectPredicateProfile,
+    ProjectPredicateWitness, RefusalKind, ReplayResult, ADMISSION_SCHEMA,
+    MONITOR_BINDING_SCHEMA, MONITOR_INVENTORY_SCHEMA, PROFILE_CATALOG_SCHEMA, PROFILE_SCHEMA,
+    PROJECT_PREDICATE_WITNESS_SCHEMA,
 };
 pub use receipt::{NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef, RECEIPT_SCHEMA};
 pub use render::{render_human, render_json, render_jsonl, render_markdown};
