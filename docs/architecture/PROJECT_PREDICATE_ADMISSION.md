@@ -177,10 +177,26 @@ nq-monitor project-predicate replay \
   --receipt admission.json \
   --inventory monitor-inventory.json \
   --profiles profiles.json
+
+nq-monitor project-predicate support-evaluate \
+  --receipt admission.json \
+  --inventory monitor-inventory.json \
+  --profiles profiles.json \
+  --facts independent-support-facts.json
 ```
 
 A semantic refusal is a valid result. Malformed JSON is not a decision and is a
 CLI error.
+
+`support-evaluate` is a deliberately narrow verifier seam for Pulse. It first
+replays the exact positive admission from its saved inventory and catalog,
+then evaluates the same content-bound profile over a second typed fact object.
+Its `nq.project-predicate-support-evaluation/v1` result binds the admission
+receipt, catalog, profile, and input-schema digests plus the recomputed trace.
+It does not validate the second observation's signature, source independence,
+subject/vantage custody, occurrence currentness, or operational consequence;
+those are Pulse responsibilities. A false support predicate is a valid
+evaluation result, not an NQ negative world claim.
 
 ## Unfamiliar-project control
 
@@ -241,6 +257,7 @@ observation because acquisition succeeded, decide operational currentness
 after `evaluated_at`, authorize publication or remediation, assign alert
 severity, schedule recurrence, or notify humans.
 
-Monitor remains the generic discovery/acquisition/structural-join owner. Pulse
-generic support/currentness and Nightshift generic attention are not wired by
-this campaign.
+Monitor remains the generic discovery/acquisition/structural-join owner. The
+separate Pulse campaign consumes this replay/evaluation seam for governed
+independent-source support and occurrence-relative currentness. Nightshift
+generic attention remains unwired.

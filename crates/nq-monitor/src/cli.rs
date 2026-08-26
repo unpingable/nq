@@ -272,9 +272,28 @@ pub enum ProjectPredicateAction {
     /// Recompute a sealed admission from its exact inventory and catalog.
     /// Replay does not refresh its observation occurrence.
     Replay(ProjectPredicateReplayCmd),
+    /// Replay an exact positive admission and recompute the same governed
+    /// predicate over a separate typed support-facts object.
+    SupportEvaluate(ProjectPredicateSupportEvaluateCmd),
     /// Print the JCS/SHA-256 digest that must explicitly bind a governed
     /// profile catalog at admission time.
     CatalogDigest(ProjectPredicateCatalogDigestCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectPredicateSupportEvaluateCmd {
+    #[arg(long)]
+    pub receipt: PathBuf,
+    #[arg(long)]
+    pub inventory: PathBuf,
+    #[arg(long)]
+    pub profiles: PathBuf,
+    /// JSON object containing only the independent support observation facts.
+    #[arg(long)]
+    pub facts: PathBuf,
+    /// Output path, or `-` for stdout.
+    #[arg(long, default_value = "-")]
+    pub output: String,
 }
 
 #[derive(Debug, Args)]

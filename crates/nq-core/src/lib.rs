@@ -71,14 +71,14 @@ pub use projection_receipt::{
     PROJECTION_RECEIPT_SCHEMA,
 };
 pub use project_predicate::{
-    admit_project_predicate, canonical_digest, catalog_digest, profile_digest,
-    replay_project_predicate, AdmissionDisposition, AdmissionReceipt, AdmissionRefusal,
-    Comparator, EvaluationTrace, FactSpec, FactType, MonitorAcquisition, MonitorDeclaration,
-    MonitorInventory, MonitorInventoryConcern, NamedPredicateBranch, Predicate, PredicateSubject,
-    ProducerTestimony, ProfileCatalog, ProjectObservation, ProjectPredicateProfile,
-    ProjectPredicateWitness, RefusalKind, ReplayResult, ADMISSION_SCHEMA,
-    MONITOR_BINDING_SCHEMA, MONITOR_INVENTORY_SCHEMA, PROFILE_CATALOG_SCHEMA, PROFILE_SCHEMA,
-    PROJECT_PREDICATE_WITNESS_SCHEMA,
+    admit_project_predicate, canonical_digest, catalog_digest, evaluate_project_predicate_support,
+    profile_digest, replay_project_predicate, AdmissionDisposition, AdmissionReceipt,
+    AdmissionRefusal, Comparator, EvaluationTrace, FactSpec, FactType, MonitorAcquisition,
+    MonitorDeclaration, MonitorInventory, MonitorInventoryConcern, NamedPredicateBranch, Predicate,
+    PredicateSubject, ProducerTestimony, ProfileCatalog, ProjectObservation,
+    ProjectPredicateProfile, ProjectPredicateWitness, RefusalKind, ReplayResult, SupportEvaluation,
+    ADMISSION_SCHEMA, MONITOR_BINDING_SCHEMA, MONITOR_INVENTORY_SCHEMA, PROFILE_CATALOG_SCHEMA,
+    PROFILE_SCHEMA, PROJECT_PREDICATE_WITNESS_SCHEMA, SUPPORT_EVALUATION_SCHEMA,
 };
 pub use receipt::{NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef, RECEIPT_SCHEMA};
 pub use render::{render_human, render_json, render_jsonl, render_markdown};

@@ -14,6 +14,7 @@ pub const PROFILE_CATALOG_SCHEMA: &str = "nq.project-predicate-profile-catalog/v
 pub const PROFILE_SCHEMA: &str = "nq.project-predicate-profile/v1";
 pub const PROJECT_PREDICATE_WITNESS_SCHEMA: &str = "nq.project-predicate-witness/v1";
 pub const ADMISSION_SCHEMA: &str = "nq.project-predicate-admission/v1";
+pub const SUPPORT_EVALUATION_SCHEMA: &str = "nq.project-predicate-support-evaluation/v1";
 pub const MONITOR_INVENTORY_SCHEMA: &str = "monitor.project-observation.inventory/v1";
 pub const MONITOR_BINDING_SCHEMA: &str = "project.observation-binding/v1";
 
@@ -298,6 +299,93 @@ pub struct ReplayResult {
     pub matches: bool,
     pub expected_receipt_digest: String,
     pub recomputed_receipt_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SupportEvaluation {
+    pub schema: String,
+    pub admission_replay_matches: bool,
+    pub admission_receipt_digest: String,
+    pub catalog_digest: String,
+    pub predicate_profile: String,
+    pub profile_digest: String,
+    pub input_schema_digest: String,
+    pub semantic_conclusion: bool,
+    pub trace: EvaluationTrace,
+}
+
+/// Replay an exact admitted receipt and evaluate its governed predicate over a
+/// second typed fact object. This validates semantics only; source custody and
+/// independence of the second observation remain Pulse responsibilities.
+pub fn evaluate_project_predicate_support(
+    prior: &AdmissionReceipt,
+    inventory: &MonitorInventory,
+    catalog: &ProfileCatalog,
+    support_facts: &Value,
+) -> Result<SupportEvaluation, AdmissionRefusal> {
+    let replay = replay_project_predicate(prior, inventory, catalog);
+    if !replay.matches
+        || prior.disposition != AdmissionDisposition::AdmittedWithScope
+        || prior.semantic_conclusion != Some(true)
+    {
+        return Err(AdmissionRefusal {
+            kind: RefusalKind::IdentityMismatch,
+            detail: "input is not an exactly replayable positive NQ admission".to_owned(),
+        });
+    }
+    let predicate_profile = prior
+        .predicate_profile
+        .as_deref()
+        .ok_or_else(|| AdmissionRefusal {
+            kind: RefusalKind::ProfileMismatch,
+            detail: "admitted receipt has no predicate profile".to_owned(),
+        })?;
+    let profile = catalog
+        .profiles
+        .iter()
+        .find(|profile| profile.id == predicate_profile)
+        .ok_or_else(|| AdmissionRefusal {
+            kind: RefusalKind::ProfileMismatch,
+            detail: predicate_profile.to_owned(),
+        })?;
+    validate_profile(profile)?;
+    let actual_profile_digest = profile_digest(profile).map_err(|detail| AdmissionRefusal {
+        kind: RefusalKind::MalformedProfile,
+        detail,
+    })?;
+    let actual_input_schema_digest =
+        input_schema_digest(profile).map_err(|detail| AdmissionRefusal {
+            kind: RefusalKind::MalformedProfile,
+            detail,
+        })?;
+    if prior.catalog_digest
+        != catalog_digest(catalog).map_err(|detail| AdmissionRefusal {
+            kind: RefusalKind::MalformedProfile,
+            detail,
+        })?
+        || prior.profile_digest.as_deref() != Some(actual_profile_digest.as_str())
+        || prior.input_schema_digest.as_deref() != Some(actual_input_schema_digest.as_str())
+    {
+        return Err(AdmissionRefusal {
+            kind: RefusalKind::ProfileMismatch,
+            detail: "catalog, profile, or input-schema custody differs from the admission"
+                .to_owned(),
+        });
+    }
+    let facts = validate_facts(profile, support_facts)?;
+    let trace = evaluate_predicate(&profile.predicate, &facts)?;
+    Ok(SupportEvaluation {
+        schema: SUPPORT_EVALUATION_SCHEMA.to_owned(),
+        admission_replay_matches: true,
+        admission_receipt_digest: prior.receipt_digest.clone(),
+        catalog_digest: prior.catalog_digest.clone(),
+        predicate_profile: predicate_profile.to_owned(),
+        profile_digest: actual_profile_digest,
+        input_schema_digest: actual_input_schema_digest,
+        semantic_conclusion: trace.result,
+        trace,
+    })
 }
 
 pub fn canonical_digest<T: Serialize>(value: &T) -> Result<String, String> {
@@ -1073,6 +1161,41 @@ mod tests {
         assert_eq!(negative.disposition, AdmissionDisposition::Refused);
         assert_eq!(negative.semantic_conclusion, Some(false));
         assert_eq!(negative.refusal.unwrap().kind, RefusalKind::PredicateFalse);
+    }
+
+    #[test]
+    fn support_evaluation_replays_admission_and_ignores_producer_verdict() {
+        let catalog = catalog();
+        let source = inventory(json!(12));
+        let receipt = admit(&source, &catalog);
+        let positive = evaluate_project_predicate_support(
+            &receipt,
+            &source,
+            &catalog,
+            &json!({"queue": {"depth": 12}}),
+        )
+        .expect("support evaluation");
+        assert!(positive.admission_replay_matches);
+        assert!(positive.semantic_conclusion);
+
+        let contradictory = evaluate_project_predicate_support(
+            &receipt,
+            &source,
+            &catalog,
+            &json!({"queue": {"depth": 18}}),
+        )
+        .expect("false support predicate is a valid evaluation");
+        assert!(!contradictory.semantic_conclusion);
+
+        let mut substituted = receipt.clone();
+        substituted.receipt_digest = STATUS_DIGEST.to_owned();
+        assert!(evaluate_project_predicate_support(
+            &substituted,
+            &source,
+            &catalog,
+            &json!({"queue": {"depth": 12}}),
+        )
+        .is_err());
     }
 
     #[test]
