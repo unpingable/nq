@@ -6,6 +6,22 @@ Canonical slug: `constellation-runtime-monitor-integration`
 
 Final classification: **MONITOR-INTEGRATION-LIVE-WITH-BOUNDED-BLIND-SPOTS**
 
+## Canonical NQ handoff guardrail
+
+> **FUTURE NQ WORK MUST BEGIN FROM CANONICAL SUCCESSOR NQ.**
+> **CLASSIC NQ WAS THIS CAMPAIGN'S IMPLEMENTATION BASIS ONLY.**
+
+Classic NQ at `/data/git/nq-root/nq` supplied Lanternwake's legacy/current
+operational implementation basis. Canonical successor NQ is NQ-ng at
+`/data/git/skunkworks/nq-ng`, canonical branch `main`, resolved at
+`59abd3bcb2d0cc30657a659b3ebc57b981289d9f`. NQ-ng is the default basis for
+future development; this statement does not claim that the operational
+authority switch or deployment cutover has occurred.
+
+Lanternwake commits are evidence/specimens, not an instruction to cherry-pick
+Classic NQ code into the successor. The native semantic handoff is recorded in
+[`SUCCESSOR-HANDOFF.md`](SUCCESSOR-HANDOFF.md).
+
 Classic NQ already observes the real Linode-side host through its intended witness/pull path and observes one public HTTP route through blackbox-exporter/Prometheus. Lanternwake adds fail-closed optional reported-host binding and exact activation instructions for future sources. No k3s deployment exists yet, so k3s coverage is ready only at the host/exporter configuration layer.
 
 ## Coverage at exit
@@ -28,3 +44,6 @@ Classic NQ already observes the real Linode-side host through its intended witne
 No write/remediation authority, secret read, pod exec, provider credential, mutation verb, deployment orchestration, or semantic health aggregation was introduced. TURNSTILE, GLASSHOPPER, SOCKETWRENCH, VM-lifecycle, Cartography, Nightshift, and monitor-skunkworks worktrees were read only and remain outside Lanternwake custody.
 
 The next smallest observation slice is direct read-only Kubernetes identity/state collection only after a real target supplies exact cluster, namespace, Pod, storage, freshness, and minimum-RBAC facts. If the first deployment exposes only a declared route, activate blackbox/Prometheus first and leave topology explicitly unknown.
+
+> For any future prompt that says "NQ" without qualification, resolve and use
+> canonical successor NQ. Classic NQ requires explicit operator authorization.
