@@ -10,7 +10,7 @@ Classic NQ already observes the real Linode-side host through its intended witne
 
 ## Coverage at exit
 
-- Linode: live host resources, named services, SQLite/WAL, logs/metrics according to private configuration, and one public blackbox probe.
+- Linode: a current source and host row, inventory counts of 14 service rows and two SQLite rows, and one attributed public blackbox metric family. Lanternwake did not independently query every service, database, or log detail.
 - crow/local VM: reusable configuration is ready; the recorded qualification VM is powered off and was not observed live by Lanternwake.
 - k3s: no live target. Once reachable, slice 1 can observe its declared external service route and any already-exported metrics without Kubernetes credentials.
 - target identity: an operator can bind canonical source identity to the exact wire-reported host; mismatch fails closed before import.
@@ -20,6 +20,7 @@ Classic NQ already observes the real Linode-side host through its intended witne
 - no real cluster/context, namespace/UID, monitor service account/RBAC, Pod/UID, container ID, port, Service/Endpoints, readiness URL, image digest, or PVC/PV identity is yet available;
 - no direct node Ready, Pod phase/Ready/waiting reason, restart-count, Service/Endpoints, PVC Bound, or replacement-identity Kubernetes API sensor;
 - no direct generic HTTP sensor; blackbox-exporter remains the bounded first slice;
+- the Lanternwake live query did not enumerate per-service, per-SQLite, or log details; its overview counts are inventory testimony only;
 - no arbitrary mount/inode/read-only state, swap/PSI/OOM, interface/link, CRI/containerd, or Linode control-plane observation;
 - bare Prometheus series from multiple targets can collide; provenance becomes explicitly ambiguous rather than exact;
 - process existence, Pod Ready, Docker health, HTTP 200, low resource use, and absence of log errors do not establish application success or qualification.

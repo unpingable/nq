@@ -5,6 +5,12 @@
   "observation_source": "https://nq.neutral.zone documented read-only API",
   "environment": "public Linode-side NQ endpoint",
   "observed_at": "2026-08-28T21:38:21.482907679Z",
+  "sensors_run": [
+    "GET /api/overview generation and inventory summary",
+    "v_sources source status and freshness query",
+    "v_hosts current host row query",
+    "v_metrics attributed blackbox metric-family query"
+  ],
   "facts": {
     "generation_id": 229949,
     "generation_age_s": 51,
@@ -21,6 +27,7 @@
   "unavailable": [
     "TURNSTILE k3s runtime: no cluster or deployed workload exists",
     "local qualification VM: powered off in its closeout",
+    "per-service, per-SQLite, and log detail: not enumerated by this live read",
     "application semantic correctness",
     "deployment qualification"
   ],
