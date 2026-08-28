@@ -37,6 +37,19 @@ pub const CAMPAIGN_STAGE_REALIZATION_NONCLAIMS_V2: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PredecessorRequirementV2 {
+    InitialGit {
+        head: GitObjectIdentityV1,
+        tree: GitObjectIdentityV1,
+    },
+    PriorStageRealization {
+        stage_id: String,
+        reservation: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct CampaignStageRealizationProfileV2 {
     pub schema: String,
@@ -46,6 +59,7 @@ pub struct CampaignStageRealizationProfileV2 {
     pub stage_id: String,
     pub repository_id: String,
     pub repository_ref: String,
+    pub predecessor: PredecessorRequirementV2,
     pub predecessor_head: GitObjectIdentityV1,
     pub predecessor_tree: GitObjectIdentityV1,
     /// Content identity of the predeclared executor-plan template. It is not a
@@ -87,6 +101,9 @@ pub struct CampaignStageRealizationEvidenceV2 {
     pub stage_id: String,
     pub repository_id: String,
     pub repository_ref: String,
+    /// Exact prior NQ inputs and receipt for a prior-reservation predecessor.
+    /// Initial Git predecessors require this to be absent.
+    pub predecessor_qualification: Option<Box<PriorStageQualificationV2>>,
     /// Zero chains is absence; more than one is retained conflict. Neither can
     /// qualify. This vector is never reduced by selecting a winner.
     pub realizations: Vec<ExactRealizationChainV2>,
@@ -97,6 +114,14 @@ pub struct CampaignStageRealizationEvidenceV2 {
     pub artifacts: Vec<ArtifactEvidenceV1>,
     pub workspace_custody: Vec<WorkspaceCustodyEvidenceV1>,
     pub observed_clean_worktree: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PriorStageQualificationV2 {
+    pub profile: Box<CampaignStageRealizationProfileV2>,
+    pub evidence: Box<CampaignStageRealizationEvidenceV2>,
+    pub receipt: Box<CampaignStageRealizationReceiptV2>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -158,8 +183,9 @@ pub fn evaluate_campaign_stage_realization(
         && !evaluator.evaluator_version.is_empty()
         && is_sha256(&evaluator.executable_sha256);
 
-    let chain_exact =
-        evidence.realizations.len() == 1 && realization_matches(profile, &evidence.realizations[0]);
+    let chain_exact = predecessor_matches(profile, evidence)
+        && evidence.realizations.len() == 1
+        && realization_matches(profile, &evidence.realizations[0]);
 
     let (status, reasons) = if outer_exact && chain_exact {
         let chain = &evidence.realizations[0];
@@ -292,6 +318,35 @@ fn realization_matches(
         && git_object_is_well_formed(&chain.result_tree)
 }
 
+fn predecessor_matches(
+    profile: &CampaignStageRealizationProfileV2,
+    evidence: &CampaignStageRealizationEvidenceV2,
+) -> bool {
+    match (&profile.predecessor, &evidence.predecessor_qualification) {
+        (PredecessorRequirementV2::InitialGit { head, tree }, None) => {
+            head == &profile.predecessor_head && tree == &profile.predecessor_tree
+        }
+        (
+            PredecessorRequirementV2::PriorStageRealization {
+                stage_id,
+                reservation,
+            },
+            Some(prior),
+        ) => {
+            let replay =
+                replay_campaign_stage_realization(&prior.profile, &prior.evidence, &prior.receipt);
+            replay.matches
+                && prior.profile.stage_id == *stage_id
+                && prior.profile.evidence_reservation == *reservation
+                && prior.receipt.status == QualificationStatusV1::Qualified
+                && prior.receipt.realizations.len() == 1
+                && prior.receipt.realizations[0].result_head == profile.predecessor_head
+                && prior.receipt.realizations[0].result_tree == profile.predecessor_tree
+        }
+        _ => false,
+    }
+}
+
 fn profile_is_well_formed(profile: &CampaignStageRealizationProfileV2) -> bool {
     profile.schema == CAMPAIGN_STAGE_REALIZATION_PROFILE_SCHEMA_V2
         && !profile.profile_id.is_empty()
@@ -302,6 +357,18 @@ fn profile_is_well_formed(profile: &CampaignStageRealizationProfileV2) -> bool {
         && profile.repository_ref.starts_with("refs/")
         && git_object_is_well_formed(&profile.predecessor_head)
         && git_object_is_well_formed(&profile.predecessor_tree)
+        && match &profile.predecessor {
+            PredecessorRequirementV2::InitialGit { head, tree } => {
+                git_object_is_well_formed(head)
+                    && git_object_is_well_formed(tree)
+                    && head == &profile.predecessor_head
+                    && tree == &profile.predecessor_tree
+            }
+            PredecessorRequirementV2::PriorStageRealization {
+                stage_id,
+                reservation,
+            } => !stage_id.is_empty() && is_sha256(reservation),
+        }
         && is_sha256(&profile.executor_plan_template)
         && !profile.ordered_gates.is_empty()
         && !profile.required_workspace_predicates.is_empty()
@@ -384,6 +451,10 @@ mod tests {
             stage_id: "stage-1".to_owned(),
             repository_id: "fixture/repository".to_owned(),
             repository_ref: "refs/heads/main".to_owned(),
+            predecessor: PredecessorRequirementV2::InitialGit {
+                head: object('3'),
+                tree: object('4'),
+            },
             predecessor_head: object('3'),
             predecessor_tree: object('4'),
             executor_plan_template: digest('5'),
@@ -424,6 +495,7 @@ mod tests {
             stage_id: profile.stage_id.clone(),
             repository_id: profile.repository_id.clone(),
             repository_ref: profile.repository_ref.clone(),
+            predecessor_qualification: None,
             realizations: vec![chain],
             producer,
             qualification_started_at_unix_ms: 100,
@@ -487,6 +559,51 @@ mod tests {
             receipt.realizations[0].porter_run_id,
             "fresh-runtime-run-id"
         );
+    }
+
+    #[test]
+    fn prior_reservation_predecessor_requires_exact_replayable_qualified_result() {
+        let (prior_profile, prior_evidence, evaluator) = specimen();
+        let prior_receipt =
+            evaluate_campaign_stage_realization(&prior_profile, &prior_evidence, &evaluator, 110);
+        assert_eq!(prior_receipt.status, QualificationStatusV1::Qualified);
+
+        let mut profile = prior_profile.clone();
+        profile.profile_id = "velvet-pigeon/stage-2".to_owned();
+        profile.evidence_reservation = digest('f');
+        profile.stage_id = "stage-2".to_owned();
+        profile.predecessor = PredecessorRequirementV2::PriorStageRealization {
+            stage_id: prior_profile.stage_id.clone(),
+            reservation: prior_profile.evidence_reservation.clone(),
+        };
+        profile.predecessor_head = prior_receipt.realizations[0].result_head.clone();
+        profile.predecessor_tree = prior_receipt.realizations[0].result_tree.clone();
+
+        let mut evidence = prior_evidence.clone();
+        evidence.evidence_id = "runtime-evidence-2".to_owned();
+        evidence.profile_id = profile.profile_id.clone();
+        evidence.evidence_reservation = profile.evidence_reservation.clone();
+        evidence.stage_id = profile.stage_id.clone();
+        evidence.predecessor_qualification = Some(Box::new(PriorStageQualificationV2 {
+            profile: Box::new(prior_profile),
+            evidence: Box::new(prior_evidence),
+            receipt: Box::new(prior_receipt),
+        }));
+        evidence.realizations[0].evidence_reservation = profile.evidence_reservation.clone();
+        evidence.realizations[0].predecessor_head = profile.predecessor_head.clone();
+        evidence.realizations[0].predecessor_tree = profile.predecessor_tree.clone();
+        evidence.realizations[0].result_head = object('d');
+        evidence.realizations[0].result_tree = object('e');
+        evidence.profile_sha256 = canonical_sha256(&profile);
+
+        let receipt = evaluate_campaign_stage_realization(&profile, &evidence, &evaluator, 120);
+        assert_eq!(receipt.status, QualificationStatusV1::Qualified);
+
+        profile.predecessor_head = object('f');
+        evidence.realizations[0].predecessor_head = profile.predecessor_head.clone();
+        evidence.profile_sha256 = canonical_sha256(&profile);
+        let wrong = evaluate_campaign_stage_realization(&profile, &evidence, &evaluator, 120);
+        assert_eq!(wrong.status, QualificationStatusV1::Indeterminate);
     }
 
     #[test]

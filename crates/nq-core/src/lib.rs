@@ -39,6 +39,7 @@ pub use campaign_stage_realization_qualification::{
     evaluate_campaign_stage_realization, replay_campaign_stage_realization,
     CampaignStageRealizationEvidenceV2, CampaignStageRealizationProfileV2,
     CampaignStageRealizationReceiptV2, CampaignStageRealizationReplayV2, ExactRealizationChainV2,
+    PredecessorRequirementV2, PriorStageQualificationV2,
     CAMPAIGN_STAGE_REALIZATION_EVIDENCE_SCHEMA_V2, CAMPAIGN_STAGE_REALIZATION_NONCLAIMS_V2,
     CAMPAIGN_STAGE_REALIZATION_PROFILE_SCHEMA_V2, CAMPAIGN_STAGE_REALIZATION_RECEIPT_SCHEMA_V2,
     CAMPAIGN_STAGE_REALIZATION_REPLAY_SCHEMA_V2,
