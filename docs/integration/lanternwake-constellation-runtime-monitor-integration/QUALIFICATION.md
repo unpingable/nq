@@ -31,6 +31,17 @@ scripts/check-constellation-boundaries.sh
 PASS for default and all-feature dependency resolutions
 ```
 
+A final independent rerun after campaign handoff preserved the Lanternwake
+results: the 11 `nq-core` config tests, 8 `nq-monitor` pull tests, and both
+dependency-boundary resolutions passed. That rerun of
+`cargo test --workspace --lib` was not a clean aggregate pass: all 665
+`nq-db` library tests passed, then the pre-existing timing-sensitive
+`tls_cert_transport::tests::resolved_probe_uses_absolute_handshake_deadline_without_retry`
+case exceeded its 25 ms elapsed-time assertion under concurrent load. The
+same exact case passed immediately when rerun in isolation. It is outside the
+Lanternwake change surface; this record retains the scheduling failure rather
+than presenting the final aggregate rerun as green.
+
 The second command emitted six pre-existing dead-code warnings outside this change. `cargo fmt --all -- --check` is not a clean baseline gate at source base `2e956d2`: it reports broad pre-existing formatting drift across unrelated files. Lanternwake did not rewrite those files.
 
 The separate `nq-db` `operator_docs_contract` integration test ran five of six cases successfully; `canonical_deploy_configs_deserialize` failed because canonical `main` does not contain the fixture path `deploy/aggregator.json` that the test attempts to read. The failure predates and is unrelated to Lanternwake. The actual shipped config CLI tests passed: six `nq-monitor` cases and six `nq-witness` cases.
