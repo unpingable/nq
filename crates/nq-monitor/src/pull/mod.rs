@@ -143,6 +143,28 @@ fn validate_publisher_state_schema(state: &PublisherState) -> Result<(), String>
     }
 }
 
+/// Apply the optional deployment-local binding between one configured source
+/// and the publisher identity reported in the versioned `/state` envelope.
+///
+/// `SourceConfig::name` remains the canonical database identity. The binding
+/// does not infer that the publisher is the intended machine; it only proves
+/// that the response agrees with the exact identity the operator configured.
+/// When no binding is configured, the historical warning-only behavior is
+/// retained for compatibility.
+fn validate_reported_host(source: &SourceConfig, state: &PublisherState) -> Result<(), String> {
+    let Some(expected) = source.expected_reported_host.as_deref() else {
+        return Ok(());
+    };
+    if state.host == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "publisher /state host identity mismatch: source {:?} expected reported host {:?}, observed {:?}; refusing collector rows",
+            source.name, expected, state.host
+        ))
+    }
+}
+
 enum PullResult {
     Ok {
         source_run: SourceRun,
@@ -194,6 +216,18 @@ async fn pull_one(source: SourceConfig) -> PullResult {
 
     if let Err(error_message) = validate_publisher_state_schema(&state) {
         warn!(source = %source.name, err = %error_message, "pull refused unsupported /state schema");
+        return PullResult::Failed(SourceRun {
+            source: source.name,
+            status: SourceStatus::Error,
+            received_at,
+            collected_at: Some(state.collected_at),
+            duration_ms: Some(duration_ms),
+            error_message: Some(error_message),
+        });
+    }
+
+    if let Err(error_message) = validate_reported_host(&source, &state) {
+        warn!(source = %source.name, err = %error_message, "pull refused publisher identity mismatch");
         return PullResult::Failed(SourceRun {
             source: source.name,
             status: SourceStatus::Error,
@@ -591,10 +625,49 @@ async fn pull_one(source: SourceConfig) -> PullResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{routing::get, Json, Router};
     use serde_json::json;
 
     fn state_from_json(v: serde_json::Value) -> PublisherState {
         serde_json::from_value(v).expect("fixture must deserialize as PublisherState")
+    }
+
+    fn source(expected_reported_host: Option<&str>) -> SourceConfig {
+        SourceConfig {
+            name: "environment-a/runtime-node".to_string(),
+            base_url: "http://127.0.0.1:9847".to_string(),
+            timeout_ms: 5_000,
+            expected_reported_host: expected_reported_host.map(str::to_string),
+        }
+    }
+
+    fn current_state(host: &str) -> PublisherState {
+        state_from_json(json!({
+            "schema": PUBLISHER_STATE_SCHEMA,
+            "host": host,
+            "collected_at": "2026-08-28T19:33:00Z",
+            "collectors": {}
+        }))
+    }
+
+    async fn serve_state(state: PublisherState) -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new().route(
+            nq_witness_api::STATE_PATH,
+            get(move || {
+                let state = state.clone();
+                async move { Json(state) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local substitution fixture");
+        let address = listener.local_addr().expect("fixture address");
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve local substitution fixture");
+        });
+        (format!("http://{address}"), handle)
     }
 
     #[test]
@@ -632,5 +705,67 @@ mod tests {
         assert!(err.contains("unsupported"), "{err}");
         assert!(err.contains("nq.witness_packet.v2"), "{err}");
         assert!(err.contains(PUBLISHER_STATE_SCHEMA), "{err}");
+    }
+
+    #[test]
+    fn expected_reported_host_accepts_the_exact_bound_identity() {
+        let state = current_state("runtime-node-01");
+        assert!(validate_reported_host(&source(Some("runtime-node-01")), &state).is_ok());
+    }
+
+    #[test]
+    fn expected_reported_host_refuses_substitution_before_row_import() {
+        let state = current_state("runtime-node-02");
+        let error = validate_reported_host(&source(Some("runtime-node-01")), &state)
+            .expect_err("a different reported host must refuse the source");
+        assert!(error.contains("identity mismatch"), "{error}");
+        assert!(error.contains("runtime-node-01"), "{error}");
+        assert!(error.contains("runtime-node-02"), "{error}");
+        assert!(error.contains("refusing collector rows"), "{error}");
+    }
+
+    #[test]
+    fn omitted_expected_reported_host_preserves_compatibility_behavior() {
+        let state = current_state("publisher-self-name-differs");
+        assert!(validate_reported_host(&source(None), &state).is_ok());
+    }
+
+    #[tokio::test]
+    async fn matching_live_fixture_imports_the_bound_source() {
+        let (base_url, server) = serve_state(current_state("runtime-node-01")).await;
+        let mut configured = source(Some("runtime-node-01"));
+        configured.base_url = base_url;
+
+        let result = pull_one(configured).await;
+        server.abort();
+
+        match result {
+            PullResult::Ok { source_run, .. } => {
+                assert_eq!(source_run.source, "environment-a/runtime-node");
+                assert_eq!(source_run.status, SourceStatus::Ok);
+            }
+            PullResult::Failed(run) => panic!("matching identity was refused: {run:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn substituted_live_fixture_becomes_source_error_with_no_rows() {
+        let (base_url, server) = serve_state(current_state("runtime-node-02")).await;
+        let mut configured = source(Some("runtime-node-01"));
+        configured.base_url = base_url;
+
+        let result = pull_one(configured).await;
+        server.abort();
+
+        match result {
+            PullResult::Failed(run) => {
+                assert_eq!(run.source, "environment-a/runtime-node");
+                assert_eq!(run.status, SourceStatus::Error);
+                let detail = run.error_message.expect("identity refusal detail");
+                assert!(detail.contains("runtime-node-01"), "{detail}");
+                assert!(detail.contains("runtime-node-02"), "{detail}");
+            }
+            PullResult::Ok { .. } => panic!("substituted source imported collector rows"),
+        }
     }
 }

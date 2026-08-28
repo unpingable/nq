@@ -109,6 +109,9 @@ impl Config {
             }
             validate_appendable_http_url(format!("{prefix}.base_url"), &source.base_url)?;
             require_nonzero(format!("{prefix}.timeout_ms"), source.timeout_ms)?;
+            if let Some(expected) = source.expected_reported_host.as_deref() {
+                require_trimmed_identity(format!("{prefix}.expected_reported_host"), expected)?;
+            }
         }
 
         require_nonzero(
@@ -340,10 +343,18 @@ impl Default for EscalationThresholds {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceConfig {
+    /// Stable operator-selected identity used as the canonical database host.
     pub name: String,
     pub base_url: String,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
+    /// Optional exact binding to the `host` value reported by the publisher's
+    /// versioned `/state` envelope. When configured, a mismatch refuses the
+    /// pull before any collector rows are imported. This is deployment-local
+    /// identity configuration; omission preserves the compatibility behavior
+    /// in which `name` is canonical and a mismatch is warning-only.
+    #[serde(default)]
+    pub expected_reported_host: Option<String>,
 }
 
 fn default_timeout_ms() -> u64 {
@@ -1389,6 +1400,16 @@ mod tests {
         let mut config = valid_aggregator();
         config.sources[0].name = " local-host".to_string();
         assert_validation_field(config.validate(), "sources[0].name");
+
+        let mut config = valid_aggregator();
+        config.sources[0].expected_reported_host = Some(" ".to_string());
+        assert_validation_field(config.validate(), "sources[0].expected_reported_host");
+
+        let mut config = valid_aggregator();
+        config.sources[0].expected_reported_host = Some("runtime-node-01".to_string());
+        config
+            .validate()
+            .expect("a trimmed expected publisher identity is valid");
 
         let mut config = valid_aggregator();
         config.sources.push(config.sources[0].clone());

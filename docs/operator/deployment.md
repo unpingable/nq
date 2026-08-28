@@ -212,12 +212,14 @@ URLs use the private witness addresses:
     {
       "name": "app-01",
       "base_url": "http://10.20.0.21:9847",
-      "timeout_ms": 10000
+      "timeout_ms": 10000,
+      "expected_reported_host": "app-01"
     },
     {
       "name": "db-01",
       "base_url": "http://10.20.0.22:9847",
-      "timeout_ms": 10000
+      "timeout_ms": 10000,
+      "expected_reported_host": "db-01"
     }
   ],
   "retention": {
@@ -235,6 +237,13 @@ URLs use the private witness addresses:
   }
 }
 ```
+
+`expected_reported_host` is optional for compatibility. When set, it must
+exactly match the publisher envelope's self-reported `host`; a mismatch makes
+the source pull fail before any collector rows are imported. Read the value
+from the intended witness's versioned `/state` response and keep it in private
+deployment configuration. The configured `name` remains the stable database
+identity and may use a separate environment/component naming convention.
 
 `external_url` is used in notification links; set it to the operator-facing
 authenticated URL before enabling channels. The `disk_budget` fields are

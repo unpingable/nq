@@ -1,0 +1,16 @@
+{
+  "schema": "nq.lanternwake.campaign_custody.v1",
+  "campaign_codename": "Lanternwake",
+  "campaign_slug": "constellation-runtime-monitor-integration",
+  "recorded_on": "2026-08-28",
+  "implementation_repo": "nq",
+  "branch": "campaign/lanternwake-constellation-runtime-monitor-integration",
+  "base_head": "2e956d27616bcb7e49016b4d7867c9455c4129a7",
+  "read_only_inputs": [
+    {"repo": "nq-ng", "branch": "campaign/k3s-exact-occurrence-adapter-v1", "head": "90535c80ae57e6b16734cc9751dd81a79ce1fd44"},
+    {"repo": "nightshift", "branch": "campaign/governed-campaign-loop-v0-qualification", "head": "e2675dd854dbfe633bf14456595d722e88bf92bc"},
+    {"repo": "monitor", "branch": "campaign/project-predicate-support-json-custody", "head": "8c70c439f2ae74c917bfcf99f0822d3da8f17b41"}
+  ],
+  "qualification_results_imported_as_monitor_verdicts": false,
+  "write_or_remediation_authority_added": false
+}

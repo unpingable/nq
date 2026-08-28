@@ -1,0 +1,28 @@
+{
+  "schema": "nq.lanternwake.live_observation.v1",
+  "campaign_codename": "Lanternwake",
+  "campaign_slug": "constellation-runtime-monitor-integration",
+  "observation_source": "https://nq.neutral.zone documented read-only API",
+  "environment": "public Linode-side NQ endpoint",
+  "observed_at": "2026-08-28T21:38:21.482907679Z",
+  "facts": {
+    "generation_id": 229949,
+    "generation_age_s": 51,
+    "generation_status": "complete",
+    "source": "labelwatch-host",
+    "source_status": "ok",
+    "source_generations_behind": 0,
+    "host_rows": 1,
+    "service_rows": 14,
+    "sqlite_rows": 2,
+    "blackbox_probe_success": 1,
+    "blackbox_http_status_code": 200
+  },
+  "unavailable": [
+    "TURNSTILE k3s runtime: no cluster or deployed workload exists",
+    "local qualification VM: powered off in its closeout",
+    "application semantic correctness",
+    "deployment qualification"
+  ],
+  "claim_ceiling": "current bounded host/runtime and HTTP-route testimony only"
+}
