@@ -83,6 +83,9 @@ pub enum Command {
     /// Deterministically evaluate exact factual repository evidence against a
     /// closed campaign-stage qualification profile. Grants no authority.
     CampaignStageQualification(CampaignStageQualificationCmd),
+    /// Qualify one exact runtime realization of a predeclared evidence
+    /// reservation. Grants no freshness, applicability, or authority.
+    CampaignStageRealization(CampaignStageRealizationCmd),
     /// Produce a witness packet from a local source (git, pytest, ...).
     /// Writes `nq.witness.v1` JSON to stdout by default. Witnesses
     /// report observations; they do not name claims.
@@ -296,6 +299,44 @@ pub struct CampaignStageQualificationEvaluateCmd {
 
 #[derive(Debug, Args)]
 pub struct CampaignStageQualificationReplayCmd {
+    #[arg(long)]
+    pub profile: PathBuf,
+    #[arg(long)]
+    pub evidence: PathBuf,
+    #[arg(long)]
+    pub receipt: PathBuf,
+    #[arg(long, default_value = "-")]
+    pub output: String,
+}
+
+#[derive(Debug, Args)]
+pub struct CampaignStageRealizationCmd {
+    #[command(subcommand)]
+    pub action: CampaignStageRealizationAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CampaignStageRealizationAction {
+    /// Emit an immutable NQ receipt from factual realization evidence.
+    Evaluate(CampaignStageRealizationEvaluateCmd),
+    /// Recompute an exact receipt without refreshing evidence.
+    Replay(CampaignStageRealizationReplayCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct CampaignStageRealizationEvaluateCmd {
+    #[arg(long)]
+    pub profile: PathBuf,
+    #[arg(long)]
+    pub evidence: PathBuf,
+    #[arg(long)]
+    pub evaluated_at_unix_ms: u64,
+    #[arg(long, default_value = "-")]
+    pub output: String,
+}
+
+#[derive(Debug, Args)]
+pub struct CampaignStageRealizationReplayCmd {
     #[arg(long)]
     pub profile: PathBuf,
     #[arg(long)]
