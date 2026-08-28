@@ -80,6 +80,9 @@ pub enum Command {
     /// observation inventory. Producer states remain testimony; only the
     /// profile-governed predicate over typed facts is admitted.
     ProjectPredicate(ProjectPredicateCmd),
+    /// Deterministically evaluate exact factual repository evidence against a
+    /// closed campaign-stage qualification profile. Grants no authority.
+    CampaignStageQualification(CampaignStageQualificationCmd),
     /// Produce a witness packet from a local source (git, pytest, ...).
     /// Writes `nq.witness.v1` JSON to stdout by default. Witnesses
     /// report observations; they do not name claims.
@@ -262,6 +265,45 @@ pub struct ReceiptCmd {
 pub struct ProjectPredicateCmd {
     #[command(subcommand)]
     pub action: ProjectPredicateAction,
+}
+
+#[derive(Debug, Args)]
+pub struct CampaignStageQualificationCmd {
+    #[command(subcommand)]
+    pub action: CampaignStageQualificationAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CampaignStageQualificationAction {
+    /// Emit an immutable historical NQ receipt. The evidence has no verdict.
+    Evaluate(CampaignStageQualificationEvaluateCmd),
+    /// Recompute and compare an exact receipt. Replay does not refresh it.
+    Replay(CampaignStageQualificationReplayCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct CampaignStageQualificationEvaluateCmd {
+    #[arg(long)]
+    pub profile: PathBuf,
+    #[arg(long)]
+    pub evidence: PathBuf,
+    /// Explicit historical evaluation occurrence; never a freshness claim.
+    #[arg(long)]
+    pub evaluated_at_unix_ms: u64,
+    #[arg(long, default_value = "-")]
+    pub output: String,
+}
+
+#[derive(Debug, Args)]
+pub struct CampaignStageQualificationReplayCmd {
+    #[arg(long)]
+    pub profile: PathBuf,
+    #[arg(long)]
+    pub evidence: PathBuf,
+    #[arg(long)]
+    pub receipt: PathBuf,
+    #[arg(long, default_value = "-")]
+    pub output: String,
 }
 
 #[derive(Debug, Subcommand)]

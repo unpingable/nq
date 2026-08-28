@@ -23,13 +23,16 @@ pub use batch::{
     SmartWitnessRow, SourceRun, SqliteDbRow, SqliteDbSet, ZfsWitnessRow,
 };
 pub use campaign_stage_qualification::{
-    ArtifactEvidenceV1, ArtifactRequirementV1, CampaignStageQualificationEvidenceV1,
+    evaluate_campaign_stage_qualification, replay_campaign_stage_qualification, ArtifactEvidenceV1,
+    ArtifactRequirementV1, CampaignStageQualificationEvidenceV1,
     CampaignStageQualificationProfileV1, CampaignStageQualificationReceiptV1,
-    EvidenceProducerIdentityV1, GateEvidenceV1, GateExecutionContextV1, GateOutcomeV1,
-    GateRequirementV1, GitObjectIdentityV1, QualificationReasonV1, QualificationStatusV1,
+    CampaignStageQualificationReplayV1, EvidenceProducerIdentityV1, GateEvidenceV1,
+    GateExecutionContextV1, GateOutcomeV1, GateRequirementV1, GitObjectIdentityV1,
+    QualificationEvaluatorIdentityV1, QualificationReasonV1, QualificationStatusV1,
     WorkspaceCustodyEvidenceV1, WorkspaceCustodyPredicateV1, WorkspacePredicateOutcomeV1,
     CAMPAIGN_STAGE_QUALIFICATION_EVIDENCE_SCHEMA_V1, CAMPAIGN_STAGE_QUALIFICATION_NONCLAIMS_V1,
-    CAMPAIGN_STAGE_QUALIFICATION_PROFILE_SCHEMA_V1, CAMPAIGN_STAGE_QUALIFICATION_SCHEMA_V1,
+    CAMPAIGN_STAGE_QUALIFICATION_PROFILE_SCHEMA_V1, CAMPAIGN_STAGE_QUALIFICATION_REPLAY_SCHEMA_V1,
+    CAMPAIGN_STAGE_QUALIFICATION_SCHEMA_V1,
 };
 pub use claim_registry::{
     evaluate, ClaimEntry, ClaimRegistry, CompositeClaim, LeafClaim, LeafCondition, NonMintableClaim,

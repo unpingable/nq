@@ -1,3 +1,4 @@
+pub mod campaign_stage_qualification;
 pub mod check;
 pub mod config;
 pub mod database;
@@ -45,6 +46,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::ValidateWitness(cmd) => validate_witness::run(cmd),
         Command::Verify(cmd) => verify::run(cmd),
         Command::ProjectPredicate(cmd) => project_predicate::run(cmd),
+        Command::CampaignStageQualification(cmd) => campaign_stage_qualification::run(cmd),
         Command::Witness(cmd) => witness::run(cmd),
         Command::Receipt(cmd) => receipt::run(cmd),
         Command::Reliance(cmd) => reliance::run(cmd),
