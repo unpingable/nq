@@ -1,12 +1,13 @@
 pub mod batch;
+pub mod campaign_stage_qualification;
 pub mod claim_registry;
 pub mod config;
 pub mod humanize;
 pub mod inquiry;
 pub mod intent;
 pub mod preflight;
-pub mod projection_receipt;
 pub mod project_predicate;
+pub mod projection_receipt;
 pub mod receipt;
 pub mod receipt_check;
 pub mod receipt_replay;
@@ -17,16 +18,25 @@ pub mod time_basis;
 pub mod wire;
 pub mod witness;
 
-pub use batch::{GpuWitnessRow, 
-    Batch, CollectorRun, HostRow, MetricRow, MetricSet, ServiceRow, ServiceSet, SmartWitnessRow,
-    SourceRun, SqliteDbRow, SqliteDbSet, ZfsWitnessRow,
+pub use batch::{
+    Batch, CollectorRun, GpuWitnessRow, HostRow, MetricRow, MetricSet, ServiceRow, ServiceSet,
+    SmartWitnessRow, SourceRun, SqliteDbRow, SqliteDbSet, ZfsWitnessRow,
+};
+pub use campaign_stage_qualification::{
+    ArtifactEvidenceV1, ArtifactRequirementV1, CampaignStageQualificationEvidenceV1,
+    CampaignStageQualificationProfileV1, CampaignStageQualificationReceiptV1,
+    EvidenceProducerIdentityV1, GateEvidenceV1, GateExecutionContextV1, GateOutcomeV1,
+    GateRequirementV1, GitObjectIdentityV1, QualificationReasonV1, QualificationStatusV1,
+    WorkspaceCustodyEvidenceV1, WorkspaceCustodyPredicateV1, WorkspacePredicateOutcomeV1,
+    CAMPAIGN_STAGE_QUALIFICATION_EVIDENCE_SCHEMA_V1, CAMPAIGN_STAGE_QUALIFICATION_NONCLAIMS_V1,
+    CAMPAIGN_STAGE_QUALIFICATION_PROFILE_SCHEMA_V1, CAMPAIGN_STAGE_QUALIFICATION_SCHEMA_V1,
 };
 pub use claim_registry::{
     evaluate, ClaimEntry, ClaimRegistry, CompositeClaim, LeafClaim, LeafCondition, NonMintableClaim,
 };
 pub use config::{
-    Config, DetectorThresholds, DiskBudgetConfig, EscalationThresholds, PublisherConfig,
-    RetentionConfig, SmartWitnessConfig, GpuWitnessConfig, SourceConfig, ZfsWitnessConfig,
+    Config, DetectorThresholds, DiskBudgetConfig, EscalationThresholds, GpuWitnessConfig,
+    PublisherConfig, RetentionConfig, SmartWitnessConfig, SourceConfig, ZfsWitnessConfig,
 };
 pub use humanize::humanize_duration_s;
 pub use inquiry::{
@@ -62,14 +72,6 @@ pub use preflight::{
     PreflightExclusion, PreflightResult, PreflightSupport, PreflightTarget, Verdict,
     PREFLIGHT_CONTRACT_VERSION, PREFLIGHT_DISK_STATE_SCHEMA, PREFLIGHT_SQLITE_WAL_STATE_SCHEMA,
 };
-pub use projection_receipt::{
-    ProjectionContradictionStatus, ProjectionMappingProfile, ProjectionReceipt,
-    ProjectionReceiptMapping, ProjectionReceiptPacket, ProjectionReceiptReplay,
-    ProjectionReceiptSource, ProjectionReceiptSubstitution, ProjectionReceiptValidationError,
-    ProjectionReceiptValidationFailure, ProjectionSourceSystem,
-    PROJECTION_RECEIPT_DOES_NOT_ESTABLISH, PROJECTION_RECEIPT_ESTABLISHES,
-    PROJECTION_RECEIPT_SCHEMA,
-};
 pub use project_predicate::{
     admit_project_predicate, canonical_digest, catalog_digest, evaluate_project_predicate_support,
     profile_digest, replay_project_predicate, AdmissionDisposition, AdmissionReceipt,
@@ -79,6 +81,14 @@ pub use project_predicate::{
     ProjectPredicateProfile, ProjectPredicateWitness, RefusalKind, ReplayResult, SupportEvaluation,
     ADMISSION_SCHEMA, MONITOR_BINDING_SCHEMA, MONITOR_INVENTORY_SCHEMA, PROFILE_CATALOG_SCHEMA,
     PROFILE_SCHEMA, PROJECT_PREDICATE_WITNESS_SCHEMA, SUPPORT_EVALUATION_SCHEMA,
+};
+pub use projection_receipt::{
+    ProjectionContradictionStatus, ProjectionMappingProfile, ProjectionReceipt,
+    ProjectionReceiptMapping, ProjectionReceiptPacket, ProjectionReceiptReplay,
+    ProjectionReceiptSource, ProjectionReceiptSubstitution, ProjectionReceiptValidationError,
+    ProjectionReceiptValidationFailure, ProjectionSourceSystem,
+    PROJECTION_RECEIPT_DOES_NOT_ESTABLISH, PROJECTION_RECEIPT_ESTABLISHES,
+    PROJECTION_RECEIPT_SCHEMA,
 };
 pub use receipt::{NotVerifiedEntry, Receipt, Status, StatusReason, WitnessRef, RECEIPT_SCHEMA};
 pub use render::{render_human, render_json, render_jsonl, render_markdown};
