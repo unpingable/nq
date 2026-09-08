@@ -579,11 +579,20 @@ fn admission_inner(
     if !digest_shape(status_digest) {
         return refuse(RefusalKind::StatusDigestMissing, "invalid status digest");
     }
-    let Some(profile) = catalog.profiles.iter().find(|profile| {
+    let matching_binding = |profile: &ProjectPredicateProfile| {
         profile.declaration_profile == item.declaration.profile
             && profile.subject.project == inventory.project
             && profile.subject.concern == concern_id
-    }) else {
+    };
+    let Some(profile) = catalog
+        .profiles
+        .iter()
+        .filter(|profile| matching_binding(profile))
+        .find(|profile| profile.question == item.declaration.question)
+    else {
+        if catalog.profiles.iter().any(matching_binding) {
+            return refuse(RefusalKind::QuestionMismatch, &item.declaration.question);
+        }
         return refuse(RefusalKind::ProfileMismatch, &item.declaration.profile);
     };
     if let Err(error) = validate_profile(profile) {
@@ -1161,6 +1170,26 @@ mod tests {
         assert_eq!(negative.disposition, AdmissionDisposition::Refused);
         assert_eq!(negative.semantic_conclusion, Some(false));
         assert_eq!(negative.refusal.unwrap().kind, RefusalKind::PredicateFalse);
+    }
+
+    #[test]
+    fn matching_question_selects_the_intended_profile_version() {
+        let mut versioned_catalog = catalog();
+        let mut second = profile();
+        second.id = "example.profile.queue-bounded-17/v2".to_owned();
+        second.question = "example.question.queue-bounded/v2".to_owned();
+        versioned_catalog.profiles.push(second);
+
+        let mut source = inventory(json!(12));
+        source.concerns[0].declaration.question =
+            "example.question.queue-bounded/v2".to_owned();
+        let receipt = admit(&source, &versioned_catalog);
+
+        assert_eq!(receipt.disposition, AdmissionDisposition::AdmittedWithScope);
+        assert_eq!(
+            receipt.predicate_profile.as_deref(),
+            Some("example.profile.queue-bounded-17/v2")
+        );
     }
 
     #[test]
