@@ -1,5 +1,21 @@
 # NQ
 
+> **Deprecated — NQ classic.** This public `nq` repository is not NQ-NG.
+> [Constellation NQ](https://github.com/unpingable/constellation-nq) (formerly
+> NQ-NG) is the public diagnostic/evidence successor. Its
+> [source-release guide](https://github.com/unpingable/constellation-nq/blob/constellation-public-source-20260912/docs/PUBLIC_RELEASE.md)
+> describes the developer preview, source build and bounded qualifications.
+> No binary package or drop-in migration from classic is claimed.
+> Do not relabel classic receipts, state, or verdicts as successor evidence.
+
+The documentation below describes classic capabilities and historical releases.
+Keep existing deployments only for explicitly identified transitional or rollback
+needs until their replacements are qualified. A repository rename is not a data
+migration or deployment cutover. For action authorization and execution custody,
+[Constellation AG](https://github.com/unpingable/constellation-ag) and
+[Constellation Docket](https://github.com/unpingable/constellation-docket) own those separate responsibilities;
+they are not diagnostic replacements for NQ. See [retirement guidance](AGENTS.md#deprecated-nq-classic-2026-09-08).
+
 **NQ is IETF-brutalist monitoring. The shape is ugly because the incident log was.**
 
 NQ is a local-first diagnostic monitor for Linux operators. It pulls bounded evidence from hosts, stores coherent generations in SQLite, classifies failure modes, and keeps loss of observability visible. A separate claim-verification surface can turn supplied evidence into reviewable receipts for CI and automation.

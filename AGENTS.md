@@ -1,5 +1,42 @@
 # AGENTS.md — Working in this repo
 
+## Deprecated: NQ classic (2026-09-08)
+
+This repository (`unpingable/nq`) is **NQ classic and is deprecated**.
+Agent Governor classic (`unpingable/agent_governor`, commonly checked out as
+`agent_gov`) is also deprecated. Neither is a target for new integrations,
+features, or qualification intended to establish a new supported consumer.
+
+- Use **Constellation AG** (`unpingable/constellation-ag`) for supported exact-work authorization
+  and one-use authority, and **Constellation Docket** (`unpingable/constellation-docket`) for attempt,
+  dispatch, and reconciliation custody. Discover their current supported
+  interfaces and qualified revisions before implementing an integration.
+- For diagnostic and evidence capabilities, use public **Constellation NQ**
+  (`unpingable/constellation-nq`) where its qualified profile fits, or identify
+  another owning implementation and qualify its consumer contract. Do not
+  treat ag-ng/Docket as diagnostic replacements or relabel a classic receipt
+  as successor evidence.
+- Retain classic only for explicitly identified transitional dependencies and
+  rollback. Record the consumer, supplied capability, owner, and removal gate;
+  distinguish source, build-image, and production removal.
+- Do not add classic imports, pins, container installs, fixture-generation
+  requirements, or automatic fallback. This includes making `nq-monitor` from
+  this repository a prerequisite for a new consumer's test evidence.
+  Historical fixtures may remain identified as historical; a renamed wrapper
+  does not retire a classic dependency.
+- Inspection, migration, and retirement work may proceed within the user's
+  scope. Repairs to a remaining classic runtime require explicit bounded
+  transitional or rollback authorization; do not revive its architecture.
+- Remove deployed classic dependencies only after replacement qualification.
+  Deprecation alone does not authorize service shutdown, deletion, or migration.
+
+This section governs how to use the legacy guide below. Its quick-start,
+deployment commands, related-project table, and architectural shorthand
+describe classic only; they do not authorize installing or selecting either
+classic repository for current work.
+
+## Legacy maintenance guide
+
 This file is a travel guide for AI agents working on NQ.
 It describes the project, conventions, and safety boundaries.
 
